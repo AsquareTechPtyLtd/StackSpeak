@@ -222,7 +222,7 @@ User-toggleable setting in UI Preferences. Two modes:
         "language": "http",
         "code": "PUT /users/42\n{ \"name\": \"Ada\" }\n\n// Running this 1× or 100× → same final state."
       },
-      "category": "system-design",
+      "stack": "system-design",
       "unlockLevel": 3,
       "tags": ["api", "distributed-systems", "interview"]
     }
@@ -244,20 +244,123 @@ User-toggleable setting in UI Preferences. Two modes:
 | `exampleSentence` | string | Natural-sounding sentence a senior engineer/architect would say in a meeting. |
 | `etymology` | string | Brief origin note; rendered in Instrument Serif Italic. |
 | `codeExample` | object | `{ language, code }` — `language` is a lowercase slug (`http`, `yaml`, `ts`, `hs`, `swift`, `sql`, `bash`, `py`, `go`, `rust`). |
-| `category` | enum | See allowed values below |
+| `stack` | enum | See allowed values below |
 | `unlockLevel` | integer (1–5) | Which user level must be reached to unlock this word. Ties directly to the Level System. |
 | `tags` | array of strings | Free-form tags (lowercase-with-hyphens) for filtering/search. |
 
 All fields are **required** for MVP. No optional fields — if a word doesn't have a good code example, it doesn't belong in the bank yet.
 
-### Allowed Category Values
-- `system-design` — System design terminology (idempotent, eventual consistency, partitioning)
-- `architecture` — Architecture patterns (abstraction leakage, Conway's Law, orthogonality)
-- `engineering-culture` — Engineering culture (bikeshedding, cargo culting, yak shaving)
-- `interview` — Interview vocabulary (heuristic, fungible, amortized, latency vs throughput)
-- `leadership` — Leadership/product thinking (north star, toil, technical debt, observability)
+### Stack System
 
-Do not invent new categories. If a word doesn't fit, discuss before adding.
+Words are organized into **stacks** — focused learning paths that unlock progressively as users level up from Intern to Staff Engineer. Stacks mirror real career progression: beginners start with fundamentals, seniors master advanced topics.
+
+#### Level-Based Stack Progression
+
+Each level unlocks new mandatory and optional stacks. Mandatory stacks auto-add to the user's learning path; optional stacks can be selected for specialization.
+
+**Level 1: Intern** *(4 mandatory + 2 optional)*
+- Mandatory: `basic-programming`, `basic-web`, `code-quality`, `engineering-culture`
+- Optional: `basic-frontend`, `basic-backend`
+
+**Level 2: Junior Developer** *(inherits L1 + 3 mandatory + 1 optional)*
+- New Mandatory: `basic-networking`, `version-control`, `testing`
+- New Optional: `basic-mobile`
+
+**Level 3: Developer** *(inherits L1-2 + 3 mandatory + 4 optional)*
+- New Mandatory: `architecture`, `basic-system-design`, `performance`
+- New Optional: `advanced-frontend`, `advanced-backend`, `mobile`, `security`
+
+**Level 4: Senior Developer** *(inherits L1-3 + 3 mandatory + 2 optional)*
+- New Mandatory: `advanced-system-design`, `advanced-networking`, `interview`
+- New Optional: `leadership`, `devops`, `data-engineering`
+
+**Level 5: Staff Engineer** *(inherits L1-4 + 2 mandatory + 3 optional)*
+- New Mandatory: `leadership`, `architecture-at-scale`
+- New Optional: `machine-learning`, `security-architecture`, `data-platform`
+
+#### Stack Descriptions
+
+| Stack | Type | Level | Description |
+|-------|------|-------|-------------|
+| `basic-programming` | M | 1 | Variables, functions, loops, data structures |
+| `basic-web` | M | 1 | HTTP, APIs, JSON, REST basics |
+| `code-quality` | M | 1 | Readability, naming, simple patterns |
+| `engineering-culture` | M | 1 | Code reviews, PRs, collaboration |
+| `basic-frontend` | O | 1 | HTML, CSS, JavaScript, DOM |
+| `basic-backend` | O | 1 | Databases, servers, API design |
+| `basic-networking` | M | 2 | DNS, TCP/IP, request/response |
+| `version-control` | M | 2 | Git workflows, branches, merges |
+| `testing` | M | 2 | Unit tests, integration tests, TDD |
+| `basic-mobile` | O | 2 | Mobile app fundamentals |
+| `architecture` | M | 3 | SOLID, design patterns, modularity |
+| `basic-system-design` | M | 3 | Caching, load balancing, scaling |
+| `performance` | M | 3 | Profiling, optimization, bottlenecks |
+| `advanced-frontend` | O | 3 | State management, SSR, frameworks |
+| `advanced-backend` | O | 3 | Microservices, message queues |
+| `mobile` | O | 3 | Advanced mobile patterns |
+| `security` | O | 3 | Auth, OWASP, threat modeling |
+| `advanced-system-design` | M | 4 | Distributed systems, CAP theorem |
+| `advanced-networking` | M | 4 | Load balancers, CDNs, edge |
+| `interview` | M | 4 | Interview terminology |
+| `leadership` | M | 5 | Technical decisions, mentoring |
+| `devops` | O | 4 | CI/CD, IaC, containers |
+| `data-engineering` | O | 4 | ETL, warehousing, streaming |
+| `architecture-at-scale` | M | 5 | Multi-region, platform thinking |
+| `machine-learning` | O | 5 | Models, training, inference |
+| `security-architecture` | O | 5 | Security architecture, compliance |
+| `data-platform` | O | 5 | Data platform architecture |
+
+*(M = Mandatory, O = Optional)*
+
+#### User Experience
+
+**Onboarding:**
+- User sees only Level 1 stacks (4 mandatory pre-checked + 2 optional toggleable)
+- Simpler, less overwhelming than showing all 28 stacks upfront
+- Prompt: *"Core stacks are essential fundamentals. Add optional stacks to specialize your learning."*
+
+**Level-Up Modal:**
+- Triggered when user advances to next level
+- Shows newly unlocked mandatory stacks (auto-added, marked with checkmark)
+- Shows newly unlocked optional stacks (user can select/deselect)
+- Example: *"You're now a Developer! New stacks: Architecture, Basic System Design, Performance (core) + Advanced Frontend, Mobile, Security (optional)"*
+
+**Stack Management (Profile → Manage Stacks):**
+- Shows all mandatory stacks for current level (locked, cannot disable)
+- Shows all optional stacks up to current level (user can toggle)
+- Future-level stacks remain hidden until unlocked
+- Changes persist immediately
+
+**Word Rotation:**
+- Daily 5-word sets only include words from user's active stacks
+- Filter: `word.stack ∈ userProgress.selectedStacks`
+- Also filtered by `word.unlockLevel ≤ userProgress.level` and not mastered
+
+#### Implementation
+
+**WordStack enum:**
+- `minimumLevel: Int` — level required to unlock this stack
+- `isMandatoryAtLevel: Bool` — whether this stack is mandatory (vs optional)
+- `mandatoryStacks(for: Int) -> Set<WordStack>` — all mandatory stacks up to given level
+- `newMandatoryStacks(for: Int) -> Set<WordStack>` — mandatory stacks that unlock at exact level
+- `availableOptionalStacks(for: Int) -> Set<WordStack>` — optional stacks up to given level
+- `newOptionalStacks(for: Int) -> Set<WordStack>` — optional stacks that unlock at exact level
+
+**UserProgress:**
+- `selectedStacks: Set<String>` — active stack raw values
+- Initialized to `WordStack.mandatoryStacks(for: 1)` on first launch
+- `addMandatoryStacks(for level: Int)` — called automatically on level advancement
+
+**ProgressService:**
+- `checkAndAdvanceLevel()` calls `userProgress.addMandatoryStacks(for: newLevel)` after incrementing level
+- `getNewStacksForLevel(_ level: Int)` returns tuple of new mandatory and optional stacks for LevelUpView
+
+**Future Extensibility:**
+- New stacks added to WordStack enum with `minimumLevel` set appropriately
+- Existing users won't see new stacks until they reach that level
+- If a new mandatory stack is added to an already-released level, it auto-adds on next app launch (migration logic)
+
+Do not invent new stacks. If a word doesn't fit existing stacks, discuss before adding.
 
 ### Word Level Display
 Each word card displays its unlock level as `L<n> · <Career Title>` (e.g., `L3 · Developer`). The career title is derived from the Level System table — so the display automatically updates if level names ever change.
@@ -270,6 +373,7 @@ Each word card displays its unlock level as `L<n> · <Career Title>` (e.g., `L3 
 3. Each day, pick the next 5 words from the queue, **skipping:**
    - Words the user has marked as Mastered
    - Words whose `unlockLevel` is above the user's current level
+   - Words whose `stack` is not in the user's `selectedStacks`
 4. When the unlocked queue is exhausted, reshuffle non-mastered unlocked words and restart.
 5. If the user has mastered every available word, show: *"You've mastered StackSpeak! Check back for new words."*
 
@@ -438,12 +542,13 @@ Notifications must feel helpful, not naggy. Request permission only after the us
 
 ## First-Launch Experience
 
-### Onboarding (3 screens, skippable)
+### Onboarding (3 screens + stack selection, skippable)
 1. **Value prop:** *"Five quiet words, every weekday."*
 2. **Active learning:** *"Practice by writing — or speaking — your own sentence."*
 3. **Progression hook:** *"Level up from Intern to Staff Engineer."*
+4. **Stack selection:** User chooses which optional stacks to add (core stacks pre-selected and locked)
 
-Each screen has a "Next" button and a persistent "Skip" option. After screen 3 (or skip), user lands on the Home screen with their first daily set ready. No level quiz.
+Each screen has a "Next" button and a persistent "Skip" option. After screen 3 (or skip), user sees the stack selection screen. After confirming stack choices, user lands on the Home screen with their first daily set ready. No level quiz.
 
 ### Initial UserProgress Initialization
 On first launch, create a UserProgress record with:
@@ -456,6 +561,7 @@ On first launch, create a UserProgress record with:
 - `installDate`: today (device local date)
 - `notificationPreferences`: null
 - `uiPreferences`: `{ theme: "system", density: "roomy" }`
+- `selectedStacks`: set containing all mandatory stacks (user customizes during onboarding)
 - `shuffleSeed`: derived from `userId`
 
 ### First-Day Behavior
@@ -594,3 +700,189 @@ Android is planned for after iOS ships. When we get there, the plan is **separat
 - Material Design 3 components + equivalent design tokens
 
 Sync scripts in `scripts/` are already multi-platform aware — they will sync to Android paths when the `android/` directory exists.
+
+---
+
+## Implementation Decisions
+
+This section documents architectural and implementation choices made during project scaffolding.
+
+### Data Model Design
+
+**Word Model with SwiftData:**
+- Flattened `codeExample` object into `codeExampleLanguage` and `codeExampleCode` properties for SwiftData compatibility
+- Custom `Codable` implementation to map between JSON structure and SwiftData properties
+- `@Attribute(.unique)` on `id` field ensures no duplicate words in the database
+- Kept `WordCategory` as a string-backed enum for type safety and easy JSON decoding
+
+**UserProgress as Single Source of Truth:**
+- One `UserProgress` record per installation (identified by `userId` UUID)
+- All user state lives in this model: level, streak, practiced/mastered/bookmarked word IDs, preferences
+- `PracticedSentence` and `ReviewState` use `@Relationship(deleteRule: .cascade)` for automatic cleanup
+- Preferences (`ThemePreference`, `DensityPreference`, notification settings) stored directly in UserProgress for simplicity
+
+**DailySet Design:**
+- Each day gets its own `DailySet` record keyed by `startOfDay(for: date)`
+- Stores word IDs rather than full Word objects to avoid duplication
+- `completedWordIds` tracks per-word completion within a set
+- `isComplete` computed property enables streak calculation
+
+**ReviewState Implementation:**
+- One `ReviewState` per practiced word (initialized on first practice)
+- Stores SM-2 algorithm parameters: `easinessFactor`, `interval`, `repetitions`, `dueDate`
+- `updateAfterReview(quality:)` encapsulates SM-2 formulas within the model
+
+### Service Layer Architecture
+
+**WordService:**
+- Owns all word querying and daily set generation logic
+- `loadWordsFromBundle()` performs incremental sync: only inserts new words, never deletes or updates existing IDs
+- `selectWords()` uses `SeededRandomGenerator` for deterministic shuffling based on user seed + date
+- Filters mastered words and locked words (above user level) from daily rotation
+
+**ProgressService:**
+- Handles all mutations to UserProgress: marking practiced, mastered, bookmarked
+- `completeDailySet()` calculates streak continuation/break logic and triggers level advancement
+- Streak rules: consecutive days increment, 1-day gaps reset to 1, same-day completion doesn't double-count
+
+**ReviewSchedulerService:**
+- Thin wrapper around SM-2 algorithm; delegates to `ReviewState.updateAfterReview()`
+- `fetchDueReviews()` returns reviews sorted by `dueDate` ascending (oldest first)
+- Review quality simplified to two buttons: "Again" (quality 2) and "Got it" (quality 4)
+
+**NotificationService:**
+- Singleton pattern (`shared`) since it wraps system framework
+- Notification messages rotate randomly to avoid robotic repetition
+- Two notification identifiers: `"daily-reminder"` and `"second-reminder"` for independent scheduling
+- `rescheduleNotifications()` cancels all and re-adds to ensure clean state
+
+**SpeechService:**
+- `@MainActor` + `@Published` properties for SwiftUI binding
+- Requests both Speech and Microphone permissions on first use
+- Live transcription updates `transcript` property; views observe via `onChange`
+- Graceful degradation: mic button hidden if permission denied
+
+### View Architecture
+
+**MVVM Implementation:**
+- All feature Views use dedicated ViewModels (Onboarding, Home, Library, Review, Profile)
+- ViewModels marked `@Observable` (Swift 6 Observation framework) instead of `ObservableObject`
+- Views access services directly when mutations are simple (e.g., `ProgressService` in WordCardView)
+- Complex state management (e.g., ReviewView flashcard queue) delegated to ViewModel
+
+**Theme Management:**
+- `ThemeManager` as `@Observable` singleton, injected via custom `EnvironmentKey`
+- Views access via `@Environment(\.theme)` — no prop drilling
+- `resolvedColorScheme()` method respects user preference vs system preference
+- Color tokens fetched dynamically based on resolved scheme (light/dark)
+
+**Navigation Structure:**
+- `MainTabView` as root with four tabs (Today, Review, Library, You)
+- Onboarding shown as full-screen cover when `showOnboarding` state is true
+- Word Detail and Sentence Practice pushed via `NavigationLink` / `NavigationStack`
+- No custom navigation coordinator for MVP; relies on native SwiftUI navigation
+
+### SwiftData Schema
+
+**Model Container Initialization:**
+- Schema explicitly lists all models in `StackSpeakApp.init()`
+- `isStoredInMemoryOnly: false` persists data to disk (default location)
+- Models: `Word`, `DailySet`, `UserProgress`, `PracticedSentence`, `ReviewState`
+
+**Querying Pattern:**
+- Views use `@Query` for reactive data (e.g., `@Query private var userProgressList: [UserProgress]`)
+- Services use `FetchDescriptor` with `#Predicate` macros for programmatic queries
+- Predicates leverage Swift 6 macro syntax for type-safe, compile-time-checked queries
+
+### Design System Tokens
+
+**Color Token Structure:**
+- Separate `ColorTokens` structs for `.light` and `.dark` themes
+- Views never reference `ColorTokens.light` directly; always go through `theme.colors`
+- Hex initializer on `Color` for token definitions; all tokens defined in one place
+
+**Typography Tokens:**
+- Static functions for custom font loading: `inter()`, `jetBrainsMono()`, `instrumentSerif()`
+- Semantic font constants: `body`, `headline`, `title1`, etc.
+- Special-purpose fonts: `code`, `mono` (JetBrains Mono), `etymology` (Instrument Serif Italic)
+- `cardTitle(density:)` function adjusts size based on user density preference
+
+**Spacing Tokens:**
+- Base scale: `xs` (4), `sm` (8), `md` (12), `lg` (16), `xl` (20), `xxl` (24), `xxxl` (32)
+- Density-aware functions: `cardPadding()`, `cardGap()`, `rowPadding()` return different values for compact/roomy
+
+### First-Launch Flow
+
+**App Initialization:**
+- `StackSpeakApp.initializeApp()` runs on `.task` modifier
+- Checks for existing `UserProgress`; creates default if none exists
+- Loads theme/density preferences from UserProgress into ThemeManager
+- Calls `WordService.loadWordsFromBundle()` to populate database
+
+**Onboarding Detection:**
+- `ContentView` checks if `wordsPracticedCount > 0` or `lastCompletedDate != nil`
+- If both are false/nil, shows onboarding; otherwise shows `MainTabView`
+- Onboarding is skippable — user can tap "Skip" on any page
+
+### Word Validation Logic
+
+**Sentence Practice Validation:**
+- Non-empty after trimming whitespace
+- Case-insensitive whole-word match using `localizedCaseInsensitiveContains()`
+- No inflection handling beyond simple substring match (future enhancement opportunity)
+- Error messages displayed inline; no alerts or toasts
+
+### Review Queue Algorithm
+
+**Due Date Calculation:**
+- SM-2 formula updates `interval` (days) after each review
+- `dueDate = Calendar.current.date(byAdding: .day, value: interval, to: Date())`
+- Reviews become "due" when `dueDate <= now`
+- Sorted by `dueDate` ascending so oldest reviews surface first
+
+**Flashcard Interaction:**
+- Tap anywhere on card to flip (front → back, back → front)
+- 3D rotation animation using `rotation3DEffect`
+- Back side shows two buttons: "Again" and "Got it"
+- Buttons hidden on front side; "Tap to flip" hint shown instead
+
+### Level Progression Logic
+
+**Advancement Rules:**
+- **Both** conditions must be met: `wordsPracticed >= threshold` AND `currentStreak >= threshold`
+- Checked after every daily set completion in `ProgressService.completeDailySet()`
+- Level automatically increments when thresholds met; no manual promotion
+- Streak loss does NOT drop level (one-way progression)
+
+**Progress Calculation:**
+- `LevelDefinition.progressToNextLevel()` returns separate progress for words and streak
+- `overallProgress` averages the two for UI display
+- `isReady` checks if both are at 100% (level-up eligible)
+
+### Placeholder Content
+
+**Sample words.json:**
+- Included three sample words (idempotent, orthogonal, bikeshedding) to validate JSON structure
+- All required fields populated per schema
+- Real technical words with accurate definitions (no lorem ipsum)
+- Will be replaced with full ~300-word bank before launch
+
+### Not Yet Implemented
+
+The following features are defined in the spec but not yet implemented in the scaffold:
+
+1. **Xcode Project File** — `StackSpeak.xcodeproj` not created; needs Xcode initialization
+2. **Custom Fonts** — Inter, JetBrains Mono, Instrument Serif not bundled; fallback fonts used
+3. **Info.plist Configuration** — `UIAppFonts`, permission descriptions (`NSSpeechRecognitionUsageDescription`, `NSMicrophoneUsageDescription`) not set
+4. **Preview Providers** — No `#Preview` macros added to Views (required per Definition of Done)
+5. **Unit Tests** — No test files created in `StackSpeakTests/` directory
+6. **Localizable.strings** — All user-facing strings hardcoded in Views (should be extracted)
+7. **Notification Permission Flow** — Modal after first practice session not implemented
+8. **Settings Screens** — Profile → Notifications/Theme/Density settings link to empty actions
+9. **Level-Up Modal** — No celebration UI when user advances to next level
+10. **iPad Layout Adaptations** — All views designed for iPhone; no split-view or size-class handling
+11. **Accessibility** — No VoiceOver labels, no Dynamic Type testing
+12. **Daily Summary Screen** — No completion screen after finishing all 5 words
+13. **Mastered/Bookmarked Detail Views** — Profile sections show counts but no drill-down lists
+
+These gaps represent the next phase of implementation work.
