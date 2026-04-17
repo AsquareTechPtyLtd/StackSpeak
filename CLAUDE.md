@@ -93,20 +93,22 @@ ios/StackSpeak/
 ```
 
 ## Core Features — MVP
-1. **Onboarding** — 3-screen skippable intro; everyone starts at Level 1.
+1. **Onboarding** — 3-screen skippable intro + stack selection; everyone starts at Level 1 with 4 mandatory stacks.
 2. **Daily Word Set (Home / Today)** — 5 words per day as tap-to-expand cards with progress ring for the day's completion.
 3. **Word Detail Screen** — full view: short + long definition, pronunciation, tech context, code example, etymology, example sentence.
-4. **Sentence Practice** — user writes (or speaks via mic) their own sentence using the word. Non-empty + must contain the word.
-5. **Mark as Mastered** — user excludes a word from future daily sets; reversible.
-6. **Bookmark / Save** — user stars a word to keep a reference list; does *not* exclude it from daily sets.
-7. **Review (Spaced Repetition)** — tap-to-flip flashcards for previously practiced words, scheduled by the SRS algorithm.
-8. **Library / Search** — search past words with filters (category, difficulty, level, mastered, bookmarked).
-9. **Profile (You)** — streak counter, activity overview, mastered list, bookmarked list, notification settings.
-10. **Streak Tracking** — consecutive days of completed daily sets.
-11. **Level System** — progression through developer career levels; unlocks more words.
-12. **Daily Notification** — configurable reminder time with optional second reminder.
-13. **UI Preferences** — toggle light/dark/system theme; toggle card density (compact/roomy).
-14. **Offline First** — all words bundled; no network required for core flow.
+4. **Sentence Practice** — user writes (or speaks via mic) their own sentence using the word. Non-empty + must contain the word. Makes word eligible for assessment.
+5. **Assessment Quiz** — multiple-choice quiz in Review tab. Each word needs 2 correct answers to count toward level progression. 24-hour cooldown on wrong attempts.
+6. **Review Flashcards** — tap-to-flip SRS flashcards for previously practiced words, scheduled by SM-2 algorithm. Optional for retention.
+7. **Mark as Mastered** — user excludes a word from future daily sets; reversible. Separate from assessment progression.
+8. **Bookmark / Save** — user stars a word to keep a reference list; does *not* exclude it from daily sets.
+9. **Library / Search** — search past words with filters (stack, level, mastered, bookmarked).
+10. **Profile (You)** — streak counter, level progress (percentage-based), assessed words count, mastered list, bookmarked list, stack management, notification settings.
+11. **Streak Tracking** — consecutive days of completed daily sets. For engagement only; doesn't affect level progression.
+12. **Level System** — assessment-based progression through 5 developer career levels (Intern → Staff Engineer). Each level unlocks new stacks (28 total).
+13. **Stack Personalization** — 14 mandatory + 14 optional stacks. Users choose specializations at each level.
+14. **Daily Notification** — configurable reminder time with optional second reminder.
+15. **UI Preferences** — toggle light/dark/system theme; toggle card density (compact/roomy).
+16. **Offline First** — all words bundled; no network required for core flow.
 
 ## Navigation Structure
 
@@ -381,37 +383,86 @@ Each word card displays its unlock level as `L<n> · <Career Title>` (e.g., `L3 
 
 ## Level System
 
-Users progress through developer career-title levels. Each level unlocks more words. Level progression is based on **both** words practiced and current streak (both conditions must be met to advance).
+Users progress through developer career-title levels by **mastering vocabulary through assessments**. Each level unlocks more words and stacks. Level progression is based on **words assessed correctly twice** — not time-based or streak-based.
 
 ### Level Progression
 
-| Level | Title | Unlock Condition | Approx Words Added |
-|-------|-------|------------------|--------------------|
-| 1 | Intern | Default (at install) | First ~40 words |
-| 2 | Junior Developer | 20 words practiced + 3-day streak | +60 words |
-| 3 | Developer | 50 words practiced + 7-day streak | +80 words |
-| 4 | Senior Developer | 120 words practiced + 14-day streak | +70 words |
-| 5 | Staff Engineer | 220 words practiced + 21-day streak | Remaining ~50 words |
+| Level | Title | Words Required (2× Correct Each) | Progression |
+|-------|-------|-----------------------------------|-------------|
+| 1 | Intern | 0 | Default at install |
+| 2 | Junior Developer | 20 | Practice → Assess → Master 20 words |
+| 3 | Developer | 50 | Total 50 words mastered |
+| 4 | Senior Developer | 120 | Total 120 words mastered |
+| 5 | Staff Engineer | 220 | Total 220 words mastered |
 
 ### Rules
-- **"Words practiced"** = unique words the user wrote a sentence for (not just viewed). Mastered words count toward this total.
-- **System is extensible** — future versions can add Level 6+ (e.g., Principal Engineer, Architect, Distinguished Engineer) without breaking existing progress. Levels are defined in a single config array; code must not hardcode "5 levels."
-- **Streak loss does NOT drop level** — if the user loses their streak, they keep their current level but cannot advance until streak is rebuilt to meet the next threshold.
-- **Level-up UX** — show a simple modal: *"You're now a Senior Developer!"* with dismiss action. No heavy animation.
-- **Locked words** — visible in the Library (when filter "show locked" is on) with *"Reach Level N: [Title] to unlock"* message. Do not hide them entirely.
-- **Current level display** — show prominently on Home screen header with progress bar to next level.
+- **"Words assessed correctly twice"** = words the user has answered correctly in the assessment quiz at least twice. This ensures mastery, not just exposure.
+- **Progression is mastery-based** — users must prove knowledge via multiple-choice quiz, not just practice by writing sentences.
+- **Streak is for engagement only** — daily streak motivates consistency but does NOT affect level progression.
+- **System is extensible** — future versions can add Level 6+ (e.g., Principal Engineer, Architect, Distinguished Engineer) without breaking existing progress.
+- **Level-up triggers after assessment** — when user reaches the threshold, a celebration modal appears showing newly unlocked stacks.
+- **Locked words** — visible in the Library (when filter "show locked" is on) with *"Reach Level N: [Title] to unlock"* message.
+- **Progress display** — shows percentage + words remaining (e.g., "67% • 10 words to level up").
 
-## Mastered Words
+## Assessment System
 
-Users can mark any word as mastered from the Word Detail screen or the expanded Home card.
+Users advance through levels by passing **multiple-choice quizzes** for practiced words. Each word must be answered correctly **at least twice** before it counts toward level progression.
+
+### Assessment Flow
+
+1. **Practice First** — user writes/speaks a sentence using the word (Today tab)
+2. **Word Becomes Eligible** — practiced word unlocks for assessment
+3. **Take Quiz** — Review tab → Assessment section
+4. **Multiple Choice** — select the correct definition from 4 options
+5. **Immediate Feedback** — green checkmark (correct) or red X (wrong)
+6. **Track Progress** — shows X/2 correct attempts per word
+7. **Count Toward Level** — 2 correct answers = word counts toward next level
+
+### Quiz Format
+
+**Multiple Choice:**
+- Question: "What does this word mean?"
+- Display: word + pronunciation
+- Options: 4 definitions (1 correct + 3 distractors from other words)
+- Feedback: immediate visual (green/red) + explanation
+
+**Retry Logic:**
+- **Correct answer:** can attempt again immediately to get 2/2
+- **Wrong answer:** 24-hour cooldown before retry (prevents spam)
+- **No point deduction:** wrong answers don't hurt progress, just don't help
+
+### Assessment Eligibility
+
+Words become eligible for assessment when:
+- User has practiced the word (written a sentence)
+- AND word has <2 correct assessments
+- AND 24 hours have passed since last wrong attempt (if applicable)
+
+Eligible words appear in **Review tab → Assessment section**.
+
+### Progression Tracking
+
+**User Progress Display:**
+- Home header: progress bar + "67% • 10 words to level up"
+- Profile stats: "Assessed Correctly (2×): 35"
+- Shows exact percentage, not abstract points
+
+**Per-Word Tracking:**
+- Each word shows "X/2 correct" during assessment
+- AssessmentResult model stores: wordId, attemptedAt, isCorrect, selectedAnswer, correctAnswer
+- UserProgress.wordsAssessedCorrectlyTwice counts words at 2/2 threshold
+
+## Mastered Words (User-Marked)
+
+Separate from assessment-based progression. Users can manually mark words as "mastered" to skip them in daily rotation.
 
 **Behavior:**
 - Mastered words are excluded from future daily sets.
-- Mastered words still count toward "words practiced" for level progression.
-- Mastered words are still eligible for Review screen rotation (spaced repetition doesn't "forget" mastered words — they just aren't delivered daily).
-- Profile screen has a **Mastered Words** section listing all mastered words sorted by date mastered (newest first).
+- Mastered words do NOT automatically count toward level progression (must still pass assessment).
+- Mastered words are still eligible for Review → Flashcards (spaced repetition).
+- Profile screen has a **Mastered Words** section listing user-marked mastered words.
 - User can **unmark** any mastered word from the Mastered list (reversible).
-- If the user masters every word in their unlocked pool, show completion message: *"You've mastered StackSpeak! Check back for new words."*
+- "I know this" button on expanded Home card marks word as mastered.
 
 ## Bookmarks (Saved Words)
 
@@ -423,29 +474,59 @@ Separate from Mastered. Users bookmark words they want to reference again.
 - A word can be both bookmarked and mastered independently.
 - Tap a star/bookmark icon on Word Detail or the expanded Home card to toggle.
 
-## Review Screen (Spaced Repetition)
+## Review Tab (Dual-Mode)
 
-Flashcard-style review of previously practiced words. Tap to flip.
+The Review tab has **two modes**: Assessment (for leveling up) and Flashcards (for long-term retention).
 
-### Algorithm: SM-2 (SuperMemo 2)
+### Tab Toggle: Assessment | Flashcards
+
+Users switch between modes via tab selector at the top of the Review screen.
+
+---
+
+### Assessment Mode (Primary for Level Progression)
+
+**Purpose:** Quiz-based assessment to prove mastery and advance levels.
+
+**Eligibility:**
+- Shows words that have been practiced (sentence written)
+- Filters out words already assessed correctly twice
+- Filters out words with wrong attempts in last 24 hours
+
+**UI:**
+- Multiple-choice quiz (see Assessment System section above)
+- Shows "X of Y" progress at top
+- Shows "X/2 correct" per word
+- Immediate feedback on submit
+
+**Progression:**
+- Each correct answer increments word's correct count
+- 2 correct = word counts toward next level
+- Level up triggers modal when threshold reached
+
+---
+
+### Flashcards Mode (Spaced Repetition for Retention)
+
+**Purpose:** Long-term retention via SRS algorithm. Optional, doesn't affect level progression.
+
+**Algorithm: SM-2 (SuperMemo 2)**
 Standard, well-tested SRS algorithm. Each word has:
 - `easinessFactor` (default 2.5, min 1.3)
 - `interval` (days until next review)
 - `repetitions` (consecutive successful recalls)
 
-On each review, user self-rates recall quality 0-5:
-- 0-2 (fail): reset `repetitions` to 0, interval to 1 day
-- 3-5 (pass): apply SM-2 formulas to update EF, interval, repetitions
+**Interaction:**
+- Tap to flip card (front = word, back = definition + example)
+- Two buttons: **Again** (quality = 2) and **Got it** (quality = 4)
+- SM-2 formulas update interval based on performance
 
-### MVP Simplification
-User sees two buttons only: **Again** (quality = 2) and **Got it** (quality = 4). No five-point self-rating — keep it frictionless. Under the hood, we use SM-2 with those two quality values.
+**Review Queue:**
+- Words become eligible after being practiced once
+- Shows due-today words first, then overdue words oldest-first
+- Review is optional — missing reviews doesn't break streaks or affect level
 
-### Review Queue
-- Words become eligible for review after the user has practiced them once (written a sentence).
-- Review screen shows due-today words first, then overdue words oldest-first.
-- Review is optional — missing reviews doesn't break streaks.
-
-### Persistence
+**Persistence:**
 Each practiced word has a `ReviewState` stored in SwiftData: `{ wordId, easinessFactor, interval, repetitions, dueDate, lastReviewedAt }`.
 
 ## Sentence Practice
