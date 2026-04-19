@@ -79,13 +79,19 @@ func deterministicUUID(from string: String) -> UUID {
     var h1: UInt64 = 14695981039346656037
     var h2: UInt64 = 14695981039346656037 &+ 1
     for byte in string.utf8 {
-        h1 ^= UInt64(byte); h1 = h1 &* 1099511628211
-        h2 ^= UInt64(byte); h2 = h2 &* 1099511628211 &+ 7
+        h1 ^= UInt64(byte)
+        h1 = h1 &* 1099511628211
+        h2 ^= UInt64(byte)
+        h2 = h2 &* 1099511628211 &+ 7
     }
-    let b = (0..<8).map { i in UInt8((h1 >> (i * 8)) & 0xFF) }
-        + (0..<8).map { i in UInt8((h2 >> (i * 8)) & 0xFF) }
-    return UUID(uuid: (b[0],b[1],b[2],b[3],b[4],b[5],b[6],b[7],
-                       b[8],b[9],b[10],b[11],b[12],b[13],b[14],b[15]))
+    func byte(_ h: UInt64, _ shift: Int) -> UInt8 { UInt8((h >> shift) & 0xFF) }
+    let uuid: uuid_t = (
+        byte(h1,  0), byte(h1,  8), byte(h1, 16), byte(h1, 24),
+        byte(h1, 32), byte(h1, 40), byte(h1, 48), byte(h1, 56),
+        byte(h2,  0), byte(h2,  8), byte(h2, 16), byte(h2, 24),
+        byte(h2, 32), byte(h2, 40), byte(h2, 48), byte(h2, 56)
+    )
+    return UUID(uuid: uuid)
 }
 
 // MARK: - DTO (matches words.json wire format)
