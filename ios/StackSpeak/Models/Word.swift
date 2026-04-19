@@ -53,7 +53,7 @@ final class Word {
         self.tags = tags
     }
 
-    convenience init(from dto: WordDTO) {
+    convenience init(from dto: WordDTO, stack: String) {
         self.init(
             id: dto.id,
             word: dto.word,
@@ -66,7 +66,7 @@ final class Word {
             etymology: dto.etymology,
             codeExampleLanguage: dto.codeExample.language,
             codeExampleCode: dto.codeExample.code,
-            stack: dto.stack?.rawValue ?? "",
+            stack: stack,
             unlockLevel: dto.unlockLevel,
             tags: dto.tags
         )
@@ -86,11 +86,9 @@ struct WordDTO: Codable {
     let exampleSentence: String
     let etymology: String
     let codeExample: CodeExampleDTO
-    /// Optional — many stack files omit the per-word `stack` field and rely on the
-    /// parent `StackFileDTO.stack` instead. Loader injects the parent when nil.
-    var stack: WordStack?
     let unlockLevel: Int
     let tags: [String]
+    // `stack` is intentionally absent — it is injected from StackFileDTO.stack by the loader.
 }
 
 struct CodeExampleDTO: Codable {

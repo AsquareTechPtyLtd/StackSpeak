@@ -24,7 +24,7 @@ final class WordService: WordRepository {
 
         let index = try JSONDecoder().decode(StacksIndex.self, from: indexData)
 
-        var allWords: [WordDTO] = []
+        var allWords: [(dto: WordDTO, stack: String)] = []
 
         for stackMeta in index.stacks {
             let stackFileName = stackMeta.file.replacingOccurrences(of: "stacks/", with: "")
@@ -50,13 +50,7 @@ final class WordService: WordRepository {
             // Skip stack files that fail to decode rather than aborting the whole load.
             do {
                 let stackFile = try JSONDecoder().decode(StackFileDTO.self, from: stackData)
-                let parentStack = WordStack(rawValue: stackFile.stack)
-                let wordsWithStack = stackFile.words.map { dto -> WordDTO in
-                    var copy = dto
-                    if copy.stack == nil { copy.stack = parentStack }
-                    return copy
-                }
-                allWords.append(contentsOf: wordsWithStack)
+                allWords.append(contentsOf: stackFile.words.map { ($0, stackFile.stack) })
             } catch {
                 logger.error("Skipping \(stackFileName, privacy: .public).json — decode failed: \(error.localizedDescription, privacy: .public)")
                 continue
@@ -65,8 +59,8 @@ final class WordService: WordRepository {
 
         // Insert new words into the database
         let existingIds = try fetchExistingWordIdSet()
-        for dto in allWords where !existingIds.contains(dto.id) {
-            let word = Word(from: dto)
+        for (dto, stack) in allWords where !existingIds.contains(dto.id) {
+            let word = Word(from: dto, stack: stack)
             modelContext.insert(word)
         }
 
