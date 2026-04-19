@@ -15,37 +15,30 @@ struct StackSpeakApp: App {
         var container: ModelContainer?
         var error: Error?
 
+        let schema = Schema([
+            Word.self,
+            DailySet.self,
+            UserProgress.self,
+            PracticedSentence.self,
+            ReviewState.self,
+            AssessmentResult.self,
+            WordReport.self
+        ])
+
         do {
-            let schema = Schema([
-                Word.self,
-                DailySet.self,
-                UserProgress.self,
-                PracticedSentence.self,
-                ReviewState.self,
-                AssessmentResult.self,
-                WordReport.self
-            ])
-            let config = ModelConfiguration(schema: schema, isStoredInMemoryOnly: false)
-            container = try ModelContainer(for: schema, configurations: [config])
-            // Raise file protection so the store is inaccessible while the device is locked.
-            // Also exclude from backups — user progress is device-local by design.
-            if let storeURL = container?.configurations.first?.url {
-                do {
-                    var values = URLResourceValues()
-                    values.isExcludedFromBackup = true
-                    var url = storeURL
-                    try url.setResourceValues(values)
-                    try FileManager.default.setAttributes(
-                        [.protectionKey: FileProtectionType.complete],
-                        ofItemAtPath: storeURL.path
-                    )
-                } catch {
-                    logger.error("Failed to harden store file attributes: \(error.localizedDescription, privacy: .public)")
-                }
+            container = try Self.makeContainer(schema: schema)
+        } catch let firstError {
+            // Schema migration failed (e.g. after an app update added new model types).
+            // Wipe the store and retry so the app stays usable. Word data reloads from
+            // the bundle; user progress is lost, but a crash loop is worse.
+            logger.error("ModelContainer init failed, wiping store and retrying: \(firstError.localizedDescription, privacy: .public)")
+            Self.deleteStoreFiles(schema: schema)
+            do {
+                container = try Self.makeContainer(schema: schema)
+            } catch let secondError {
+                logger.error("ModelContainer retry failed: \(secondError.localizedDescription, privacy: .public)")
+                error = secondError
             }
-        } catch let caught {
-            logger.error("Failed to initialize ModelContainer: \(caught.localizedDescription, privacy: .public)")
-            error = caught
         }
 
         self.modelContainer = container
@@ -53,6 +46,39 @@ struct StackSpeakApp: App {
         self.services = container.map { Services(modelContext: $0.mainContext) }
 
         TypographyTokens.assertCustomFontsLoaded()
+    }
+
+    private static func makeContainer(schema: Schema) throws -> ModelContainer {
+        let config = ModelConfiguration(schema: schema, isStoredInMemoryOnly: false)
+        let container = try ModelContainer(for: schema, configurations: [config])
+
+        // Raise file protection and exclude from backups.
+        if let storeURL = container.configurations.first?.url {
+            do {
+                var values = URLResourceValues()
+                values.isExcludedFromBackup = true
+                var url = storeURL
+                try url.setResourceValues(values)
+                try FileManager.default.setAttributes(
+                    [.protectionKey: FileProtectionType.complete],
+                    ofItemAtPath: storeURL.path
+                )
+            } catch {
+                logger.error("Failed to harden store file attributes: \(error.localizedDescription, privacy: .public)")
+            }
+        }
+
+        return container
+    }
+
+    private static func deleteStoreFiles(schema: Schema) {
+        // Resolve the default SwiftData store URL and delete it along with WAL/SHM sidecar files.
+        guard let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first else { return }
+        let storeBase = appSupport.appendingPathComponent("default.store")
+        for suffix in ["", "-wal", "-shm"] {
+            let url = URL(fileURLWithPath: storeBase.path + suffix)
+            try? FileManager.default.removeItem(at: url)
+        }
     }
 
     var body: some Scene {
