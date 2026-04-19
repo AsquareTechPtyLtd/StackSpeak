@@ -98,14 +98,13 @@ struct LibraryView: View {
 
     private func loadAllWords() async {
         guard let progress = userProgress, let services else { return }
-        // Load all words once - filtering happens via computed property
         if let words = try? services.word.fetchWords(matching: "", filters: WordFilters(
             stack: nil,
             level: nil,
             masteredIds: progress.masteredWordIds,
             bookmarkedIds: progress.bookmarkedWordIds
         )) {
-            viewModel.allWords = words
+            viewModel.allWords = words.filter { progress.wordsPracticedIds.contains($0.id) }
             viewModel.masteredIds = progress.masteredWordIds
             viewModel.bookmarkedIds = progress.bookmarkedWordIds
         }
