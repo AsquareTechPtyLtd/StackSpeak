@@ -49,7 +49,23 @@ struct StackSpeakApp: App {
     }
 
     private static func makeContainer(schema: Schema) throws -> ModelContainer {
-        let config = ModelConfiguration(schema: schema, isStoredInMemoryOnly: false)
+        // Ensure the Application Support directory exists before SwiftData tries to use it
+        if let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first,
+           let bundleId = Bundle.main.bundleIdentifier {
+            let swiftDataDir = appSupport.appendingPathComponent(bundleId)
+            do {
+                try FileManager.default.createDirectory(at: swiftDataDir, withIntermediateDirectories: true)
+                logger.info("Ensured SwiftData directory exists at \(swiftDataDir.path, privacy: .public)")
+            } catch {
+                logger.error("Failed to create SwiftData directory: \(error.localizedDescription, privacy: .public)")
+            }
+        }
+
+        // Explicitly disable CloudKit sync. The app's entitlements include CloudKit
+        // (used by CloudKitReportService for word reports), and without `cloudKitDatabase: .none`
+        // SwiftData auto-enables CloudKit sync, which fails because our models use
+        // `@Attribute(.unique)` and non-optional relationships — both unsupported with CloudKit.
+        let config = ModelConfiguration(schema: schema, isStoredInMemoryOnly: false, cloudKitDatabase: .none)
         let container = try ModelContainer(for: schema, configurations: [config])
 
         // Exclude from iCloud/iTunes backups — progress is device-local by design.
@@ -64,12 +80,26 @@ struct StackSpeakApp: App {
     }
 
     private static func deleteStoreFiles(schema: Schema) {
-        // Resolve the default SwiftData store URL and delete it along with WAL/SHM sidecar files.
+        // Delete the entire SwiftData directory for this app to ensure a clean slate.
+        // SwiftData stores files in Application Support/{bundle-id}/
         guard let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first else { return }
-        let storeBase = appSupport.appendingPathComponent("default.store")
-        for suffix in ["", "-wal", "-shm"] {
-            let url = URL(fileURLWithPath: storeBase.path + suffix)
-            try? FileManager.default.removeItem(at: url)
+
+        // SwiftData uses the bundle identifier as a subdirectory
+        if let bundleId = Bundle.main.bundleIdentifier {
+            let swiftDataDir = appSupport.appendingPathComponent(bundleId)
+            do {
+                try FileManager.default.removeItem(at: swiftDataDir)
+                logger.info("Deleted SwiftData directory at \(swiftDataDir.path, privacy: .public)")
+            } catch {
+                logger.error("Failed to delete SwiftData directory: \(error.localizedDescription, privacy: .public)")
+            }
+        } else {
+            // Fallback: try to delete the default.store files directly
+            let storeBase = appSupport.appendingPathComponent("default.store")
+            for suffix in ["", "-wal", "-shm"] {
+                let url = URL(fileURLWithPath: storeBase.path + suffix)
+                try? FileManager.default.removeItem(at: url)
+            }
         }
     }
 
@@ -98,6 +128,12 @@ struct StackSpeakApp: App {
         guard let container = modelContainer else { return }
         let context = container.mainContext
 
+        // Check if StackRegistry loaded successfully
+        if StackRegistry.shared.allStacks.isEmpty, let registryError = StackRegistry.shared.loadError {
+            logger.error("StackRegistry failed to load, cannot initialize app: \(registryError.localizedDescription, privacy: .public)")
+            return
+        }
+
         let descriptor = FetchDescriptor<UserProgress>()
         let progress = try? context.fetch(descriptor).first
 
@@ -123,7 +159,14 @@ struct StackSpeakApp: App {
         }
 
         if let services = services {
-            do { try await services.word.loadWordsFromBundle() } catch { logger.error("Word bundle load failed: \(error.localizedDescription, privacy: .public)") }
+            do {
+                try await services.word.loadWordsFromBundle()
+                // Update catalog status after successful load
+                let totalCount = try context.fetchCount(FetchDescriptor<Word>())
+                services.catalogStatus = .loaded(count: totalCount)
+            } catch {
+                logger.error("Word bundle load failed: \(error.localizedDescription, privacy: .public)")
+            }
         }
     }
 }

@@ -103,17 +103,28 @@ struct WordCardView: View {
                     .foregroundColor(theme.colors.accent)
                     .accessibilityLabel(String(format: String(localized: "a11y.openDetail.format"), word.word))
 
+                Spacer()
+
                 if !userProgress.masteredWordIds.contains(word.id) {
-                    Button(String(localized: "home.wordCard.iKnowThis")) { markAsMastered() }
-                        .font(TypographyTokens.callout)
-                        .foregroundColor(theme.colors.inkMuted)
-                        .accessibilityLabel(String(format: String(localized: "a11y.markMastered.format"), word.word))
+                    Button(action: markAsMastered) {
+                        Label(String(localized: "home.wordCard.iKnowThis"), systemImage: "checkmark")
+                            .font(TypographyTokens.callout.weight(.medium))
+                            .foregroundColor(theme.colors.good)
+                            .padding(.horizontal, theme.spacing.md)
+                            .padding(.vertical, theme.spacing.sm)
+                            .background(theme.colors.good.opacity(0.12))
+                            .cornerRadius(20)
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel(String(format: String(localized: "a11y.markMastered.format"), word.word))
                 }
 
-                Button(String(localized: "home.wordCard.report")) { showReport = true }
-                    .font(TypographyTokens.callout)
-                    .foregroundColor(theme.colors.inkMuted)
-                    .accessibilityLabel(String(format: String(localized: "a11y.report.format"), word.word))
+                Button(action: { showReport = true }) {
+                    Image(systemName: "flag")
+                        .font(.system(size: 14))
+                        .foregroundColor(theme.colors.inkFaint)
+                }
+                .accessibilityLabel(String(format: String(localized: "a11y.report.format"), word.word))
             }
         }
     }

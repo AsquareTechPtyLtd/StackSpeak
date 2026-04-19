@@ -1,5 +1,8 @@
 import Foundation
+import OSLog
 import SwiftData
+
+private let logger = Logger(subsystem: "com.stackspeak.ios", category: "WordService")
 
 @MainActor
 final class WordService: WordRepository {
@@ -19,9 +22,8 @@ final class WordService: WordRepository {
             try Data(contentsOf: indexUrl)
         }.value
 
-        let index = try JSONDecoder().decode(WordsIndexDTO.self, from: indexData)
+        let index = try JSONDecoder().decode(StacksIndex.self, from: indexData)
 
-        // Load all stack files (later: optimize by loading only active stacks)
         var allWords: [WordDTO] = []
 
         for stackMeta in index.stacks {
@@ -37,12 +39,26 @@ final class WordService: WordRepository {
                 continue
             }
 
-            let stackData = try await Task.detached(priority: .userInitiated) {
-                try Data(contentsOf: stackUrl)
-            }.value
+            let stackData: Data
+            do {
+                stackData = try await Task.detached(priority: .userInitiated) {
+                    try Data(contentsOf: stackUrl)
+                }.value
+            } catch {
+                logger.error("Failed to read \(stackFileName, privacy: .public).json: \(error.localizedDescription, privacy: .public)")
+                continue
+            }
 
-            let stackFile = try JSONDecoder().decode(StackFileDTO.self, from: stackData)
-            allWords.append(contentsOf: stackFile.words)
+            // Skip stack files whose per-word `stack` value isn't in the WordStack enum,
+            // or that otherwise fail to decode. Aborting the whole load on one bad file
+            // means zero words reach the database — the empty home screen we saw before.
+            do {
+                let stackFile = try JSONDecoder().decode(StackFileDTO.self, from: stackData)
+                allWords.append(contentsOf: stackFile.words)
+            } catch {
+                logger.error("Skipping \(stackFileName, privacy: .public).json — decode failed: \(error.localizedDescription, privacy: .public)")
+                continue
+            }
         }
 
         // Insert new words into the database
@@ -55,6 +71,10 @@ final class WordService: WordRepository {
         if modelContext.hasChanges {
             try modelContext.save()
         }
+
+        // Count total words after loading
+        let totalCount = try modelContext.fetchCount(FetchDescriptor<Word>())
+        logger.info("Bundle load complete, total words in catalog: \(totalCount)")
     }
 
     func generateDailySet(for date: Date, userProgress: UserProgress) throws -> DailySet {
@@ -63,16 +83,19 @@ final class WordService: WordRepository {
         let descriptor = FetchDescriptor<DailySet>(
             predicate: #Predicate { $0.dayString == dayString }
         )
-        if let existing = try modelContext.fetch(descriptor).first {
+        let existingSet = try modelContext.fetch(descriptor).first
+
+        // If a previous call cached an empty DailySet (e.g. words hadn't finished loading
+        // from the bundle yet), discard it and try again now that words may be available.
+        if let existing = existingSet, !existing.wordIds.isEmpty {
             return existing
         }
 
         let allWords = try modelContext.fetch(FetchDescriptor<Word>())
         guard !allWords.isEmpty else {
-            let empty = DailySet(dayString: dayString, wordIds: [])
-            modelContext.insert(empty)
-            try modelContext.save()
-            return empty
+            // Don't cache an empty set — return a transient one so the next call can retry
+            // once the bundle finishes loading.
+            return existingSet ?? DailySet(dayString: dayString, wordIds: [])
         }
 
         let shuffled = deterministicShuffle(allWords, seed: userProgress.shuffleSeed)
@@ -83,7 +106,20 @@ final class WordService: WordRepository {
             count: 5
         )
 
+        // No qualifying words yet (e.g. user's selectedStacks haven't been finalized).
+        // Don't cache — caller will retry.
+        guard !selected.isEmpty else {
+            return existingSet ?? DailySet(dayString: dayString, wordIds: [])
+        }
+
         userProgress.wordQueueCursor = newCursor
+
+        // Reuse the existing empty record if present so the unique dayString constraint isn't violated.
+        if let existing = existingSet {
+            existing.wordIds = selected.map(\.id)
+            try modelContext.save()
+            return existing
+        }
 
         let dailySet = DailySet(dayString: dayString, wordIds: selected.map(\.id))
         modelContext.insert(dailySet)
@@ -109,7 +145,7 @@ final class WordService: WordRepository {
         var words = try modelContext.fetch(descriptor)
 
         if let stack = filters.stack {
-            words = words.filter { $0.stack == stack }
+            words = words.filter { $0.stack == stack.rawValue }
         }
         if let level = filters.level {
             words = words.filter { $0.unlockLevel == level }
@@ -127,7 +163,6 @@ final class WordService: WordRepository {
     // MARK: - Private helpers
 
     private func fetchExistingWordIdSet() throws -> Set<UUID> {
-        // Fetch only the id field to avoid loading full word objects.
         var descriptor = FetchDescriptor<Word>()
         descriptor.propertiesToFetch = [\.id]
         let words = try modelContext.fetch(descriptor)
@@ -178,7 +213,7 @@ final class WordService: WordRepository {
     private func qualifies(word: Word, for userProgress: UserProgress) -> Bool {
         !userProgress.masteredWordIds.contains(word.id) &&
         word.unlockLevel <= userProgress.level &&
-        userProgress.selectedStacks.contains(word.stack.rawValue)
+        userProgress.selectedStacks.contains(word.stack)
     }
 }
 

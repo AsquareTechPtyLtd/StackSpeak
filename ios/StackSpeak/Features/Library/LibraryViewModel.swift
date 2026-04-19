@@ -16,7 +16,7 @@ final class LibraryViewModel {
 
         // Filter by stack
         if let stack = selectedStack {
-            result = result.filter { $0.stack == stack }
+            result = result.filter { $0.stack == stack.rawValue }
         }
 
         // Filter by search query

@@ -14,9 +14,12 @@ final class Word {
     var etymology: String
     var codeExampleLanguage: String
     var codeExampleCode: String
-    var stack: WordStack
+    /// Stored as the stack's raw id (e.g. "basic-web"). Use `wordStack` for a typed view.
+    var stack: String
     var unlockLevel: Int
     var tags: [String]
+
+    var wordStack: WordStack { WordStack(rawValue: stack) }
 
     init(
         id: UUID,
@@ -30,7 +33,7 @@ final class Word {
         etymology: String,
         codeExampleLanguage: String,
         codeExampleCode: String,
-        stack: WordStack,
+        stack: String,
         unlockLevel: Int,
         tags: [String]
     ) {
@@ -63,7 +66,7 @@ final class Word {
             etymology: dto.etymology,
             codeExampleLanguage: dto.codeExample.language,
             codeExampleCode: dto.codeExample.code,
-            stack: dto.stack,
+            stack: dto.stack.rawValue,
             unlockLevel: dto.unlockLevel,
             tags: dto.tags
         )
@@ -97,20 +100,7 @@ struct WordsDatabaseDTO: Codable {
     let words: [WordDTO]
 }
 
-// MARK: - New split-by-stack DTOs
-
-struct WordsIndexDTO: Codable {
-    let version: String
-    let stacks: [StackMetadataDTO]
-}
-
-struct StackMetadataDTO: Codable {
-    let id: String
-    let name: String
-    let file: String
-    let wordCount: Int
-    let description: String
-}
+// MARK: - Stack file DTO
 
 struct StackFileDTO: Codable {
     let stack: String

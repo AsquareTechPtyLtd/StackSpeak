@@ -11,6 +11,7 @@ struct StackManagementView: View {
     private let logger = Logger(subsystem: "com.stackspeak.ios", category: "Settings")
 
     @State private var selectedOptionalStacks: Set<WordStack> = []
+    @State private var saveError: Error?
 
     private var currentLevel: Int { userProgress?.level ?? 1 }
 
@@ -39,6 +40,13 @@ struct StackManagementView: View {
         .onAppear {
             loadSelectedStacks()
         }
+        .alert("Save Failed", isPresented: .constant(saveError != nil), presenting: saveError) { _ in
+            Button("OK") {
+                saveError = nil
+            }
+        } message: { error in
+            Text("Failed to save your changes: \(error.localizedDescription)")
+        }
     }
 
     private var infoSection: some View {
@@ -66,7 +74,7 @@ struct StackManagementView: View {
                 .padding(.horizontal, theme.spacing.sm)
 
             VStack(spacing: theme.spacing.sm) {
-                ForEach(Array(WordStack.mandatoryStacks(for: currentLevel)).sorted { $0.displayName < $1.displayName }) { stack in
+                ForEach(WordStack.mandatoryStacks(for: currentLevel).sorted(by: { $0.displayName < $1.displayName })) { stack in
                     StackCard(stack: stack, isSelected: true, isMandatory: true, onToggle: {})
                 }
             }
@@ -83,7 +91,7 @@ struct StackManagementView: View {
                 .padding(.horizontal, theme.spacing.sm)
 
             VStack(spacing: theme.spacing.sm) {
-                ForEach(Array(WordStack.availableOptionalStacks(for: currentLevel)).sorted { $0.displayName < $1.displayName }) { stack in
+                ForEach(WordStack.availableOptionalStacks(for: currentLevel).sorted(by: { $0.displayName < $1.displayName })) { stack in
                     StackCard(
                         stack: stack,
                         isSelected: selectedOptionalStacks.contains(stack),
@@ -98,7 +106,7 @@ struct StackManagementView: View {
     private func loadSelectedStacks() {
         guard let progress = userProgress else { return }
         selectedOptionalStacks = Set(
-            progress.selectedStacks.compactMap { WordStack(rawValue: $0) }.filter { !$0.isMandatoryByDefault }
+            progress.selectedStacks.compactMap { WordStack(rawValue: $0) }.filter { !$0.isMandatory }
         )
     }
 
@@ -119,10 +127,11 @@ struct StackManagementView: View {
 
         do {
             try modelContext.save()
+            dismiss()
         } catch {
             logger.error("Failed to save stack changes: \(error.localizedDescription, privacy: .public)")
+            saveError = error
         }
-        dismiss()
     }
 }
 

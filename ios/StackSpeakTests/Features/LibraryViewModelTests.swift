@@ -10,7 +10,7 @@ struct LibraryViewModelTests {
         let viewModel = LibraryViewModel()
 
         let word1 = createMockWord(word: "algorithm", stack: .basicProgramming)
-        let word2 = createMockWord(word: "refactor", stack: .cleanCode)
+        let word2 = createMockWord(word: "refactor", stack: .intermediateCodeQuality)
 
         viewModel.allWords = [word1, word2]
 
@@ -22,7 +22,7 @@ struct LibraryViewModelTests {
         let viewModel = LibraryViewModel()
 
         let word1 = createMockWord(word: "algorithm", stack: .basicProgramming)
-        let word2 = createMockWord(word: "refactor", stack: .cleanCode)
+        let word2 = createMockWord(word: "refactor", stack: .intermediateCodeQuality)
         let word3 = createMockWord(word: "iterate", stack: .basicProgramming)
 
         viewModel.allWords = [word1, word2, word3]
@@ -37,8 +37,8 @@ struct LibraryViewModelTests {
         let viewModel = LibraryViewModel()
 
         let word1 = createMockWord(word: "algorithm", stack: .basicProgramming)
-        let word2 = createMockWord(word: "refactor", stack: .cleanCode)
-        let word3 = createMockWord(word: "algorithmic", stack: .algorithms)
+        let word2 = createMockWord(word: "refactor", stack: .intermediateCodeQuality)
+        let word3 = createMockWord(word: "algorithmic", stack: .advancedAlgorithms)
 
         viewModel.allWords = [word1, word2, word3]
         viewModel.searchQuery = "algo"
@@ -52,12 +52,12 @@ struct LibraryViewModelTests {
     func testFilteredWordsByStackAndSearch() async throws {
         let viewModel = LibraryViewModel()
 
-        let word1 = createMockWord(word: "algorithm", stack: .algorithms)
-        let word2 = createMockWord(word: "refactor", stack: .cleanCode)
-        let word3 = createMockWord(word: "binary search", stack: .algorithms)
+        let word1 = createMockWord(word: "algorithm", stack: .advancedAlgorithms)
+        let word2 = createMockWord(word: "refactor", stack: .intermediateCodeQuality)
+        let word3 = createMockWord(word: "binary search", stack: .advancedAlgorithms)
 
         viewModel.allWords = [word1, word2, word3]
-        viewModel.selectedStack = .algorithms
+        viewModel.selectedStack = .advancedAlgorithms
         viewModel.searchQuery = "search"
 
         #expect(viewModel.filteredWords.count == 1)
@@ -68,8 +68,8 @@ struct LibraryViewModelTests {
     func testReactiveFiltering() async throws {
         let viewModel = LibraryViewModel()
 
-        let word1 = createMockWord(word: "algorithm", stack: .algorithms)
-        let word2 = createMockWord(word: "refactor", stack: .cleanCode)
+        let word1 = createMockWord(word: "algorithm", stack: .advancedAlgorithms)
+        let word2 = createMockWord(word: "refactor", stack: .intermediateCodeQuality)
 
         viewModel.allWords = [word1, word2]
 
@@ -77,7 +77,7 @@ struct LibraryViewModelTests {
         #expect(viewModel.filteredWords.count == 2)
 
         // Apply stack filter
-        viewModel.selectedStack = .algorithms
+        viewModel.selectedStack = .advancedAlgorithms
         #expect(viewModel.filteredWords.count == 1)
 
         // Clear stack filter, apply search

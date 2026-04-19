@@ -13,17 +13,18 @@ struct LevelUpView: View {
     let userProgress: UserProgress
 
     @State private var selectedOptionalStacks: Set<WordStack> = []
+    @State private var saveError: Error?
 
     var levelDefinition: LevelDefinition? {
         LevelDefinition.definition(for: newLevel)
     }
 
     var newMandatoryStacks: [WordStack] {
-        Array(WordStack.newMandatoryStacks(for: newLevel)).sorted { $0.displayName < $1.displayName }
+        WordStack.newMandatoryStacks(for: newLevel).sorted(by: { $0.displayName < $1.displayName })
     }
 
     var newOptionalStacks: [WordStack] {
-        Array(WordStack.newOptionalStacks(for: newLevel)).sorted { $0.displayName < $1.displayName }
+        WordStack.newOptionalStacks(for: newLevel).sorted(by: { $0.displayName < $1.displayName })
     }
 
     var body: some View {
@@ -46,6 +47,13 @@ struct LevelUpView: View {
                 }
                 .padding(theme.spacing.lg)
             }
+        }
+        .alert("Save Failed", isPresented: .constant(saveError != nil), presenting: saveError) { _ in
+            Button("OK") {
+                saveError = nil
+            }
+        } message: { error in
+            Text("Failed to save your stack selection: \(error.localizedDescription)")
         }
     }
 
@@ -146,10 +154,11 @@ struct LevelUpView: View {
         userProgress.selectedStacks.formUnion(selectedOptionalStacks.map { $0.rawValue })
         do {
             try modelContext.save()
+            dismiss()
         } catch {
             logger.error("Failed to save level-up stack selection: \(error.localizedDescription, privacy: .public)")
+            saveError = error
         }
-        dismiss()
     }
 }
 

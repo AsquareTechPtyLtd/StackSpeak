@@ -73,7 +73,7 @@ struct WordReportSheet: View {
                     .font(TypographyTokens.callout)
                     .foregroundColor(theme.colors.inkMuted)
 
-                Text("L\(word.unlockLevel) · \(word.stack.displayName)")
+                Text("L\(word.unlockLevel) · \(word.wordStack.displayName)")
                     .font(TypographyTokens.caption)
                     .foregroundColor(theme.colors.inkFaint)
             }
@@ -172,7 +172,7 @@ struct WordReportSheet: View {
                 try await services?.report.submitReport(
                     wordId: word.id,
                     wordTerm: word.word,
-                    stack: word.stack.rawValue,
+                    stack: word.stack,
                     reason: reason,
                     additionalNotes: additionalNotes,
                     userLevel: userProgress.level

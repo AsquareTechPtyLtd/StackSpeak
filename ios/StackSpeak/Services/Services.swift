@@ -2,10 +2,16 @@ import SwiftUI
 import SwiftData
 import Foundation
 
+enum CatalogStatus: Equatable {
+    case loading
+    case loaded(count: Int)
+}
+
 /// Container for all app services, injected via EnvironmentValues.
 /// Constructed once in StackSpeakApp and shared across the view hierarchy.
 /// Services are accessed via protocol types for testability.
 @MainActor
+@Observable
 final class Services {
     let word: any WordRepository
     let progress: any ProgressRepository
@@ -13,6 +19,8 @@ final class Services {
     let reviewScheduler: any ReviewRepository
     let speech: any SpeechRepository
     let report: any ReportServiceProtocol
+
+    var catalogStatus: CatalogStatus = .loading
 
     init(modelContext: ModelContext) {
         self.word = WordService(modelContext: modelContext)

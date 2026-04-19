@@ -172,7 +172,7 @@ struct WordRowView: View {
                     .lineLimit(2)
 
                 HStack(spacing: theme.spacing.sm) {
-                    Text(word.stack.displayName)
+                    Text(word.wordStack.displayName)
                         .font(TypographyTokens.caption)
                         .foregroundColor(theme.colors.inkFaint)
 

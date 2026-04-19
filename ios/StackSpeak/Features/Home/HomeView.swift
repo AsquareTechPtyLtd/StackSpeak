@@ -1,4 +1,5 @@
 import SwiftUI
+import SwiftData
 import UIKit
 import UserNotifications
 
@@ -68,6 +69,16 @@ struct HomeView: View {
                 Task {
                     if let progress = userProgress, let services {
                         await viewModel.loadTodaysWords(wordService: services.word, userProgress: progress)
+                    }
+                }
+            }
+            .onChange(of: services?.catalogStatus) { oldStatus, newStatus in
+                // Bundle words finished loading after HomeView appeared — regenerate the daily set.
+                if case .loaded = newStatus, viewModel.todaysWords.isEmpty {
+                    Task {
+                        if let progress = userProgress, let services {
+                            await viewModel.loadTodaysWords(wordService: services.word, userProgress: progress)
+                        }
                     }
                 }
             }

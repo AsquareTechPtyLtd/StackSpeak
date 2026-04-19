@@ -12,13 +12,14 @@ struct StackSelectionView: View {
     @Binding var showOnboarding: Bool
 
     @State private var selectedOptionalStacks: Set<WordStack> = []
+    @State private var saveError: Error?
 
     private var mandatoryStacks: [WordStack] {
-        Array(WordStack.mandatoryStacks(for: 1)).sorted { $0.displayName < $1.displayName }
+        WordStack.mandatoryStacks(for: 1).sorted(by: { $0.displayName < $1.displayName })
     }
 
     private var optionalStacks: [WordStack] {
-        Array(WordStack.availableOptionalStacks(for: 1)).sorted { $0.displayName < $1.displayName }
+        WordStack.availableOptionalStacks(for: 1).sorted(by: { $0.displayName < $1.displayName })
     }
 
     var body: some View {
@@ -38,6 +39,13 @@ struct StackSelectionView: View {
 
                 continueButton
             }
+        }
+        .alert("Save Failed", isPresented: .constant(saveError != nil), presenting: saveError) { _ in
+            Button("OK") {
+                saveError = nil
+            }
+        } message: { error in
+            Text("Failed to save your selection: \(error.localizedDescription)")
         }
     }
 
@@ -126,10 +134,11 @@ struct StackSelectionView: View {
 
         do {
             try modelContext.save()
+            showOnboarding = false
         } catch {
             logger.error("Failed to save stack selection: \(error.localizedDescription, privacy: .public)")
+            saveError = error
         }
-        showOnboarding = false
     }
 }
 
