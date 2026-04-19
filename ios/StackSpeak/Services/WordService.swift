@@ -47,12 +47,16 @@ final class WordService: WordRepository {
                 continue
             }
 
-            // Skip stack files whose per-word `stack` value isn't in the WordStack enum,
-            // or that otherwise fail to decode. Aborting the whole load on one bad file
-            // means zero words reach the database — the empty home screen we saw before.
+            // Skip stack files that fail to decode rather than aborting the whole load.
             do {
                 let stackFile = try JSONDecoder().decode(StackFileDTO.self, from: stackData)
-                allWords.append(contentsOf: stackFile.words)
+                let parentStack = WordStack(rawValue: stackFile.stack)
+                let wordsWithStack = stackFile.words.map { dto -> WordDTO in
+                    var copy = dto
+                    if copy.stack == nil { copy.stack = parentStack }
+                    return copy
+                }
+                allWords.append(contentsOf: wordsWithStack)
             } catch {
                 logger.error("Skipping \(stackFileName, privacy: .public).json — decode failed: \(error.localizedDescription, privacy: .public)")
                 continue

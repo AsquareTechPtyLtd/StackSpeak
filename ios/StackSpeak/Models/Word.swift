@@ -66,7 +66,7 @@ final class Word {
             etymology: dto.etymology,
             codeExampleLanguage: dto.codeExample.language,
             codeExampleCode: dto.codeExample.code,
-            stack: dto.stack.rawValue,
+            stack: dto.stack?.rawValue ?? "",
             unlockLevel: dto.unlockLevel,
             tags: dto.tags
         )
@@ -86,7 +86,9 @@ struct WordDTO: Codable {
     let exampleSentence: String
     let etymology: String
     let codeExample: CodeExampleDTO
-    let stack: WordStack
+    /// Optional — many stack files omit the per-word `stack` field and rely on the
+    /// parent `StackFileDTO.stack` instead. Loader injects the parent when nil.
+    var stack: WordStack?
     let unlockLevel: Int
     let tags: [String]
 }
