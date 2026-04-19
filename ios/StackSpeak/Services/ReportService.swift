@@ -11,7 +11,7 @@ protocol ReportServiceProtocol {
         reason: WordReportReason,
         additionalNotes: String,
         userLevel: Int
-    ) throws
+    ) async throws
 
     func getReports() throws -> [WordReport]
 }
@@ -32,7 +32,7 @@ final class ReportService: ReportServiceProtocol {
         reason: WordReportReason,
         additionalNotes: String = "",
         userLevel: Int
-    ) throws {
+    ) async throws {
         let report = WordReport(
             wordId: wordId,
             wordTerm: wordTerm,
@@ -46,10 +46,28 @@ final class ReportService: ReportServiceProtocol {
 
         do {
             try modelContext.save()
-            logger.info("Report submitted reason=\(reason.rawValue, privacy: .public)")
+            logger.info("Report saved locally reason=\(reason.rawValue, privacy: .public)")
         } catch {
             logger.error("Failed to save report: \(error.localizedDescription, privacy: .public)")
             throw error
+        }
+
+        // Capture scalars before leaving @MainActor — WordReport is not Sendable.
+        let reportedAt = report.reportedAt
+        let reasonRaw = report.reason
+        let notes = report.additionalNotes
+        let level = report.userLevel
+
+        Task.detached(priority: .background) {
+            await CloudKitReportService.shared.upload(
+                wordId: wordId,
+                wordTerm: wordTerm,
+                stack: stack,
+                reason: reasonRaw,
+                additionalNotes: notes,
+                userLevel: level,
+                reportedAt: reportedAt
+            )
         }
     }
 

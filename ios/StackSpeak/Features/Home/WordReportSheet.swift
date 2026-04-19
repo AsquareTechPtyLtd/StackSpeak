@@ -167,19 +167,21 @@ struct WordReportSheet: View {
 
         isSubmitting = true
 
-        do {
-            try services?.report.submitReport(
-                wordId: word.id,
-                wordTerm: word.word,
-                stack: word.stack.rawValue,
-                reason: reason,
-                additionalNotes: additionalNotes,
-                userLevel: userProgress.level
-            )
-            isSubmitting = false
-            showSuccess = true
-        } catch {
-            isSubmitting = false
+        Task {
+            do {
+                try await services?.report.submitReport(
+                    wordId: word.id,
+                    wordTerm: word.word,
+                    stack: word.stack.rawValue,
+                    reason: reason,
+                    additionalNotes: additionalNotes,
+                    userLevel: userProgress.level
+                )
+                isSubmitting = false
+                showSuccess = true
+            } catch {
+                isSubmitting = false
+            }
         }
     }
 }
