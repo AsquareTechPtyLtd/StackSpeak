@@ -10,6 +10,8 @@ final class ReviewViewModel {
 
     var eligibleAssessmentWords: [Word] = []
     var currentAssessmentIndex = 0
+    /// Increments each time eligible words reload, forcing SwiftUI to recreate AssessmentView instances.
+    var assessmentGeneration = 0
 
     func reviewedTodayCount(userProgress: UserProgress) -> Int {
         let today = Calendar.current.startOfDay(for: Date())
@@ -58,5 +60,6 @@ final class ReviewViewModel {
 
         eligibleAssessmentWords = sorted
         currentAssessmentIndex = 0
+        assessmentGeneration += 1
     }
 }

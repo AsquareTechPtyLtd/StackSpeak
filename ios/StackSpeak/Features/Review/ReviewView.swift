@@ -78,10 +78,11 @@ struct ReviewView: View {
                 assessmentStatsHeader(progress: progress)
 
                 TabView(selection: $viewModel.currentAssessmentIndex) {
-                    ForEach(Array(viewModel.eligibleAssessmentWords.enumerated()), id: \.element.id) { index, word in
+                    ForEach(Array(viewModel.eligibleAssessmentWords.enumerated()), id: \.offset) { index, word in
                         AssessmentView(word: word) { isCorrect, leveledUpTo in
                             handleAssessmentComplete(isCorrect: isCorrect, leveledUpTo: leveledUpTo, progress: progress)
                         }
+                        .id("\(word.id)-\(viewModel.assessmentGeneration)")
                         .tag(index)
                     }
                 }
