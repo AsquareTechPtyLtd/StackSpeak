@@ -107,7 +107,7 @@ struct OnboardingView: View {
             do {
                 try modelContext.save()
             } catch {
-                logger.error("Failed to save onboarding skip: \(error.localizedDescription)")
+                logger.error("Failed to save onboarding skip: \(error.localizedDescription, privacy: .public)")
             }
         }
         showOnboarding = false

@@ -27,8 +27,24 @@ struct StackSpeakApp: App {
             ])
             let config = ModelConfiguration(schema: schema, isStoredInMemoryOnly: false)
             container = try ModelContainer(for: schema, configurations: [config])
+            // Raise file protection so the store is inaccessible while the device is locked.
+            // Also exclude from backups — user progress is device-local by design.
+            if let storeURL = container?.configurations.first?.url {
+                do {
+                    var values = URLResourceValues()
+                    values.isExcludedFromBackup = true
+                    var url = storeURL
+                    try url.setResourceValues(values)
+                    try FileManager.default.setAttributes(
+                        [.protectionKey: FileProtectionType.complete],
+                        ofItemAtPath: storeURL.path
+                    )
+                } catch {
+                    logger.error("Failed to harden store file attributes: \(error.localizedDescription, privacy: .public)")
+                }
+            }
         } catch let caught {
-            logger.error("Failed to initialize ModelContainer: \(caught.localizedDescription)")
+            logger.error("Failed to initialize ModelContainer: \(caught.localizedDescription, privacy: .public)")
             error = caught
         }
 
@@ -74,7 +90,7 @@ struct StackSpeakApp: App {
             // Rebuild the two-correct cache on launch in case it was lost or corrupted.
             if progress.wordsWithTwoCorrectIds.isEmpty && !progress.assessmentResults.isEmpty {
                 progress.rebuildTwoCorrectCache()
-                do { try context.save() } catch { logger.error("Cache rebuild save failed: \(error)") }
+                do { try context.save() } catch { logger.error("Cache rebuild save failed: \(error.localizedDescription, privacy: .public)") }
             }
         } else {
             // Race-safe singleton check: only insert if count is truly zero
@@ -82,14 +98,14 @@ struct StackSpeakApp: App {
             if count == 0 {
                 let newProgress = UserProgress()
                 context.insert(newProgress)
-                do { try context.save() } catch { logger.error("UserProgress init save failed: \(error)") }
+                do { try context.save() } catch { logger.error("UserProgress init save failed: \(error.localizedDescription, privacy: .public)") }
             } else {
                 logger.warning("UserProgress creation skipped - already exists (race avoided)")
             }
         }
 
         if let services = services {
-            do { try await services.word.loadWordsFromBundle() } catch { logger.error("Word bundle load failed: \(error)") }
+            do { try await services.word.loadWordsFromBundle() } catch { logger.error("Word bundle load failed: \(error.localizedDescription, privacy: .public)") }
         }
     }
 }
@@ -125,19 +141,11 @@ struct ErrorView: View {
                     .cornerRadius(8)
                     .padding(.horizontal, 32)
 
-                Button(action: {
-                    // User can try force-quitting and restarting
-                    fatalError("User requested crash to restart")
-                }) {
-                    Text("Restart App")
-                        .font(TypographyTokens.headline)
-                        .foregroundColor(theme.colors.accentText)
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 16)
-                        .background(theme.colors.accent)
-                        .cornerRadius(12)
-                }
-                .padding(.horizontal, 32)
+                Text("Force-quit this app and relaunch to try again.")
+                    .font(TypographyTokens.callout)
+                    .foregroundColor(theme.colors.inkMuted)
+                    .multilineTextAlignment(.center)
+                    .padding(.horizontal, 32)
             }
         }
     }

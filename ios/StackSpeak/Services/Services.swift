@@ -20,7 +20,7 @@ final class Services {
         self.notification = NotificationService()
         self.reviewScheduler = ReviewSchedulerService(modelContext: modelContext)
         self.speech = SpeechService()
-        self.report = ReportService()
+        self.report = ReportService(modelContext: modelContext)
     }
 
     // Preview/Test initializer with mock repositories

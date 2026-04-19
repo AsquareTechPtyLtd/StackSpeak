@@ -120,7 +120,7 @@ struct StackManagementView: View {
         do {
             try modelContext.save()
         } catch {
-            logger.error("Failed to save stack changes: \(error.localizedDescription)")
+            logger.error("Failed to save stack changes: \(error.localizedDescription, privacy: .public)")
         }
         dismiss()
     }

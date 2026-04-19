@@ -31,7 +31,7 @@ final class ProgressService: ProgressRepository {
         do {
             try modelContext.save()
         } catch {
-            logger.error("Failed to save word practiced: \(error.localizedDescription)")
+            logger.error("Failed to save word practiced: \(error.localizedDescription, privacy: .public)")
         }
     }
 
@@ -43,7 +43,7 @@ final class ProgressService: ProgressRepository {
         do {
             try modelContext.save()
         } catch {
-            logger.error("Failed to save word mastered: \(error.localizedDescription)")
+            logger.error("Failed to save word mastered: \(error.localizedDescription, privacy: .public)")
         }
     }
 
@@ -55,7 +55,7 @@ final class ProgressService: ProgressRepository {
         do {
             try modelContext.save()
         } catch {
-            logger.error("Failed to save word unmastered: \(error.localizedDescription)")
+            logger.error("Failed to save word unmastered: \(error.localizedDescription, privacy: .public)")
         }
     }
 
@@ -71,7 +71,7 @@ final class ProgressService: ProgressRepository {
         do {
             try modelContext.save()
         } catch {
-            logger.error("Failed to save bookmark toggle: \(error.localizedDescription)")
+            logger.error("Failed to save bookmark toggle: \(error.localizedDescription, privacy: .public)")
         }
     }
 
@@ -147,7 +147,7 @@ final class ProgressService: ProgressRepository {
         do {
             try modelContext.save()
         } catch {
-            logger.error("Failed to save assessment result: \(error.localizedDescription)")
+            logger.error("Failed to save assessment result: \(error.localizedDescription, privacy: .public)")
         }
 
         return userProgress.level > oldLevel ? userProgress.level : nil

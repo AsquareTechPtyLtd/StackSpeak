@@ -127,7 +127,7 @@ struct StackSelectionView: View {
         do {
             try modelContext.save()
         } catch {
-            logger.error("Failed to save stack selection: \(error.localizedDescription)")
+            logger.error("Failed to save stack selection: \(error.localizedDescription, privacy: .public)")
         }
         showOnboarding = false
     }

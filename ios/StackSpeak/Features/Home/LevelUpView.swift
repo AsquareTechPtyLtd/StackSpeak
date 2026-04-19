@@ -147,7 +147,7 @@ struct LevelUpView: View {
         do {
             try modelContext.save()
         } catch {
-            logger.error("Failed to save level-up stack selection: \(error.localizedDescription)")
+            logger.error("Failed to save level-up stack selection: \(error.localizedDescription, privacy: .public)")
         }
         dismiss()
     }

@@ -80,7 +80,7 @@ struct DensitySettingsView: View {
         do {
             try modelContext.save()
         } catch {
-            logger.error("Failed to save density preference: \(error.localizedDescription)")
+            logger.error("Failed to save density preference: \(error.localizedDescription, privacy: .public)")
         }
     }
 }

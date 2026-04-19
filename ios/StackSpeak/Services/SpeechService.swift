@@ -45,6 +45,10 @@ final class SpeechService: ObservableObject, SpeechRepository {
                 throw SpeechServiceError.recognitionRequestCreationFailed
             }
             recognitionRequest.shouldReportPartialResults = true
+            // Keep audio on-device — do not send to Apple servers.
+            if recognizer?.supportsOnDeviceRecognition == true {
+                recognitionRequest.requiresOnDeviceRecognition = true
+            }
 
             let inputNode = audioEngine.inputNode
             recognitionTask = recognizer?.recognitionTask(with: recognitionRequest) { [weak self] result, error in
@@ -67,9 +71,12 @@ final class SpeechService: ObservableObject, SpeechRepository {
             }
 
             let nativeFormat = inputNode.outputFormat(forBus: 0)
-            let recordingFormat = nativeFormat.sampleRate > 0
+            guard let recordingFormat = nativeFormat.sampleRate > 0
                 ? nativeFormat
-                : AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: 44100, channels: 1, interleaved: false)!
+                : AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: 44100, channels: 1, interleaved: false)
+            else {
+                throw SpeechServiceError.audioFormatCreationFailed
+            }
             let req = recognitionRequest
             inputNode.installTap(onBus: 0, bufferSize: 1024, format: recordingFormat) { buffer, _ in
                 req.append(buffer)
@@ -106,11 +113,14 @@ final class SpeechService: ObservableObject, SpeechRepository {
 
 enum SpeechServiceError: LocalizedError {
     case recognitionRequestCreationFailed
+    case audioFormatCreationFailed
 
     var errorDescription: String? {
         switch self {
         case .recognitionRequestCreationFailed:
             return "Unable to create speech recognition request"
+        case .audioFormatCreationFailed:
+            return "Unable to configure audio format for recording"
         }
     }
 }

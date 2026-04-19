@@ -11,6 +11,8 @@ struct SentencePracticeView: View {
     let word: Word
     let userProgress: UserProgress
 
+    private static let maxSentenceLength = 500
+
     @State private var sentence = ""
     @State private var inputMethod: InputMethod = .typed
     @State private var errorMessage: String?
@@ -110,13 +112,28 @@ struct SentencePracticeView: View {
                 .padding(theme.spacing.md)
                 .background(theme.colors.surfaceAlt)
                 .cornerRadius(8)
+                .textContentType(.none)
                 .accessibilityLabel(String(localized: "a11y.sentenceInput"))
+                .onChange(of: sentence) { _, newValue in
+                    if newValue.count > Self.maxSentenceLength {
+                        sentence = String(newValue.prefix(Self.maxSentenceLength))
+                    }
+                }
                 .onChange(of: speechService.transcript) { _, newValue in
                     if !newValue.isEmpty {
-                        sentence = newValue
+                        sentence = String(newValue.prefix(Self.maxSentenceLength))
                         inputMethod = .voice
                     }
                 }
+
+            HStack {
+                Spacer()
+                Text("\(sentence.count)/\(Self.maxSentenceLength)")
+                    .font(TypographyTokens.caption)
+                    .foregroundColor(sentence.count >= Self.maxSentenceLength
+                                     ? theme.colors.warn
+                                     : theme.colors.inkFaint)
+            }
         }
         .padding(theme.spacing.cardPadding(density: theme.density))
         .background(theme.colors.surface)

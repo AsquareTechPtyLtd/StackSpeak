@@ -5,10 +5,13 @@ struct WordReportSheet: View {
     @Environment(\.theme) private var theme
     @Environment(\.dismiss) private var dismiss
     @Environment(\.services) private var services
-    @Environment(\.modelContext) private var modelContext
 
     let word: Word
     let userProgress: UserProgress
+
+    @Environment(\.modelContext) private var modelContext
+
+    private static let maxNotesLength = 1000
 
     @State private var selectedReason: WordReportReason?
     @State private var additionalNotes = ""
@@ -118,10 +121,26 @@ struct WordReportSheet: View {
                 .padding(theme.spacing.sm)
                 .background(theme.colors.surface)
                 .cornerRadius(8)
+                .textContentType(.none)
+                .autocorrectionDisabled()
                 .overlay(
                     RoundedRectangle(cornerRadius: 8)
                         .stroke(theme.colors.line, lineWidth: 1)
                 )
+                .onChange(of: additionalNotes) { _, newValue in
+                    if newValue.count > Self.maxNotesLength {
+                        additionalNotes = String(newValue.prefix(Self.maxNotesLength))
+                    }
+                }
+
+            HStack {
+                Spacer()
+                Text("\(additionalNotes.count)/\(Self.maxNotesLength)")
+                    .font(TypographyTokens.caption)
+                    .foregroundColor(additionalNotes.count >= Self.maxNotesLength
+                                     ? theme.colors.warn
+                                     : theme.colors.inkFaint)
+            }
         }
     }
 
@@ -148,28 +167,19 @@ struct WordReportSheet: View {
 
         isSubmitting = true
 
-        Task {
-            do {
-                try await services?.report.submitReport(
-                    wordId: word.id,
-                    wordTerm: word.word,
-                    stack: word.stack.rawValue,
-                    reason: reason,
-                    additionalNotes: additionalNotes,
-                    userLevel: userProgress.level,
-                    modelContext: modelContext
-                )
-
-                await MainActor.run {
-                    isSubmitting = false
-                    showSuccess = true
-                }
-            } catch {
-                await MainActor.run {
-                    isSubmitting = false
-                    // Could show error alert here
-                }
-            }
+        do {
+            try services?.report.submitReport(
+                wordId: word.id,
+                wordTerm: word.word,
+                stack: word.stack.rawValue,
+                reason: reason,
+                additionalNotes: additionalNotes,
+                userLevel: userProgress.level
+            )
+            isSubmitting = false
+            showSuccess = true
+        } catch {
+            isSubmitting = false
         }
     }
 }
@@ -177,7 +187,7 @@ struct WordReportSheet: View {
 struct ReasonButton: View {
     let reason: WordReportReason
     let isSelected: Bool
-    let theme: Theme
+    let theme: ThemeManager
     let action: () -> Void
 
     var body: some View {

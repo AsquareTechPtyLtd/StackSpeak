@@ -81,7 +81,7 @@ struct ThemeSettingsView: View {
         do {
             try modelContext.save()
         } catch {
-            logger.error("Failed to save theme preference: \(error.localizedDescription)")
+            logger.error("Failed to save theme preference: \(error.localizedDescription, privacy: .public)")
         }
     }
 }

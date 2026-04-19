@@ -188,7 +188,7 @@ struct NotificationSettingsView: View {
                     do {
                         try modelContext.save()
                     } catch {
-                        logger.error("Failed to save notification enabled: \(error.localizedDescription)")
+                        logger.error("Failed to save notification enabled: \(error.localizedDescription, privacy: .public)")
                     }
                     try await NotificationService.shared.rescheduleNotifications(
                         primary: primaryTime,
@@ -204,7 +204,7 @@ struct NotificationSettingsView: View {
             do {
                 try modelContext.save()
             } catch {
-                logger.error("Failed to save notification disabled: \(error.localizedDescription)")
+                logger.error("Failed to save notification disabled: \(error.localizedDescription, privacy: .public)")
             }
             NotificationService.shared.cancelAllNotifications()
         }
@@ -216,7 +216,7 @@ struct NotificationSettingsView: View {
         do {
             try modelContext.save()
         } catch {
-            logger.error("Failed to save primary notification time: \(error.localizedDescription)")
+            logger.error("Failed to save primary notification time: \(error.localizedDescription, privacy: .public)")
         }
         Task {
             try? await NotificationService.shared.rescheduleNotifications(
@@ -235,7 +235,7 @@ struct NotificationSettingsView: View {
         do {
             try modelContext.save()
         } catch {
-            logger.error("Failed to save second reminder toggle: \(error.localizedDescription)")
+            logger.error("Failed to save second reminder toggle: \(error.localizedDescription, privacy: .public)")
         }
         Task {
             try? await NotificationService.shared.rescheduleNotifications(
@@ -251,7 +251,7 @@ struct NotificationSettingsView: View {
         do {
             try modelContext.save()
         } catch {
-            logger.error("Failed to save second notification time: \(error.localizedDescription)")
+            logger.error("Failed to save second notification time: \(error.localizedDescription, privacy: .public)")
         }
         Task {
             try? await NotificationService.shared.rescheduleNotifications(

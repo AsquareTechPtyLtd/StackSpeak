@@ -17,7 +17,7 @@ final class ReviewSchedulerService: ReviewRepository {
         do {
             try modelContext.save()
         } catch {
-            logger.error("Failed to save review: \(error.localizedDescription)")
+            logger.error("Failed to save review: \(error.localizedDescription, privacy: .public)")
             throw error
         }
     }

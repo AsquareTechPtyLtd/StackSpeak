@@ -192,12 +192,10 @@ struct WordFilters {
 }
 
 enum WordServiceError: LocalizedError {
-    case bundleFileNotFound
     case indexFileNotFound
 
     var errorDescription: String? {
         switch self {
-        case .bundleFileNotFound: return "words.json not found in app bundle"
         case .indexFileNotFound: return "words-index.json not found in app bundle"
         }
     }
