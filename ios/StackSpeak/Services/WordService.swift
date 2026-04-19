@@ -59,7 +59,9 @@ final class WordService: WordRepository {
 
         // Insert new words into the database
         let existingIds = try fetchExistingWordIdSet()
-        for (dto, stack) in allWords where !existingIds.contains(dto.id) {
+        for (dto, stack) in allWords {
+            let wordId = UUID(uuidString: dto.id) ?? deterministicUUID(from: dto.id)
+            guard !existingIds.contains(wordId) else { continue }
             let word = Word(from: dto, stack: stack)
             modelContext.insert(word)
         }

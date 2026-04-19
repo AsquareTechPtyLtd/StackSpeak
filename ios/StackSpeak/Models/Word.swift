@@ -55,7 +55,7 @@ final class Word {
 
     convenience init(from dto: WordDTO, stack: String) {
         self.init(
-            id: dto.id,
+            id: UUID(uuidString: dto.id) ?? deterministicUUID(from: dto.id),
             word: dto.word,
             pronunciation: dto.pronunciation,
             partOfSpeech: dto.partOfSpeech,
@@ -73,10 +73,25 @@ final class Word {
     }
 }
 
+/// Converts an arbitrary string to a deterministic UUID via FNV-1a so that
+/// mnemonic IDs like "bw001000-…" always produce the same UUID across installs.
+func deterministicUUID(from string: String) -> UUID {
+    var h1: UInt64 = 14695981039346656037
+    var h2: UInt64 = 14695981039346656037 &+ 1
+    for byte in string.utf8 {
+        h1 ^= UInt64(byte); h1 = h1 &* 1099511628211
+        h2 ^= UInt64(byte); h2 = h2 &* 1099511628211 &+ 7
+    }
+    let b = (0..<8).map { i in UInt8((h1 >> (i * 8)) & 0xFF) }
+        + (0..<8).map { i in UInt8((h2 >> (i * 8)) & 0xFF) }
+    return UUID(uuid: (b[0],b[1],b[2],b[3],b[4],b[5],b[6],b[7],
+                       b[8],b[9],b[10],b[11],b[12],b[13],b[14],b[15]))
+}
+
 // MARK: - DTO (matches words.json wire format)
 
 struct WordDTO: Codable {
-    let id: UUID
+    let id: String  // may be a valid UUID string or a mnemonic like "bw001000-…"
     let word: String
     let pronunciation: String
     let partOfSpeech: String
