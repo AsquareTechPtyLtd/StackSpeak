@@ -174,11 +174,11 @@ extension UserProgress {
             .max(by: { $0.attemptedAt < $1.attemptedAt })
 
         guard let lastAttempt else { return true }
-        if lastAttempt.isCorrect { return true }
 
-        // Use exact seconds comparison to avoid Calendar timezone edge cases
-        let secondsSince = Date().timeIntervalSince(lastAttempt.attemptedAt)
-        return secondsSince >= 86400  // 24 × 60 × 60
+        // One attempt per word per calendar day — correct or not.
+        // The second (and final) correct attempt must happen on a different day.
+        let cal = Calendar.current
+        return !cal.isDateInToday(lastAttempt.attemptedAt)
     }
 
     /// Rebuilds `wordsWithTwoCorrectIds` from raw results. Used for migration / testing only.
