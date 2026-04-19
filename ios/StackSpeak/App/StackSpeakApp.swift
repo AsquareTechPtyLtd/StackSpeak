@@ -52,20 +52,12 @@ struct StackSpeakApp: App {
         let config = ModelConfiguration(schema: schema, isStoredInMemoryOnly: false)
         let container = try ModelContainer(for: schema, configurations: [config])
 
-        // Raise file protection and exclude from backups.
+        // Exclude from iCloud/iTunes backups — progress is device-local by design.
         if let storeURL = container.configurations.first?.url {
-            do {
-                var values = URLResourceValues()
-                values.isExcludedFromBackup = true
-                var url = storeURL
-                try url.setResourceValues(values)
-                try FileManager.default.setAttributes(
-                    [.protectionKey: FileProtectionType.complete],
-                    ofItemAtPath: storeURL.path
-                )
-            } catch {
-                logger.error("Failed to harden store file attributes: \(error.localizedDescription, privacy: .public)")
-            }
+            var values = URLResourceValues()
+            values.isExcludedFromBackup = true
+            var url = storeURL
+            try? url.setResourceValues(values)
         }
 
         return container
