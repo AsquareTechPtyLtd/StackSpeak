@@ -23,22 +23,20 @@ struct AssessmentView: View {
     }
 
     var body: some View {
-        VStack(spacing: theme.spacing.xl) {
-            Spacer()
+        ScrollView {
+            VStack(spacing: theme.spacing.xl) {
+                questionSection
 
-            questionSection
+                optionsSection
 
-            optionsSection
-
-            Spacer()
-
-            if hasSubmitted {
-                feedbackSection
-            } else {
-                submitButton
+                if hasSubmitted {
+                    feedbackSection
+                } else {
+                    submitButton
+                }
             }
+            .padding(theme.spacing.lg)
         }
-        .padding(theme.spacing.lg)
         // Generate options once per word, not on every re-appear.
         .task(id: word.id) {
             if options.isEmpty {
@@ -79,6 +77,7 @@ struct AssessmentView: View {
                 )
             }
         }
+        .frame(maxWidth: .infinity)
     }
 
     private var feedbackSection: some View {
@@ -223,13 +222,15 @@ struct OptionButton: View {
 
     var body: some View {
         Button(action: onTap) {
-            HStack {
+            HStack(alignment: .top) {
                 Text(text)
                     .font(TypographyTokens.body)
                     .foregroundColor(theme.colors.ink)
                     .multilineTextAlignment(.leading)
+                    .lineLimit(nil)
+                    .fixedSize(horizontal: false, vertical: true)
 
-                Spacer()
+                Spacer(minLength: theme.spacing.sm)
 
                 if isCorrect {
                     Image(systemName: "checkmark.circle.fill")
