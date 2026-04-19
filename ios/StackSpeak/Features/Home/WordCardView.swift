@@ -120,10 +120,19 @@ struct WordCardView: View {
                 }
 
                 Button(action: { showReport = true }) {
-                    Image(systemName: "flag")
-                        .font(.system(size: 14))
-                        .foregroundColor(theme.colors.inkFaint)
+                    HStack(spacing: 4) {
+                        Image(systemName: "flag")
+                            .font(.system(size: 12))
+                        Text("Report")
+                            .font(TypographyTokens.caption)
+                    }
+                    .foregroundColor(theme.colors.warn)
+                    .padding(.horizontal, theme.spacing.sm)
+                    .padding(.vertical, 6)
+                    .background(theme.colors.warn.opacity(0.1))
+                    .cornerRadius(20)
                 }
+                .buttonStyle(.plain)
                 .accessibilityLabel(String(format: String(localized: "a11y.report.format"), word.word))
             }
         }
