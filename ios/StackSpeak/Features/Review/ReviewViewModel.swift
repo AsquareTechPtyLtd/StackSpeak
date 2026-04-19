@@ -7,42 +7,56 @@ final class ReviewViewModel {
     var dueReviews: [ReviewState] = []
     var words: [UUID: Word] = [:]
     var currentIndex = 0
-    var reviewedCount = 0
 
     var eligibleAssessmentWords: [Word] = []
     var currentAssessmentIndex = 0
+
+    func reviewedTodayCount(userProgress: UserProgress) -> Int {
+        let today = Calendar.current.startOfDay(for: Date())
+        return userProgress.reviewStates.filter { state in
+            guard let lastReviewed = state.lastReviewedAt else { return false }
+            return Calendar.current.startOfDay(for: lastReviewed) >= today
+        }.count
+    }
 
     func loadDueReviews(progress: UserProgress) {
         dueReviews = progress.reviewStates
             .filter { $0.dueDate <= Date() }
             .sorted { $0.dueDate < $1.dueDate }
-
         currentIndex = 0
     }
 
-    func loadWords(from modelContext: ModelContext) async {
-        let wordService = WordService(modelContext: modelContext)
-
+    func loadWords(wordService: any WordRepository) async {
         for reviewState in dueReviews {
+            guard words[reviewState.wordId] == nil else { continue }
             if let word = try? wordService.fetchWord(byId: reviewState.wordId) {
                 words[reviewState.wordId] = word
             }
+            guard !Task.isCancelled else { return }
         }
     }
 
-    func loadEligibleAssessmentWords(modelContext: ModelContext, userProgress: UserProgress) async {
-        let wordService = WordService(modelContext: modelContext)
+    func loadEligibleAssessmentWords(wordService: any WordRepository, userProgress: UserProgress) async {
         let eligible = userProgress.wordsEligibleForAssessment()
 
-        var loadedWords: [Word] = []
+        var loaded: [Word] = []
         for wordId in eligible {
+            guard !Task.isCancelled else { return }
             if userProgress.canAttemptAssessment(for: wordId),
                let word = try? wordService.fetchWord(byId: wordId) {
-                loadedWords.append(word)
+                loaded.append(word)
             }
         }
 
-        eligibleAssessmentWords = loadedWords.shuffled()
+        // Deterministic shuffle: same user state → same assessment order
+        var sorted = loaded.sorted { $0.id.uuidString < $1.id.uuidString }
+        var rng = SeededRandomGenerator(seed: stableHash(userProgress.shuffleSeed.uuidString + "assessment"))
+        for i in stride(from: sorted.count - 1, through: 1, by: -1) {
+            let j = Int(rng.next() % UInt64(i + 1))
+            sorted.swapAt(i, j)
+        }
+
+        eligibleAssessmentWords = sorted
         currentAssessmentIndex = 0
     }
 }

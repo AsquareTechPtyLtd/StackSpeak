@@ -1,18 +1,25 @@
 import SwiftUI
+import SwiftData
+import UserNotifications
 
 struct SentencePracticeView: View {
     @Environment(\.theme) private var theme
+    @Environment(\.services) private var services
     @Environment(\.modelContext) private var modelContext
     @Environment(\.dismiss) private var dismiss
 
     let word: Word
     let userProgress: UserProgress
 
-    @StateObject private var speechService = SpeechService()
     @State private var sentence = ""
     @State private var inputMethod: InputMethod = .typed
     @State private var errorMessage: String?
     @State private var showSuccess = false
+    @State private var showNotificationPrompt = false
+
+    private var speechService: any SpeechRepository {
+        services?.speech ?? SpeechService()
+    }
 
     var body: some View {
         ZStack {
@@ -21,7 +28,6 @@ struct SentencePracticeView: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: theme.spacing.xl) {
                     instructionSection
-
                     inputSection
 
                     if let error = errorMessage {
@@ -33,25 +39,36 @@ struct SentencePracticeView: View {
                 .padding(theme.spacing.lg)
             }
         }
-        .navigationTitle("Practice")
+        .navigationTitle("practice.navTitle")
         .navigationBarTitleDisplayMode(.inline)
-        .alert("Great work!", isPresented: $showSuccess) {
-            Button("Continue") {
+        .alert("practice.success.title", isPresented: $showSuccess) {
+            Button("practice.success.continue") {
                 dismiss()
+                // Show notification prompt after first practice if needed
+                if shouldShowNotificationPrompt() {
+                    showNotificationPrompt = true
+                }
             }
         } message: {
-            Text("You've practiced \"\(word.word)\"! Take the assessment in Review to count it toward your level.")
+            Text(String(format: String(localized: "practice.success.message.format"), word.word))
         }
-        .task {
-            if speechService.authorizationStatus == .notDetermined {
-                _ = await speechService.requestAuthorization()
+        .alert("notifications.prompt.title", isPresented: $showNotificationPrompt) {
+            Button("notifications.prompt.enable") {
+                Task {
+                    if let services {
+                        _ = try? await services.notification.requestAuthorization()
+                    }
+                }
             }
+            Button("notifications.prompt.notNow", role: .cancel) { }
+        } message: {
+            Text("notifications.prompt.message")
         }
     }
 
     private var instructionSection: some View {
         VStack(alignment: .leading, spacing: theme.spacing.md) {
-            Text("Use \"\(word.word)\" in a sentence")
+            Text(String(format: String(localized: "practice.instruction.format"), word.word))
                 .font(TypographyTokens.title2)
                 .foregroundColor(theme.colors.ink)
 
@@ -67,7 +84,7 @@ struct SentencePracticeView: View {
     private var inputSection: some View {
         VStack(alignment: .leading, spacing: theme.spacing.md) {
             HStack {
-                Text("Your sentence")
+                Text("practice.input.title")
                     .font(TypographyTokens.headline)
                     .foregroundColor(theme.colors.ink)
 
@@ -82,6 +99,7 @@ struct SentencePracticeView: View {
                             .background(theme.colors.accentBg)
                             .clipShape(Circle())
                     }
+                    .accessibilityLabel(speechService.isRecording ? "Stop recording" : "Start voice input")
                 }
             }
 
@@ -92,9 +110,12 @@ struct SentencePracticeView: View {
                 .padding(theme.spacing.md)
                 .background(theme.colors.surfaceAlt)
                 .cornerRadius(8)
+                .accessibilityLabel(String(localized: "a11y.sentenceInput"))
                 .onChange(of: speechService.transcript) { _, newValue in
-                    sentence = newValue
-                    inputMethod = .voice
+                    if !newValue.isEmpty {
+                        sentence = newValue
+                        inputMethod = .voice
+                    }
                 }
         }
         .padding(theme.spacing.cardPadding(density: theme.density))
@@ -115,50 +136,59 @@ struct SentencePracticeView: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(theme.colors.warn.opacity(0.1))
         .cornerRadius(8)
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel(String(format: String(localized: "a11y.error.format"), message))
     }
 
     private var submitButton: some View {
         Button(action: submit) {
-            Text("Submit")
+            Text("practice.submit")
                 .font(TypographyTokens.headline)
-                .foregroundColor(.white)
+                .foregroundColor(theme.colors.accentText)
                 .frame(maxWidth: .infinity)
                 .padding(.vertical, theme.spacing.lg)
                 .background(sentence.isEmpty ? theme.colors.inkFaint : theme.colors.accent)
                 .cornerRadius(12)
         }
         .disabled(sentence.isEmpty)
+        .accessibilityLabel(String(localized: "a11y.submitSentence"))
+        .accessibilityHint(sentence.isEmpty ? "Type or speak a sentence first" : "")
     }
 
     private func toggleRecording() {
         if speechService.isRecording {
             speechService.stopRecording()
         } else {
-            do {
-                try speechService.startRecording()
-                errorMessage = nil
-            } catch {
-                errorMessage = error.localizedDescription
+            Task { @MainActor in
+                if speechService.authorizationStatus == .notDetermined {
+                    _ = await speechService.requestAuthorization()
+                }
+                guard speechService.authorizationStatus == .authorized else { return }
+                do {
+                    try speechService.startRecording()
+                    errorMessage = nil
+                } catch {
+                    errorMessage = error.localizedDescription
+                }
             }
         }
     }
 
     private func submit() {
         let trimmed = sentence.trimmingCharacters(in: .whitespacesAndNewlines)
-
         guard !trimmed.isEmpty else {
-            errorMessage = "Please write a sentence first."
+            errorMessage = String(localized: "practice.error.empty")
             return
         }
 
-        let containsWord = trimmed.localizedCaseInsensitiveContains(word.word)
-        guard containsWord else {
-            errorMessage = "Your sentence must contain the word \"\(word.word)\"."
+        guard containsWord(trimmed, target: word.word) else {
+            errorMessage = String(format: String(localized: "practice.error.noWord.format"), word.word)
             return
         }
 
-        let progressService = ProgressService(modelContext: modelContext)
-        progressService.markWordPracticed(
+        guard let services else { return }
+
+        services.progress.markWordPracticed(
             wordId: word.id,
             sentence: trimmed,
             inputMethod: inputMethod,
@@ -167,21 +197,34 @@ struct SentencePracticeView: View {
 
         if let dailySet = try? fetchTodaysDailySet() {
             dailySet.markWordCompleted(word.id)
-
             if dailySet.isComplete {
-                try? progressService.completeDailySet(dailySet, userProgress: userProgress)
+                try? services.progress.completeDailySet(dailySet, userProgress: userProgress)
             }
         }
 
-        try? modelContext.save()
         showSuccess = true
     }
 
+    /// Whole-word match allowing common inflections (plural -s/-es/-ies, past -ed, progressive -ing).
+    /// Note: doesn't handle y→ies stem change (query→queries), but matches most CS vocab which pluralizes regularly.
+    private func containsWord(_ sentence: String, target: String) -> Bool {
+        let escaped = NSRegularExpression.escapedPattern(for: target)
+        let pattern = "\\b\(escaped)(s|es|ies|ed|ing|'s)?\\b"
+        let regex = try? NSRegularExpression(pattern: pattern, options: .caseInsensitive)
+        let range = NSRange(sentence.startIndex..., in: sentence)
+        return regex?.firstMatch(in: sentence, range: range) != nil
+    }
+
     private func fetchTodaysDailySet() throws -> DailySet? {
-        let today = Calendar.current.startOfDay(for: Date())
+        let today = DailySet.todayString()
         let descriptor = FetchDescriptor<DailySet>(
-            predicate: #Predicate { $0.date == today }
+            predicate: #Predicate { $0.dayString == today }
         )
         return try modelContext.fetch(descriptor).first
+    }
+
+    private func shouldShowNotificationPrompt() -> Bool {
+        // Show prompt after first practice if notifications not configured
+        return userProgress.wordsPracticedIds.count == 1 && !userProgress.notificationEnabled
     }
 }

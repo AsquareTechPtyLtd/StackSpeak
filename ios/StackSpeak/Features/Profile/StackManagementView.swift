@@ -1,18 +1,18 @@
 import SwiftUI
 import SwiftData
+import OSLog
 
 struct StackManagementView: View {
     @Environment(\.theme) private var theme
+    @Environment(\.userProgress) private var userProgress
     @Environment(\.modelContext) private var modelContext
     @Environment(\.dismiss) private var dismiss
 
-    @Query private var userProgressList: [UserProgress]
+    private let logger = Logger(subsystem: "com.stackspeak.ios", category: "Settings")
 
-    @State private var selectedStacks: Set<WordStack> = []
+    @State private var selectedOptionalStacks: Set<WordStack> = []
 
-    var userProgress: UserProgress? {
-        userProgressList.first
-    }
+    private var currentLevel: Int { userProgress?.level ?? 1 }
 
     var body: some View {
         ZStack {
@@ -21,22 +21,19 @@ struct StackManagementView: View {
             ScrollView {
                 VStack(spacing: theme.spacing.lg) {
                     infoSection
-
                     mandatoryStacksSection
-
                     optionalStacksSection
                 }
+                .frame(maxWidth: 720)
                 .padding(theme.spacing.lg)
             }
         }
-        .navigationTitle("Manage Stacks")
+        .navigationTitle("stacks.navTitle")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
-                Button("Save") {
-                    saveChanges()
-                }
-                .foregroundColor(theme.colors.accent)
+                Button("stacks.save", action: saveChanges)
+                    .foregroundColor(theme.colors.accent)
             }
         }
         .onAppear {
@@ -48,8 +45,9 @@ struct StackManagementView: View {
         HStack(spacing: theme.spacing.md) {
             Image(systemName: "info.circle.fill")
                 .foregroundColor(theme.colors.accent)
+                .accessibilityHidden(true)
 
-            Text("Core stacks are required and provide foundational technical vocabulary. Optional stacks can be added or removed anytime.")
+            Text("stacks.info")
                 .font(TypographyTokens.callout)
                 .foregroundColor(theme.colors.inkMuted)
         }
@@ -60,7 +58,7 @@ struct StackManagementView: View {
 
     private var mandatoryStacksSection: some View {
         VStack(alignment: .leading, spacing: theme.spacing.md) {
-            Text("Core Stacks (Unlocked)")
+            Text("stacks.section.core")
                 .font(TypographyTokens.caption)
                 .foregroundColor(theme.colors.inkFaint)
                 .textCase(.uppercase)
@@ -68,14 +66,8 @@ struct StackManagementView: View {
                 .padding(.horizontal, theme.spacing.sm)
 
             VStack(spacing: theme.spacing.sm) {
-                let currentLevel = userProgress?.level ?? 1
-                ForEach(Array(WordStack.mandatoryStacks(for: currentLevel)).sorted(by: { $0.displayName < $1.displayName })) { stack in
-                    StackCard(
-                        stack: stack,
-                        isSelected: true,
-                        isMandatory: true,
-                        onToggle: {}
-                    )
+                ForEach(Array(WordStack.mandatoryStacks(for: currentLevel)).sorted { $0.displayName < $1.displayName }) { stack in
+                    StackCard(stack: stack, isSelected: true, isMandatory: true, onToggle: {})
                 }
             }
         }
@@ -83,7 +75,7 @@ struct StackManagementView: View {
 
     private var optionalStacksSection: some View {
         VStack(alignment: .leading, spacing: theme.spacing.md) {
-            Text("Optional Stacks (Available)")
+            Text("stacks.section.optional")
                 .font(TypographyTokens.caption)
                 .foregroundColor(theme.colors.inkFaint)
                 .textCase(.uppercase)
@@ -91,11 +83,10 @@ struct StackManagementView: View {
                 .padding(.horizontal, theme.spacing.sm)
 
             VStack(spacing: theme.spacing.sm) {
-                let currentLevel = userProgress?.level ?? 1
-                ForEach(Array(WordStack.availableOptionalStacks(for: currentLevel)).sorted(by: { $0.displayName < $1.displayName })) { stack in
+                ForEach(Array(WordStack.availableOptionalStacks(for: currentLevel)).sorted { $0.displayName < $1.displayName }) { stack in
                     StackCard(
                         stack: stack,
-                        isSelected: selectedStacks.contains(stack),
+                        isSelected: selectedOptionalStacks.contains(stack),
                         isMandatory: false,
                         onToggle: { toggleStack(stack) }
                     )
@@ -106,29 +97,46 @@ struct StackManagementView: View {
 
     private func loadSelectedStacks() {
         guard let progress = userProgress else { return }
-
-        selectedStacks = WordStack.mandatoryStacks(for: progress.level)
-        for stackRawValue in progress.selectedStacks {
-            if let stack = WordStack(rawValue: stackRawValue), !stack.isMandatoryAtLevel {
-                selectedStacks.insert(stack)
-            }
-        }
+        selectedOptionalStacks = Set(
+            progress.selectedStacks.compactMap { WordStack(rawValue: $0) }.filter { !$0.isMandatoryByDefault }
+        )
     }
 
     private func toggleStack(_ stack: WordStack) {
-        if selectedStacks.contains(stack) {
-            selectedStacks.remove(stack)
+        if selectedOptionalStacks.contains(stack) {
+            selectedOptionalStacks.remove(stack)
         } else {
-            selectedStacks.insert(stack)
+            selectedOptionalStacks.insert(stack)
         }
     }
 
     private func saveChanges() {
         guard let progress = userProgress else { return }
 
-        progress.selectedStacks = Set(selectedStacks.map { $0.rawValue })
-        try? modelContext.save()
+        let mandatory = Set(WordStack.mandatoryStacks(for: progress.level).map { $0.rawValue })
+        let optional  = Set(selectedOptionalStacks.map { $0.rawValue })
+        progress.selectedStacks = mandatory.union(optional)
 
+        do {
+            try modelContext.save()
+        } catch {
+            logger.error("Failed to save stack changes: \(error.localizedDescription)")
+        }
         dismiss()
+    }
+}
+
+#Preview("Stack Management - Light") {
+    NavigationStack {
+        StackManagementView()
+            .withTheme(ThemeManager())
+    }
+}
+
+#Preview("Stack Management - Dark") {
+    NavigationStack {
+        StackManagementView()
+            .withTheme(ThemeManager())
+            .preferredColorScheme(.dark)
     }
 }

@@ -1,0 +1,65 @@
+import SwiftUI
+import SwiftData
+import Foundation
+
+/// Container for all app services, injected via EnvironmentValues.
+/// Constructed once in StackSpeakApp and shared across the view hierarchy.
+/// Services are accessed via protocol types for testability.
+@MainActor
+final class Services {
+    let word: any WordRepository
+    let progress: any ProgressRepository
+    let notification: any NotificationRepository
+    let reviewScheduler: any ReviewRepository
+    let speech: any SpeechRepository
+
+    init(modelContext: ModelContext) {
+        self.word = WordService(modelContext: modelContext)
+        self.progress = ProgressService(modelContext: modelContext)
+        self.notification = NotificationService()
+        self.reviewScheduler = ReviewSchedulerService(modelContext: modelContext)
+        self.speech = SpeechService()
+    }
+
+    // Preview/Test initializer with mock repositories
+    init(
+        word: any WordRepository,
+        progress: any ProgressRepository,
+        notification: any NotificationRepository,
+        reviewScheduler: any ReviewRepository,
+        speech: any SpeechRepository
+    ) {
+        self.word = word
+        self.progress = progress
+        self.notification = notification
+        self.reviewScheduler = reviewScheduler
+        self.speech = speech
+    }
+}
+
+// MARK: - Environment Keys
+
+struct ServicesKey: EnvironmentKey {
+    // Sentinel default — real Services instance is injected at app root.
+    static let defaultValue: Services? = nil
+}
+
+struct UserProgressKey: EnvironmentKey {
+    // UserProgress is optional — nil before onboarding completes.
+    static let defaultValue: UserProgress? = nil
+}
+
+extension Services: @unchecked Sendable {}
+extension UserProgress: @unchecked Sendable {}
+
+extension EnvironmentValues {
+    var services: Services? {
+        get { self[ServicesKey.self] }
+        set { self[ServicesKey.self] = newValue }
+    }
+
+    var userProgress: UserProgress? {
+        get { self[UserProgressKey.self] }
+        set { self[UserProgressKey.self] = newValue }
+    }
+}

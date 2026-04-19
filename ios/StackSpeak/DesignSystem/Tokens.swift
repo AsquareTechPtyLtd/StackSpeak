@@ -11,6 +11,7 @@ struct ColorTokens {
     let lineStrong: Color
     let accent: Color
     let accentBg: Color
+    let accentText: Color  // Text color on accent background (e.g., CTA buttons)
     let codeBg: Color
     let codeInk: Color
     let codeKey: Color
@@ -31,6 +32,7 @@ struct ColorTokens {
         lineStrong: Color(hex: "14161C").opacity(0.14),
         accent: Color(hex: "3E4BDB"),
         accentBg: Color(hex: "3E4BDB").opacity(0.08),
+        accentText: .white,
         codeBg: Color(hex: "F2F1EC"),
         codeInk: Color(hex: "15161A"),
         codeKey: Color(hex: "8B2F7A"),
@@ -48,10 +50,11 @@ struct ColorTokens {
         ink: Color(hex: "F2F2F4"),
         inkMuted: Color(hex: "A4A7B0"),
         inkFaint: Color(hex: "6B6E77"),
-        line: Color.white.opacity(0.06),
-        lineStrong: Color.white.opacity(0.12),
+        line: Color(hex: "FFFFFF").opacity(0.06),
+        lineStrong: Color(hex: "FFFFFF").opacity(0.12),
         accent: Color(hex: "8B93FF"),
         accentBg: Color(hex: "8B93FF").opacity(0.12),
+        accentText: .white,
         codeBg: Color(hex: "0F1013"),
         codeInk: Color(hex: "E6E6EA"),
         codeKey: Color(hex: "D291E7"),
@@ -74,10 +77,8 @@ struct SpacingTokens {
 
     func cardPadding(density: DensityPreference) -> EdgeInsets {
         switch density {
-        case .compact:
-            return EdgeInsets(top: 16, leading: 18, bottom: 16, trailing: 18)
-        case .roomy:
-            return EdgeInsets(top: 22, leading: 22, bottom: 22, trailing: 22)
+        case .compact: return EdgeInsets(top: 16, leading: 18, bottom: 16, trailing: 18)
+        case .roomy:   return EdgeInsets(top: 22, leading: 22, bottom: 22, trailing: 22)
         }
     }
 
@@ -91,40 +92,48 @@ struct SpacingTokens {
 }
 
 struct TypographyTokens {
-    static func inter(size: CGFloat, weight: Font.Weight = .regular) -> Font {
-        .custom("Inter", size: size).weight(weight)
+    // MARK: - Font constructors with Dynamic Type scaling
+
+    static func inter(size: CGFloat, weight: Font.Weight = .regular, relativeTo textStyle: Font.TextStyle = .body) -> Font {
+        .custom("Inter", size: size, relativeTo: textStyle).weight(weight)
     }
 
     static func jetBrainsMono(size: CGFloat, weight: Font.Weight = .regular) -> Font {
-        .custom("JetBrainsMono", size: size).weight(weight)
+        .custom("JetBrainsMono-Regular", size: size, relativeTo: .caption)
     }
 
     static func instrumentSerif(size: CGFloat) -> Font {
-        .custom("InstrumentSerif-Italic", size: size)
+        .custom("InstrumentSerif-Italic", size: size, relativeTo: .callout)
     }
 
-    static let largeTitle = inter(size: 34, weight: .bold)
-    static let title1 = inter(size: 28, weight: .semibold)
-    static let title2 = inter(size: 22, weight: .semibold)
-    static let title3 = inter(size: 20, weight: .semibold)
-    static let headline = inter(size: 17, weight: .semibold)
-    static let body = inter(size: 17, weight: .regular)
-    static let callout = inter(size: 16, weight: .regular)
-    static let subheadline = inter(size: 15, weight: .regular)
-    static let footnote = inter(size: 13, weight: .regular)
-    static let caption = inter(size: 12, weight: .regular)
+    // MARK: - Semantic tokens
 
-    static let code = jetBrainsMono(size: 14, weight: .regular)
-    static let codeLarge = jetBrainsMono(size: 16, weight: .regular)
-    static let mono = jetBrainsMono(size: 13, weight: .medium)
+    static let largeTitle  = inter(size: 34, weight: .bold,     relativeTo: .largeTitle)
+    static let title1      = inter(size: 28, weight: .semibold, relativeTo: .title)
+    static let title2      = inter(size: 22, weight: .semibold, relativeTo: .title2)
+    static let title3      = inter(size: 20, weight: .semibold, relativeTo: .title3)
+    static let headline    = inter(size: 17, weight: .semibold, relativeTo: .headline)
+    static let body        = inter(size: 17, weight: .regular,  relativeTo: .body)
+    static let callout     = inter(size: 16, weight: .regular,  relativeTo: .callout)
+    static let subheadline = inter(size: 15, weight: .regular,  relativeTo: .subheadline)
+    static let footnote    = inter(size: 13, weight: .regular,  relativeTo: .footnote)
+    static let caption     = inter(size: 12, weight: .regular,  relativeTo: .caption)
 
-    static let etymology = instrumentSerif(size: 15)
+    static let code      = jetBrainsMono(size: 14)
+    static let codeLarge = jetBrainsMono(size: 16)
+    static let mono      = jetBrainsMono(size: 13, weight: .medium)
+
+    static let etymology      = instrumentSerif(size: 15)
     static let etymologyLarge = instrumentSerif(size: 17)
 
     static func cardTitle(density: DensityPreference) -> Font {
-        density == .compact ? inter(size: 22, weight: .semibold) : inter(size: 26, weight: .semibold)
+        density == .compact
+            ? inter(size: 22, weight: .semibold, relativeTo: .title2)
+            : inter(size: 26, weight: .semibold, relativeTo: .title)
     }
 }
+
+// MARK: - Color hex initializer
 
 extension Color {
     init(hex: String) {
@@ -133,22 +142,34 @@ extension Color {
         Scanner(string: hex).scanHexInt64(&int)
         let a, r, g, b: UInt64
         switch hex.count {
-        case 3:
-            (a, r, g, b) = (255, (int >> 8) * 17, (int >> 4 & 0xF) * 17, (int & 0xF) * 17)
-        case 6:
-            (a, r, g, b) = (255, int >> 16, int >> 8 & 0xFF, int & 0xFF)
-        case 8:
-            (a, r, g, b) = (int >> 24, int >> 16 & 0xFF, int >> 8 & 0xFF, int & 0xFF)
+        case 3:  (a, r, g, b) = (255, (int >> 8) * 17, (int >> 4 & 0xF) * 17, (int & 0xF) * 17)
+        case 6:  (a, r, g, b) = (255, int >> 16, int >> 8 & 0xFF, int & 0xFF)
+        case 8:  (a, r, g, b) = (int >> 24, int >> 16 & 0xFF, int >> 8 & 0xFF, int & 0xFF)
         default:
+            assert(false, "Invalid hex color string: \(hex)")
             (a, r, g, b) = (255, 0, 0, 0)
         }
+        self.init(.sRGB,
+                  red:     Double(r) / 255,
+                  green:   Double(g) / 255,
+                  blue:    Double(b) / 255,
+                  opacity: Double(a) / 255)
+    }
+}
 
-        self.init(
-            .sRGB,
-            red: Double(r) / 255,
-            green: Double(g) / 255,
-            blue:  Double(b) / 255,
-            opacity: Double(a) / 255
-        )
+// MARK: - DEBUG font registration check
+
+extension TypographyTokens {
+    /// Call once at app launch in DEBUG builds to confirm all custom fonts loaded correctly.
+    static func assertCustomFontsLoaded() {
+#if DEBUG
+        let required = ["Inter-Regular", "JetBrainsMono-Regular", "InstrumentSerif-Italic"]
+        for name in required {
+            assert(
+                UIFont(name: name, size: 12) != nil,
+                "Custom font '\(name)' not found. Ensure it is bundled under Resources/Fonts/ and declared in UIAppFonts."
+            )
+        }
+#endif
     }
 }

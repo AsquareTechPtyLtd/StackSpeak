@@ -1,17 +1,24 @@
 import SwiftUI
 import SwiftData
+import OSLog
 
 struct StackSelectionView: View {
     @Environment(\.theme) private var theme
+    @Environment(\.userProgress) private var userProgress
     @Environment(\.modelContext) private var modelContext
-    @Query private var userProgressList: [UserProgress]
+
+    private let logger = Logger(subsystem: "com.stackspeak.ios", category: "Onboarding")
 
     @Binding var showOnboarding: Bool
 
-    @State private var selectedStacks: Set<WordStack> = []
+    @State private var selectedOptionalStacks: Set<WordStack> = []
 
-    var userProgress: UserProgress? {
-        userProgressList.first
+    private var mandatoryStacks: [WordStack] {
+        Array(WordStack.mandatoryStacks(for: 1)).sorted { $0.displayName < $1.displayName }
+    }
+
+    private var optionalStacks: [WordStack] {
+        Array(WordStack.availableOptionalStacks(for: 1)).sorted { $0.displayName < $1.displayName }
     }
 
     var body: some View {
@@ -19,13 +26,13 @@ struct StackSelectionView: View {
             theme.colors.bg.ignoresSafeArea()
 
             VStack(spacing: 0) {
-                headerSection
-
                 ScrollView {
                     VStack(spacing: theme.spacing.lg) {
+                        headerSection
                         mandatoryStacksSection
                         optionalStacksSection
                     }
+                    .frame(maxWidth: 720)
                     .padding(theme.spacing.lg)
                 }
 
@@ -36,22 +43,20 @@ struct StackSelectionView: View {
 
     private var headerSection: some View {
         VStack(alignment: .leading, spacing: theme.spacing.md) {
-            Text("Choose Your Learning Path")
+            Text("onboarding.stacks.title")
                 .font(TypographyTokens.title1)
                 .foregroundColor(theme.colors.ink)
 
-            Text("Core stacks are essential fundamentals. Add optional stacks to specialize your learning.")
+            Text("onboarding.stacks.description")
                 .font(TypographyTokens.body)
                 .foregroundColor(theme.colors.inkMuted)
         }
-        .padding(theme.spacing.lg)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(theme.colors.surface)
     }
 
     private var mandatoryStacksSection: some View {
         VStack(alignment: .leading, spacing: theme.spacing.md) {
-            Text("Core Stacks (Level 1)")
+            Text("onboarding.stacks.coreSection")
                 .font(TypographyTokens.caption)
                 .foregroundColor(theme.colors.inkFaint)
                 .textCase(.uppercase)
@@ -59,13 +64,8 @@ struct StackSelectionView: View {
                 .padding(.horizontal, theme.spacing.sm)
 
             VStack(spacing: theme.spacing.sm) {
-                ForEach(Array(WordStack.mandatoryStacks(for: 1)).sorted(by: { $0.displayName < $1.displayName })) { stack in
-                    StackCard(
-                        stack: stack,
-                        isSelected: true,
-                        isMandatory: true,
-                        onToggle: {}
-                    )
+                ForEach(mandatoryStacks) { stack in
+                    StackCard(stack: stack, isSelected: true, isMandatory: true, onToggle: {})
                 }
             }
         }
@@ -73,7 +73,7 @@ struct StackSelectionView: View {
 
     private var optionalStacksSection: some View {
         VStack(alignment: .leading, spacing: theme.spacing.md) {
-            Text("Optional Stacks (Level 1)")
+            Text("onboarding.stacks.optionalSection")
                 .font(TypographyTokens.caption)
                 .foregroundColor(theme.colors.inkFaint)
                 .textCase(.uppercase)
@@ -81,10 +81,10 @@ struct StackSelectionView: View {
                 .padding(.horizontal, theme.spacing.sm)
 
             VStack(spacing: theme.spacing.sm) {
-                ForEach(Array(WordStack.availableOptionalStacks(for: 1)).sorted(by: { $0.displayName < $1.displayName })) { stack in
+                ForEach(optionalStacks) { stack in
                     StackCard(
                         stack: stack,
-                        isSelected: selectedStacks.contains(stack),
+                        isSelected: selectedOptionalStacks.contains(stack),
                         isMandatory: false,
                         onToggle: { toggleStack(stack) }
                     )
@@ -95,9 +95,9 @@ struct StackSelectionView: View {
 
     private var continueButton: some View {
         Button(action: saveAndContinue) {
-            Text("Continue")
+            Text("onboarding.stacks.continue")
                 .font(TypographyTokens.headline)
-                .foregroundColor(.white)
+                .foregroundColor(theme.colors.accentText)
                 .frame(maxWidth: .infinity)
                 .padding(.vertical, theme.spacing.lg)
                 .background(theme.colors.accent)
@@ -108,19 +108,27 @@ struct StackSelectionView: View {
     }
 
     private func toggleStack(_ stack: WordStack) {
-        if selectedStacks.contains(stack) {
-            selectedStacks.remove(stack)
+        if selectedOptionalStacks.contains(stack) {
+            selectedOptionalStacks.remove(stack)
         } else {
-            selectedStacks.insert(stack)
+            selectedOptionalStacks.insert(stack)
         }
     }
 
     private func saveAndContinue() {
         guard let progress = userProgress else { return }
 
-        progress.selectedStacks = Set(selectedStacks.map { $0.rawValue })
-        try? modelContext.save()
+        // Always include mandatory stacks — the user cannot deselect them.
+        let mandatoryRawValues = Set(WordStack.mandatoryStacks(for: progress.level).map { $0.rawValue })
+        let optionalRawValues = Set(selectedOptionalStacks.map { $0.rawValue })
+        progress.selectedStacks = mandatoryRawValues.union(optionalRawValues)
+        progress.didCompleteOnboarding = true
 
+        do {
+            try modelContext.save()
+        } catch {
+            logger.error("Failed to save stack selection: \(error.localizedDescription)")
+        }
         showOnboarding = false
     }
 }
@@ -134,8 +142,21 @@ struct StackCard: View {
     let onToggle: () -> Void
 
     var body: some View {
-        Button(action: isMandatory ? {} : onToggle) {
-            HStack(spacing: theme.spacing.md) {
+        Group {
+            if isMandatory {
+                cardContent
+            } else {
+                Button(action: onToggle) { cardContent }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel(stack.displayName)
+                    .accessibilityValue(isSelected ? "selected" : "not selected")
+                    .accessibilityAddTraits(.isButton)
+            }
+        }
+    }
+
+    private var cardContent: some View {
+        HStack(spacing: theme.spacing.md) {
                 Image(systemName: stack.icon)
                     .font(.system(size: 24))
                     .foregroundColor(isSelected ? theme.colors.accent : theme.colors.inkMuted)
@@ -150,7 +171,7 @@ struct StackCard: View {
                             .foregroundColor(theme.colors.ink)
 
                         if isMandatory {
-                            Text("REQUIRED")
+                            Text("onboarding.stacks.required")
                                 .font(TypographyTokens.caption)
                                 .foregroundColor(theme.colors.accent)
                                 .padding(.horizontal, theme.spacing.xs)
@@ -181,8 +202,6 @@ struct StackCard: View {
                 RoundedRectangle(cornerRadius: 12)
                     .stroke(isSelected ? theme.colors.accent : theme.colors.line, lineWidth: isSelected ? 2 : 1)
             )
-        }
-        .buttonStyle(.plain)
-        .disabled(isMandatory)
     }
 }
+

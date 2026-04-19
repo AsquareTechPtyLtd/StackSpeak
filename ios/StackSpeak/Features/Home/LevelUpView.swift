@@ -1,10 +1,13 @@
 import SwiftUI
 import SwiftData
+import OSLog
 
 struct LevelUpView: View {
     @Environment(\.theme) private var theme
     @Environment(\.dismiss) private var dismiss
     @Environment(\.modelContext) private var modelContext
+
+    private let logger = Logger(subsystem: "com.stackspeak.ios", category: "LevelUp")
 
     let newLevel: Int
     let userProgress: UserProgress
@@ -53,19 +56,21 @@ struct LevelUpView: View {
                 .foregroundColor(theme.colors.accent)
 
             if let levelDef = levelDefinition {
-                VStack(spacing: theme.spacing.xs) {
-                    Text("You're now a")
-                        .font(TypographyTokens.title2)
+                VStack(spacing: theme.spacing.md) {
+                    Text("levelUp.youAreNow")
+                        .font(TypographyTokens.title3)
                         .foregroundColor(theme.colors.inkMuted)
+                        .multilineTextAlignment(.center)
 
                     Text(levelDef.title)
                         .font(TypographyTokens.largeTitle)
                         .foregroundColor(theme.colors.ink)
                         .bold()
 
-                    Text("Level \(newLevel)")
-                        .font(TypographyTokens.headline)
-                        .foregroundColor(theme.colors.accent)
+                    Text(levelDef.description)
+                        .font(TypographyTokens.callout)
+                        .foregroundColor(theme.colors.inkMuted)
+                        .multilineTextAlignment(.center)
                 }
             }
         }
@@ -75,11 +80,11 @@ struct LevelUpView: View {
     private var mandatoryStacksSection: some View {
         VStack(alignment: .leading, spacing: theme.spacing.md) {
             VStack(alignment: .leading, spacing: theme.spacing.xs) {
-                Text("New Core Stacks")
+                Text("levelUp.newCoreStacks.title")
                     .font(TypographyTokens.headline)
                     .foregroundColor(theme.colors.ink)
 
-                Text("These stacks have been added to your learning path")
+                Text("levelUp.newCoreStacks.subtitle")
                     .font(TypographyTokens.callout)
                     .foregroundColor(theme.colors.inkMuted)
             }
@@ -95,11 +100,11 @@ struct LevelUpView: View {
     private var optionalStacksSection: some View {
         VStack(alignment: .leading, spacing: theme.spacing.md) {
             VStack(alignment: .leading, spacing: theme.spacing.xs) {
-                Text("New Optional Stacks")
+                Text("levelUp.newOptionalStacks.title")
                     .font(TypographyTokens.headline)
                     .foregroundColor(theme.colors.ink)
 
-                Text("Choose specializations that match your goals")
+                Text("levelUp.newOptionalStacks.subtitle")
                     .font(TypographyTokens.callout)
                     .foregroundColor(theme.colors.inkMuted)
             }
@@ -119,9 +124,9 @@ struct LevelUpView: View {
 
     private var continueButton: some View {
         Button(action: saveAndContinue) {
-            Text("Continue")
+            Text("levelUp.continue")
                 .font(TypographyTokens.headline)
-                .foregroundColor(.white)
+                .foregroundColor(theme.colors.accentText)
                 .frame(maxWidth: .infinity)
                 .padding(.vertical, theme.spacing.lg)
                 .background(theme.colors.accent)
@@ -139,7 +144,11 @@ struct LevelUpView: View {
 
     private func saveAndContinue() {
         userProgress.selectedStacks.formUnion(selectedOptionalStacks.map { $0.rawValue })
-        try? modelContext.save()
+        do {
+            try modelContext.save()
+        } catch {
+            logger.error("Failed to save level-up stack selection: \(error.localizedDescription)")
+        }
         dismiss()
     }
 }
@@ -194,6 +203,5 @@ struct StackUnlockCard: View {
             .cornerRadius(8)
         }
         .buttonStyle(.plain)
-        .disabled(isMandatory)
     }
 }

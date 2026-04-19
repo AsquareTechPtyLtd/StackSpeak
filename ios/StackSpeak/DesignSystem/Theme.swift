@@ -4,49 +4,39 @@ import SwiftUI
 final class ThemeManager {
     var preference: ThemePreference = .system
     var density: DensityPreference = .roomy
+    /// Set by the root view via `.onChange(of: colorScheme)` so `colors` can respond to system changes.
+    var systemColorScheme: ColorScheme = .light
 
     var colors: ColorTokens {
-        switch effectiveColorScheme {
-        case .light:
-            return .light
-        case .dark:
-            return .dark
+        switch preference {
+        case .system: return systemColorScheme == .dark ? .dark : .light
+        case .light:  return .light
+        case .dark:   return .dark
         }
     }
 
     var spacing = SpacingTokens()
-    var typography = TypographyTokens.self
-
-    private var effectiveColorScheme: ColorScheme {
-        switch preference {
-        case .system:
-            return .light
-        case .light:
-            return .light
-        case .dark:
-            return .dark
-        }
-    }
 
     func resolvedColorScheme(with systemScheme: ColorScheme) -> ColorScheme {
         switch preference {
-        case .system:
-            return systemScheme
-        case .light:
-            return .light
-        case .dark:
-            return .dark
+        case .system: return systemScheme
+        case .light:  return .light
+        case .dark:   return .dark
         }
     }
 
     func colors(for colorScheme: ColorScheme) -> ColorTokens {
-        colorScheme == .light ? .light : .dark
+        colorScheme == .dark ? .dark : .light
     }
 }
 
 struct ThemeKey: EnvironmentKey {
-    static let defaultValue = ThemeManager()
+    // Default ThemeManager for previews and fallback contexts.
+    // Real ThemeManager is injected at app root.
+    static let defaultValue: ThemeManager = ThemeManager()
 }
+
+extension ThemeManager: @unchecked Sendable {}
 
 extension EnvironmentValues {
     var theme: ThemeManager {

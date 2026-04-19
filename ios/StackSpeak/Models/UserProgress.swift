@@ -13,6 +13,13 @@ final class UserProgress {
     var bookmarkedWordIds: Set<UUID>
     var installDate: Date
     var shuffleSeed: UUID
+    /// Cursor position in the deterministic word queue. Advances after each daily set is generated.
+    var wordQueueCursor: Int
+    /// Denormalized cache of word IDs that have ≥2 correct assessment answers.
+    /// Updated incrementally in ProgressService to avoid O(n) scans on every render.
+    var wordsWithTwoCorrectIds: Set<UUID>
+    /// Set when the user finishes onboarding (or skips it). Used to detect first-launch.
+    var didCompleteOnboarding: Bool
 
     var notificationEnabled: Bool
     var notificationTime: Date?
@@ -33,7 +40,17 @@ final class UserProgress {
     }
 
     var wordsAssessedCorrectlyTwice: Int {
-        wordsWithTwoCorrectAssessments().count
+        wordsWithTwoCorrectIds.count
+    }
+
+    /// Returns the streak to display, accounting for whether the streak is still active.
+    /// A streak that hasn't been extended today or yesterday is shown as 0.
+    var displayedCurrentStreak: Int {
+        guard let lastCompleted = lastCompletedDate else { return 0 }
+        let today = Calendar.current.startOfDay(for: Date())
+        let last = Calendar.current.startOfDay(for: lastCompleted)
+        let days = Calendar.current.dateComponents([.day], from: last, to: today).day ?? 0
+        return days > 1 ? 0 : currentStreak
     }
 
     init() {
@@ -47,6 +64,9 @@ final class UserProgress {
         self.bookmarkedWordIds = []
         self.installDate = Date()
         self.shuffleSeed = UUID()
+        self.wordQueueCursor = 0
+        self.wordsWithTwoCorrectIds = []
+        self.didCompleteOnboarding = false
         self.notificationEnabled = false
         self.notificationTime = nil
         self.secondReminderEnabled = false
@@ -61,7 +81,9 @@ final class UserProgress {
 
     func addMandatoryStacks(for level: Int) {
         let newMandatory = WordStack.mandatoryStacks(for: level)
-        selectedStacks.formUnion(newMandatory.map { $0.rawValue })
+        var updated = selectedStacks
+        updated.formUnion(newMandatory.map { $0.rawValue })
+        selectedStacks = updated
     }
 }
 
@@ -82,7 +104,7 @@ final class PracticedSentence {
 
 @Model
 final class ReviewState {
-    @Attribute(.unique) var wordId: UUID
+    var wordId: UUID
     var easinessFactor: Double
     var interval: Int
     var repetitions: Int
@@ -147,43 +169,28 @@ extension UserProgress {
     }
 
     func canAttemptAssessment(for wordId: UUID) -> Bool {
-        guard let lastAttempt = assessmentResults
+        let lastAttempt = assessmentResults
             .filter({ $0.wordId == wordId })
-            .sorted(by: { $0.attemptedAt > $1.attemptedAt })
-            .first else {
-            return true
-        }
+            .max(by: { $0.attemptedAt < $1.attemptedAt })
 
-        if lastAttempt.isCorrect {
-            return true
-        }
+        guard let lastAttempt else { return true }
+        if lastAttempt.isCorrect { return true }
 
-        let hoursSinceAttempt = Calendar.current.dateComponents([.hour], from: lastAttempt.attemptedAt, to: Date()).hour ?? 0
-        return hoursSinceAttempt >= 24
+        // Use exact seconds comparison to avoid Calendar timezone edge cases
+        let secondsSince = Date().timeIntervalSince(lastAttempt.attemptedAt)
+        return secondsSince >= 86400  // 24 × 60 × 60
     }
 
-    func wordsWithTwoCorrectAssessments() -> Set<UUID> {
+    /// Rebuilds `wordsWithTwoCorrectIds` from raw results. Used for migration / testing only.
+    /// Normal updates happen incrementally in ProgressService.recordAssessmentResult.
+    func rebuildTwoCorrectCache() {
         let wordCorrectCounts = Dictionary(grouping: assessmentResults.filter { $0.isCorrect }) { $0.wordId }
             .mapValues { $0.count }
-
-        return Set(wordCorrectCounts.filter { $0.value >= 2 }.keys)
+        wordsWithTwoCorrectIds = Set(wordCorrectCounts.filter { $0.value >= 2 }.keys)
     }
 
     func wordsEligibleForAssessment() -> Set<UUID> {
-        wordsPracticedIds.subtracting(wordsWithTwoCorrectAssessments())
-    }
-}
-
-@Model
-final class AssessmentAttempt {
-    @Attribute(.unique) var wordId: UUID
-    var lastAttemptDate: Date?
-    var correctCount: Int
-
-    init(wordId: UUID) {
-        self.wordId = wordId
-        self.lastAttemptDate = nil
-        self.correctCount = 0
+        wordsPracticedIds.subtracting(wordsWithTwoCorrectIds)
     }
 }
 

@@ -1,17 +1,12 @@
 import SwiftUI
-import SwiftData
 
 struct LibraryView: View {
     @Environment(\.theme) private var theme
-    @Environment(\.modelContext) private var modelContext
-    @Query private var userProgressList: [UserProgress]
+    @Environment(\.services) private var services
+    @Environment(\.userProgress) private var userProgress
 
-    @StateObject private var viewModel = LibraryViewModel()
+    @State private var viewModel = LibraryViewModel()
     @State private var searchText = ""
-
-    var userProgress: UserProgress? {
-        userProgressList.first
-    }
 
     var body: some View {
         NavigationStack {
@@ -28,18 +23,24 @@ struct LibraryView: View {
                             wordsListSection
                         }
                     }
+                    .frame(maxWidth: 720)
                     .padding(theme.spacing.lg)
                 }
             }
-            .navigationTitle("Library")
+            .navigationTitle("library.navTitle")
             .navigationBarTitleDisplayMode(.large)
-            .searchable(text: $searchText, prompt: "Search words")
+            .searchable(text: $searchText, prompt: "library.search.prompt")
             .onChange(of: searchText) { _, newValue in
                 viewModel.searchQuery = newValue
-                performSearch()
             }
             .task {
-                performSearch()
+                await loadAllWords()
+            }
+            .onChange(of: userProgress?.masteredWordIds) { _, newIds in
+                viewModel.masteredIds = newIds ?? []
+            }
+            .onChange(of: userProgress?.bookmarkedWordIds) { _, newIds in
+                viewModel.bookmarkedIds = newIds ?? []
             }
         }
     }
@@ -48,16 +49,16 @@ struct LibraryView: View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: theme.spacing.sm) {
                 FilterChip(
-                    title: "All",
+                    title: String(localized: "library.filter.all"),
                     isSelected: viewModel.selectedStack == nil,
-                    action: { viewModel.selectedStack = nil; performSearch() }
+                    action: { viewModel.selectedStack = nil }
                 )
 
                 ForEach(WordStack.allCases) { stack in
                     FilterChip(
                         title: stack.displayName,
                         isSelected: viewModel.selectedStack == stack,
-                        action: { viewModel.selectedStack = stack; performSearch() }
+                        action: { viewModel.selectedStack = stack }
                     )
                 }
             }
@@ -69,12 +70,13 @@ struct LibraryView: View {
             Image(systemName: "books.vertical")
                 .font(.system(size: 64, weight: .light))
                 .foregroundColor(theme.colors.inkFaint)
+                .accessibilityHidden(true)
 
-            Text("No words found")
+            Text("library.empty.title")
                 .font(TypographyTokens.title2)
                 .foregroundColor(theme.colors.ink)
 
-            Text("Try adjusting your search or filters.")
+            Text("library.empty.message")
                 .font(TypographyTokens.body)
                 .foregroundColor(theme.colors.inkMuted)
         }
@@ -85,7 +87,7 @@ struct LibraryView: View {
         LazyVStack(spacing: theme.spacing.md) {
             ForEach(viewModel.filteredWords) { word in
                 if let progress = userProgress {
-                    NavigationLink(destination: WordDetailView(word: word, userProgress: progress)) {
+                    NavigationLink(destination: NavigationStack { WordDetailView(word: word, userProgress: progress) }) {
                         WordRowView(word: word, userProgress: progress)
                     }
                     .buttonStyle(.plain)
@@ -94,14 +96,18 @@ struct LibraryView: View {
         }
     }
 
-    private func performSearch() {
-        let filters = WordFilters(
-            stack: viewModel.selectedStack,
-            level: nil
-        )
-
-        if let words = try? WordService(modelContext: modelContext).fetchWords(matching: searchText, filters: filters) {
-            viewModel.filteredWords = words
+    private func loadAllWords() async {
+        guard let progress = userProgress, let services else { return }
+        // Load all words once - filtering happens via computed property
+        if let words = try? services.word.fetchWords(matching: "", filters: WordFilters(
+            stack: nil,
+            level: nil,
+            masteredIds: progress.masteredWordIds,
+            bookmarkedIds: progress.bookmarkedWordIds
+        )) {
+            viewModel.allWords = words
+            viewModel.masteredIds = progress.masteredWordIds
+            viewModel.bookmarkedIds = progress.bookmarkedWordIds
         }
     }
 }
@@ -123,6 +129,7 @@ struct FilterChip: View {
                 .background(isSelected ? theme.colors.accent : theme.colors.surface)
                 .cornerRadius(20)
         }
+        .accessibilityAddTraits(isSelected ? [.isSelected] : [])
     }
 }
 
@@ -132,17 +139,9 @@ struct WordRowView: View {
     let word: Word
     let userProgress: UserProgress
 
-    var isPracticed: Bool {
-        userProgress.wordsPracticedIds.contains(word.id)
-    }
-
-    var isMastered: Bool {
-        userProgress.masteredWordIds.contains(word.id)
-    }
-
-    var isBookmarked: Bool {
-        userProgress.bookmarkedWordIds.contains(word.id)
-    }
+    var isPracticed: Bool { userProgress.wordsPracticedIds.contains(word.id) }
+    var isMastered: Bool  { userProgress.masteredWordIds.contains(word.id) }
+    var isBookmarked: Bool { userProgress.bookmarkedWordIds.contains(word.id) }
 
     var body: some View {
         HStack(alignment: .top, spacing: theme.spacing.md) {
@@ -156,12 +155,14 @@ struct WordRowView: View {
                         Image(systemName: "checkmark.circle.fill")
                             .font(.system(size: 14))
                             .foregroundColor(theme.colors.good)
+                            .accessibilityLabel(String(localized: "a11y.mastered"))
                     }
 
                     if isBookmarked {
                         Image(systemName: "bookmark.fill")
                             .font(.system(size: 12))
                             .foregroundColor(theme.colors.accent)
+                            .accessibilityLabel(String(localized: "a11y.bookmarked"))
                     }
                 }
 
@@ -177,6 +178,7 @@ struct WordRowView: View {
 
                     Text("·")
                         .foregroundColor(theme.colors.inkFaint)
+                        .accessibilityHidden(true)
 
                     Text("L\(word.unlockLevel)")
                         .font(TypographyTokens.mono)
@@ -189,9 +191,23 @@ struct WordRowView: View {
             Image(systemName: "chevron.right")
                 .font(.system(size: 14))
                 .foregroundColor(theme.colors.inkFaint)
+                .accessibilityHidden(true)
         }
         .padding(theme.spacing.rowPadding(density: theme.density))
         .background(theme.colors.surface)
         .cornerRadius(8)
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("\(word.word). \(word.shortDefinition).\(isMastered ? " " + String(localized: "a11y.mastered") + "." : "")\(isBookmarked ? " " + String(localized: "a11y.bookmarked") + "." : "")")
     }
+}
+
+#Preview("Library - Light") {
+    LibraryView()
+        .withTheme(ThemeManager())
+}
+
+#Preview("Library - Dark") {
+    LibraryView()
+        .withTheme(ThemeManager())
+        .preferredColorScheme(.dark)
 }

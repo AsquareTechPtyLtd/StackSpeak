@@ -2,7 +2,7 @@ import Foundation
 import UserNotifications
 
 @MainActor
-final class NotificationService {
+final class NotificationService: NotificationRepository {
     static let shared = NotificationService()
 
     private let notificationCenter = UNUserNotificationCenter.current()
@@ -15,7 +15,7 @@ final class NotificationService {
         "Ready to learn? Today's words await."
     ]
 
-    private init() {}
+    init() {}
 
     func requestAuthorization() async throws -> Bool {
         let granted = try await notificationCenter.requestAuthorization(options: [.alert, .badge, .sound])
@@ -27,20 +27,32 @@ final class NotificationService {
         return settings.authorizationStatus
     }
 
-    func scheduleDailyNotification(at time: Date, isPrimary: Bool = true) async throws {
-        let content = UNMutableNotificationContent()
-        content.title = "StackSpeak"
-        content.body = notificationMessages.randomElement() ?? notificationMessages[0]
-        content.sound = .default
-        content.badge = 1
+    func scheduleDailyNotifications(at time: Date, isPrimary: Bool = true, count: Int = 7) async throws {
+        let calendar = Calendar.current
+        let timeComponents = calendar.dateComponents([.hour, .minute], from: time)
+        let prefix = isPrimary ? "daily-reminder" : "second-reminder"
 
-        let components = Calendar.current.dateComponents([.hour, .minute], from: time)
-        let trigger = UNCalendarNotificationTrigger(dateMatching: components, repeats: true)
+        // Schedule N one-shot notifications, rotating through messages
+        for dayOffset in 0..<count {
+            guard let targetDate = calendar.date(byAdding: .day, value: dayOffset, to: Date()),
+                  let scheduledDate = calendar.date(bySettingHour: timeComponents.hour ?? 9,
+                                                     minute: timeComponents.minute ?? 0,
+                                                     second: 0,
+                                                     of: targetDate) else { continue }
 
-        let identifier = isPrimary ? "daily-reminder" : "second-reminder"
-        let request = UNNotificationRequest(identifier: identifier, content: content, trigger: trigger)
+            let dateString = DateFormatter.yyyyMMdd.string(from: scheduledDate)
+            let content = UNMutableNotificationContent()
+            content.title = "StackSpeak"
+            content.body = notificationMessages[dayOffset % notificationMessages.count]
+            content.sound = .default
+            content.badge = 1
 
-        try await notificationCenter.add(request)
+            let triggerDate = calendar.dateComponents([.year, .month, .day, .hour, .minute], from: scheduledDate)
+            let trigger = UNCalendarNotificationTrigger(dateMatching: triggerDate, repeats: false)
+            let request = UNNotificationRequest(identifier: "\(prefix)-\(dateString)", content: content, trigger: trigger)
+
+            try await notificationCenter.add(request)
+        }
     }
 
     func cancelNotification(identifier: String) {
@@ -55,15 +67,30 @@ final class NotificationService {
         cancelAllNotifications()
 
         if let primary = primary {
-            try await scheduleDailyNotification(at: primary, isPrimary: true)
+            try await scheduleDailyNotifications(at: primary, isPrimary: true)
         }
 
         if let secondary = secondary {
-            try await scheduleDailyNotification(at: secondary, isPrimary: false)
+            try await scheduleDailyNotifications(at: secondary, isPrimary: false)
         }
+    }
+
+    func getPendingNotificationCount() async -> Int {
+        let pending = await notificationCenter.pendingNotificationRequests()
+        return pending.count
     }
 
     func resetBadge() {
         UNUserNotificationCenter.current().setBadgeCount(0)
     }
+}
+
+// MARK: - Helpers
+
+private extension DateFormatter {
+    static let yyyyMMdd: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "yyyy-MM-dd"
+        return formatter
+    }()
 }

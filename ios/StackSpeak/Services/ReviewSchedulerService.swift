@@ -1,43 +1,29 @@
 import Foundation
 import SwiftData
+import OSLog
 
 @MainActor
-final class ReviewSchedulerService {
+final class ReviewSchedulerService: ReviewRepository {
     private let modelContext: ModelContext
+    private let logger = Logger(subsystem: "com.stackspeak.ios", category: "ReviewSchedulerService")
 
     init(modelContext: ModelContext) {
         self.modelContext = modelContext
     }
 
-    func fetchDueReviews(for userProgress: UserProgress) -> [ReviewState] {
-        let now = Date()
-        return userProgress.reviewStates
-            .filter { $0.dueDate <= now }
-            .sorted { $0.dueDate < $1.dueDate }
-    }
-
     func recordReview(reviewState: ReviewState, quality: ReviewQuality) throws {
         let qualityValue = quality.rawValue
         reviewState.updateAfterReview(quality: qualityValue)
-        try modelContext.save()
+        do {
+            try modelContext.save()
+        } catch {
+            logger.error("Failed to save review: \(error.localizedDescription)")
+            throw error
+        }
     }
 
-    func getReviewStats(for userProgress: UserProgress) -> ReviewStats {
-        let now = Date()
-        let dueCount = userProgress.reviewStates.filter { $0.dueDate <= now }.count
-        let totalCount = userProgress.reviewStates.count
-
-        let reviewedToday = userProgress.reviewStates.filter { state in
-            guard let lastReviewed = state.lastReviewedAt else { return false }
-            return Calendar.current.isDateInToday(lastReviewed)
-        }.count
-
-        return ReviewStats(
-            dueCount: dueCount,
-            totalCount: totalCount,
-            reviewedToday: reviewedToday
-        )
-    }
+    // Note: fetchDueReviews and getReviewStats were removed as dead code.
+    // ReviewViewModel implements these inline. Future: consolidate logic here.
 }
 
 enum ReviewQuality: Int {
@@ -45,8 +31,4 @@ enum ReviewQuality: Int {
     case good = 4
 }
 
-struct ReviewStats {
-    let dueCount: Int
-    let totalCount: Int
-    let reviewedToday: Int
-}
+// ReviewStats was removed - unused after deleting getReviewStats()

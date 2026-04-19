@@ -1,9 +1,10 @@
 import SwiftUI
 
+/// Presented as a sheet from WordCardView and as a pushed screen from LibraryView.
+/// No inner NavigationStack — the caller is responsible for wrapping in one if needed.
 struct WordDetailView: View {
     @Environment(\.theme) private var theme
-    @Environment(\.modelContext) private var modelContext
-    @Environment(\.dismiss) private var dismiss
+    @Environment(\.services) private var services
 
     let word: Word
     let userProgress: UserProgress
@@ -24,17 +25,13 @@ struct WordDetailView: View {
                 ScrollView {
                     VStack(alignment: .leading, spacing: theme.spacing.xl) {
                         headerSection
-
                         definitionsSection
-
                         contextSection
-
                         exampleSentenceSection
-
                         codeExampleSection
-
                         etymologySection
                     }
+                    .frame(maxWidth: 720)
                     .padding(theme.spacing.lg)
                 }
             }
@@ -47,11 +44,13 @@ struct WordDetailView: View {
                             Image(systemName: isBookmarked ? "bookmark.fill" : "bookmark")
                                 .foregroundColor(theme.colors.accent)
                         }
+                        .accessibilityLabel(isBookmarked ? "Remove bookmark" : "Bookmark \(word.word)")
 
                         Button(action: toggleMastered) {
                             Image(systemName: isMastered ? "checkmark.circle.fill" : "checkmark.circle")
                                 .foregroundColor(isMastered ? theme.colors.good : theme.colors.inkMuted)
                         }
+                        .accessibilityLabel(isMastered ? "Unmark as mastered" : "Mark \(word.word) as mastered")
                     }
                 }
             }
@@ -80,12 +79,10 @@ struct WordDetailView: View {
 
     private var definitionsSection: some View {
         VStack(alignment: .leading, spacing: theme.spacing.md) {
-            SectionHeader(title: "Definition")
-
+            SectionHeader(title: "wordDetail.section.definition")
             Text(word.shortDefinition)
                 .font(TypographyTokens.body)
                 .foregroundColor(theme.colors.ink)
-
             Text(word.longDefinition)
                 .font(TypographyTokens.callout)
                 .foregroundColor(theme.colors.inkMuted)
@@ -97,8 +94,7 @@ struct WordDetailView: View {
 
     private var contextSection: some View {
         VStack(alignment: .leading, spacing: theme.spacing.md) {
-            SectionHeader(title: "Tech Context")
-
+            SectionHeader(title: "wordDetail.section.techContext")
             Text(word.techContext)
                 .font(TypographyTokens.callout)
                 .foregroundColor(theme.colors.ink)
@@ -110,8 +106,7 @@ struct WordDetailView: View {
 
     private var exampleSentenceSection: some View {
         VStack(alignment: .leading, spacing: theme.spacing.md) {
-            SectionHeader(title: "Example")
-
+            SectionHeader(title: "wordDetail.section.example")
             Text(word.exampleSentence)
                 .font(TypographyTokens.body)
                 .foregroundColor(theme.colors.ink)
@@ -124,8 +119,7 @@ struct WordDetailView: View {
 
     private var codeExampleSection: some View {
         VStack(alignment: .leading, spacing: theme.spacing.md) {
-            SectionHeader(title: "Code Example")
-
+            SectionHeader(title: "wordDetail.section.code")
             ScrollView(.horizontal, showsIndicators: false) {
                 Text(word.codeExampleCode)
                     .font(TypographyTokens.code)
@@ -134,6 +128,7 @@ struct WordDetailView: View {
             }
             .background(theme.colors.codeBg)
             .cornerRadius(8)
+            .accessibilityLabel("Code example in \(word.codeExampleLanguage)")
         }
         .padding(theme.spacing.cardPadding(density: theme.density))
         .background(theme.colors.surface)
@@ -142,8 +137,7 @@ struct WordDetailView: View {
 
     private var etymologySection: some View {
         VStack(alignment: .leading, spacing: theme.spacing.md) {
-            SectionHeader(title: "Etymology")
-
+            SectionHeader(title: "wordDetail.section.etymology")
             Text(word.etymology)
                 .font(TypographyTokens.etymology)
                 .foregroundColor(theme.colors.inkMuted)
@@ -154,25 +148,21 @@ struct WordDetailView: View {
     }
 
     private func toggleBookmark() {
-        let progressService = ProgressService(modelContext: modelContext)
-        progressService.toggleBookmark(word.id, userProgress: userProgress)
-        try? modelContext.save()
+        services?.progress.toggleBookmark(word.id, userProgress: userProgress)
     }
 
     private func toggleMastered() {
-        let progressService = ProgressService(modelContext: modelContext)
         if isMastered {
-            progressService.unmarkWordMastered(word.id, userProgress: userProgress)
+            services?.progress.unmarkWordMastered(word.id, userProgress: userProgress)
         } else {
-            progressService.markWordMastered(word.id, userProgress: userProgress)
+            services?.progress.markWordMastered(word.id, userProgress: userProgress)
         }
-        try? modelContext.save()
     }
 }
 
 struct SectionHeader: View {
     @Environment(\.theme) private var theme
-    let title: String
+    let title: LocalizedStringKey
 
     var body: some View {
         Text(title)

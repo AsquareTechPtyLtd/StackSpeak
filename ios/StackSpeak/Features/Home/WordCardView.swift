@@ -2,7 +2,7 @@ import SwiftUI
 
 struct WordCardView: View {
     @Environment(\.theme) private var theme
-    @Environment(\.modelContext) private var modelContext
+    @Environment(\.services) private var services
 
     let word: Word
     let isCompleted: Bool
@@ -13,36 +13,48 @@ struct WordCardView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            Button(action: { withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) { isExpanded.toggle() } }) {
-                HStack {
-                    VStack(alignment: .leading, spacing: theme.spacing.xs) {
-                        HStack {
-                            Text(word.word)
-                                .font(TypographyTokens.cardTitle(density: theme.density))
-                                .foregroundColor(theme.colors.ink)
+            // Use onTapGesture on the header instead of a wrapping Button so that
+            // NavigationLink and other interactive elements in the expanded section
+            // don't steal / suppress taps.
+            HStack {
+                VStack(alignment: .leading, spacing: theme.spacing.xs) {
+                    HStack {
+                        Text(word.word)
+                            .font(TypographyTokens.cardTitle(density: theme.density))
+                            .foregroundColor(theme.colors.ink)
 
-                            if isCompleted {
-                                Image(systemName: "checkmark.circle.fill")
-                                    .foregroundColor(theme.colors.good)
-                            }
+                        if isCompleted {
+                            Image(systemName: "checkmark.circle.fill")
+                                .foregroundColor(theme.colors.good)
+                                .accessibilityLabel(String(localized: "a11y.completed"))
                         }
-
-                        Text(word.pronunciation)
-                            .font(TypographyTokens.mono)
-                            .foregroundColor(theme.colors.inkMuted)
-
-                        Text("L\(word.unlockLevel) · \(LevelDefinition.definition(for: word.unlockLevel)?.title ?? "")")
-                            .font(TypographyTokens.caption)
-                            .foregroundColor(theme.colors.inkFaint)
                     }
 
-                    Spacer()
-
-                    Image(systemName: isExpanded ? "chevron.up" : "chevron.down")
+                    Text(word.pronunciation)
+                        .font(TypographyTokens.mono)
                         .foregroundColor(theme.colors.inkMuted)
+
+                    Text("L\(word.unlockLevel) · \(LevelDefinition.definition(for: word.unlockLevel)?.title ?? "")")
+                        .font(TypographyTokens.caption)
+                        .foregroundColor(theme.colors.inkFaint)
+                }
+
+                Spacer()
+
+                Image(systemName: isExpanded ? "chevron.up" : "chevron.down")
+                    .foregroundColor(theme.colors.inkMuted)
+                    .accessibilityHidden(true)
+            }
+            .contentShape(Rectangle())
+            .onTapGesture {
+                withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
+                    isExpanded.toggle()
                 }
             }
-            .buttonStyle(.plain)
+            .accessibilityElement(children: .combine)
+            .accessibilityLabel(String(localized: "a11y.wordCard.format",
+                defaultValue: "\(word.word). \(isCompleted ? String(localized: "a11y.completed") + "." : "") \(isExpanded ? String(localized: "a11y.tapToCollapse") : String(localized: "a11y.tapToExpand"))"))
+            .accessibilityAddTraits(.isButton)
 
             if isExpanded {
                 expandedContent
@@ -51,7 +63,7 @@ struct WordCardView: View {
         .padding(theme.spacing.cardPadding(density: theme.density))
         .background(theme.colors.surface)
         .cornerRadius(12)
-        .shadow(color: theme.colors.line, radius: 2, x: 0, y: 1)
+        .shadow(color: Color.black.opacity(0.08), radius: 2, x: 0, y: 1)
         .sheet(isPresented: $showDetail) {
             WordDetailView(word: word, userProgress: userProgress)
         }
@@ -69,38 +81,35 @@ struct WordCardView: View {
 
             if !isCompleted {
                 NavigationLink(destination: SentencePracticeView(word: word, userProgress: userProgress)) {
-                    Text("Practice")
+                    Text("home.wordCard.practice")
                         .font(TypographyTokens.callout.weight(.medium))
-                        .foregroundColor(.white)
+                        .foregroundColor(theme.colors.accentText)
                         .frame(maxWidth: .infinity)
                         .padding(.vertical, theme.spacing.md)
                         .background(theme.colors.accent)
                         .cornerRadius(8)
                 }
                 .buttonStyle(.plain)
+                .accessibilityLabel(String(format: String(localized: "a11y.practice.format"), word.word))
             }
 
             HStack(spacing: theme.spacing.md) {
-                Button(action: { showDetail = true }) {
-                    Text("Open")
-                        .font(TypographyTokens.callout)
-                        .foregroundColor(theme.colors.accent)
-                }
+                Button(String(localized: "home.wordCard.open")) { showDetail = true }
+                    .font(TypographyTokens.callout)
+                    .foregroundColor(theme.colors.accent)
+                    .accessibilityLabel(String(format: String(localized: "a11y.openDetail.format"), word.word))
 
                 if !userProgress.masteredWordIds.contains(word.id) {
-                    Button(action: { markAsMastered() }) {
-                        Text("I know this")
-                            .font(TypographyTokens.callout)
-                            .foregroundColor(theme.colors.inkMuted)
-                    }
+                    Button(String(localized: "home.wordCard.iKnowThis")) { markAsMastered() }
+                        .font(TypographyTokens.callout)
+                        .foregroundColor(theme.colors.inkMuted)
+                        .accessibilityLabel(String(format: String(localized: "a11y.markMastered.format"), word.word))
                 }
             }
         }
     }
 
     private func markAsMastered() {
-        let progressService = ProgressService(modelContext: modelContext)
-        progressService.markWordMastered(word.id, userProgress: userProgress)
-        try? modelContext.save()
+        services?.progress.markWordMastered(word.id, userProgress: userProgress)
     }
 }

@@ -8,61 +8,51 @@ struct FlashcardView: View {
     let onGood: () -> Void
 
     @State private var isFlipped = false
-    @State private var dragOffset: CGSize = .zero
 
     var body: some View {
         VStack(spacing: theme.spacing.xl) {
             Spacer()
 
-            cardContent
-                .frame(maxWidth: .infinity)
-                .frame(height: 400)
-                .padding(theme.spacing.xxxl)
-                .background(theme.colors.surface)
-                .cornerRadius(16)
-                .shadow(color: theme.colors.line, radius: 4, x: 0, y: 2)
-                .rotation3DEffect(
-                    .degrees(isFlipped ? 180 : 0),
-                    axis: (x: 0, y: 1, z: 0)
-                )
-                .offset(dragOffset)
-                .gesture(
-                    DragGesture()
-                        .onChanged { value in
-                            dragOffset = value.translation
-                        }
-                        .onEnded { value in
-                            withAnimation {
-                                dragOffset = .zero
-                            }
-                        }
-                )
-                .onTapGesture {
-                    withAnimation(.spring(response: 0.4, dampingFraction: 0.7)) {
-                        isFlipped.toggle()
-                    }
+            ZStack {
+                // Render both sides to avoid flicker during rotation
+                frontSide
+                    .opacity(isFlipped ? 0 : 1)
+                    .rotation3DEffect(
+                        .degrees(isFlipped ? -90 : 0),
+                        axis: (x: 0, y: 1, z: 0),
+                        perspective: 0.5
+                    )
+
+                backSide
+                    .opacity(isFlipped ? 1 : 0)
+                    .rotation3DEffect(
+                        .degrees(isFlipped ? 0 : 90),
+                        axis: (x: 0, y: 1, z: 0),
+                        perspective: 0.5
+                    )
+            }
+            .frame(maxWidth: .infinity)
+            .frame(height: 400)
+            .padding(theme.spacing.xxxl)
+            .background(theme.colors.surface)
+            .cornerRadius(16)
+            .shadow(color: Color.black.opacity(0.08), radius: 4, x: 0, y: 2)
+            .onTapGesture {
+                withAnimation(.spring(response: 0.4, dampingFraction: 0.7)) {
+                    isFlipped.toggle()
                 }
-                .padding(.horizontal, theme.spacing.xl)
+            }
+            .padding(.horizontal, theme.spacing.xl)
 
             if isFlipped {
                 actionButtons
             } else {
-                Text("Tap to flip")
+                Text("review.flashcard.tapToFlip")
                     .font(TypographyTokens.callout)
                     .foregroundColor(theme.colors.inkFaint)
             }
 
             Spacer()
-        }
-    }
-
-    @ViewBuilder
-    private var cardContent: some View {
-        if !isFlipped {
-            frontSide
-        } else {
-            backSide
-                .rotation3DEffect(.degrees(180), axis: (x: 0, y: 1, z: 0))
         }
     }
 
@@ -92,6 +82,7 @@ struct FlashcardView: View {
                 .foregroundColor(theme.colors.inkMuted)
                 .italic()
         }
+        .scaleEffect(x: -1, y: 1) // Mirror horizontally to compensate for rotation
     }
 
     private var actionButtons: some View {
@@ -100,7 +91,7 @@ struct FlashcardView: View {
                 onAgain()
                 reset()
             }) {
-                Text("Again")
+                Text("review.flashcard.again")
                     .font(TypographyTokens.headline)
                     .foregroundColor(theme.colors.warn)
                     .frame(maxWidth: .infinity)
@@ -113,7 +104,7 @@ struct FlashcardView: View {
                 onGood()
                 reset()
             }) {
-                Text("Got it")
+                Text("review.flashcard.gotIt")
                     .font(TypographyTokens.headline)
                     .foregroundColor(theme.colors.good)
                     .frame(maxWidth: .infinity)
@@ -131,3 +122,9 @@ struct FlashcardView: View {
         }
     }
 }
+
+// Preview requires a sample Word - would need mock data infrastructure
+// #Preview("Flashcard - Light") {
+//     FlashcardView(word: Word.preview, onAgain: {}, onGood: {})
+//         .withTheme(ThemeManager())
+// }

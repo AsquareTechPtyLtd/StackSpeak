@@ -9,33 +9,63 @@ struct LevelDefinition {
     static let levels: [LevelDefinition] = [
         LevelDefinition(
             level: 1,
-            title: "Intern",
+            title: "Intern Band 1",
             wordsRequiredWithTwoCorrect: 0,
             description: "Starting your vocabulary journey"
         ),
         LevelDefinition(
             level: 2,
-            title: "Junior Developer",
-            wordsRequiredWithTwoCorrect: 20,
-            description: "Building your technical vocabulary foundation"
+            title: "Intern Band 2",
+            wordsRequiredWithTwoCorrect: 15,
+            description: "Building foundational technical vocabulary"
         ),
         LevelDefinition(
             level: 3,
-            title: "Developer",
-            wordsRequiredWithTwoCorrect: 50,
-            description: "Expanding your professional communication skills"
+            title: "Junior Band 1",
+            wordsRequiredWithTwoCorrect: 35,
+            description: "Expanding your professional communication"
         ),
         LevelDefinition(
             level: 4,
-            title: "Senior Developer",
-            wordsRequiredWithTwoCorrect: 120,
-            description: "Mastering technical discourse"
+            title: "Junior Band 2",
+            wordsRequiredWithTwoCorrect: 60,
+            description: "Strengthening core technical concepts"
         ),
         LevelDefinition(
             level: 5,
-            title: "Staff Engineer",
-            wordsRequiredWithTwoCorrect: 220,
-            description: "Leading with clarity and precision"
+            title: "Mid-Level Band 1",
+            wordsRequiredWithTwoCorrect: 90,
+            description: "Mastering everyday technical discourse"
+        ),
+        LevelDefinition(
+            level: 6,
+            title: "Mid-Level Band 2",
+            wordsRequiredWithTwoCorrect: 130,
+            description: "Communicating complex technical ideas"
+        ),
+        LevelDefinition(
+            level: 7,
+            title: "Senior Band 1",
+            wordsRequiredWithTwoCorrect: 180,
+            description: "Leading technical discussions with precision"
+        ),
+        LevelDefinition(
+            level: 8,
+            title: "Senior Band 2",
+            wordsRequiredWithTwoCorrect: 240,
+            description: "Architecting solutions through clear communication"
+        ),
+        LevelDefinition(
+            level: 9,
+            title: "Staff Band 1",
+            wordsRequiredWithTwoCorrect: 310,
+            description: "Influencing technical strategy through language"
+        ),
+        LevelDefinition(
+            level: 10,
+            title: "Staff Band 2",
+            wordsRequiredWithTwoCorrect: 390,
+            description: "Setting technical direction with clarity"
         )
     ]
 

@@ -1,16 +1,20 @@
 import Foundation
 import SwiftData
+import OSLog
 
 @MainActor
-final class ProgressService {
+final class ProgressService: ProgressRepository {
     private let modelContext: ModelContext
+    private let logger = Logger(subsystem: "com.stackspeak.ios", category: "ProgressService")
 
     init(modelContext: ModelContext) {
         self.modelContext = modelContext
     }
 
     func markWordPracticed(wordId: UUID, sentence: String, inputMethod: InputMethod, userProgress: UserProgress) {
-        userProgress.wordsPracticedIds.insert(wordId)
+        var practiced = userProgress.wordsPracticedIds
+        practiced.insert(wordId)
+        userProgress.wordsPracticedIds = practiced
 
         let practicedSentence = PracticedSentence(
             wordId: wordId,
@@ -21,77 +25,102 @@ final class ProgressService {
         userProgress.practicedSentences.append(practicedSentence)
 
         if !userProgress.reviewStates.contains(where: { $0.wordId == wordId }) {
-            let reviewState = ReviewState(wordId: wordId)
-            userProgress.reviewStates.append(reviewState)
+            userProgress.reviewStates.append(ReviewState(wordId: wordId))
+        }
+
+        do {
+            try modelContext.save()
+        } catch {
+            logger.error("Failed to save word practiced: \(error.localizedDescription)")
         }
     }
 
     func markWordMastered(_ wordId: UUID, userProgress: UserProgress) {
-        userProgress.masteredWordIds.insert(wordId)
+        var mastered = userProgress.masteredWordIds
+        mastered.insert(wordId)
+        userProgress.masteredWordIds = mastered
+
+        do {
+            try modelContext.save()
+        } catch {
+            logger.error("Failed to save word mastered: \(error.localizedDescription)")
+        }
     }
 
     func unmarkWordMastered(_ wordId: UUID, userProgress: UserProgress) {
-        userProgress.masteredWordIds.remove(wordId)
+        var mastered = userProgress.masteredWordIds
+        mastered.remove(wordId)
+        userProgress.masteredWordIds = mastered
+
+        do {
+            try modelContext.save()
+        } catch {
+            logger.error("Failed to save word unmastered: \(error.localizedDescription)")
+        }
     }
 
     func toggleBookmark(_ wordId: UUID, userProgress: UserProgress) {
-        if userProgress.bookmarkedWordIds.contains(wordId) {
-            userProgress.bookmarkedWordIds.remove(wordId)
+        var bookmarked = userProgress.bookmarkedWordIds
+        if bookmarked.contains(wordId) {
+            bookmarked.remove(wordId)
         } else {
-            userProgress.bookmarkedWordIds.insert(wordId)
+            bookmarked.insert(wordId)
+        }
+        userProgress.bookmarkedWordIds = bookmarked
+
+        do {
+            try modelContext.save()
+        } catch {
+            logger.error("Failed to save bookmark toggle: \(error.localizedDescription)")
         }
     }
 
     func completeDailySet(_ dailySet: DailySet, userProgress: UserProgress) throws {
         guard dailySet.isComplete else { return }
 
-        let today = Calendar.current.startOfDay(for: Date())
-        let lastCompleted = userProgress.lastCompletedDate.map { Calendar.current.startOfDay(for: $0) }
+        // Use user's current timezone calendar for all date calculations
+        // to properly handle DST transitions and timezone changes
+        let calendar = Calendar.current
+        let now = Date()
+        let today = calendar.startOfDay(for: now)
 
-        if let lastCompleted = lastCompleted {
-            let daysBetween = Calendar.current.dateComponents([.day], from: lastCompleted, to: today).day ?? 0
+        if let lastCompleted = userProgress.lastCompletedDate {
+            // Normalize both dates to start of day in current timezone
+            let lastDay = calendar.startOfDay(for: lastCompleted)
+
+            // Calculate day difference using calendar arithmetic (handles DST)
+            let components = calendar.dateComponents([.day], from: lastDay, to: today)
+            let daysBetween = components.day ?? 0
 
             if daysBetween == 1 {
+                // Consecutive day - increment streak
                 userProgress.currentStreak += 1
             } else if daysBetween > 1 {
+                // Gap in practice - reset streak
                 userProgress.currentStreak = 1
             }
+            // daysBetween == 0: same-day completion, no streak change
+            // daysBetween < 0: shouldn't happen (time travel), treat as same-day
         } else {
+            // First ever completion
             userProgress.currentStreak = 1
         }
 
-        userProgress.lastCompletedDate = today
+        userProgress.lastCompletedDate = now
         userProgress.longestStreak = max(userProgress.longestStreak, userProgress.currentStreak)
 
         try modelContext.save()
     }
 
-    func calculateStreak(userProgress: UserProgress) -> StreakInfo {
-        let today = Calendar.current.startOfDay(for: Date())
-        let lastCompleted = userProgress.lastCompletedDate.map { Calendar.current.startOfDay(for: $0) }
-
-        guard let lastCompleted = lastCompleted else {
-            return StreakInfo(current: 0, longest: 0, isActive: false, lastCompletedDate: nil)
-        }
-
-        let daysBetween = Calendar.current.dateComponents([.day], from: lastCompleted, to: today).day ?? 0
-        let isActive = daysBetween == 0
-
-        return StreakInfo(
-            current: userProgress.currentStreak,
-            longest: userProgress.longestStreak,
-            isActive: isActive,
-            lastCompletedDate: userProgress.lastCompletedDate
-        )
-    }
-
+    /// Records an assessment result and updates the denormalized two-correct cache.
+    /// Returns the new level number if the user leveled up, or nil otherwise.
     func recordAssessmentResult(
         wordId: UUID,
         isCorrect: Bool,
         selectedAnswer: String,
         correctAnswer: String,
         userProgress: UserProgress
-    ) -> Bool {
+    ) -> Int? {
         let result = AssessmentResult(
             wordId: wordId,
             attemptedAt: Date(),
@@ -101,14 +130,35 @@ final class ProgressService {
         )
         userProgress.assessmentResults.append(result)
 
+        // Incrementally update the two-correct cache instead of rescanning all results.
+        if isCorrect {
+            let correctCount = userProgress.assessmentResults
+                .filter { $0.wordId == wordId && $0.isCorrect }.count
+            if correctCount >= 2 {
+                var updated = userProgress.wordsWithTwoCorrectIds
+                updated.insert(wordId)
+                userProgress.wordsWithTwoCorrectIds = updated
+            }
+        }
+
         let oldLevel = userProgress.level
         checkAndAdvanceLevel(userProgress: userProgress)
 
-        return userProgress.level > oldLevel
+        do {
+            try modelContext.save()
+        } catch {
+            logger.error("Failed to save assessment result: \(error.localizedDescription)")
+        }
+
+        return userProgress.level > oldLevel ? userProgress.level : nil
+    }
+
+    func getNewStacksForLevel(_ level: Int) -> (mandatory: Set<WordStack>, optional: Set<WordStack>) {
+        (WordStack.newMandatoryStacks(for: level), WordStack.newOptionalStacks(for: level))
     }
 
     private func checkAndAdvanceLevel(userProgress: UserProgress) {
-        if LevelDefinition.canAdvance(
+        while LevelDefinition.canAdvance(
             currentLevel: userProgress.level,
             wordsAssessedCorrectlyTwice: userProgress.wordsAssessedCorrectlyTwice
         ) {
@@ -116,17 +166,6 @@ final class ProgressService {
             userProgress.addMandatoryStacks(for: userProgress.level)
         }
     }
-
-    func getNewStacksForLevel(_ level: Int) -> (mandatory: Set<WordStack>, optional: Set<WordStack>) {
-        let mandatory = WordStack.newMandatoryStacks(for: level)
-        let optional = WordStack.newOptionalStacks(for: level)
-        return (mandatory, optional)
-    }
 }
 
-struct StreakInfo {
-    let current: Int
-    let longest: Int
-    let isActive: Bool
-    let lastCompletedDate: Date?
-}
+// StreakInfo removed - calculateStreak was unused; displayedCurrentStreak on UserProgress is the live source

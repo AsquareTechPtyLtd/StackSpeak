@@ -3,7 +3,7 @@ import Speech
 import AVFoundation
 
 @MainActor
-final class SpeechService: ObservableObject {
+final class SpeechService: ObservableObject, SpeechRepository {
     @Published var isRecording = false
     @Published var transcript = ""
     @Published var authorizationStatus: SFSpeechRecognizerAuthorizationStatus = .notDetermined
@@ -19,14 +19,13 @@ final class SpeechService: ObservableObject {
     }
 
     func requestAuthorization() async -> Bool {
-        await withCheckedContinuation { continuation in
+        let status = await withCheckedContinuation { continuation in
             SFSpeechRecognizer.requestAuthorization { status in
-                Task { @MainActor in
-                    self.authorizationStatus = status
-                    continuation.resume(returning: status == .authorized)
-                }
+                continuation.resume(returning: status)
             }
         }
+        authorizationStatus = status
+        return status == .authorized
     }
 
     func startRecording() throws {
@@ -35,58 +34,69 @@ final class SpeechService: ObservableObject {
             recognitionTask = nil
         }
 
-        let audioSession = AVAudioSession.sharedInstance()
-        try audioSession.setCategory(.record, mode: .measurement, options: .duckOthers)
-        try audioSession.setActive(true, options: .notifyOthersOnDeactivation)
+        do {
+            let audioSession = AVAudioSession.sharedInstance()
+            // .playAndRecord is required for .duckOthers to take effect.
+            try audioSession.setCategory(.playAndRecord, mode: .measurement, options: [.duckOthers, .defaultToSpeaker])
+            try audioSession.setActive(true, options: .notifyOthersOnDeactivation)
 
-        recognitionRequest = SFSpeechAudioBufferRecognitionRequest()
-        guard let recognitionRequest = recognitionRequest else {
-            throw SpeechServiceError.recognitionRequestCreationFailed
-        }
-
-        recognitionRequest.shouldReportPartialResults = true
-
-        let inputNode = audioEngine.inputNode
-        recognitionTask = recognizer?.recognitionTask(with: recognitionRequest) { [weak self] result, error in
-            guard let self = self else { return }
-
-            var isFinal = false
-
-            if let result = result {
-                Task { @MainActor in
-                    self.transcript = result.bestTranscription.formattedString
-                }
-                isFinal = result.isFinal
+            recognitionRequest = SFSpeechAudioBufferRecognitionRequest()
+            guard let recognitionRequest else {
+                throw SpeechServiceError.recognitionRequestCreationFailed
             }
+            recognitionRequest.shouldReportPartialResults = true
 
-            if error != nil || isFinal {
-                self.audioEngine.stop()
-                inputNode.removeTap(onBus: 0)
-                self.recognitionRequest = nil
-                self.recognitionTask = nil
+            let inputNode = audioEngine.inputNode
+            recognitionTask = recognizer?.recognitionTask(with: recognitionRequest) { [weak self] result, error in
+                guard let self else { return }
 
-                Task { @MainActor in
-                    self.isRecording = false
+                var isFinal = false
+                if let result {
+                    let transcribed = result.bestTranscription.formattedString
+                    isFinal = result.isFinal
+                    Task { @MainActor [weak self] in
+                        self?.transcript = transcribed
+                    }
+                }
+
+                if error != nil || isFinal {
+                    Task { @MainActor [weak self] in
+                        self?.stopRecording()
+                    }
                 }
             }
+
+            let nativeFormat = inputNode.outputFormat(forBus: 0)
+            let recordingFormat = nativeFormat.sampleRate > 0
+                ? nativeFormat
+                : AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: 44100, channels: 1, interleaved: false)!
+            let req = recognitionRequest
+            inputNode.installTap(onBus: 0, bufferSize: 1024, format: recordingFormat) { buffer, _ in
+                req.append(buffer)
+            }
+
+            audioEngine.prepare()
+            try audioEngine.start()
+
+            transcript = ""
+            isRecording = true
+        } catch {
+            stopRecording()
+            throw error
         }
-
-        let recordingFormat = inputNode.outputFormat(forBus: 0)
-        inputNode.installTap(onBus: 0, bufferSize: 1024, format: recordingFormat) { buffer, _ in
-            self.recognitionRequest?.append(buffer)
-        }
-
-        audioEngine.prepare()
-        try audioEngine.start()
-
-        transcript = ""
-        isRecording = true
     }
 
     func stopRecording() {
         audioEngine.stop()
+        audioEngine.inputNode.removeTap(onBus: 0)
         recognitionRequest?.endAudio()
+        recognitionRequest = nil
+        recognitionTask?.cancel()
+        recognitionTask = nil
         isRecording = false
+
+        // Reactivate other audio that was ducked.
+        try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
     }
 
     func reset() {
@@ -96,14 +106,11 @@ final class SpeechService: ObservableObject {
 
 enum SpeechServiceError: LocalizedError {
     case recognitionRequestCreationFailed
-    case audioEngineStartFailed
 
     var errorDescription: String? {
         switch self {
         case .recognitionRequestCreationFailed:
             return "Unable to create speech recognition request"
-        case .audioEngineStartFailed:
-            return "Audio engine failed to start"
         }
     }
 }
