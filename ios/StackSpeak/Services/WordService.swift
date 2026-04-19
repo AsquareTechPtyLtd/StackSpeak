@@ -109,6 +109,8 @@ final class WordService: WordRepository {
         // No qualifying words yet (e.g. user's selectedStacks haven't been finalized).
         // Don't cache — caller will retry.
         guard !selected.isEmpty else {
+            let sampleStacks = Array(Set(allWords.prefix(50).map { $0.stack })).sorted()
+            logger.warning("generateDailySet: 0 qualifying words. level=\(userProgress.level) selectedStacks=\(userProgress.selectedStacks.sorted().joined(separator: ","), privacy: .public) sampleWordStacks=\(sampleStacks.joined(separator: ","), privacy: .public) totalWords=\(allWords.count)")
             return existingSet ?? DailySet(dayString: dayString, wordIds: [])
         }
 
