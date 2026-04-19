@@ -22,7 +22,8 @@ struct StackSpeakApp: App {
                 UserProgress.self,
                 PracticedSentence.self,
                 ReviewState.self,
-                AssessmentResult.self
+                AssessmentResult.self,
+                WordReport.self
             ])
             let config = ModelConfiguration(schema: schema, isStoredInMemoryOnly: false)
             container = try ModelContainer(for: schema, configurations: [config])

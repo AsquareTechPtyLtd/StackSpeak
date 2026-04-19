@@ -10,6 +10,7 @@ struct WordCardView: View {
 
     @State private var isExpanded = false
     @State private var showDetail = false
+    @State private var showReport = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -67,6 +68,9 @@ struct WordCardView: View {
         .sheet(isPresented: $showDetail) {
             WordDetailView(word: word, userProgress: userProgress)
         }
+        .sheet(isPresented: $showReport) {
+            WordReportSheet(word: word, userProgress: userProgress)
+        }
     }
 
     private var expandedContent: some View {
@@ -105,6 +109,11 @@ struct WordCardView: View {
                         .foregroundColor(theme.colors.inkMuted)
                         .accessibilityLabel(String(format: String(localized: "a11y.markMastered.format"), word.word))
                 }
+
+                Button(String(localized: "home.wordCard.report")) { showReport = true }
+                    .font(TypographyTokens.callout)
+                    .foregroundColor(theme.colors.inkMuted)
+                    .accessibilityLabel(String(format: String(localized: "a11y.report.format"), word.word))
             }
         }
     }

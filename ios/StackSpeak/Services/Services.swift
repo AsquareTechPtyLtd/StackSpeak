@@ -12,6 +12,7 @@ final class Services {
     let notification: any NotificationRepository
     let reviewScheduler: any ReviewRepository
     let speech: any SpeechRepository
+    let report: any ReportServiceProtocol
 
     init(modelContext: ModelContext) {
         self.word = WordService(modelContext: modelContext)
@@ -19,6 +20,7 @@ final class Services {
         self.notification = NotificationService()
         self.reviewScheduler = ReviewSchedulerService(modelContext: modelContext)
         self.speech = SpeechService()
+        self.report = ReportService()
     }
 
     // Preview/Test initializer with mock repositories
@@ -27,13 +29,15 @@ final class Services {
         progress: any ProgressRepository,
         notification: any NotificationRepository,
         reviewScheduler: any ReviewRepository,
-        speech: any SpeechRepository
+        speech: any SpeechRepository,
+        report: any ReportServiceProtocol
     ) {
         self.word = word
         self.progress = progress
         self.notification = notification
         self.reviewScheduler = reviewScheduler
         self.speech = speech
+        self.report = report
     }
 }
 
