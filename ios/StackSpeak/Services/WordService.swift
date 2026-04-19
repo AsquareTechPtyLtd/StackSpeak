@@ -30,12 +30,10 @@ final class WordService: WordRepository {
             let stackFileName = stackMeta.file.replacingOccurrences(of: "stacks/", with: "")
                 .replacingOccurrences(of: ".json", with: "")
 
-            guard let stackUrl = Bundle.main.url(
-                forResource: stackFileName,
-                withExtension: "json",
-                subdirectory: "stacks"
-            ) else {
-                // Skip missing stack files gracefully
+            // xcodegen flattens Resources/stacks/*.json into the bundle root, so
+            // look up by basename rather than via `subdirectory: "stacks"`.
+            guard let stackUrl = Bundle.main.url(forResource: stackFileName, withExtension: "json") else {
+                logger.warning("Stack file not found in bundle: \(stackFileName, privacy: .public).json")
                 continue
             }
 
