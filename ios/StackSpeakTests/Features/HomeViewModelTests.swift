@@ -68,15 +68,19 @@ struct HomeViewModelTests {
             id: id,
             word: word,
             pronunciation: "/test/",
+            partOfSpeech: "noun",
             shortDefinition: "Test definition",
+            simpleDefinition: "",
             longDefinition: "Longer test definition",
+            techContext: "Testing context",
             exampleSentence: "This is a test sentence.",
-            technicalContext: "Testing context",
             etymology: "From test",
+            connector: "",
             codeExampleLanguage: "swift",
             codeExampleCode: "let x = 1",
-            stack: .basicProgramming,
-            unlockLevel: 1
+            stack: WordStack.basicProgramming.rawValue,
+            unlockLevel: 1,
+            tags: []
         )
     }
 

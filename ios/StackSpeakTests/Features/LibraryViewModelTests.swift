@@ -94,15 +94,19 @@ struct LibraryViewModelTests {
             id: UUID(),
             word: word,
             pronunciation: "/test/",
+            partOfSpeech: "noun",
             shortDefinition: "Test definition for \(word)",
+            simpleDefinition: "",
             longDefinition: "Longer test definition",
+            techContext: "Testing context",
             exampleSentence: "This is a test sentence.",
-            technicalContext: "Testing context",
             etymology: "From test",
+            connector: "",
             codeExampleLanguage: "swift",
             codeExampleCode: "let x = 1",
-            stack: stack,
-            unlockLevel: 1
+            stack: stack.rawValue,
+            unlockLevel: 1,
+            tags: []
         )
     }
 }

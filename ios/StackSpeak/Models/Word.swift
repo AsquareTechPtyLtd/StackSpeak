@@ -8,10 +8,12 @@ final class Word {
     var pronunciation: String
     var partOfSpeech: String
     var shortDefinition: String
+    var simpleDefinition: String
     var longDefinition: String
     var techContext: String
     var exampleSentence: String
     var etymology: String
+    var connector: String
     var codeExampleLanguage: String
     var codeExampleCode: String
     /// Stored as the stack's raw id (e.g. "basic-web"). Use `wordStack` for a typed view.
@@ -27,10 +29,12 @@ final class Word {
         pronunciation: String,
         partOfSpeech: String,
         shortDefinition: String,
+        simpleDefinition: String,
         longDefinition: String,
         techContext: String,
         exampleSentence: String,
         etymology: String,
+        connector: String,
         codeExampleLanguage: String,
         codeExampleCode: String,
         stack: String,
@@ -42,10 +46,12 @@ final class Word {
         self.pronunciation = pronunciation
         self.partOfSpeech = partOfSpeech
         self.shortDefinition = shortDefinition
+        self.simpleDefinition = simpleDefinition
         self.longDefinition = longDefinition
         self.techContext = techContext
         self.exampleSentence = exampleSentence
         self.etymology = etymology
+        self.connector = connector
         self.codeExampleLanguage = codeExampleLanguage
         self.codeExampleCode = codeExampleCode
         self.stack = stack
@@ -60,10 +66,12 @@ final class Word {
             pronunciation: dto.pronunciation,
             partOfSpeech: dto.partOfSpeech,
             shortDefinition: dto.shortDefinition,
+            simpleDefinition: dto.simpleDefinition,
             longDefinition: dto.longDefinition,
             techContext: dto.techContext,
             exampleSentence: dto.exampleSentence,
             etymology: dto.etymology,
+            connector: dto.connector,
             codeExampleLanguage: dto.codeExample?.language ?? "",
             codeExampleCode: dto.codeExample?.code ?? "",
             stack: stack,
@@ -102,14 +110,34 @@ struct WordDTO: Codable {
     let pronunciation: String
     let partOfSpeech: String
     let shortDefinition: String
+    let simpleDefinition: String
     let longDefinition: String
     let techContext: String
     let exampleSentence: String
     let etymology: String
+    let connector: String
     let codeExample: CodeExampleDTO?
     let unlockLevel: Int
     let tags: [String]
     // `stack` is intentionally absent — it is injected from StackFileDTO.stack by the loader.
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decode(String.self, forKey: .id)
+        word = try c.decode(String.self, forKey: .word)
+        pronunciation = try c.decode(String.self, forKey: .pronunciation)
+        partOfSpeech = try c.decode(String.self, forKey: .partOfSpeech)
+        shortDefinition = try c.decode(String.self, forKey: .shortDefinition)
+        simpleDefinition = try c.decodeIfPresent(String.self, forKey: .simpleDefinition) ?? ""
+        longDefinition = try c.decode(String.self, forKey: .longDefinition)
+        techContext = try c.decode(String.self, forKey: .techContext)
+        exampleSentence = try c.decode(String.self, forKey: .exampleSentence)
+        etymology = try c.decode(String.self, forKey: .etymology)
+        connector = try c.decodeIfPresent(String.self, forKey: .connector) ?? ""
+        codeExample = try c.decodeIfPresent(CodeExampleDTO.self, forKey: .codeExample)
+        unlockLevel = try c.decode(Int.self, forKey: .unlockLevel)
+        tags = try c.decode([String].self, forKey: .tags)
+    }
 }
 
 struct CodeExampleDTO: Codable {
