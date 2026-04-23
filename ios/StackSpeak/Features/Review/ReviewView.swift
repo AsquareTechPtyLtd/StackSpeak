@@ -30,6 +30,7 @@ struct ReviewView: View {
                 if let progress = userProgress, let services {
                     viewModel.loadDueReviews(progress: progress)
                     await viewModel.loadWords(wordService: services.word)
+                    await viewModel.loadEligibleAssessmentWords(wordService: services.word, userProgress: progress)
                 }
             }
             .sheet(item: $levelUpDestination) { item in
@@ -60,13 +61,25 @@ struct ReviewView: View {
 
     private var assessmentSection: some View {
         Group {
-            if let progress = userProgress, !progress.wordsEligibleForAssessment().isEmpty {
-                assessmentCardsView
-            } else {
+            if !viewModel.assessmentLoaded {
                 emptyState(
                     icon: "checkmark.circle",
                     title: String(localized: "review.assessment.empty.title"),
                     message: String(localized: "review.assessment.empty.message")
+                )
+            } else if !viewModel.eligibleAssessmentWords.isEmpty {
+                assessmentCardsView
+            } else if let progress = userProgress, progress.wordsPracticedIds.isEmpty {
+                emptyState(
+                    icon: "checkmark.circle",
+                    title: String(localized: "review.assessment.empty.title"),
+                    message: String(localized: "review.assessment.empty.message")
+                )
+            } else {
+                emptyState(
+                    icon: "checkmark.seal",
+                    title: String(localized: "review.assessment.doneForToday.title"),
+                    message: String(localized: "review.assessment.doneForToday.message")
                 )
             }
         }
@@ -87,13 +100,10 @@ struct ReviewView: View {
                     }
                 }
                 .tabViewStyle(.page(indexDisplayMode: .never))
+                .frame(maxHeight: .infinity)
             }
         }
-        .task {
-            if let progress = userProgress, let services {
-                await viewModel.loadEligibleAssessmentWords(wordService: services.word, userProgress: progress)
-            }
-        }
+        .frame(maxHeight: .infinity)
     }
 
     private func assessmentStatsHeader(progress: UserProgress) -> some View {
@@ -151,7 +161,9 @@ struct ReviewView: View {
                 }
             }
             .tabViewStyle(.page(indexDisplayMode: .never))
+            .frame(maxHeight: .infinity)
         }
+        .frame(maxHeight: .infinity)
     }
 
     private var statsHeader: some View {

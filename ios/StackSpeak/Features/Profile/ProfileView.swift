@@ -126,9 +126,14 @@ struct ProfileView: View {
                 .foregroundColor(theme.colors.ink)
 
             if progress.masteredWordIds.isEmpty {
-                Text("profile.mastered.empty")
-                    .font(TypographyTokens.callout)
-                    .foregroundColor(theme.colors.inkMuted)
+                VStack(alignment: .leading, spacing: theme.spacing.xs) {
+                    Text("profile.mastered.empty")
+                        .font(TypographyTokens.callout)
+                        .foregroundColor(theme.colors.inkMuted)
+                    Text("profile.mastered.hint")
+                        .font(TypographyTokens.caption)
+                        .foregroundColor(theme.colors.inkFaint)
+                }
             } else {
                 Text(String(format: String(localized: "profile.mastered.count.format"),
                             progress.masteredWordIds.count))

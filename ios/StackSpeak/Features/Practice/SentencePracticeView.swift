@@ -16,7 +16,6 @@ struct SentencePracticeView: View {
     @State private var sentence = ""
     @State private var inputMethod: InputMethod = .typed
     @State private var errorMessage: String?
-    @State private var showSuccess = false
     @State private var showNotificationPrompt = false
 
     private var speechService: any SpeechRepository {
@@ -43,17 +42,6 @@ struct SentencePracticeView: View {
         }
         .navigationTitle("practice.navTitle")
         .navigationBarTitleDisplayMode(.inline)
-        .alert("practice.success.title", isPresented: $showSuccess) {
-            Button("practice.success.continue") {
-                dismiss()
-                // Show notification prompt after first practice if needed
-                if shouldShowNotificationPrompt() {
-                    showNotificationPrompt = true
-                }
-            }
-        } message: {
-            Text(String(format: String(localized: "practice.success.message.format"), word.word))
-        }
         .alert("notifications.prompt.title", isPresented: $showNotificationPrompt) {
             Button("notifications.prompt.enable") {
                 Task {
@@ -219,7 +207,10 @@ struct SentencePracticeView: View {
             }
         }
 
-        showSuccess = true
+        dismiss()
+        if shouldShowNotificationPrompt() {
+            showNotificationPrompt = true
+        }
     }
 
     /// Whole-word match allowing common inflections (plural -s/-es/-ies, past -ed, progressive -ing).

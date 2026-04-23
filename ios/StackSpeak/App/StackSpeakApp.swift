@@ -264,13 +264,32 @@ struct ContentView: View {
 }
 
 struct MainTabView: View {
+    @Environment(\.userProgress) private var userProgress
+    @Query private var dailySets: [DailySet]
+
+    private var todayBadge: Int {
+        guard let progress = userProgress else { return 0 }
+        let todayString = DailySet.todayString()
+        guard let set = dailySets.first(where: { $0.dayString == todayString }),
+              !set.wordIds.isEmpty else { return 0 }
+        return set.wordIds.filter { !progress.wordsPracticedIds.contains($0) }.count
+    }
+
+    private var reviewBadge: Int {
+        guard let progress = userProgress else { return 0 }
+        return progress.wordsEligibleForAssessment()
+            .filter { progress.canAttemptAssessment(for: $0) }.count
+    }
+
     var body: some View {
         TabView {
             HomeView()
                 .tabItem { Label("home.tab", systemImage: "house.fill") }
+                .badge(todayBadge)
 
             ReviewView()
                 .tabItem { Label("review.tab", systemImage: "brain.fill") }
+                .badge(reviewBadge)
 
             LibraryView()
                 .tabItem { Label("library.tab", systemImage: "books.vertical.fill") }

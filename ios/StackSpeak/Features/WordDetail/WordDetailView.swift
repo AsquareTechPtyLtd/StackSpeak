@@ -28,7 +28,9 @@ struct WordDetailView: View {
                         definitionsSection
                         contextSection
                         exampleSentenceSection
-                        codeExampleSection
+                        if !word.codeExampleCode.isEmpty {
+                            codeExampleSection
+                        }
                         etymologySection
                     }
                     .frame(maxWidth: 720)

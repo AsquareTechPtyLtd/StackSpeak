@@ -64,8 +64,8 @@ final class Word {
             techContext: dto.techContext,
             exampleSentence: dto.exampleSentence,
             etymology: dto.etymology,
-            codeExampleLanguage: dto.codeExample.language,
-            codeExampleCode: dto.codeExample.code,
+            codeExampleLanguage: dto.codeExample?.language ?? "",
+            codeExampleCode: dto.codeExample?.code ?? "",
             stack: stack,
             unlockLevel: dto.unlockLevel,
             tags: dto.tags
@@ -106,15 +106,15 @@ struct WordDTO: Codable {
     let techContext: String
     let exampleSentence: String
     let etymology: String
-    let codeExample: CodeExampleDTO
+    let codeExample: CodeExampleDTO?
     let unlockLevel: Int
     let tags: [String]
     // `stack` is intentionally absent — it is injected from StackFileDTO.stack by the loader.
 }
 
 struct CodeExampleDTO: Codable {
-    let language: String
-    let code: String
+    let language: String?
+    let code: String?
 }
 
 struct WordsDatabaseDTO: Codable {

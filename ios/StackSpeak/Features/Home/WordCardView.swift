@@ -24,11 +24,6 @@ struct WordCardView: View {
                             .font(TypographyTokens.cardTitle(density: theme.density))
                             .foregroundColor(theme.colors.ink)
 
-                        if isCompleted {
-                            Image(systemName: "checkmark.circle.fill")
-                                .foregroundColor(theme.colors.good)
-                                .accessibilityLabel(String(localized: "a11y.completed"))
-                        }
                     }
 
                     Text(word.pronunciation)
