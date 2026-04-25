@@ -21,6 +21,19 @@ final class HomeViewModel {
         dailySet?.isWordCompleted(wordId) ?? false
     }
 
+    /// Used by the Today list flow: after completing a word, the screen
+    /// offers a "Next word" CTA that pushes the next still-undone word in
+    /// the day's order. `nil` when nothing else is left.
+    func nextUndoneWord(after wordId: UUID) -> Word? {
+        guard let set = dailySet,
+              let currentIdx = set.wordIds.firstIndex(of: wordId) else { return nil }
+        let candidates = set.wordIds[(currentIdx + 1)...] + set.wordIds[..<currentIdx]
+        for id in candidates where !set.isWordCompleted(id) {
+            if let word = wordsById[id] { return word }
+        }
+        return nil
+    }
+
     /// Most recent explanation the user recorded for this word, if any. Used by the
     /// Feynman card's Done stage to echo back what was submitted.
     func latestExplanation(for wordId: UUID, userProgress: UserProgress) -> PracticedSentence? {

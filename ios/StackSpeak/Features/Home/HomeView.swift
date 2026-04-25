@@ -3,13 +3,13 @@ import SwiftData
 import UIKit
 import UserNotifications
 
-/// Today (Home) — daily Feynman deck.
+/// Today (Home) — list-first view of the day's 5 words.
 ///
-/// T1 — header card collapsed to a single status line ("Intern Band 2 · day 7 🔥").
-///   The previous bordered card with three competing focal points is gone.
-/// T2 — progress dots replaced by an `n/5 today` mono caption above the deck.
-/// CC2 — the level/streak status appears here once. Profile owns the
-///   detailed progress bar; per-card meta in the Feynman card was removed.
+/// The user picks a word from the list and drills into a single-word Feynman
+/// flow (`WordFeynmanScreen`). Resolves the previous "deck" pattern where
+/// inter-word swipe and intra-card swipe both felt like the same gesture —
+/// list nav is unambiguous, the daily progress is visible at a glance, and
+/// each word feels like an intentional pick.
 struct HomeView: View {
     @Environment(\.theme) private var theme
     @Environment(\.services) private var services
@@ -21,9 +21,10 @@ struct HomeView: View {
     @State private var showNotificationPrompt = false
     @State private var showLevelUp = false
     @State private var levelUpTarget: Int?
+    @State private var path: [UUID] = []
 
     var body: some View {
-        NavigationStack {
+        NavigationStack(path: $path) {
             navigationContent
         }
     }
@@ -32,6 +33,9 @@ struct HomeView: View {
         mainZStack
             .navigationTitle("home.navTitle")
             .navigationBarTitleDisplayMode(.large)
+            .navigationDestination(for: UUID.self) { wordId in
+                wordDestination(wordId: wordId)
+            }
             .task { await initialLoad() }
             .onChange(of: userProgress?.masteredWordIds) { _, _ in
                 Task { await reloadIfNeeded() }
@@ -119,17 +123,17 @@ struct HomeView: View {
                     message: "home.allMastered.message"
                 )
             } else {
-                dayCounter(progress: progress)
+                dayCounter()
                     .padding(.horizontal, theme.spacing.lg)
 
-                deck(progress: progress)
+                wordList(progress: progress)
             }
         }
         .frame(maxWidth: 720)
         .padding(.vertical, theme.spacing.md)
     }
 
-    /// T1 — single quiet status line replaces the three-element header card.
+    /// Single quiet status line: level + streak.
     private func statusLine(progress: UserProgress) -> some View {
         HStack(spacing: theme.spacing.xs) {
             if let levelDef = LevelDefinition.definition(for: progress.level) {
@@ -159,8 +163,7 @@ struct HomeView: View {
         .accessibilityLabel(String(format: String(localized: "a11y.streak.format"), progress.displayedCurrentStreak))
     }
 
-    /// T2 — `n / 5 today` mono caption replaces the 5-capsule progress dots.
-    private func dayCounter(progress: UserProgress) -> some View {
+    private func dayCounter() -> some View {
         let total = viewModel.dailySet?.wordIds.count ?? 0
         let done = (viewModel.dailySet?.wordIds ?? [])
             .filter { viewModel.isWordCompleted($0) }
@@ -174,27 +177,50 @@ struct HomeView: View {
         }
     }
 
-    private func deck(progress: UserProgress) -> some View {
-        TabView(selection: $viewModel.currentIndex) {
-            ForEach(Array(viewModel.todaysWords.enumerated()), id: \.element.id) { index, word in
-                FeynmanCardView(
-                    word: word,
-                    userProgress: progress,
-                    isCompleted: viewModel.isWordCompleted(word.id),
-                    latestExplanation: viewModel.latestExplanation(for: word.id, userProgress: progress),
-                    onSubmit: { explanation, method, markAsMastered in
-                        submit(wordId: word.id, explanation: explanation, method: method, markAsMastered: markAsMastered, progress: progress)
+    /// The day's 5 words as a vertical list of tappable rows.
+    private func wordList(progress: UserProgress) -> some View {
+        ScrollView {
+            VStack(spacing: theme.spacing.sm) {
+                ForEach(Array(viewModel.todaysWords.enumerated()), id: \.element.id) { index, word in
+                    Button {
+                        path.append(word.id)
+                    } label: {
+                        TodayWordRow(
+                            number: index + 1,
+                            word: word,
+                            isCompleted: viewModel.isWordCompleted(word.id)
+                        )
                     }
-                )
-                .id(word.id)
-                .padding(.horizontal, theme.spacing.lg)
-                .padding(.bottom, theme.spacing.md)
-                .tag(index)
+                    .buttonStyle(.plain)
+                    .accessibilityHint(viewModel.isWordCompleted(word.id)
+                                       ? String(localized: "a11y.today.row.review")
+                                       : String(localized: "a11y.today.row.practice"))
+                }
             }
+            .padding(.horizontal, theme.spacing.lg)
+            .padding(.bottom, theme.spacing.lg)
         }
-        .tabViewStyle(.page(indexDisplayMode: .always))
-        .indexViewStyle(.page(backgroundDisplayMode: .always))
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    @ViewBuilder
+    private func wordDestination(wordId: UUID) -> some View {
+        if let progress = userProgress,
+           let word = viewModel.wordsById[wordId] {
+            WordFeynmanScreen(
+                word: word,
+                userProgress: progress,
+                isCompleted: viewModel.isWordCompleted(wordId),
+                latestExplanation: viewModel.latestExplanation(for: wordId, userProgress: progress),
+                nextUndoneWord: viewModel.nextUndoneWord(after: wordId),
+                onSubmit: { id, explanation, method, markAsMastered in
+                    submit(wordId: id, explanation: explanation, method: method, markAsMastered: markAsMastered, progress: progress)
+                },
+                onAdvanceToNext: { nextId in
+                    // Replace top of stack with the next word.
+                    path = [nextId]
+                }
+            )
+        }
     }
 
     private var notificationBanner: some View {
@@ -253,7 +279,6 @@ struct HomeView: View {
     private func handleDayJustCompleted(progress: UserProgress) {
         viewModel.justCompletedDay = false
         // Level-up is triggered by assessments, not Feynman submissions.
-        // Reset the flag — LevelUpView is kept wired for future use.
         _ = progress
     }
 
@@ -263,6 +288,64 @@ struct HomeView: View {
         if notificationAuthStatus == .denied, let progress = userProgress, !progress.wordsPracticedIds.isEmpty {
             showNotificationBanner = true
         }
+    }
+}
+
+/// A single row in the Today list. Number on the left so the daily set has a
+/// rhythm; word + pronunciation in the middle; completion seal on the right.
+struct TodayWordRow: View {
+    @Environment(\.theme) private var theme
+
+    let number: Int
+    let word: Word
+    let isCompleted: Bool
+
+    var body: some View {
+        HStack(spacing: theme.spacing.md) {
+            ZStack {
+                Circle()
+                    .fill(isCompleted ? theme.colors.accentBg : theme.colors.surfaceAlt)
+                    .frame(width: 32, height: 32)
+                Text("\(number)")
+                    .font(TypographyTokens.mono)
+                    .foregroundColor(isCompleted ? theme.colors.accent : theme.colors.inkMuted)
+            }
+            .accessibilityHidden(true)
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text(word.word)
+                    .font(TypographyTokens.headline)
+                    .foregroundColor(isCompleted ? theme.colors.inkMuted : theme.colors.ink)
+                Text(word.pronunciation)
+                    .font(TypographyTokens.mono)
+                    .foregroundColor(theme.colors.inkFaint)
+            }
+
+            Spacer()
+
+            if isCompleted {
+                Image(systemName: "checkmark.seal.fill")
+                    .font(.system(size: 18))
+                    .foregroundColor(theme.colors.good)
+                    .symbolEffect(.bounce, value: isCompleted)
+                    .accessibilityHidden(true)
+            } else {
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundColor(theme.colors.inkFaint)
+                    .accessibilityHidden(true)
+            }
+        }
+        .padding(theme.spacing.md)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(theme.colors.surface)
+        .clipShape(.rect(cornerRadius: RadiusTokens.card))
+        .overlay(
+            RoundedRectangle(cornerRadius: RadiusTokens.card)
+                .stroke(theme.colors.line, lineWidth: 0.5)
+        )
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("\(word.word). \(isCompleted ? String(localized: "a11y.completed") : "")")
     }
 }
 

@@ -31,6 +31,10 @@ struct FeynmanCardView: View {
     let isCompleted: Bool
     let latestExplanation: PracticedSentence?
     let onSubmit: (String, InputMethod, Bool) -> Void  // explanation, inputMethod, markAsMastered
+    /// Optional — fires whenever the card reaches the `done` stage (either
+    /// via submit, skip, or report). Used by `WordFeynmanScreen` to surface
+    /// a post-completion CTA. Default is no-op so other call sites stay simple.
+    let onStageDidReachDone: () -> Void
 
     @State private var stage: FeynmanStage
     @State private var explanation: String = ""
@@ -39,6 +43,7 @@ struct FeynmanCardView: View {
     @State private var showReport = false
     @State private var showDetail = false
     @State private var advanceTrigger = 0
+    @FocusState private var explanationFocused: Bool
 
     private static let maxExplanationLength = 500
 
@@ -47,13 +52,15 @@ struct FeynmanCardView: View {
         userProgress: UserProgress,
         isCompleted: Bool,
         latestExplanation: PracticedSentence?,
-        onSubmit: @escaping (String, InputMethod, Bool) -> Void
+        onSubmit: @escaping (String, InputMethod, Bool) -> Void,
+        onStageDidReachDone: @escaping () -> Void = {}
     ) {
         self.word = word
         self.userProgress = userProgress
         self.isCompleted = isCompleted
         self.latestExplanation = latestExplanation
         self.onSubmit = onSubmit
+        self.onStageDidReachDone = onStageDidReachDone
         _stage = State(initialValue: isCompleted ? .done : .word)
     }
 
@@ -253,20 +260,26 @@ struct FeynmanCardView: View {
     }
 
     private var explainStage: some View {
-        VStack(alignment: .leading, spacing: theme.spacing.md) {
-            stageLabel("feynman.stage.explain")
-            Text("feynman.explain.prompt")
-                .font(TypographyTokens.body)
-                .foregroundColor(theme.colors.ink)
+        // ScrollView so the user can scroll to reach Submit when the
+        // keyboard is up; `.scrollDismissesKeyboard(.interactively)` lets
+        // them swipe the keyboard away with a downward drag.
+        ScrollView {
+            VStack(alignment: .leading, spacing: theme.spacing.md) {
+                stageLabel("feynman.stage.explain")
+                Text("feynman.explain.prompt")
+                    .font(TypographyTokens.body)
+                    .foregroundColor(theme.colors.ink)
 
-            explanationEditor
+                explanationEditor
 
-            if let micError {
-                Text(micError)
-                    .font(TypographyTokens.caption)
-                    .foregroundColor(theme.colors.warn)
+                if let micError {
+                    Text(micError)
+                        .font(TypographyTokens.caption)
+                        .foregroundColor(theme.colors.warn)
+                }
             }
         }
+        .scrollDismissesKeyboard(.interactively)
     }
 
     private var explanationEditor: some View {
@@ -302,7 +315,17 @@ struct FeynmanCardView: View {
                     .padding(theme.spacing.sm)
                     .background(theme.colors.surfaceAlt)
                     .clipShape(.rect(cornerRadius: RadiusTokens.inline))
+                    .focused($explanationFocused)
                     .accessibilityLabel(String(localized: "a11y.feynman.explanationInput"))
+                    .toolbar {
+                        ToolbarItemGroup(placement: .keyboard) {
+                            Spacer()
+                            Button(String(localized: "common.done")) {
+                                explanationFocused = false
+                            }
+                            .foregroundColor(theme.colors.accent)
+                        }
+                    }
                     .onChange(of: explanation) { _, newValue in
                         if newValue.count > Self.maxExplanationLength {
                             explanation = String(newValue.prefix(Self.maxExplanationLength))
@@ -510,6 +533,7 @@ struct FeynmanCardView: View {
         withAnimation(reduceMotion ? nil : MotionTokens.standard) {
             stage = next
         }
+        if next == .done { onStageDidReachDone() }
     }
 
     /// Picks the next stage. word → simple → technical → explain → connector → done.
@@ -529,9 +553,11 @@ struct FeynmanCardView: View {
         stopRecordingIfNeeded()
         onSubmit(trimmed, inputMethod, false)
         advanceTrigger &+= 1
+        let next: FeynmanStage = isComingSoon ? .done : .connector
         withAnimation(reduceMotion ? nil : MotionTokens.standard) {
-            stage = isComingSoon ? .done : .connector
+            stage = next
         }
+        if next == .done { onStageDidReachDone() }
     }
 
     private func submitAsComingSoon() {
@@ -541,6 +567,7 @@ struct FeynmanCardView: View {
         withAnimation(reduceMotion ? nil : MotionTokens.standard) {
             stage = .done
         }
+        onStageDidReachDone()
     }
 
     private func skipWord() {
@@ -550,6 +577,7 @@ struct FeynmanCardView: View {
         withAnimation(reduceMotion ? nil : MotionTokens.standard) {
             stage = .done
         }
+        onStageDidReachDone()
     }
 
     private func reportAndSkip() {
@@ -560,6 +588,7 @@ struct FeynmanCardView: View {
         withAnimation(reduceMotion ? nil : MotionTokens.standard) {
             stage = .done
         }
+        onStageDidReachDone()
     }
 
     private func toggleRecording() {
