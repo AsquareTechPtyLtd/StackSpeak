@@ -170,9 +170,9 @@ struct HomeView: View {
         .accessibilityLabel(String(format: String(localized: "a11y.streak.format"), progress.displayedCurrentStreak))
     }
 
-    /// Returns the last 10 calendar days (oldest → today) and whether each
-    /// day's daily set was fully completed. Drives the small dot tracker
-    /// shown above the instruction line.
+    /// Returns the last 10 calendar days (oldest → today) with the day's
+    /// daily-set progress (0...1). Drives the tracker strip beneath the
+    /// counter.
     private func lastTenDays() -> [CompletionDay] {
         let cal = Calendar.current
         let today = cal.startOfDay(for: Date())
@@ -180,9 +180,9 @@ struct HomeView: View {
         return (0..<10).reversed().map { offset in
             let date = cal.date(byAdding: .day, value: -offset, to: today) ?? today
             let key = DailySet.dayString(from: date)
-            let isComplete = setsByDay[key]?.isComplete ?? false
+            let progress = setsByDay[key]?.progress ?? 0
             let isToday = offset == 0
-            return CompletionDay(date: date, isComplete: isComplete, isToday: isToday)
+            return CompletionDay(date: date, progress: progress, isToday: isToday)
         }
     }
 
@@ -385,50 +385,103 @@ struct TodayWordRow: View {
 
 struct CompletionDay: Identifiable {
     let date: Date
-    let isComplete: Bool
+    /// 0...1 — fraction of the day's daily set that was practiced.
+    let progress: Double
     let isToday: Bool
+
     var id: Date { date }
+    var isComplete: Bool { progress >= 1.0 }
+    var hasAnyProgress: Bool { progress > 0 }
 }
 
-/// Compact ten-dot row showing the user's last ten days at a glance. Filled
-/// dot = day fully completed, empty hairline circle = missed. Today gets an
-/// accent ring to anchor the rightmost position.
+/// Ten-day streak strip. Each cell stacks a day-of-week initial, a 22pt
+/// rounded square that fills bottom-up by completion progress, and the
+/// date number. Today is anchored with an accent ring on the cell.
+///
+/// Design references: Apple Fitness weekly view (day-letter + cell + date),
+/// Duolingo streak calendar (warm flame color for filled days, today
+/// emphasized), Streaks app (partial fill encodes progress not just
+/// done/not-done). Color choice: `streak` (warm amber) ties visually to
+/// the flame in the status line above; `good` (green) was reserved for
+/// "you got an answer right" elsewhere in the app.
 struct CompletionTrackerRow: View {
     @Environment(\.theme) private var theme
 
     let days: [CompletionDay]
 
+    private static let cellSize: CGFloat = 22
+    private static let cellRadius: CGFloat = 6
+
     var body: some View {
-        HStack(spacing: 6) {
+        HStack(alignment: .center, spacing: 0) {
             ForEach(days) { day in
-                dot(for: day)
+                cell(for: day)
+                    .frame(maxWidth: .infinity)
             }
-            Spacer(minLength: 0)
         }
         .accessibilityElement(children: .combine)
         .accessibilityLabel(accessibilitySummary)
     }
 
-    @ViewBuilder
-    private func dot(for day: CompletionDay) -> some View {
-        ZStack {
-            Circle()
-                .fill(day.isComplete ? theme.colors.good : Color.clear)
-                .frame(width: 14, height: 14)
-            Circle()
-                .strokeBorder(
-                    day.isToday ? theme.colors.accent
-                                : (day.isComplete ? theme.colors.good : theme.colors.line),
-                    lineWidth: day.isToday ? 1.5 : 1
-                )
-                .frame(width: 14, height: 14)
-            if day.isComplete {
-                Image(systemName: "checkmark")
-                    .font(.system(size: 8, weight: .bold))
-                    .foregroundColor(.white)
+    private func cell(for day: CompletionDay) -> some View {
+        VStack(spacing: 4) {
+            Text(dayLetter(for: day.date))
+                .font(TypographyTokens.mono)
+                .foregroundColor(day.isToday ? theme.colors.accent : theme.colors.inkFaint)
+
+            ZStack(alignment: .bottom) {
+                // Empty surface
+                RoundedRectangle(cornerRadius: Self.cellRadius)
+                    .fill(theme.colors.surfaceAlt)
+
+                // Bottom-up fill proportional to day's completion (Apple Fitness ring vibe).
+                if day.hasAnyProgress {
+                    RoundedRectangle(cornerRadius: Self.cellRadius)
+                        .fill(day.isComplete
+                              ? theme.colors.streak
+                              : theme.colors.streak.opacity(0.45))
+                        .frame(height: Self.cellSize * CGFloat(day.progress))
+                }
+
+                if day.isComplete {
+                    Image(systemName: "checkmark")
+                        .font(.system(size: 11, weight: .bold))
+                        .foregroundColor(.white)
+                        .accessibilityHidden(true)
+                }
             }
+            .frame(width: Self.cellSize, height: Self.cellSize)
+            .clipShape(.rect(cornerRadius: Self.cellRadius))
+            .overlay(
+                RoundedRectangle(cornerRadius: Self.cellRadius)
+                    .strokeBorder(
+                        day.isToday ? theme.colors.accent
+                                    : (day.hasAnyProgress ? theme.colors.streak.opacity(0.8) : theme.colors.line),
+                        lineWidth: day.isToday ? 1.5 : 0.5
+                    )
+            )
+
+            Text(dayNumber(for: day.date))
+                .font(TypographyTokens.mono)
+                .foregroundColor(day.isToday ? theme.colors.ink : theme.colors.inkFaint)
         }
-        .accessibilityHidden(true)
+    }
+
+    // MARK: - Date formatting
+
+    private func dayLetter(for date: Date) -> String {
+        // First letter of the localized weekday (e.g. "M", "T", "W").
+        // `veryShortWeekdaySymbols` returns single characters per locale.
+        let cal = Calendar.current
+        let symbols = cal.veryShortWeekdaySymbols
+        let weekdayIndex = cal.component(.weekday, from: date) - 1
+        guard weekdayIndex >= 0, weekdayIndex < symbols.count else { return "" }
+        return symbols[weekdayIndex]
+    }
+
+    private func dayNumber(for date: Date) -> String {
+        let cal = Calendar.current
+        return "\(cal.component(.day, from: date))"
     }
 
     private var accessibilitySummary: String {
