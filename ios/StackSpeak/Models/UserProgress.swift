@@ -27,7 +27,6 @@ final class UserProgress {
     var secondReminderTime: Date?
 
     var themePreference: ThemePreference
-    var densityPreference: DensityPreference
 
     var selectedStacks: Set<String>
 
@@ -72,7 +71,6 @@ final class UserProgress {
         self.secondReminderEnabled = false
         self.secondReminderTime = nil
         self.themePreference = .system
-        self.densityPreference = .roomy
         self.selectedStacks = Set(WordStack.mandatoryStacks(for: 1).map { $0.rawValue })
         self.practicedSentences = []
         self.reviewStates = []
@@ -203,9 +201,4 @@ enum ThemePreference: String, Codable {
     case system
     case light
     case dark
-}
-
-enum DensityPreference: String, Codable {
-    case compact
-    case roomy
 }

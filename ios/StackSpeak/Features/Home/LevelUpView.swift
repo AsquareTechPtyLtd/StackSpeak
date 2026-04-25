@@ -2,7 +2,107 @@ import SwiftUI
 import SwiftData
 import OSLog
 
+/// Level-up moment, split into two beats (LU1):
+///   1. Pure celebration: bouncing star, level title, description, single
+///      "Continue" CTA. No admin in this view.
+///   2. If new optional stacks unlocked, a separate sheet appears for the
+///      stack picker. The celebration is never contaminated.
+///
+/// LU2 — `.symbolEffect(.bounce)` on the star + `.success` haptic on appear.
 struct LevelUpView: View {
+    @Environment(\.theme) private var theme
+    @Environment(\.dismiss) private var dismiss
+    @Environment(\.modelContext) private var modelContext
+
+    private let logger = Logger(subsystem: "com.stackspeak.ios", category: "LevelUp")
+
+    let newLevel: Int
+    let userProgress: UserProgress
+
+    @State private var hasAppeared = false
+    @State private var showStackPicker = false
+
+    var levelDefinition: LevelDefinition? {
+        LevelDefinition.definition(for: newLevel)
+    }
+
+    var hasNewOptionalStacks: Bool {
+        !WordStack.newOptionalStacks(for: newLevel).isEmpty
+    }
+
+    var body: some View {
+        ZStack {
+            theme.colors.bg.ignoresSafeArea()
+
+            VStack(spacing: theme.spacing.xl) {
+                Spacer()
+                celebrationContent
+                Spacer()
+                continueButton
+            }
+            .padding(theme.spacing.xl)
+        }
+        .sensoryFeedback(.success, trigger: hasAppeared)
+        .onAppear { hasAppeared = true }
+        .sheet(isPresented: $showStackPicker, onDismiss: { dismiss() }) {
+            LevelUpStackPickerSheet(newLevel: newLevel, userProgress: userProgress)
+        }
+    }
+
+    private var celebrationContent: some View {
+        VStack(spacing: theme.spacing.lg) {
+            Image(systemName: "star.circle.fill")
+                .font(.system(size: 96))
+                .foregroundColor(theme.colors.accent)
+                .symbolEffect(.bounce.up.byLayer, value: hasAppeared)
+                .accessibilityHidden(true)
+
+            if let levelDef = levelDefinition {
+                Text("levelUp.youAreNow")
+                    .font(TypographyTokens.callout)
+                    .foregroundColor(theme.colors.inkMuted)
+                    .multilineTextAlignment(.center)
+
+                Text(levelDef.title)
+                    .font(TypographyTokens.largeTitle)
+                    .foregroundColor(theme.colors.ink)
+                    .multilineTextAlignment(.center)
+
+                Text(levelDef.description)
+                    .font(TypographyTokens.body)
+                    .foregroundColor(theme.colors.inkMuted)
+                    .multilineTextAlignment(.center)
+                    .padding(.horizontal, theme.spacing.lg)
+            }
+
+            // Mandatory stacks at the new level are auto-added by the progression
+            // pipeline; show a single quiet line instead of a configurable list.
+            let mandatoryCount = WordStack.newMandatoryStacks(for: newLevel).count
+            if mandatoryCount > 0 {
+                Text(String(format: String(localized: "levelUp.newCoreStacks.summary"), mandatoryCount))
+                    .font(TypographyTokens.footnote)
+                    .foregroundColor(theme.colors.inkMuted)
+                    .multilineTextAlignment(.center)
+                    .padding(.top, theme.spacing.sm)
+            }
+        }
+    }
+
+    private var continueButton: some View {
+        PrimaryCTAButton(hasNewOptionalStacks
+                         ? "levelUp.choosePath"
+                         : "levelUp.continue") {
+            if hasNewOptionalStacks {
+                showStackPicker = true
+            } else {
+                dismiss()
+            }
+        }
+    }
+}
+
+/// LU1 — separate beat. Quiet picker for newly-unlocked optional stacks.
+struct LevelUpStackPickerSheet: View {
     @Environment(\.theme) private var theme
     @Environment(\.dismiss) private var dismiss
     @Environment(\.modelContext) private var modelContext
@@ -15,134 +115,60 @@ struct LevelUpView: View {
     @State private var selectedOptionalStacks: Set<WordStack> = []
     @State private var saveError: Error?
 
-    var levelDefinition: LevelDefinition? {
-        LevelDefinition.definition(for: newLevel)
-    }
-
-    var newMandatoryStacks: [WordStack] {
-        WordStack.newMandatoryStacks(for: newLevel).sorted(by: { $0.displayName < $1.displayName })
-    }
-
     var newOptionalStacks: [WordStack] {
-        WordStack.newOptionalStacks(for: newLevel).sorted(by: { $0.displayName < $1.displayName })
+        WordStack.newOptionalStacks(for: newLevel)
+            .sorted(by: { $0.displayName < $1.displayName })
     }
 
     var body: some View {
-        ZStack {
-            theme.colors.bg.ignoresSafeArea()
+        NavigationStack {
+            ZStack {
+                theme.colors.bg.ignoresSafeArea()
+                ScrollView {
+                    VStack(alignment: .leading, spacing: theme.spacing.lg) {
+                        VStack(alignment: .leading, spacing: theme.spacing.xs) {
+                            Text("levelUp.newOptionalStacks.title")
+                                .font(TypographyTokens.title2)
+                                .foregroundColor(theme.colors.ink)
+                            Text("levelUp.newOptionalStacks.subtitle")
+                                .font(TypographyTokens.body)
+                                .foregroundColor(theme.colors.inkMuted)
+                        }
 
-            ScrollView {
-                VStack(spacing: theme.spacing.xl) {
-                    celebrationHeader
+                        VStack(spacing: theme.spacing.sm) {
+                            ForEach(newOptionalStacks) { stack in
+                                StackCard(
+                                    stack: stack,
+                                    isSelected: selectedOptionalStacks.contains(stack),
+                                    isMandatory: false,
+                                    onToggle: { toggle(stack) }
+                                )
+                            }
+                        }
 
-                    if !newMandatoryStacks.isEmpty {
-                        mandatoryStacksSection
+                        PrimaryCTAButton("levelUp.continue") { saveAndDismiss() }
+                            .padding(.top, theme.spacing.md)
                     }
-
-                    if !newOptionalStacks.isEmpty {
-                        optionalStacksSection
-                    }
-
-                    continueButton
+                    .padding(theme.spacing.lg)
                 }
-                .padding(theme.spacing.lg)
             }
-        }
-        .alert("Save Failed", isPresented: .constant(saveError != nil), presenting: saveError) { _ in
-            Button("OK") {
-                saveError = nil
-            }
-        } message: { error in
-            Text("Failed to save your stack selection: \(error.localizedDescription)")
-        }
-    }
-
-    private var celebrationHeader: some View {
-        VStack(spacing: theme.spacing.lg) {
-            Image(systemName: "star.circle.fill")
-                .font(.system(size: 80))
-                .foregroundColor(theme.colors.accent)
-
-            if let levelDef = levelDefinition {
-                VStack(spacing: theme.spacing.md) {
-                    Text("levelUp.youAreNow")
-                        .font(TypographyTokens.title3)
+            .navigationTitle("levelUp.optional.navTitle")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button("levelUp.skip") { dismiss() }
                         .foregroundColor(theme.colors.inkMuted)
-                        .multilineTextAlignment(.center)
-
-                    Text(levelDef.title)
-                        .font(TypographyTokens.largeTitle)
-                        .foregroundColor(theme.colors.ink)
-                        .bold()
-
-                    Text(levelDef.description)
-                        .font(TypographyTokens.callout)
-                        .foregroundColor(theme.colors.inkMuted)
-                        .multilineTextAlignment(.center)
                 }
             }
-        }
-        .padding(.vertical, theme.spacing.xl)
-    }
-
-    private var mandatoryStacksSection: some View {
-        VStack(alignment: .leading, spacing: theme.spacing.md) {
-            VStack(alignment: .leading, spacing: theme.spacing.xs) {
-                Text("levelUp.newCoreStacks.title")
-                    .font(TypographyTokens.headline)
-                    .foregroundColor(theme.colors.ink)
-
-                Text("levelUp.newCoreStacks.subtitle")
-                    .font(TypographyTokens.callout)
-                    .foregroundColor(theme.colors.inkMuted)
-            }
-
-            VStack(spacing: theme.spacing.sm) {
-                ForEach(newMandatoryStacks) { stack in
-                    StackUnlockCard(stack: stack, isMandatory: true)
-                }
+            .alert("Save Failed", isPresented: .constant(saveError != nil), presenting: saveError) { _ in
+                Button("OK") { saveError = nil }
+            } message: { error in
+                Text("Failed to save your stack selection: \(error.localizedDescription)")
             }
         }
     }
 
-    private var optionalStacksSection: some View {
-        VStack(alignment: .leading, spacing: theme.spacing.md) {
-            VStack(alignment: .leading, spacing: theme.spacing.xs) {
-                Text("levelUp.newOptionalStacks.title")
-                    .font(TypographyTokens.headline)
-                    .foregroundColor(theme.colors.ink)
-
-                Text("levelUp.newOptionalStacks.subtitle")
-                    .font(TypographyTokens.callout)
-                    .foregroundColor(theme.colors.inkMuted)
-            }
-
-            VStack(spacing: theme.spacing.sm) {
-                ForEach(newOptionalStacks) { stack in
-                    StackUnlockCard(
-                        stack: stack,
-                        isMandatory: false,
-                        isSelected: selectedOptionalStacks.contains(stack),
-                        onToggle: { toggleOptionalStack(stack) }
-                    )
-                }
-            }
-        }
-    }
-
-    private var continueButton: some View {
-        Button(action: saveAndContinue) {
-            Text("levelUp.continue")
-                .font(TypographyTokens.headline)
-                .foregroundColor(theme.colors.accentText)
-                .frame(maxWidth: .infinity)
-                .padding(.vertical, theme.spacing.lg)
-                .background(theme.colors.accent)
-                .cornerRadius(12)
-        }
-    }
-
-    private func toggleOptionalStack(_ stack: WordStack) {
+    private func toggle(_ stack: WordStack) {
         if selectedOptionalStacks.contains(stack) {
             selectedOptionalStacks.remove(stack)
         } else {
@@ -150,7 +176,7 @@ struct LevelUpView: View {
         }
     }
 
-    private func saveAndContinue() {
+    private func saveAndDismiss() {
         userProgress.selectedStacks.formUnion(selectedOptionalStacks.map { $0.rawValue })
         do {
             try modelContext.save()
@@ -159,58 +185,5 @@ struct LevelUpView: View {
             logger.error("Failed to save level-up stack selection: \(error.localizedDescription, privacy: .public)")
             saveError = error
         }
-    }
-}
-
-struct StackUnlockCard: View {
-    @Environment(\.theme) private var theme
-
-    let stack: WordStack
-    let isMandatory: Bool
-    var isSelected: Bool = false
-    var onToggle: (() -> Void)?
-
-    var body: some View {
-        Button(action: { onToggle?() }) {
-            HStack(spacing: theme.spacing.md) {
-                Image(systemName: stack.icon)
-                    .font(.system(size: 20))
-                    .foregroundColor(theme.colors.accent)
-                    .frame(width: 32, height: 32)
-                    .background(theme.colors.accentBg)
-                    .cornerRadius(6)
-
-                VStack(alignment: .leading, spacing: theme.spacing.xs) {
-                    HStack {
-                        Text(stack.displayName)
-                            .font(TypographyTokens.callout.weight(.medium))
-                            .foregroundColor(theme.colors.ink)
-
-                        if isMandatory {
-                            Image(systemName: "checkmark.circle.fill")
-                                .font(.system(size: 14))
-                                .foregroundColor(theme.colors.good)
-                        }
-                    }
-
-                    Text(stack.description)
-                        .font(TypographyTokens.caption)
-                        .foregroundColor(theme.colors.inkMuted)
-                        .multilineTextAlignment(.leading)
-                }
-
-                Spacer()
-
-                if !isMandatory {
-                    Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
-                        .font(.system(size: 20))
-                        .foregroundColor(isSelected ? theme.colors.accent : theme.colors.inkFaint)
-                }
-            }
-            .padding(theme.spacing.md)
-            .background(theme.colors.surface)
-            .cornerRadius(8)
-        }
-        .buttonStyle(.plain)
     }
 }

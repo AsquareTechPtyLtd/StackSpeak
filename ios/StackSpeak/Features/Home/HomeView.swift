@@ -3,6 +3,13 @@ import SwiftData
 import UIKit
 import UserNotifications
 
+/// Today (Home) — daily Feynman deck.
+///
+/// T1 — header card collapsed to a single status line ("Intern Band 2 · day 7 🔥").
+///   The previous bordered card with three competing focal points is gone.
+/// T2 — progress dots replaced by an `n/5 today` mono caption above the deck.
+/// CC2 — the level/streak status appears here once. Profile owns the
+///   detailed progress bar; per-card meta in the Feynman card was removed.
 struct HomeView: View {
     @Environment(\.theme) private var theme
     @Environment(\.services) private var services
@@ -102,13 +109,17 @@ struct HomeView: View {
                     .padding(.horizontal, theme.spacing.lg)
             }
 
-            headerSection(progress: progress)
+            statusLine(progress: progress)
                 .padding(.horizontal, theme.spacing.lg)
 
             if viewModel.todaysWords.isEmpty && viewModel.errorMessage == nil {
-                allMasteredState
+                EmptyStateView(
+                    icon: "checkmark.seal.fill",
+                    title: "home.allMastered.title",
+                    message: "home.allMastered.message"
+                )
             } else {
-                progressDots(progress: progress)
+                dayCounter(progress: progress)
                     .padding(.horizontal, theme.spacing.lg)
 
                 deck(progress: progress)
@@ -118,78 +129,50 @@ struct HomeView: View {
         .padding(.vertical, theme.spacing.md)
     }
 
-    private func headerSection(progress: UserProgress) -> some View {
-        HStack {
-            VStack(alignment: .leading, spacing: theme.spacing.xs) {
-                if let levelDef = LevelDefinition.definition(for: progress.level) {
-                    Text(levelDef.title)
-                        .font(TypographyTokens.headline)
-                        .foregroundColor(theme.colors.ink)
-                }
-
-                if let levelProgress = LevelDefinition.progressToNextLevel(
-                    currentLevel: progress.level,
-                    wordsAssessedCorrectlyTwice: progress.wordsAssessedCorrectlyTwice
-                ) {
-                    ProgressView(value: levelProgress.progress)
-                        .tint(theme.colors.accent)
-                        .accessibilityLabel(String(format: String(localized: "a11y.levelProgress.format"), Int(levelProgress.progress * 100)))
-
-                    Text(String(format: String(localized: "home.levelProgress.format"),
-                                Int(levelProgress.progress * 100), levelProgress.wordsRemaining))
-                        .font(TypographyTokens.caption)
-                        .foregroundColor(theme.colors.inkMuted)
-                }
-            }
-
-            Spacer()
-
-            VStack(alignment: .trailing, spacing: theme.spacing.xs) {
-                HStack(spacing: theme.spacing.xs) {
-                    Image(systemName: "flame.fill")
-                        .font(.system(size: 14))
-                        .foregroundColor(theme.colors.accent)
-                    Text("\(progress.displayedCurrentStreak)")
-                        .font(TypographyTokens.headline)
-                        .foregroundColor(theme.colors.ink)
-                }
-                Text(progress.displayedCurrentStreak == 0
-                     ? String(localized: "home.streak.start")
-                     : String(localized: "home.streak.label"))
-                    .font(TypographyTokens.caption)
+    /// T1 — single quiet status line replaces the three-element header card.
+    private func statusLine(progress: UserProgress) -> some View {
+        HStack(spacing: theme.spacing.xs) {
+            if let levelDef = LevelDefinition.definition(for: progress.level) {
+                Text(levelDef.title)
+                    .font(TypographyTokens.subheadline)
                     .foregroundColor(theme.colors.inkMuted)
             }
-            .accessibilityElement(children: .combine)
-            .accessibilityLabel(String(format: String(localized: "a11y.streak.format"), progress.displayedCurrentStreak))
-        }
-        .padding(theme.spacing.cardPadding(density: theme.density))
-        .background(theme.colors.surface)
-        .cornerRadius(12)
-    }
-
-    // MARK: - Progress dots
-
-    private func progressDots(progress: UserProgress) -> some View {
-        let wordIds = viewModel.dailySet?.wordIds ?? []
-        return HStack(spacing: theme.spacing.sm) {
-            ForEach(Array(wordIds.enumerated()), id: \.offset) { index, id in
-                let completed = viewModel.isWordCompleted(id)
-                let current = index == viewModel.currentIndex
-                Button(action: { viewModel.currentIndex = index }) {
-                    Capsule()
-                        .fill(completed ? theme.colors.accent : (current ? theme.colors.ink.opacity(0.5) : theme.colors.line))
-                        .frame(height: 6)
-                        .frame(maxWidth: .infinity)
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel(String(format: String(localized: "a11y.feynman.cardDot.format"),
-                                           index + 1, wordIds.count,
-                                           completed ? String(localized: "a11y.completed") : ""))
+            Text("·")
+                .font(TypographyTokens.subheadline)
+                .foregroundColor(theme.colors.inkFaint)
+            HStack(spacing: 4) {
+                Image(systemName: "flame.fill")
+                    .font(.system(size: 12))
+                    .foregroundColor(theme.colors.streak)
+                    .symbolEffect(.bounce, value: progress.displayedCurrentStreak)
+                Text(progress.displayedCurrentStreak == 0
+                     ? String(localized: "home.streak.start")
+                     : String(format: String(localized: "home.streak.day.format"),
+                              progress.displayedCurrentStreak))
+                    .font(TypographyTokens.subheadline)
+                    .foregroundColor(theme.colors.ink)
+                    .contentTransition(.numericText())
             }
+            Spacer()
         }
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel(String(format: String(localized: "a11y.streak.format"), progress.displayedCurrentStreak))
     }
 
-    // MARK: - Deck
+    /// T2 — `n / 5 today` mono caption replaces the 5-capsule progress dots.
+    private func dayCounter(progress: UserProgress) -> some View {
+        let total = viewModel.dailySet?.wordIds.count ?? 0
+        let done = (viewModel.dailySet?.wordIds ?? [])
+            .filter { viewModel.isWordCompleted($0) }
+            .count
+        return HStack {
+            Text(String(format: String(localized: "home.dayCounter.format"), done, total))
+                .font(TypographyTokens.mono)
+                .foregroundColor(theme.colors.inkMuted)
+                .contentTransition(.numericText())
+            Spacer()
+        }
+    }
 
     private func deck(progress: UserProgress) -> some View {
         TabView(selection: $viewModel.currentIndex) {
@@ -209,26 +192,9 @@ struct HomeView: View {
                 .tag(index)
             }
         }
-        .tabViewStyle(.page(indexDisplayMode: .never))
+        .tabViewStyle(.page(indexDisplayMode: .always))
+        .indexViewStyle(.page(backgroundDisplayMode: .always))
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-    }
-
-    private var allMasteredState: some View {
-        VStack(spacing: theme.spacing.lg) {
-            Spacer()
-            Image(systemName: "checkmark.seal.fill")
-                .font(.system(size: 64, weight: .light))
-                .foregroundColor(theme.colors.accent)
-            Text("home.allMastered.title")
-                .font(TypographyTokens.title2)
-                .foregroundColor(theme.colors.ink)
-            Text("home.allMastered.message")
-                .font(TypographyTokens.body)
-                .foregroundColor(theme.colors.inkMuted)
-                .multilineTextAlignment(.center)
-            Spacer()
-        }
-        .padding(theme.spacing.xxxl)
     }
 
     private var notificationBanner: some View {
@@ -261,9 +227,9 @@ struct HomeView: View {
                     .foregroundColor(theme.colors.inkFaint)
             }
         }
-        .padding(theme.spacing.cardPadding(density: theme.density))
+        .padding(theme.spacing.cardPadding)
         .background(theme.colors.accentBg)
-        .cornerRadius(12)
+        .clipShape(.rect(cornerRadius: RadiusTokens.card))
     }
 
     // MARK: - Actions
@@ -286,8 +252,8 @@ struct HomeView: View {
 
     private func handleDayJustCompleted(progress: UserProgress) {
         viewModel.justCompletedDay = false
-        // Level-up is triggered by assessments, not Feynman submissions. Nothing to do
-        // here beyond resetting the flag — LevelUpView is kept wired for future use.
+        // Level-up is triggered by assessments, not Feynman submissions.
+        // Reset the flag — LevelUpView is kept wired for future use.
         _ = progress
     }
 

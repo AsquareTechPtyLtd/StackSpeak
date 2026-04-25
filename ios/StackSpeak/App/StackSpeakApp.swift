@@ -139,7 +139,6 @@ struct StackSpeakApp: App {
 
         if let progress {
             themeManager.preference = progress.themePreference
-            themeManager.density = progress.densityPreference
 
             // Rebuild the two-correct cache on launch in case it was lost or corrupted.
             if progress.wordsWithTwoCorrectIds.isEmpty && !progress.assessmentResults.isEmpty {
@@ -199,7 +198,7 @@ struct ErrorView: View {
                     .foregroundColor(theme.colors.inkFaint)
                     .padding()
                     .background(theme.colors.surface)
-                    .cornerRadius(8)
+                    .clipShape(.rect(cornerRadius: RadiusTokens.inline))
                     .padding(.horizontal, 32)
 
                 Text("Force-quit this app and relaunch to try again.")
@@ -281,21 +280,29 @@ struct MainTabView: View {
             .filter { progress.canAttemptAssessment(for: $0) }.count
     }
 
+    /// CC4 — iOS 18+ adaptive TabView gives iPhone the standard tab bar and
+    /// iPad a native sidebar without any per-platform code branches. The four
+    /// tabs are listed once; layout is selected per device.
     var body: some View {
         TabView {
-            HomeView()
-                .tabItem { Label("home.tab", systemImage: "house.fill") }
-                .badge(todayBadge)
+            Tab("home.tab", systemImage: "house.fill") {
+                HomeView()
+            }
+            .badge(todayBadge)
 
-            ReviewView()
-                .tabItem { Label("review.tab", systemImage: "brain.fill") }
-                .badge(reviewBadge)
+            Tab("review.tab", systemImage: "brain.fill") {
+                ReviewView()
+            }
+            .badge(reviewBadge)
 
-            LibraryView()
-                .tabItem { Label("library.tab", systemImage: "books.vertical.fill") }
+            Tab("library.tab", systemImage: "books.vertical.fill") {
+                LibraryView()
+            }
 
-            ProfileView()
-                .tabItem { Label("profile.tab", systemImage: "person.fill") }
+            Tab("profile.tab", systemImage: "person.fill") {
+                ProfileView()
+            }
         }
+        .tabViewStyle(.sidebarAdaptable)
     }
 }

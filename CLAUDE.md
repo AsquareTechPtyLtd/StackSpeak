@@ -24,7 +24,7 @@ Native iOS vocabulary app for developers. Delivers 5 technical words daily. MVP:
 - **Notifications:** UserNotifications
 - **Speech:** Speech framework (voice input on sentence practice)
 - **Architecture:** MVVM
-- **Minimum Target:** iOS 17, iPadOS 17
+- **Minimum Target:** iOS 18, iPadOS 18
 - **Bundle ID:** `com.stackspeak.ios`
 - **App Display Name:** `StackSpeak`
 

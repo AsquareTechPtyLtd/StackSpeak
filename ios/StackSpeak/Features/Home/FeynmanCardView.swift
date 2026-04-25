@@ -9,19 +9,28 @@ enum FeynmanStage: Int, CaseIterable {
     case done
 }
 
-/// One daily word, presented as a guided Feynman-technique flow:
-/// word → plain-English definition → everyday analogy → user explains in their
-/// own words → technical depth → done. Coming-soon words collapse the simple
-/// and connector stages into a single fallback stage.
+/// One daily word, presented as a guided Feynman-technique flow.
+///
+/// T1/T3 — header collapsed to word + pronunciation only (level meta moved to
+///   a card-level status line in HomeView).
+/// T3 — stage counter replaced with a thin progress bar at the top of the
+///   card body. The chip-style indicator was the loudest thing on the screen;
+///   a 2pt capsule says the same thing in 1% of the visual weight.
+/// T4 — Skip / Report-and-skip moved into a `Menu` (⋯). Only one primary
+///   action competes for attention now.
+/// F2 — surface shadow replaced with a 0.5pt hairline border.
+/// F8 — 3-D rotation flip replaced with cross-fade for stage transitions.
+/// F6/F7 — selection haptic + symbol effect on advance and submit.
 struct FeynmanCardView: View {
     @Environment(\.theme) private var theme
     @Environment(\.services) private var services
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     let word: Word
     let userProgress: UserProgress
     let isCompleted: Bool
     let latestExplanation: PracticedSentence?
-    let onSubmit: (String, InputMethod, Bool) -> Void  // Added Bool for markAsMastered
+    let onSubmit: (String, InputMethod, Bool) -> Void  // explanation, inputMethod, markAsMastered
 
     @State private var stage: FeynmanStage
     @State private var explanation: String = ""
@@ -29,7 +38,7 @@ struct FeynmanCardView: View {
     @State private var micError: String?
     @State private var showReport = false
     @State private var showDetail = false
-    @State private var flipRotation: Double = 0
+    @State private var advanceTrigger = 0
 
     private static let maxExplanationLength = 500
 
@@ -53,76 +62,64 @@ struct FeynmanCardView: View {
             || word.connector.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
-    private var speechService: (any SpeechRepository)? {
-        services?.speech
-    }
+    private var speechService: (any SpeechRepository)? { services?.speech }
 
     var body: some View {
         VStack(alignment: .leading, spacing: theme.spacing.lg) {
+            stageProgressBar
             headerRow
             stageContent
                 .frame(maxWidth: .infinity, alignment: .leading)
-                .transition(.opacity)
+                .id(stage)
+                .transition(.asymmetric(
+                    insertion: .opacity.combined(with: .offset(x: 8, y: 0)),
+                    removal: .opacity
+                ))
             Spacer(minLength: 0)
             advanceControls
         }
-        .padding(theme.spacing.cardPadding(density: theme.density))
+        .padding(theme.spacing.cardPadding)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .background(theme.colors.surface)
-        .cornerRadius(16)
-        .shadow(color: Color.black.opacity(0.08), radius: 4, x: 0, y: 2)
-        .rotation3DEffect(
-            .degrees(flipRotation),
-            axis: (x: 0, y: 1, z: 0),
-            perspective: 0.5
+        .clipShape(.rect(cornerRadius: RadiusTokens.card))
+        .overlay(
+            RoundedRectangle(cornerRadius: RadiusTokens.card)
+                .stroke(theme.colors.line, lineWidth: 0.5)
         )
+        .sensoryFeedback(.selection, trigger: advanceTrigger)
         .sheet(isPresented: $showReport) {
             WordReportSheet(word: word, userProgress: userProgress)
         }
         .sheet(isPresented: $showDetail) {
-            WordDetailView(word: word, userProgress: userProgress)
-        }
-    }
-
-    // MARK: - Header
-
-    private var headerRow: some View {
-        HStack(alignment: .top) {
-            VStack(alignment: .leading, spacing: theme.spacing.xs) {
-                Text(word.word)
-                    .font(TypographyTokens.cardTitle(density: theme.density))
-                    .foregroundColor(theme.colors.ink)
-                    .accessibilityAddTraits(.isHeader)
-
-                Text(word.pronunciation)
-                    .font(TypographyTokens.mono)
-                    .foregroundColor(theme.colors.inkMuted)
-                    .accessibilityLabel(String(format: String(localized: "a11y.pronunciation.format"), word.pronunciation))
-
-                Text("L\(word.unlockLevel) · \(LevelDefinition.definition(for: word.unlockLevel)?.title ?? "")")
-                    .font(TypographyTokens.caption)
-                    .foregroundColor(theme.colors.inkFaint)
+            NavigationStack {
+                WordDetailView(word: word, userProgress: userProgress)
             }
-
-            Spacer()
-
-            stageIndicator
         }
     }
 
-    private var stageIndicator: some View {
-        Text(String(format: String(localized: "feynman.stage.counter.format"),
-                    visibleStageIndex, visibleStageTotal))
-            .font(TypographyTokens.caption)
-            .foregroundColor(theme.colors.inkFaint)
-            .padding(.horizontal, theme.spacing.sm)
-            .padding(.vertical, theme.spacing.xs)
-            .background(theme.colors.accentBg)
-            .cornerRadius(4)
+    // MARK: - Stage progress bar (replaces stage counter chip — T3)
+
+    private var stageProgressBar: some View {
+        GeometryReader { geo in
+            ZStack(alignment: .leading) {
+                Capsule()
+                    .fill(theme.colors.line)
+                Capsule()
+                    .fill(theme.colors.accent)
+                    .frame(width: geo.size.width * stageProgress)
+                    .animation(reduceMotion ? nil : MotionTokens.standard, value: stageProgress)
+            }
+        }
+        .frame(height: 2)
+        .accessibilityLabel(String(format: String(localized: "a11y.feynman.stageProgress.format"),
+                                   visibleStageIndex, visibleStageTotal))
     }
 
-    /// Stages visible for this word. Coming-soon words skip the connector stage
-    /// (nothing meaningful to show), so the counter reads 5 total instead of 6.
+    /// 0-1 progress through visible stages.
+    private var stageProgress: Double {
+        Double(visibleStageIndex - 1) / Double(max(1, visibleStageTotal - 1))
+    }
+
     private var visibleStageTotal: Int { isComingSoon ? 5 : 6 }
 
     private var visibleStageIndex: Int {
@@ -136,23 +133,68 @@ struct FeynmanCardView: View {
         }
     }
 
+    // MARK: - Header (T1/T3 — collapsed)
+
+    private var headerRow: some View {
+        HStack(alignment: .firstTextBaseline) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(word.word)
+                    .font(TypographyTokens.cardTitle)
+                    .foregroundColor(theme.colors.ink)
+                    .accessibilityAddTraits(.isHeader)
+                Text(word.pronunciation)
+                    .font(TypographyTokens.mono)
+                    .foregroundColor(theme.colors.inkMuted)
+                    .accessibilityLabel(String(format: String(localized: "a11y.pronunciation.format"), word.pronunciation))
+            }
+            Spacer()
+            overflowMenu
+        }
+    }
+
+    /// T4 — single ⋯ replaces the three competing buttons on the word stage.
+    private var overflowMenu: some View {
+        Menu {
+            Button {
+                skipWord()
+            } label: {
+                Label(String(localized: "feynman.menu.skipMastered"),
+                      systemImage: "checkmark.circle")
+            }
+            Button(role: .destructive) {
+                reportAndSkip()
+            } label: {
+                Label(String(localized: "feynman.menu.report"),
+                      systemImage: "flag")
+            }
+            if stage != .done {
+                Divider()
+                Button {
+                    showDetail = true
+                } label: {
+                    Label(String(localized: "feynman.menu.openDetail"),
+                          systemImage: "doc.text")
+                }
+            }
+        } label: {
+            Image(systemName: "ellipsis.circle")
+                .font(.system(size: 20))
+                .foregroundColor(theme.colors.inkFaint)
+        }
+        .accessibilityLabel(String(localized: "feynman.menu.label"))
+    }
+
     // MARK: - Stage content
 
     @ViewBuilder
     private var stageContent: some View {
         switch stage {
-        case .word:
-            wordStage
-        case .simple:
-            simpleStage
-        case .connector:
-            connectorStage
-        case .explain:
-            explainStage
-        case .technical:
-            technicalStage
-        case .done:
-            doneStage
+        case .word:      wordStage
+        case .simple:    simpleStage
+        case .connector: connectorStage
+        case .explain:   explainStage
+        case .technical: technicalStage
+        case .done:      doneStage
         }
     }
 
@@ -162,25 +204,6 @@ struct FeynmanCardView: View {
             Text("feynman.word.prompt")
                 .font(TypographyTokens.body)
                 .foregroundColor(theme.colors.ink)
-
-            Spacer()
-
-            // Report button on first screen
-            Button(action: reportAndSkip) {
-                HStack(spacing: 4) {
-                    Image(systemName: "flag")
-                        .font(.system(size: 12))
-                    Text("Report issue & skip")
-                        .font(TypographyTokens.caption)
-                }
-                .foregroundColor(theme.colors.warn)
-                .padding(.horizontal, theme.spacing.sm)
-                .padding(.vertical, 6)
-                .background(theme.colors.warn.opacity(0.1))
-                .cornerRadius(20)
-            }
-            .buttonStyle(.plain)
-            .accessibilityLabel("Report an issue with this word and skip it")
         }
     }
 
@@ -221,9 +244,7 @@ struct FeynmanCardView: View {
                 .font(TypographyTokens.callout)
                 .foregroundColor(theme.colors.inkMuted)
                 .fixedSize(horizontal: false, vertical: true)
-
             Divider().background(theme.colors.line)
-
             Text(word.shortDefinition)
                 .font(TypographyTokens.body)
                 .foregroundColor(theme.colors.ink)
@@ -254,43 +275,46 @@ struct FeynmanCardView: View {
                 Text("feynman.explain.inputLabel")
                     .font(TypographyTokens.caption)
                     .foregroundColor(theme.colors.inkFaint)
-
                 Spacer()
-
-                if let speech = speechService, speech.authorizationStatus != .denied && speech.authorizationStatus != .restricted {
-                    Button(action: toggleRecording) {
-                        Image(systemName: (speech.isRecording) ? "mic.fill" : "mic")
-                            .font(.system(size: 18))
-                            .foregroundColor((speech.isRecording) ? theme.colors.accent : theme.colors.inkMuted)
-                            .padding(theme.spacing.sm)
-                            .background(theme.colors.accentBg)
-                            .clipShape(Circle())
-                    }
-                    .accessibilityLabel(speech.isRecording
-                                        ? String(localized: "a11y.feynman.stopRecording")
-                                        : String(localized: "a11y.feynman.startRecording"))
+                if let speech = speechService,
+                   speech.authorizationStatus != .denied,
+                   speech.authorizationStatus != .restricted {
+                    micButton(speech: speech)
                 }
             }
 
-            TextEditor(text: $explanation)
-                .font(TypographyTokens.body)
-                .foregroundColor(theme.colors.ink)
-                .frame(minHeight: 120)
-                .padding(theme.spacing.sm)
-                .background(theme.colors.surfaceAlt)
-                .cornerRadius(8)
-                .accessibilityLabel(String(localized: "a11y.feynman.explanationInput"))
-                .onChange(of: explanation) { _, newValue in
-                    if newValue.count > Self.maxExplanationLength {
-                        explanation = String(newValue.prefix(Self.maxExplanationLength))
-                    }
+            // FC1 — TextEditor placeholder via ZStack overlay (TextEditor doesn't
+            // support placeholders natively).
+            ZStack(alignment: .topLeading) {
+                if explanation.isEmpty {
+                    Text("feynman.explain.placeholder")
+                        .font(TypographyTokens.body)
+                        .foregroundColor(theme.colors.inkFaint)
+                        .padding(.horizontal, theme.spacing.sm + 5)
+                        .padding(.vertical, theme.spacing.sm + 8)
+                        .allowsHitTesting(false)
                 }
-                .onChange(of: speechService?.transcript ?? "") { _, newValue in
-                    if !newValue.isEmpty {
-                        explanation = String(newValue.prefix(Self.maxExplanationLength))
-                        inputMethod = .voice
+                TextEditor(text: $explanation)
+                    .font(TypographyTokens.body)
+                    .foregroundColor(theme.colors.ink)
+                    .scrollContentBackground(.hidden)
+                    .frame(minHeight: 120)
+                    .padding(theme.spacing.sm)
+                    .background(theme.colors.surfaceAlt)
+                    .clipShape(.rect(cornerRadius: RadiusTokens.inline))
+                    .accessibilityLabel(String(localized: "a11y.feynman.explanationInput"))
+                    .onChange(of: explanation) { _, newValue in
+                        if newValue.count > Self.maxExplanationLength {
+                            explanation = String(newValue.prefix(Self.maxExplanationLength))
+                        }
                     }
-                }
+                    .onChange(of: speechService?.transcript ?? "") { _, newValue in
+                        if !newValue.isEmpty {
+                            explanation = String(newValue.prefix(Self.maxExplanationLength))
+                            inputMethod = .voice
+                        }
+                    }
+            }
 
             HStack {
                 if speechService?.authorizationStatus == .denied {
@@ -306,6 +330,25 @@ struct FeynmanCardView: View {
                                      : theme.colors.inkFaint)
             }
         }
+    }
+
+    /// FC2 — clearly distinct idle vs. recording state.
+    private func micButton(speech: any SpeechRepository) -> some View {
+        let isRecording = speech.isRecording
+        return Button(action: toggleRecording) {
+            ZStack {
+                Circle()
+                    .fill(isRecording ? theme.colors.bad : theme.colors.surfaceAlt)
+                    .frame(width: 36, height: 36)
+                Image(systemName: isRecording ? "mic.fill" : "mic")
+                    .font(.system(size: 16, weight: .semibold))
+                    .foregroundColor(isRecording ? .white : theme.colors.inkMuted)
+                    .symbolEffect(.pulse, isActive: isRecording)
+            }
+        }
+        .accessibilityLabel(isRecording
+                            ? String(localized: "a11y.feynman.stopRecording")
+                            : String(localized: "a11y.feynman.startRecording"))
     }
 
     private var technicalStage: some View {
@@ -348,7 +391,7 @@ struct FeynmanCardView: View {
                                 .padding(theme.spacing.md)
                         }
                         .background(theme.colors.codeBg)
-                        .cornerRadius(8)
+                        .clipShape(.rect(cornerRadius: RadiusTokens.inline))
                         .accessibilityLabel(String(format: String(localized: "a11y.codeExample.format"), word.codeExampleLanguage))
                     }
                 }
@@ -370,6 +413,7 @@ struct FeynmanCardView: View {
             HStack(spacing: theme.spacing.sm) {
                 Image(systemName: "checkmark.seal.fill")
                     .foregroundColor(theme.colors.good)
+                    .symbolEffect(.bounce, value: stage)
                 Text("feynman.done.title")
                     .font(TypographyTokens.headline)
                     .foregroundColor(theme.colors.ink)
@@ -378,10 +422,8 @@ struct FeynmanCardView: View {
             if let latestExplanation, !latestExplanation.sentence.isEmpty {
                 VStack(alignment: .leading, spacing: theme.spacing.sm) {
                     Text("feynman.done.yourExplanation")
-                        .font(TypographyTokens.caption)
-                        .foregroundColor(theme.colors.inkFaint)
-                        .textCase(.uppercase)
-                        .tracking(0.5)
+                        .font(TypographyTokens.subheadline.weight(.medium))
+                        .foregroundColor(theme.colors.inkMuted)
                     Text(latestExplanation.sentence)
                         .font(TypographyTokens.body)
                         .foregroundColor(theme.colors.ink)
@@ -389,17 +431,15 @@ struct FeynmanCardView: View {
                         .padding(theme.spacing.md)
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .background(theme.colors.surfaceAlt)
-                        .cornerRadius(8)
+                        .clipShape(.rect(cornerRadius: RadiusTokens.inline))
                 }
             }
 
             if !word.connector.isEmpty {
                 VStack(alignment: .leading, spacing: theme.spacing.sm) {
                     Text("feynman.done.takeaway")
-                        .font(TypographyTokens.caption)
-                        .foregroundColor(theme.colors.inkFaint)
-                        .textCase(.uppercase)
-                        .tracking(0.5)
+                        .font(TypographyTokens.subheadline.weight(.medium))
+                        .foregroundColor(theme.colors.inkMuted)
                     Text(word.connector)
                         .font(TypographyTokens.body)
                         .foregroundColor(theme.colors.ink)
@@ -408,32 +448,12 @@ struct FeynmanCardView: View {
                 }
             }
 
-            HStack(spacing: theme.spacing.md) {
-                Button(action: { showDetail = true }) {
-                    Text("feynman.done.openDetail")
-                        .font(TypographyTokens.callout)
-                        .foregroundColor(theme.colors.accent)
-                }
-                .accessibilityLabel(String(format: String(localized: "a11y.openDetail.format"), word.word))
-
-                Spacer()
-
-                Button(action: { showReport = true }) {
-                    HStack(spacing: 4) {
-                        Image(systemName: "flag")
-                            .font(.system(size: 12))
-                        Text("home.wordCard.report")
-                            .font(TypographyTokens.caption)
-                    }
-                    .foregroundColor(theme.colors.warn)
-                    .padding(.horizontal, theme.spacing.sm)
-                    .padding(.vertical, 6)
-                    .background(theme.colors.warn.opacity(0.1))
-                    .cornerRadius(20)
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel(String(format: String(localized: "a11y.report.format"), word.word))
+            Button(action: { showDetail = true }) {
+                Text("feynman.done.openDetail")
+                    .font(TypographyTokens.callout)
+                    .foregroundColor(theme.colors.accent)
             }
+            .accessibilityLabel(String(format: String(localized: "a11y.openDetail.format"), word.word))
         }
     }
 
@@ -443,39 +463,15 @@ struct FeynmanCardView: View {
     private var advanceControls: some View {
         switch stage {
         case .word:
-            VStack(spacing: theme.spacing.sm) {
-                primaryButton(titleKey: "feynman.advance.next", enabled: true) {
-                    advance()
-                }
-
-                Button(action: skipWord) {
-                    HStack(spacing: 4) {
-                        Image(systemName: "checkmark.circle.fill")
-                            .font(.system(size: 14))
-                        Text("Skip & mark finished")
-                            .font(TypographyTokens.callout)
-                    }
-                    .foregroundColor(theme.colors.good)
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, theme.spacing.sm)
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel("Skip this word and mark as finished")
-            }
+            PrimaryCTAButton("feynman.advance.next") { advance() }
         case .simple:
-            primaryButton(titleKey: "feynman.advance.next", enabled: true) {
-                advance()
-            }
+            PrimaryCTAButton("feynman.advance.next") { advance() }
         case .technical:
-            primaryButton(titleKey: "feynman.advance.readyToExplain", enabled: true) {
-                advance()
-            }
+            PrimaryCTAButton("feynman.advance.readyToExplain") { advance() }
         case .explain:
             explainControls
         case .connector:
-            primaryButton(titleKey: "feynman.advance.finish", enabled: true) {
-                advance()
-            }
+            PrimaryCTAButton("feynman.advance.finish") { advance() }
         case .done:
             EmptyView()
         }
@@ -493,147 +489,76 @@ struct FeynmanCardView: View {
                         .frame(maxWidth: .infinity)
                         .padding(.vertical, theme.spacing.md)
                         .background(theme.colors.surfaceAlt)
-                        .cornerRadius(10)
+                        .clipShape(.rect(cornerRadius: RadiusTokens.card))
                 }
                 .buttonStyle(.plain)
                 .accessibilityLabel(String(localized: "a11y.feynman.markPracticed"))
             }
 
-            primaryButton(titleKey: "feynman.explain.submit", enabled: !trimmed.isEmpty) {
+            PrimaryCTAButton("feynman.explain.submit") {
                 submitExplanation(trimmed: trimmed)
             }
+            .disabled(trimmed.isEmpty)
         }
-    }
-
-    private func primaryButton(titleKey: LocalizedStringKey, enabled: Bool, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            Text(titleKey)
-                .font(TypographyTokens.headline)
-                .foregroundColor(theme.colors.accentText)
-                .frame(maxWidth: .infinity)
-                .padding(.vertical, theme.spacing.md)
-                .background(enabled ? theme.colors.accent : theme.colors.inkFaint)
-                .cornerRadius(12)
-        }
-        .buttonStyle(.plain)
-        .disabled(!enabled)
     }
 
     // MARK: - Actions
 
     private func advance() {
         guard let next = nextStage(from: stage) else { return }
-
-        // Flip animation: rotate halfway, change content, then complete rotation
-        withAnimation(.easeIn(duration: 0.15)) {
-            flipRotation = 90
-        }
-
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
+        advanceTrigger &+= 1
+        withAnimation(reduceMotion ? nil : MotionTokens.standard) {
             stage = next
-
-            withAnimation(.easeOut(duration: 0.15)) {
-                flipRotation = 0
-            }
         }
     }
 
-    /// Picks the next stage. Order is word → simple → technical → explain → connector → done.
-    /// Coming-soon words skip the connector stage (no content to show), so explain leads
-    /// straight to done for those.
+    /// Picks the next stage. word → simple → technical → explain → connector → done.
+    /// Coming-soon words skip the connector stage.
     private func nextStage(from current: FeynmanStage) -> FeynmanStage? {
         switch current {
-        case .word:
-            return .simple
-        case .simple:
-            return .technical
-        case .technical:
-            return .explain
-        case .explain:
-            return isComingSoon ? .done : .connector
-        case .connector:
-            return .done
-        case .done:
-            return nil
+        case .word:      return .simple
+        case .simple:    return .technical
+        case .technical: return .explain
+        case .explain:   return isComingSoon ? .done : .connector
+        case .connector: return .done
+        case .done:      return nil
         }
     }
 
     private func submitExplanation(trimmed: String) {
         stopRecordingIfNeeded()
-        onSubmit(trimmed, inputMethod, false)  // Normal submission, not auto-mastered
-
-        // Flip animation for submit
-        withAnimation(.easeIn(duration: 0.15)) {
-            flipRotation = 90
-        }
-
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
+        onSubmit(trimmed, inputMethod, false)
+        advanceTrigger &+= 1
+        withAnimation(reduceMotion ? nil : MotionTokens.standard) {
             stage = isComingSoon ? .done : .connector
-
-            withAnimation(.easeOut(duration: 0.15)) {
-                flipRotation = 0
-            }
         }
     }
 
     private func submitAsComingSoon() {
         stopRecordingIfNeeded()
-        // Empty explanation — ProgressService skips the PracticedSentence row but
-        // still inserts the word into wordsPracticedIds + creates a ReviewState.
-        onSubmit("", .typed, false)  // Normal practice, not mastered
-
-        // Flip animation for submit
-        withAnimation(.easeIn(duration: 0.15)) {
-            flipRotation = 90
-        }
-
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
+        onSubmit("", .typed, false)
+        advanceTrigger &+= 1
+        withAnimation(reduceMotion ? nil : MotionTokens.standard) {
             stage = .done
-
-            withAnimation(.easeOut(duration: 0.15)) {
-                flipRotation = 0
-            }
         }
     }
 
     private func skipWord() {
         stopRecordingIfNeeded()
-        // Mark as MASTERED - counts toward level progression, won't appear in assessments
-        onSubmit("", .typed, true)  // true = mark as mastered
-
-        // Flip animation for skip
-        withAnimation(.easeIn(duration: 0.15)) {
-            flipRotation = 90
-        }
-
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
+        onSubmit("", .typed, true)  // mark as mastered
+        advanceTrigger &+= 1
+        withAnimation(reduceMotion ? nil : MotionTokens.standard) {
             stage = .done
-
-            withAnimation(.easeOut(duration: 0.15)) {
-                flipRotation = 0
-            }
         }
     }
 
     private func reportAndSkip() {
-        // Show report sheet first
         showReport = true
-
-        // Mark as MASTERED - counts toward level progression, won't appear in assessments
         stopRecordingIfNeeded()
-        onSubmit("", .typed, true)  // true = mark as mastered
-
-        // Flip animation to done stage
-        withAnimation(.easeIn(duration: 0.15)) {
-            flipRotation = 90
-        }
-
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
+        onSubmit("", .typed, true)
+        advanceTrigger &+= 1
+        withAnimation(reduceMotion ? nil : MotionTokens.standard) {
             stage = .done
-
-            withAnimation(.easeOut(duration: 0.15)) {
-                flipRotation = 0
-            }
         }
     }
 
@@ -668,12 +593,12 @@ struct FeynmanCardView: View {
 
     // MARK: - Helpers
 
+    /// F4 — sentence-case stage labels. Reduced from the previous tracked
+    /// uppercase caption to a small medium-weight label.
     private func stageLabel(_ key: LocalizedStringKey) -> some View {
         Text(key)
-            .font(TypographyTokens.caption)
-            .foregroundColor(theme.colors.inkFaint)
-            .textCase(.uppercase)
-            .tracking(0.5)
+            .font(TypographyTokens.subheadline.weight(.medium))
+            .foregroundColor(theme.colors.inkMuted)
     }
 
     @ViewBuilder
