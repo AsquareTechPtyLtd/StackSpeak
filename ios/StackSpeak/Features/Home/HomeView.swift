@@ -15,6 +15,7 @@ struct HomeView: View {
     @Environment(\.services) private var services
     @Environment(\.userProgress) private var userProgress
 
+    @Query private var dailySets: [DailySet]
     @State private var viewModel = HomeViewModel()
     @State private var notificationAuthStatus: UNAuthorizationStatus = .notDetermined
     @State private var showNotificationBanner = false
@@ -126,6 +127,9 @@ struct HomeView: View {
                 dayCounter()
                     .padding(.horizontal, theme.spacing.lg)
 
+                CompletionTrackerRow(days: lastTenDays())
+                    .padding(.horizontal, theme.spacing.lg)
+
                 instructionLine()
                     .padding(.horizontal, theme.spacing.lg)
 
@@ -164,6 +168,22 @@ struct HomeView: View {
         }
         .accessibilityElement(children: .combine)
         .accessibilityLabel(String(format: String(localized: "a11y.streak.format"), progress.displayedCurrentStreak))
+    }
+
+    /// Returns the last 10 calendar days (oldest → today) and whether each
+    /// day's daily set was fully completed. Drives the small dot tracker
+    /// shown above the instruction line.
+    private func lastTenDays() -> [CompletionDay] {
+        let cal = Calendar.current
+        let today = cal.startOfDay(for: Date())
+        let setsByDay = Dictionary(uniqueKeysWithValues: dailySets.map { ($0.dayString, $0) })
+        return (0..<10).reversed().map { offset in
+            let date = cal.date(byAdding: .day, value: -offset, to: today) ?? today
+            let key = DailySet.dayString(from: date)
+            let isComplete = setsByDay[key]?.isComplete ?? false
+            let isToday = offset == 0
+            return CompletionDay(date: date, isComplete: isComplete, isToday: isToday)
+        }
     }
 
     /// Quiet instruction that does what the dropped `.word` stage used to do —
@@ -358,6 +378,63 @@ struct TodayWordRow: View {
         )
         .accessibilityElement(children: .combine)
         .accessibilityLabel("\(word.word). \(isCompleted ? String(localized: "a11y.completed") : "")")
+    }
+}
+
+// MARK: - 10-day completion tracker
+
+struct CompletionDay: Identifiable {
+    let date: Date
+    let isComplete: Bool
+    let isToday: Bool
+    var id: Date { date }
+}
+
+/// Compact ten-dot row showing the user's last ten days at a glance. Filled
+/// dot = day fully completed, empty hairline circle = missed. Today gets an
+/// accent ring to anchor the rightmost position.
+struct CompletionTrackerRow: View {
+    @Environment(\.theme) private var theme
+
+    let days: [CompletionDay]
+
+    var body: some View {
+        HStack(spacing: 6) {
+            ForEach(days) { day in
+                dot(for: day)
+            }
+            Spacer(minLength: 0)
+        }
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel(accessibilitySummary)
+    }
+
+    @ViewBuilder
+    private func dot(for day: CompletionDay) -> some View {
+        ZStack {
+            Circle()
+                .fill(day.isComplete ? theme.colors.good : Color.clear)
+                .frame(width: 14, height: 14)
+            Circle()
+                .strokeBorder(
+                    day.isToday ? theme.colors.accent
+                                : (day.isComplete ? theme.colors.good : theme.colors.line),
+                    lineWidth: day.isToday ? 1.5 : 1
+                )
+                .frame(width: 14, height: 14)
+            if day.isComplete {
+                Image(systemName: "checkmark")
+                    .font(.system(size: 8, weight: .bold))
+                    .foregroundColor(.white)
+            }
+        }
+        .accessibilityHidden(true)
+    }
+
+    private var accessibilitySummary: String {
+        let completed = days.filter { $0.isComplete }.count
+        return String(format: String(localized: "home.tracker.accessibility.format"),
+                      completed, days.count)
     }
 }
 
