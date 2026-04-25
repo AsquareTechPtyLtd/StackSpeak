@@ -130,9 +130,13 @@ struct WordDTO: Codable {
         shortDefinition = try c.decode(String.self, forKey: .shortDefinition)
         simpleDefinition = try c.decodeIfPresent(String.self, forKey: .simpleDefinition) ?? ""
         longDefinition = try c.decode(String.self, forKey: .longDefinition)
-        techContext = try c.decode(String.self, forKey: .techContext)
-        exampleSentence = try c.decode(String.self, forKey: .exampleSentence)
-        etymology = try c.decode(String.self, forKey: .etymology)
+        // techContext / exampleSentence / etymology are tolerant: every UI
+        // surface already gates on `.isEmpty` before rendering them, so a
+        // word missing one of these still loads (it just doesn't render
+        // that section). Same pattern as simpleDefinition / connector.
+        techContext = try c.decodeIfPresent(String.self, forKey: .techContext) ?? ""
+        exampleSentence = try c.decodeIfPresent(String.self, forKey: .exampleSentence) ?? ""
+        etymology = try c.decodeIfPresent(String.self, forKey: .etymology) ?? ""
         connector = try c.decodeIfPresent(String.self, forKey: .connector) ?? ""
         codeExample = try c.decodeIfPresent(CodeExampleDTO.self, forKey: .codeExample)
         unlockLevel = try c.decode(Int.self, forKey: .unlockLevel)
