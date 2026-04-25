@@ -1,7 +1,11 @@
 import SwiftUI
 
+/// Stages of the Feynman flow for one word.
+///
+/// The standalone `word` stage ("say it out loud") was removed once Today
+/// became a list — the user already sees + says the word from the list before
+/// drilling in. Flow is now: simple → technical → explain → connector → done.
 enum FeynmanStage: Int, CaseIterable {
-    case word
     case simple
     case technical
     case explain
@@ -61,7 +65,7 @@ struct FeynmanCardView: View {
         self.latestExplanation = latestExplanation
         self.onSubmit = onSubmit
         self.onStageDidReachDone = onStageDidReachDone
-        _stage = State(initialValue: isCompleted ? .done : .word)
+        _stage = State(initialValue: isCompleted ? .done : .simple)
     }
 
     private var isComingSoon: Bool {
@@ -127,16 +131,15 @@ struct FeynmanCardView: View {
         Double(visibleStageIndex - 1) / Double(max(1, visibleStageTotal - 1))
     }
 
-    private var visibleStageTotal: Int { isComingSoon ? 5 : 6 }
+    private var visibleStageTotal: Int { isComingSoon ? 4 : 5 }
 
     private var visibleStageIndex: Int {
         switch stage {
-        case .word:      return 1
-        case .simple:    return 2
-        case .technical: return 3
-        case .explain:   return 4
-        case .connector: return 5
-        case .done:      return isComingSoon ? 5 : 6
+        case .simple:    return 1
+        case .technical: return 2
+        case .explain:   return 3
+        case .connector: return 4
+        case .done:      return isComingSoon ? 4 : 5
         }
     }
 
@@ -196,7 +199,6 @@ struct FeynmanCardView: View {
     @ViewBuilder
     private var stageContent: some View {
         switch stage {
-        case .word:      wordStage
         case .simple:    simpleStage
         case .connector: connectorStage
         case .explain:   explainStage
@@ -205,14 +207,6 @@ struct FeynmanCardView: View {
         }
     }
 
-    private var wordStage: some View {
-        VStack(alignment: .leading, spacing: theme.spacing.md) {
-            stageLabel("feynman.stage.word")
-            Text("feynman.word.prompt")
-                .font(TypographyTokens.body)
-                .foregroundColor(theme.colors.ink)
-        }
-    }
 
     private var simpleStage: some View {
         VStack(alignment: .leading, spacing: theme.spacing.md) {
@@ -485,8 +479,6 @@ struct FeynmanCardView: View {
     @ViewBuilder
     private var advanceControls: some View {
         switch stage {
-        case .word:
-            PrimaryCTAButton("feynman.advance.next") { advance() }
         case .simple:
             PrimaryCTAButton("feynman.advance.next") { advance() }
         case .technical:
@@ -540,7 +532,6 @@ struct FeynmanCardView: View {
     /// Coming-soon words skip the connector stage.
     private func nextStage(from current: FeynmanStage) -> FeynmanStage? {
         switch current {
-        case .word:      return .simple
         case .simple:    return .technical
         case .technical: return .explain
         case .explain:   return isComingSoon ? .done : .connector

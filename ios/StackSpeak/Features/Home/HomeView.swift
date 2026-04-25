@@ -126,6 +126,9 @@ struct HomeView: View {
                 dayCounter()
                     .padding(.horizontal, theme.spacing.lg)
 
+                instructionLine()
+                    .padding(.horizontal, theme.spacing.lg)
+
                 wordList(progress: progress)
             }
         }
@@ -161,6 +164,15 @@ struct HomeView: View {
         }
         .accessibilityElement(children: .combine)
         .accessibilityLabel(String(format: String(localized: "a11y.streak.format"), progress.displayedCurrentStreak))
+    }
+
+    /// Quiet instruction that does what the dropped `.word` stage used to do —
+    /// asks the user to say each word aloud before tapping into the deeper flow.
+    private func instructionLine() -> some View {
+        Text("home.instruction")
+            .font(TypographyTokens.subheadline)
+            .foregroundColor(theme.colors.inkMuted)
+            .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     private func dayCounter() -> some View {
