@@ -19,9 +19,9 @@ Native iOS vocabulary app for software developers and engineers. Delivers 5 tech
 ## Core Features — MVP
 
 1. **Onboarding** — 3-screen skippable intro + stack selection; everyone starts at Level 1 with 4 mandatory stacks.
-2. **Daily Word Set (Home / Today)** — 5 words per day as tap-to-expand cards with progress ring for the day's completion.
-3. **Word Detail Screen** — full view: short + long definition, pronunciation, tech context, code example, etymology, example sentence.
-4. **Sentence Practice** — user writes (or speaks via mic) their own sentence using the word. Non-empty + must contain the word. Makes word eligible for assessment.
+2. **Feynman Card Experience (Home / Today)** — 5 words per day as a horizontal swipeable card deck. Each card walks the user through staged reveals (plain-English definition → technical depth → their own explanation → everyday analogy as a takeaway). Explaining the word in their own words — typed or spoken — is what marks the card complete.
+3. **Word Detail Screen** — full view: short + long definition, pronunciation, tech context, code example, etymology, example sentence. Reachable from Library and Review; the Feynman card on Today already surfaces this content inline.
+4. **Self-Explanation (inside the Feynman card)** — the user types or speaks their own explanation of the word. Stored verbatim; no validation against the target word, no AI scoring. Submission makes the word eligible for assessment and completes the daily card.
 5. **Assessment Quiz** — multiple-choice quiz in Review tab. Each word needs 2 correct answers to count toward level progression. 24-hour cooldown on wrong attempts.
 6. **Review Flashcards** — tap-to-flip SRS flashcards for previously practiced words, scheduled by SM-2 algorithm. Optional for retention.
 7. **Mark as Mastered** — user excludes a word from future daily sets; reversible. Separate from assessment progression.
@@ -57,7 +57,7 @@ Aesthetic: **60/40 Linear → Bear blend.** Cool-neutral grays for chrome, warm-
 All custom fonts must be declared in `Info.plist` under `UIAppFonts`. Fallbacks: `-apple-system`, `ui-monospace`, `Georgia`.
 
 **Interactions:**
-- **Home cards:** tap to expand in place (smooth reveal, Linear-style). Expanded card shows short definition + practice input + "I know this" pill + "Open" action.
+- **Home (Feynman) cards:** one card per word. Tap-to-advance through staged reveals inside a card; horizontal swipe to move between cards. Progress dots at the top of the deck show which card you're on; a filled dot means that word is already practiced.
 - **Review flashcards:** tap to flip (front = word, back = definition + example).
 - **Animations:** subtle, never distracting. No spring overshoot. No celebratory confetti (the level-up modal is the only fanfare).
 
@@ -84,10 +84,12 @@ All custom fonts must be declared in `Info.plist` under `UIAppFonts`. Fallbacks:
       "pronunciation": "eye-DEM-po-tent",
       "partOfSpeech": "adjective",
       "shortDefinition": "An operation that produces the same result no matter how many times it runs.",
+      "simpleDefinition": "Something you can do over and over and the outcome is the same — like pressing the ground-floor button in an elevator that's already on the ground floor.",
       "longDefinition": "A property of certain operations where applying them multiple times has the same effect as applying them once. Critical for safe retries in distributed systems and HTTP methods like PUT and DELETE.",
       "techContext": "Commonly used in API design and distributed systems discussions.",
       "exampleSentence": "The retry logic is safe because the endpoint is idempotent.",
       "etymology": "from Latin idem (\"same\") + potent (\"power\") — coined 1870 in algebra.",
+      "connector": "Think of idempotent like a light switch that's only labelled 'off' — flicking it ten times leaves the room just as dark as flicking it once.",
       "codeExample": {
         "language": "http",
         "code": "PUT /users/42\n{ \"name\": \"Ada\" }\n\n// Running this 1× or 100× → same final state."
@@ -108,17 +110,21 @@ All custom fonts must be declared in `Info.plist` under `UIAppFonts`. Fallbacks:
 | `word` | string | The term itself, lowercase unless a proper noun or acronym |
 | `pronunciation` | string | Phonetic only, hyphenated, uppercase stressed syllable (e.g., `eye-DEM-po-tent`). Not IPA. |
 | `partOfSpeech` | string | `noun`, `verb`, `adjective`, `adverb`, `phrase`, `acronym` |
-| `shortDefinition` | string | One-line definition — shown on Home cards, flashcard front-to-back, search results. |
-| `longDefinition` | string | 1-2 sentence expanded definition — shown on Word Detail screen. |
+| `shortDefinition` | string | One-line definition — shown on flashcard front-to-back and search results. |
+| `simpleDefinition` | string | Plain-English definition aimed at someone with no CS background. Avoid jargon. Shown on the Feynman card's first content reveal. |
+| `longDefinition` | string | 1-2 sentence expanded definition — shown on Word Detail screen and on the Feynman card's technical reveal. |
 | `techContext` | string | 1-2 sentences on where/how a developer encounters this term in real work. |
 | `exampleSentence` | string | Natural-sounding sentence a senior engineer/architect would say in a meeting. |
 | `etymology` | string | Brief origin note; rendered in Instrument Serif Italic. |
+| `connector` | string | Everyday analogy that anchors the term to something the user already knows. Convention: *"Think of X like Y — …"*. Shown on the Feynman card's final reveal (after the user has explained it) so it sticks as a takeaway. |
 | `codeExample` | object | `{ language, code }` — `language` is a lowercase slug (`http`, `yaml`, `ts`, `hs`, `swift`, `sql`, `bash`, `py`, `go`, `rust`). |
 | `stack` | enum | One of the stacks defined in `Models/WordStack.swift`. |
 | `unlockLevel` | integer (1–5) | Which user level must be reached to unlock this word. |
 | `tags` | array of strings | Free-form tags (lowercase-with-hyphens) for filtering/search. |
 
 All fields are **required** for MVP. No optional fields — if a word doesn't have a good code example, it doesn't belong in the bank yet.
+
+**Backfill exception (temporary):** `simpleDefinition` and `connector` were introduced with the Feynman card. The fields default to `""` in the model so existing installs don't crash, and words that haven't been backfilled render a "coming soon" state on the Feynman card. These are required on all new and edited words going forward; all shipped words must be populated before the Feynman flow becomes the only path to day completion.
 
 ### Word Bank Target
 
@@ -319,32 +325,75 @@ The Review tab has **two modes**: Assessment (for leveling up) and Flashcards (f
 
 **Persistence:** Each practiced word has a `ReviewState` stored in SwiftData: `{ wordId, easinessFactor, interval, repetitions, dueDate, lastReviewedAt }`.
 
-## Sentence Practice
+## Feynman Card Experience
 
-Users prove engagement with a word by writing or speaking a sentence using it.
+The Feynman card is the core Home/Today interaction. It replaces the older expanding-card + separate sentence-practice screen. One card per daily word; each card walks through staged reveals and culminates in the user explaining the word in their own words.
 
-### Input Modes
+### Deck Structure
 
-1. **Type** — standard text field.
-2. **Voice** — tap mic button, dictate sentence. Uses iOS `Speech` framework.
+- Horizontal swipe between the 5 daily cards. Swipe respects already-completed cards (user can revisit, sees their own prior explanation).
+- Progress dots at the top of the deck (5 dots, one per card). A filled dot = word practiced for the day. Tapping a dot jumps to that card.
+- Header above the dots shows current level + streak, same information density as before (moved from the old HomeView header).
+- When all 5 dots are filled the deck collapses to an "all done for today" state; streak and level progression have already been updated at that point.
 
-### Validation
+### Card Stages (in order)
 
-- Non-empty after trim.
-- Must contain the target word (case-insensitive, whole-word match — allow common inflections like plural `-s`, past tense `-ed`).
-- No AI-based semantic validation for MVP.
+1. **Word.** The term, pronunciation, and level badge. Tap / "Next" advances.
+2. **Simple definition.** `simpleDefinition` — plain English, no jargon. Tap advances.
+3. **Technical depth.** `longDefinition` + `techContext` + `codeExample` + `exampleSentence` + `etymology`. The full picture — the user reads this before attempting to explain. Tap "I'm ready to explain" advances.
+4. **Explain.** A prompt ("Now explain it in your own words") with a type/mic input area. The user must submit non-empty text to advance. No validation of content — any submission is accepted. Mic input uses the same `SpeechService` flow as the old sentence-practice screen (on-device, live transcript, permission request on first tap).
+5. **Connector.** `connector` — everyday analogy shown *after* the user has wrestled with the word themselves. Serves as a memorable takeaway rather than a learning scaffold. Tap "Finish card" advances.
+6. **Done.** Summary: the user's own explanation echoed back, plus "I know this" and "Report" actions (same semantics as the old word card).
 
-### Voice Input
+Ordering rationale: the flow follows the real Feynman technique — learn (simple + technical), teach (explain), then anchor the memory (connector). The connector is deliberately placed *after* the explanation attempt so it reinforces the concept the user just articulated rather than priming them with the answer.
 
-- Tap mic → request `NSSpeechRecognitionUsageDescription` + `NSMicrophoneUsageDescription` permission on first use.
-- Show live transcription in the input field while recording.
-- Pulse animation on mic button while listening.
-- Tap mic again to stop and finalize.
-- If permission denied, show a banner on the practice UI: *"Enable microphone access in Settings to speak your sentence."*
+Stages within a card are local state — swiping away resets the visual to the first stage, but the submitted explanation is persisted and on return the card opens directly at **Done** with the explanation shown.
 
-### What Gets Saved
+### What Marks a Card Complete
 
-On successful submission, store `{ wordId, sentence, createdAt, inputMethod }` in UserProgress. This powers the Daily Summary and unlocks the word for Review scheduling.
+Submitting a non-empty explanation on the **Explain** stage. This is what mutates persistent state:
+
+- Appends a `PracticedSentence { wordId, sentence: <explanation>, createdAt, inputMethod }` to `UserProgress`.
+- Inserts `wordId` into `wordsPracticedIds`.
+- Creates a `ReviewState` for the word if none exists (enters SRS).
+- Marks the word completed in today's `DailySet`.
+- If `DailySet.isComplete` afterwards, triggers the existing `completeDailySet` streak/level pipeline.
+
+The flow is identical to the retired sentence-practice flow at the data layer — only the UI entry point changed.
+
+### Coming-Soon Fallback
+
+A card whose word has empty `simpleDefinition` **or** empty `connector` renders a shortened flow:
+
+- The Simple stage swaps its usual content for a **Coming soon** panel showing `shortDefinition` and copy along the lines of *"We're still writing the simple explanation for this word — tap to mark as practiced."* The Technical stage still renders normally since those fields remain populated.
+- The Connector stage is skipped entirely (nothing to show). Explain leads directly to Done.
+- The Explain stage still appears but the submit button is optional; the user can also tap "Mark practiced" to complete the card without recording an explanation. This path still calls `markWordPracticed` (with an empty sentence, which `ProgressService` treats as "no sentence stored") so the day is still completable.
+- Rationale: until all stacks are backfilled, users with un-backfilled stacks must not be blocked from day completion or streak continuation.
+
+### Input Modes (Explain Stage)
+
+- **Type** — standard text field. 500-char cap (same as old practice screen).
+- **Voice** — tap mic button, dictate explanation. Uses iOS `Speech` framework via the existing `SpeechService`.
+  - Request `NSSpeechRecognitionUsageDescription` + `NSMicrophoneUsageDescription` on first tap.
+  - Live transcript populates the text field while recording.
+  - Pulse animation on mic button while listening.
+  - Tap mic again (or speech framework detects silence) to stop and finalize.
+  - If permission denied, a banner on the card reads: *"Enable microphone access in Settings to speak your explanation."* Typing still works.
+
+Unlike the retired sentence-practice flow, the explanation is **not** validated to contain the target word — the whole point is to explain in the user's own words.
+
+### Integration with Existing Progression
+
+- **Review:** explanation submission is the event that makes a word eligible for assessment. `wordsEligibleForAssessment()` is unchanged (uses `wordsPracticedIds`).
+- **Library:** unchanged — still populated from `wordsPracticedIds`.
+- **Streak/Level:** unchanged — triggered via `ProgressService.completeDailySet` when all 5 dots are filled.
+- **Notifications:** first-practice notification prompt still fires after the first submitted explanation of the install's life.
+
+### Out of Scope (Feynman card)
+
+- No evaluation or scoring of the user's explanation (no keyword match, no LLM, no backend).
+- No editing of a submitted explanation (re-practicing the same word appends a second `PracticedSentence` row rather than replacing).
+- No sharing or export of explanations.
 
 ## UI Preferences
 

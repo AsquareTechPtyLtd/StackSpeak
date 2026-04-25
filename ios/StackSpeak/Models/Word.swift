@@ -8,12 +8,12 @@ final class Word {
     var pronunciation: String
     var partOfSpeech: String
     var shortDefinition: String
-    var simpleDefinition: String
+    var simpleDefinition: String = ""
     var longDefinition: String
     var techContext: String
     var exampleSentence: String
     var etymology: String
-    var connector: String
+    var connector: String = ""
     var codeExampleLanguage: String
     var codeExampleCode: String
     /// Stored as the stack's raw id (e.g. "basic-web"). Use `wordStack` for a typed view.

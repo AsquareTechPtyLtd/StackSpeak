@@ -9,7 +9,9 @@ final class CloudKitReportService: Sendable {
     static let shared = CloudKitReportService()
     private init() {}
 
-    private let database = CKContainer(identifier: "iCloud.com.stackspeak.ios").publicCloudDatabase
+    private var database: CKDatabase {
+        CKContainer(identifier: "iCloud.com.stackspeak.ios").publicCloudDatabase
+    }
     private let logger = Logger(subsystem: "com.stackspeak.ios", category: "CloudKitReportService")
 
     func upload(

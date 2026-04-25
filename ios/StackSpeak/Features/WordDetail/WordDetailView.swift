@@ -1,6 +1,6 @@
 import SwiftUI
 
-/// Presented as a sheet from WordCardView and as a pushed screen from LibraryView.
+/// Presented as a sheet from the Feynman card's Done stage and as a pushed screen from LibraryView.
 /// No inner NavigationStack — the caller is responsible for wrapping in one if needed.
 struct WordDetailView: View {
     @Environment(\.theme) private var theme

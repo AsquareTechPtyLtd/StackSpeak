@@ -17,7 +17,7 @@ protocol WordRepository {
 /// Protocol for user progress data access
 @MainActor
 protocol ProgressRepository {
-    func markWordPracticed(wordId: UUID, sentence: String, inputMethod: InputMethod, userProgress: UserProgress)
+    func markWordPracticed(wordId: UUID, sentence: String, inputMethod: InputMethod, markAsMastered: Bool, userProgress: UserProgress)
     func markWordMastered(_ wordId: UUID, userProgress: UserProgress)
     func unmarkWordMastered(_ wordId: UUID, userProgress: UserProgress)
     func toggleBookmark(_ wordId: UUID, userProgress: UserProgress)

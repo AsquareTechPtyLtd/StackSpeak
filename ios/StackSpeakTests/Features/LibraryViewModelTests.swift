@@ -3,6 +3,7 @@ import Foundation
 @testable import StackSpeak
 
 @Suite("LibraryViewModel Tests")
+@MainActor
 struct LibraryViewModelTests {
 
     @Test("filteredWords derives from allWords with no filters")
@@ -29,7 +30,7 @@ struct LibraryViewModelTests {
         viewModel.selectedStack = .basicProgramming
 
         #expect(viewModel.filteredWords.count == 2)
-        #expect(viewModel.filteredWords.allSatisfy { $0.stack == .basicProgramming })
+        #expect(viewModel.filteredWords.allSatisfy { $0.wordStack == .basicProgramming })
     }
 
     @Test("filteredWords filters by search query")
