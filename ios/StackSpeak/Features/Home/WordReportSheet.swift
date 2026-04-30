@@ -13,6 +13,7 @@ struct WordReportSheet: View {
 
     let word: Word
     let userProgress: UserProgress
+    var onSubmitted: () -> Void = {}
 
     private static let maxNotesLength = 1000
 
@@ -53,7 +54,10 @@ struct WordReportSheet: View {
                 }
             }
             .alert("report.success.title", isPresented: $showSuccess) {
-                Button("common.ok") { dismiss() }
+                Button("common.ok") {
+                    onSubmitted()
+                    dismiss()
+                }
             } message: {
                 Text("report.success.message")
             }

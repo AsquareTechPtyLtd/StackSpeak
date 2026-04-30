@@ -103,7 +103,11 @@ struct FeynmanCardView: View {
         .simultaneousGesture(swipeAdvanceGesture)
         .sensoryFeedback(.selection, trigger: advanceTrigger)
         .sheet(isPresented: $showReport) {
-            WordReportSheet(word: word, userProgress: userProgress)
+            WordReportSheet(
+                word: word,
+                userProgress: userProgress,
+                onSubmitted: finalizeReportSkip
+            )
         }
         .sheet(isPresented: $showDetail) {
             NavigationStack {
@@ -638,8 +642,14 @@ struct FeynmanCardView: View {
     }
 
     private func reportAndSkip() {
-        showReport = true
         stopRecordingIfNeeded()
+        showReport = true
+    }
+
+    /// Mutates progress (mark mastered, advance to done) only after the user
+    /// successfully submits the report. Wired as the report sheet's
+    /// onSubmitted callback so canceling the sheet leaves the card untouched.
+    private func finalizeReportSkip() {
         onSubmit("", .typed, true)
         advanceTrigger &+= 1
         withAnimation(reduceMotion ? nil : MotionTokens.standard) {
