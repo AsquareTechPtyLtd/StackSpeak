@@ -22,7 +22,9 @@ struct StackSpeakApp: App {
             PracticedSentence.self,
             ReviewState.self,
             AssessmentResult.self,
-            WordReport.self
+            WordReport.self,
+            BookProgress.self,
+            BookmarkedCard.self
         ])
 
         do {
@@ -295,8 +297,8 @@ struct MainTabView: View {
             }
             .badge(reviewBadge)
 
-            Tab("library.tab", systemImage: "books.vertical.fill") {
-                LibraryView()
+            Tab("books.tab", systemImage: "books.vertical.fill") {
+                BooksTabView()
             }
 
             Tab("profile.tab", systemImage: "person.fill") {

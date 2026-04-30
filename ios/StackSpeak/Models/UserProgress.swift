@@ -8,17 +8,13 @@ final class UserProgress {
     var currentStreak: Int
     var longestStreak: Int
     var lastCompletedDate: Date?
-    var wordsPracticedIds: Set<UUID>
-    var masteredWordIds: Set<UUID>
-    var bookmarkedWordIds: Set<UUID>
+    var wordsPracticedIdsStorage: String
+    var masteredWordIdsStorage: String
+    var bookmarkedWordIdsStorage: String
     var installDate: Date
     var shuffleSeed: UUID
-    /// Cursor position in the deterministic word queue. Advances after each daily set is generated.
     var wordQueueCursor: Int
-    /// Denormalized cache of word IDs that have ≥2 correct assessment answers.
-    /// Updated incrementally in ProgressService to avoid O(n) scans on every render.
-    var wordsWithTwoCorrectIds: Set<UUID>
-    /// Set when the user finishes onboarding (or skips it). Used to detect first-launch.
+    var wordsWithTwoCorrectIdsStorage: String
     var didCompleteOnboarding: Bool
 
     var notificationEnabled: Bool
@@ -28,7 +24,60 @@ final class UserProgress {
 
     var themePreference: ThemePreference
 
-    var selectedStacks: Set<String>
+    var selectedStacksStorage: String
+
+    // MARK: - Pro subscription
+
+    var isPro: Bool = false
+    var proExpiryDate: Date? = nil
+
+    // MARK: - Daily-5 vocab load-more (Pro feature)
+    // Hard cap at 25 cards/day. Reset at local midnight.
+
+    var wordsLoadedToday: Int = 0
+    var lastWordsLoadedResetDate: Date = Date.distantPast
+
+    // MARK: - Book reading preferences
+
+    /// `nil` means unlimited (the default). A value sets a global daily cap across all books.
+    /// Default value when first opting in: 20.
+    var dailyBookCardLimit: Int? = nil
+    var bookCardsReadToday: Int = 0
+    var lastBookReadingResetDate: Date = Date.distantPast
+
+    var wordsPracticedIds: Set<UUID> {
+        get { Self.uuidsFromCSV(wordsPracticedIdsStorage) }
+        set { wordsPracticedIdsStorage = Self.csvFromUUIDs(newValue) }
+    }
+
+    var masteredWordIds: Set<UUID> {
+        get { Self.uuidsFromCSV(masteredWordIdsStorage) }
+        set { masteredWordIdsStorage = Self.csvFromUUIDs(newValue) }
+    }
+
+    var bookmarkedWordIds: Set<UUID> {
+        get { Self.uuidsFromCSV(bookmarkedWordIdsStorage) }
+        set { bookmarkedWordIdsStorage = Self.csvFromUUIDs(newValue) }
+    }
+
+    var wordsWithTwoCorrectIds: Set<UUID> {
+        get { Self.uuidsFromCSV(wordsWithTwoCorrectIdsStorage) }
+        set { wordsWithTwoCorrectIdsStorage = Self.csvFromUUIDs(newValue) }
+    }
+
+    var selectedStacks: Set<String> {
+        get { selectedStacksStorage.isEmpty ? [] : Set(selectedStacksStorage.components(separatedBy: ",")) }
+        set { selectedStacksStorage = newValue.sorted().joined(separator: ",") }
+    }
+
+    private static func uuidsFromCSV(_ csv: String) -> Set<UUID> {
+        guard !csv.isEmpty else { return [] }
+        return Set(csv.components(separatedBy: ",").compactMap { UUID(uuidString: $0) })
+    }
+
+    private static func csvFromUUIDs(_ uuids: Set<UUID>) -> String {
+        uuids.map(\.uuidString).joined(separator: ",")
+    }
 
     @Relationship(deleteRule: .cascade) var practicedSentences: [PracticedSentence]
     @Relationship(deleteRule: .cascade) var reviewStates: [ReviewState]
@@ -58,20 +107,27 @@ final class UserProgress {
         self.currentStreak = 0
         self.longestStreak = 0
         self.lastCompletedDate = nil
-        self.wordsPracticedIds = []
-        self.masteredWordIds = []
-        self.bookmarkedWordIds = []
+        self.wordsPracticedIdsStorage = ""
+        self.masteredWordIdsStorage = ""
+        self.bookmarkedWordIdsStorage = ""
         self.installDate = Date()
         self.shuffleSeed = UUID()
         self.wordQueueCursor = 0
-        self.wordsWithTwoCorrectIds = []
+        self.wordsWithTwoCorrectIdsStorage = ""
         self.didCompleteOnboarding = false
         self.notificationEnabled = false
         self.notificationTime = nil
         self.secondReminderEnabled = false
         self.secondReminderTime = nil
         self.themePreference = .system
-        self.selectedStacks = Set(WordStack.mandatoryStacks(for: 1).map { $0.rawValue })
+        self.selectedStacksStorage = WordStack.mandatoryStacks(for: 1).map(\.rawValue).joined(separator: ",")
+        self.isPro = false
+        self.proExpiryDate = nil
+        self.wordsLoadedToday = 0
+        self.lastWordsLoadedResetDate = .distantPast
+        self.dailyBookCardLimit = nil
+        self.bookCardsReadToday = 0
+        self.lastBookReadingResetDate = .distantPast
         self.practicedSentences = []
         self.reviewStates = []
         self.assessmentResults = []
@@ -189,6 +245,63 @@ extension UserProgress {
 
     func wordsEligibleForAssessment() -> Set<UUID> {
         wordsPracticedIds.subtracting(wordsWithTwoCorrectIds)
+    }
+}
+
+extension UserProgress {
+    /// Single source of truth for Pro entitlement.
+    /// True only when the user has an active subscription with a future expiry.
+    var isProActive: Bool {
+        guard isPro else { return false }
+        guard let expiry = proExpiryDate else { return false }
+        return expiry > Date()
+    }
+
+    /// Records that one more vocab load-more card was served today.
+    /// Resets the counter at local midnight before incrementing.
+    func recordWordsLoadedToday(now: Date = Date(), calendar: Calendar = .current) {
+        let today = calendar.startOfDay(for: now)
+        if today > lastWordsLoadedResetDate {
+            wordsLoadedToday = 0
+            lastWordsLoadedResetDate = today
+        }
+        wordsLoadedToday += 1
+    }
+
+    /// Resets the daily vocab load-more counter if a new local day has begun.
+    /// Use before reading `wordsLoadedToday` for cap checks.
+    func refreshWordsLoadedTodayIfNeeded(now: Date = Date(), calendar: Calendar = .current) {
+        let today = calendar.startOfDay(for: now)
+        if today > lastWordsLoadedResetDate {
+            wordsLoadedToday = 0
+            lastWordsLoadedResetDate = today
+        }
+    }
+
+    /// Records that one more book card was read today. Resets at local midnight.
+    func recordBookCardRead(now: Date = Date(), calendar: Calendar = .current) {
+        let today = calendar.startOfDay(for: now)
+        if today > lastBookReadingResetDate {
+            bookCardsReadToday = 0
+            lastBookReadingResetDate = today
+        }
+        bookCardsReadToday += 1
+    }
+
+    /// Resets the book reading counter if a new local day has begun. Idempotent.
+    func refreshBookCardsReadIfNeeded(now: Date = Date(), calendar: Calendar = .current) {
+        let today = calendar.startOfDay(for: now)
+        if today > lastBookReadingResetDate {
+            bookCardsReadToday = 0
+            lastBookReadingResetDate = today
+        }
+    }
+
+    /// True when the user has opted into a daily book-reading cap and hit it today.
+    /// `nil` limit (the default) never caps.
+    var bookCapReached: Bool {
+        guard let limit = dailyBookCardLimit else { return false }
+        return bookCardsReadToday >= limit
     }
 }
 

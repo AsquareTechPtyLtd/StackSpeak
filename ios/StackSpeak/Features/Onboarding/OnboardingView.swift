@@ -16,24 +16,19 @@ struct OnboardingView: View {
 
     private let pages: [OnboardingPage] = [
         OnboardingPage(
-            kind: .icon(systemImage: "sparkles"),
+            kind: .icon(systemImage: "bubble.left.and.bubble.right"),
             title: String(localized: "onboarding.page1.title"),
             description: String(localized: "onboarding.page1.description")
         ),
         OnboardingPage(
-            kind: .icon(systemImage: "mic.fill"),
+            kind: .icon(systemImage: "shuffle"),
             title: String(localized: "onboarding.page2.title"),
             description: String(localized: "onboarding.page2.description")
         ),
         OnboardingPage(
-            kind: .sampleCard,
+            kind: .icon(systemImage: "mic.fill"),
             title: String(localized: "onboarding.page3.title"),
             description: String(localized: "onboarding.page3.description")
-        ),
-        OnboardingPage(
-            kind: .icon(systemImage: "chart.line.uptrend.xyaxis"),
-            title: String(localized: "onboarding.page4.title"),
-            description: String(localized: "onboarding.page4.description")
         )
     ]
 
@@ -64,21 +59,24 @@ struct OnboardingView: View {
                 .tabViewStyle(.page(indexDisplayMode: .never))
 
                 VStack(spacing: theme.spacing.lg) {
-                    PrimaryCTAButton(currentPage == pages.count - 1
-                                     ? "onboarding.button.getStarted"
-                                     : "onboarding.button.next") {
-                        advance()
-                    }
+                    if currentPage == pages.count - 1 {
+                        PrimaryCTAButton("onboarding.button.getStarted") {
+                            advance()
+                        }
+                    } else {
+                        SwipeHint()
 
-                    Button(action: skipAll) {
-                        Text("onboarding.button.skip")
-                            .font(TypographyTokens.callout)
-                            .foregroundColor(theme.colors.inkMuted)
+                        Button(action: skipAll) {
+                            Text("onboarding.button.skip")
+                                .font(TypographyTokens.callout)
+                                .foregroundColor(theme.colors.inkMuted)
+                        }
+                        .accessibilityLabel(String(localized: "a11y.skipOnboarding"))
                     }
-                    .accessibilityLabel(String(localized: "a11y.skipOnboarding"))
                 }
                 .padding(.horizontal, theme.spacing.xl)
                 .padding(.bottom, theme.spacing.xl)
+                .animation(MotionTokens.standard, value: currentPage)
             }
         }
     }
@@ -142,10 +140,6 @@ struct OnboardingPageView: View {
                     .foregroundColor(theme.colors.accent)
                     .padding(.bottom, theme.spacing.lg)
                     .accessibilityHidden(true)
-            case .sampleCard:
-                SampleFeynmanPreview()
-                    .padding(.horizontal, theme.spacing.xl)
-                    .padding(.bottom, theme.spacing.lg)
             }
 
             Text(page.title)
@@ -167,81 +161,34 @@ struct OnboardingPageView: View {
 struct OnboardingPage {
     enum Kind {
         case icon(systemImage: String)
-        case sampleCard
     }
     let kind: Kind
     let title: String
     let description: String
 }
 
-/// CC1 — non-interactive teaser of the actual Feynman card. New users see a
-/// real card before they read about it. Hard-coded sample word so we don't
-/// depend on the catalog being loaded yet.
-private struct SampleFeynmanPreview: View {
+private struct SwipeHint: View {
     @Environment(\.theme) private var theme
-    @State private var stage: SampleStage = .word
-
-    enum SampleStage: Int, CaseIterable { case word, plain, technical }
+    @State private var nudge = false
 
     var body: some View {
-        VStack(alignment: .leading, spacing: theme.spacing.md) {
-            HStack(spacing: 4) {
-                ForEach(SampleStage.allCases, id: \.rawValue) { s in
-                    Capsule()
-                        .fill(s.rawValue <= stage.rawValue ? theme.colors.accent : theme.colors.line)
-                        .frame(height: 2)
-                }
-            }
-            VStack(alignment: .leading, spacing: 2) {
-                Text("Idempotent")
-                    .font(TypographyTokens.title3)
-                    .foregroundColor(theme.colors.ink)
-                Text("eye-DEM-po-tent")
-                    .font(TypographyTokens.mono)
-                    .foregroundColor(theme.colors.inkMuted)
-            }
-            stageBody
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .id(stage)
-                .transition(.opacity)
-            Spacer(minLength: 0)
-        }
-        .padding(theme.spacing.lg)
-        .frame(maxWidth: .infinity, minHeight: 220, alignment: .topLeading)
-        .background(theme.colors.surface)
-        .clipShape(.rect(cornerRadius: RadiusTokens.card))
-        .overlay(
-            RoundedRectangle(cornerRadius: RadiusTokens.card)
-                .stroke(theme.colors.line, lineWidth: 0.5)
-        )
-        .onTapGesture { advance() }
-        .accessibilityElement(children: .combine)
-        .accessibilityHint("Tap to advance the demo")
-    }
-
-    @ViewBuilder
-    private var stageBody: some View {
-        switch stage {
-        case .word:
-            Text("Tap to see what it means.")
+        HStack(spacing: 6) {
+            Text("onboarding.swipeHint")
                 .font(TypographyTokens.callout)
                 .foregroundColor(theme.colors.inkMuted)
-        case .plain:
-            Text("Doing it again won't change the result — like pressing the ground-floor button in an elevator that's already there.")
-                .font(TypographyTokens.body)
-                .foregroundColor(theme.colors.ink)
-                .fixedSize(horizontal: false, vertical: true)
-        case .technical:
-            Text("An operation that produces the same result no matter how many times it runs.")
-                .font(TypographyTokens.body)
-                .foregroundColor(theme.colors.ink)
-                .fixedSize(horizontal: false, vertical: true)
+            Image(systemName: "chevron.right")
+                .font(TypographyTokens.callout.weight(.semibold))
+                .foregroundColor(theme.colors.inkMuted)
+                .offset(x: nudge ? 4 : 0)
         }
-    }
-
-    private func advance() {
-        let next = SampleStage(rawValue: (stage.rawValue + 1) % SampleStage.allCases.count) ?? .word
-        withAnimation(MotionTokens.standard) { stage = next }
+        .frame(height: 52)
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel(String(localized: "onboarding.swipeHint"))
+        .onAppear {
+            withAnimation(.easeInOut(duration: 0.9).repeatForever(autoreverses: true)) {
+                nudge = true
+            }
+        }
     }
 }
 

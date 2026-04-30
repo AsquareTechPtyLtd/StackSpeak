@@ -2,11 +2,8 @@ import SwiftUI
 
 /// Single-word destination pushed from the Today list.
 ///
-/// Wraps `FeynmanCardView` and provides the post-completion affordance:
-/// when the card lands on the `done` stage and there's another undone word
-/// in the day, surfaces a "Next word" button that pops back to Today and
-/// pushes the next word. If everything's done, the button reads "Back to
-/// Today" and just pops.
+/// Wraps `FeynmanCardView`. When the card reaches the `done` stage, briefly
+/// celebrates and then pops back to Today so the user can pick their next word.
 struct WordFeynmanScreen: View {
     @Environment(\.theme) private var theme
     @Environment(\.dismiss) private var dismiss
@@ -15,11 +12,10 @@ struct WordFeynmanScreen: View {
     let userProgress: UserProgress
     let isCompleted: Bool
     let latestExplanation: PracticedSentence?
-    let nextUndoneWord: Word?
     let onSubmit: (UUID, String, InputMethod, Bool) -> Void
-    let onAdvanceToNext: (UUID) -> Void
 
     @State private var didJustComplete = false
+    @State private var autoAdvanceTask: Task<Void, Never>?
 
     var body: some View {
         VStack(spacing: theme.spacing.md) {
@@ -31,9 +27,11 @@ struct WordFeynmanScreen: View {
                 onSubmit: { explanation, method, markAsMastered in
                     onSubmit(word.id, explanation, method, markAsMastered)
                     didJustComplete = true
+                    scheduleAutoAdvance()
                 },
                 onStageDidReachDone: {
                     didJustComplete = true
+                    scheduleAutoAdvance()
                 }
             )
             .padding(.horizontal, theme.spacing.lg)
@@ -51,6 +49,9 @@ struct WordFeynmanScreen: View {
         .background(theme.colors.bg)
         .navigationBarTitleDisplayMode(.inline)
         .navigationTitle("")
+        .onDisappear {
+            cancelAutoAdvance()
+        }
     }
 
     private var shouldShowCompletionCTA: Bool {
@@ -59,14 +60,26 @@ struct WordFeynmanScreen: View {
 
     @ViewBuilder
     private var completionCTA: some View {
-        if let next = nextUndoneWord {
-            PrimaryCTAButton("today.nextWord") {
-                onAdvanceToNext(next.id)
-            }
-        } else {
-            PrimaryCTAButton("today.backToToday") {
-                dismiss()
-            }
+        PrimaryCTAButton("today.backToToday") {
+            cancelAutoAdvance()
+            dismiss()
         }
+    }
+
+    /// Auto-pop back to Today after a brief celebration moment, so the user
+    /// returns to the list and chooses their next word themselves.
+    private func scheduleAutoAdvance() {
+        cancelAutoAdvance()
+
+        autoAdvanceTask = Task {
+            try? await Task.sleep(for: .seconds(1.5))
+            guard !Task.isCancelled else { return }
+            await MainActor.run { dismiss() }
+        }
+    }
+
+    private func cancelAutoAdvance() {
+        autoAdvanceTask?.cancel()
+        autoAdvanceTask = nil
     }
 }

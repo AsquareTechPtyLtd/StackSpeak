@@ -97,6 +97,8 @@ struct FeynmanCardView: View {
             RoundedRectangle(cornerRadius: RadiusTokens.card)
                 .stroke(theme.colors.line, lineWidth: 0.5)
         )
+        .contentShape(Rectangle())
+        .simultaneousGesture(swipeAdvanceGesture)
         .sensoryFeedback(.selection, trigger: advanceTrigger)
         .sheet(isPresented: $showReport) {
             WordReportSheet(word: word, userProgress: userProgress)
@@ -215,8 +217,10 @@ struct FeynmanCardView: View {
                 comingSoonBody
             } else {
                 Text(word.simpleDefinition)
-                    .font(TypographyTokens.title3)
+                    .font(TypographyTokens.body)
                     .foregroundColor(theme.colors.ink)
+                    .lineSpacing(8)
+                    .multilineTextAlignment(.leading)
                     .fixedSize(horizontal: false, vertical: true)
             }
         }
@@ -228,9 +232,13 @@ struct FeynmanCardView: View {
             Text("feynman.connector.intro")
                 .font(TypographyTokens.callout)
                 .foregroundColor(theme.colors.inkMuted)
+                .lineSpacing(7)
+                .multilineTextAlignment(.leading)
             Text(word.connector)
                 .font(TypographyTokens.body)
                 .foregroundColor(theme.colors.ink)
+                .lineSpacing(8)
+                .multilineTextAlignment(.leading)
                 .italic()
                 .fixedSize(horizontal: false, vertical: true)
         }
@@ -244,11 +252,15 @@ struct FeynmanCardView: View {
             Text("feynman.comingSoon.message")
                 .font(TypographyTokens.callout)
                 .foregroundColor(theme.colors.inkMuted)
+                .lineSpacing(7)
+                .multilineTextAlignment(.leading)
                 .fixedSize(horizontal: false, vertical: true)
             Divider().background(theme.colors.line)
             Text(word.shortDefinition)
                 .font(TypographyTokens.body)
                 .foregroundColor(theme.colors.ink)
+                .lineSpacing(8)
+                .multilineTextAlignment(.leading)
                 .fixedSize(horizontal: false, vertical: true)
         }
     }
@@ -377,6 +389,8 @@ struct FeynmanCardView: View {
                     Text(word.longDefinition)
                         .font(TypographyTokens.body)
                         .foregroundColor(theme.colors.ink)
+                        .lineSpacing(8)
+                        .multilineTextAlignment(.leading)
                         .fixedSize(horizontal: false, vertical: true)
                 }
 
@@ -385,6 +399,8 @@ struct FeynmanCardView: View {
                         Text(word.techContext)
                             .font(TypographyTokens.callout)
                             .foregroundColor(theme.colors.ink)
+                            .lineSpacing(7)
+                            .multilineTextAlignment(.leading)
                             .fixedSize(horizontal: false, vertical: true)
                     }
                 }
@@ -394,6 +410,8 @@ struct FeynmanCardView: View {
                         Text(word.exampleSentence)
                             .font(TypographyTokens.body)
                             .foregroundColor(theme.colors.ink)
+                            .lineSpacing(8)
+                            .multilineTextAlignment(.leading)
                             .italic()
                             .fixedSize(horizontal: false, vertical: true)
                     }
@@ -479,17 +497,42 @@ struct FeynmanCardView: View {
     @ViewBuilder
     private var advanceControls: some View {
         switch stage {
-        case .simple:
-            PrimaryCTAButton("feynman.advance.next") { advance() }
-        case .technical:
-            PrimaryCTAButton("feynman.advance.readyToExplain") { advance() }
+        case .simple, .technical, .connector:
+            SwipeContinueHint()
+                .frame(maxWidth: .infinity)
+                .accessibilityAction(named: Text("feynman.swipe.continue.a11y")) { advance() }
         case .explain:
             explainControls
-        case .connector:
-            PrimaryCTAButton("feynman.advance.finish") { advance() }
         case .done:
             EmptyView()
         }
+    }
+
+    /// Stages where a left-swipe should move to the next stage. The explain
+    /// stage is excluded because it owns a text editor + Submit button, and
+    /// done is terminal.
+    private var isSwipeAdvanceStage: Bool {
+        switch stage {
+        case .simple, .technical, .connector: return true
+        case .explain, .done: return false
+        }
+    }
+
+    /// Horizontal left-swipe advances the stage. Right-swipe is intentionally
+    /// not handled — that gesture belongs to the navigation back-edge.
+    private var swipeAdvanceGesture: some Gesture {
+        DragGesture(minimumDistance: 24)
+            .onEnded { value in
+                guard isSwipeAdvanceStage else { return }
+                let dx = value.translation.width
+                let dy = value.translation.height
+                let predictedDx = value.predictedEndTranslation.width
+                let isHorizontal = abs(dx) > abs(dy) * 1.5
+                let crossedThreshold = dx < -60 || predictedDx < -120
+                if isHorizontal && crossedThreshold {
+                    advance()
+                }
+            }
     }
 
     @ViewBuilder
@@ -626,6 +669,35 @@ struct FeynmanCardView: View {
         VStack(alignment: .leading, spacing: theme.spacing.sm) {
             SectionHeader(title: title)
             content()
+        }
+    }
+}
+
+/// Replaces the per-stage advance CTA. Quietly tells the user to swipe left
+/// to move on; the chevron nudges leftward in time with the gesture direction.
+private struct SwipeContinueHint: View {
+    @Environment(\.theme) private var theme
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var nudge = false
+
+    var body: some View {
+        HStack(spacing: 6) {
+            Text("feynman.swipe.continue")
+                .font(TypographyTokens.callout)
+                .foregroundColor(theme.colors.inkMuted)
+            Image(systemName: "chevron.left")
+                .font(TypographyTokens.callout.weight(.semibold))
+                .foregroundColor(theme.colors.inkMuted)
+                .offset(x: nudge ? -4 : 0)
+        }
+        .frame(height: 44)
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel(String(localized: "feynman.swipe.continue"))
+        .onAppear {
+            guard !reduceMotion else { return }
+            withAnimation(.easeInOut(duration: 0.9).repeatForever(autoreverses: true)) {
+                nudge = true
+            }
         }
     }
 }

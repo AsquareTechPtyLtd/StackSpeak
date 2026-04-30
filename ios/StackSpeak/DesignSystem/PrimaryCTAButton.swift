@@ -35,5 +35,6 @@ struct PrimaryCTAButton: View {
         }
         .buttonStyle(.plain)
         .sensoryFeedback(.impact(weight: .light), trigger: isLoading)
+        .accessibilityHint(isEnabled ? Text("") : Text("a11y.cta.disabled"))
     }
 }

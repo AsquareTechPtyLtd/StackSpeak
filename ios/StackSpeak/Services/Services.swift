@@ -19,6 +19,8 @@ final class Services {
     let reviewScheduler: any ReviewRepository
     let speech: any SpeechRepository
     let report: any ReportServiceProtocol
+    let bookCatalog: BookCatalogService
+    let bookmark: any BookmarkRepository
 
     var catalogStatus: CatalogStatus = .loading
 
@@ -29,6 +31,8 @@ final class Services {
         self.reviewScheduler = ReviewSchedulerService(modelContext: modelContext)
         self.speech = SpeechService()
         self.report = ReportService(modelContext: modelContext)
+        self.bookCatalog = BookCatalogService(source: BundledBookSource.main())
+        self.bookmark = BookmarkService(modelContext: modelContext)
     }
 
     // Preview/Test initializer with mock repositories
@@ -38,7 +42,9 @@ final class Services {
         notification: any NotificationRepository,
         reviewScheduler: any ReviewRepository,
         speech: any SpeechRepository,
-        report: any ReportServiceProtocol
+        report: any ReportServiceProtocol,
+        bookCatalog: BookCatalogService,
+        bookmark: any BookmarkRepository
     ) {
         self.word = word
         self.progress = progress
@@ -46,6 +52,8 @@ final class Services {
         self.reviewScheduler = reviewScheduler
         self.speech = speech
         self.report = report
+        self.bookCatalog = bookCatalog
+        self.bookmark = bookmark
     }
 }
 

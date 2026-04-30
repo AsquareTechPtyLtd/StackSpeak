@@ -34,6 +34,11 @@ struct HomeView: View {
         mainZStack
             .navigationTitle("home.navTitle")
             .navigationBarTitleDisplayMode(.large)
+            .toolbar {
+                ToolbarItem(placement: .navigationBarTrailing) {
+                    dayCounterBadge()
+                }
+            }
             .navigationDestination(for: UUID.self) { wordId in
                 wordDestination(wordId: wordId)
             }
@@ -124,10 +129,13 @@ struct HomeView: View {
                     message: "home.allMastered.message"
                 )
             } else {
-                dayCounter()
+                sectionDivider()
                     .padding(.horizontal, theme.spacing.lg)
 
                 CompletionTrackerRow(days: lastTenDays())
+                    .padding(.horizontal, theme.spacing.lg)
+
+                sectionDivider()
                     .padding(.horizontal, theme.spacing.lg)
 
                 instructionLine()
@@ -170,6 +178,35 @@ struct HomeView: View {
         .accessibilityLabel(String(format: String(localized: "a11y.streak.format"), progress.displayedCurrentStreak))
     }
 
+    /// Compact badge showing today's completion (e.g., "0/5").
+    private func dayCounterBadge() -> some View {
+        let total = viewModel.dailySet?.wordIds.count ?? 0
+        let done = (viewModel.dailySet?.wordIds ?? [])
+            .filter { viewModel.isWordCompleted($0) }
+            .count
+
+        return HStack(spacing: 4) {
+            Text("\(done)")
+                .font(TypographyTokens.mono.weight(.semibold))
+                .foregroundColor(done == total && total > 0 ? theme.colors.good : theme.colors.ink)
+                .contentTransition(.numericText())
+            Text("/")
+                .font(TypographyTokens.mono)
+                .foregroundColor(theme.colors.inkFaint)
+            Text("\(total)")
+                .font(TypographyTokens.mono)
+                .foregroundColor(theme.colors.inkMuted)
+        }
+        .padding(.horizontal, theme.spacing.sm)
+        .padding(.vertical, theme.spacing.xs)
+        .background(theme.colors.surfaceAlt)
+        .clipShape(.rect(cornerRadius: RadiusTokens.inline))
+        .overlay(
+            RoundedRectangle(cornerRadius: RadiusTokens.inline)
+                .stroke(theme.colors.line, lineWidth: 0.5)
+        )
+    }
+
     /// Returns the last 10 calendar days (oldest → today) with the day's
     /// daily-set progress (0...1). Drives the tracker strip beneath the
     /// counter.
@@ -186,6 +223,22 @@ struct HomeView: View {
         }
     }
 
+    /// Subtle decorative divider — thin gradient fade for gentle section breaks.
+    private func sectionDivider() -> some View {
+        LinearGradient(
+            colors: [
+                theme.colors.line.opacity(0),
+                theme.colors.lineStrong,
+                theme.colors.lineStrong,
+                theme.colors.line.opacity(0)
+            ],
+            startPoint: .leading,
+            endPoint: .trailing
+        )
+        .frame(height: 1)
+        .padding(.vertical, theme.spacing.xs)
+    }
+
     /// Quiet instruction that does what the dropped `.word` stage used to do —
     /// asks the user to say each word aloud before tapping into the deeper flow.
     private func instructionLine() -> some View {
@@ -193,20 +246,6 @@ struct HomeView: View {
             .font(TypographyTokens.subheadline)
             .foregroundColor(theme.colors.inkMuted)
             .frame(maxWidth: .infinity, alignment: .leading)
-    }
-
-    private func dayCounter() -> some View {
-        let total = viewModel.dailySet?.wordIds.count ?? 0
-        let done = (viewModel.dailySet?.wordIds ?? [])
-            .filter { viewModel.isWordCompleted($0) }
-            .count
-        return HStack {
-            Text(String(format: String(localized: "home.dayCounter.format"), done, total))
-                .font(TypographyTokens.mono)
-                .foregroundColor(theme.colors.inkMuted)
-                .contentTransition(.numericText())
-            Spacer()
-        }
     }
 
     /// The day's 5 words as a vertical list of tappable rows.
@@ -243,13 +282,8 @@ struct HomeView: View {
                 userProgress: progress,
                 isCompleted: viewModel.isWordCompleted(wordId),
                 latestExplanation: viewModel.latestExplanation(for: wordId, userProgress: progress),
-                nextUndoneWord: viewModel.nextUndoneWord(after: wordId),
                 onSubmit: { id, explanation, method, markAsMastered in
                     submit(wordId: id, explanation: explanation, method: method, markAsMastered: markAsMastered, progress: progress)
-                },
-                onAdvanceToNext: { nextId in
-                    // Replace top of stack with the next word.
-                    path = [nextId]
                 }
             )
         }

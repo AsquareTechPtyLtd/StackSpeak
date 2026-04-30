@@ -3,7 +3,7 @@ import SwiftUI
 /// Typography-led reader for a single word.
 ///
 /// Presented as a sheet from the Feynman card's Done stage and as a pushed
-/// screen from LibraryView. No inner NavigationStack — the caller wraps in one
+/// screen from caller. No inner NavigationStack — the caller wraps in one
 /// if needed.
 ///
 /// WD1 — replaces the previous five-stacked-cards layout with a single

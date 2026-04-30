@@ -1,0 +1,343 @@
+@chapter
+id: aiadg-ch05-production
+order: 5
+title: Production
+summary: Schemas, contracts, retries, traces, fallbacks — the unglamorous infrastructure that turns a working demo into a system you can run for a year without paging yourself.
+
+@card
+id: aiadg-ch05-c001
+order: 1
+title: The Demo-to-Prod Cliff
+teaser: Your demo works. Production has retries, version skews, malformed outputs, half-completed tool calls, and partial outages. Most of the gap between the two is engineering, not intelligence.
+
+@explanation
+
+A demo is one happy path on cherry-picked input with the model in a good mood. Production is the same agent run a million times on inputs you didn't anticipate, in a system where every dependency occasionally misbehaves. The model isn't usually the thing that breaks. The system around it is.
+
+The four common failure surfaces:
+
+- **Output shape** — JSON the parser rejects, fields the next step didn't expect, types that look right and aren't.
+- **Tool boundary** — the third-party API rate-limited, returned 503, or shipped a schema change yesterday.
+- **State drift** — two parallel runs racing on the same record, or a checkpoint replayed against newer data.
+- **Cost / latency** — a model that worked great on the test set blows the budget on the long tail of production traffic.
+
+Each of these is solvable with classic engineering. The chapter covers the patterns. None of them are about asking the model to "try harder."
+
+> [!info] If your team is debugging the model when something fails in prod, that's usually a signal the system around the model is too thin.
+
+@feynman
+
+The "works on my machine" lesson, applied to LLMs. The first nines of reliability come from making the *environment* predictable, not the protagonist.
+
+@card
+id: aiadg-ch05-c002
+order: 2
+title: Structured Outputs by Default
+teaser: Stop parsing free-form text. Every model worth using in 2026 supports schema-constrained outputs — JSON, Pydantic, Zod — and refuses to ship anything that doesn't match.
+
+@explanation
+
+Structured outputs are the single biggest reliability win available. You provide a schema; the model is constrained to produce a value that fits. No more `JSON.parse` failing on the trailing comma. No more "the model said 'sure thing!' before the JSON object."
+
+```python
+from anthropic import Anthropic
+from pydantic import BaseModel
+
+class TicketTriage(BaseModel):
+    severity: Literal["P0", "P1", "P2"]
+    owner_team: str
+    summary: str
+
+response = client.messages.create(
+    model="claude-sonnet-4-6",
+    tools=[{"name": "triage", "input_schema": TicketTriage.model_json_schema()}],
+    tool_choice={"type": "tool", "name": "triage"},
+    messages=[...],
+)
+triage = TicketTriage.model_validate(response.content[0].input)
+```
+
+The same pattern works on every major API: Anthropic tools with `tool_choice`, OpenAI's `response_format`, Gemini's `response_schema`. The output is a typed object you pass to the next stage. If the model can't produce something valid, the API errors out cleanly.
+
+> [!tip] Don't over-constrain. Schemas with 30 required fields force the model to make up information rather than admit "I don't know." Mark optional fields optional; let the model say nothing when nothing is the right answer.
+
+@feynman
+
+Type-safe APIs for prose. The compiler catches the wrong-shape result before it reaches the function that would crash on it.
+
+@card
+id: aiadg-ch05-c003
+order: 3
+title: Validation as a Gate
+teaser: Output validation isn't just shape — it's value, range, and cross-field consistency. The validator that rejects invalid plans is the cheapest production safeguard you'll ship.
+
+@explanation
+
+A schema gives you shape. A validator gives you semantics. The model can produce a valid-shaped object that's still nonsensical: a refund amount larger than the order, a delivery date in the past, a user_id that doesn't exist.
+
+The validation step lives between "model produced output" and "downstream consumed it":
+
+```python
+draft = model_call(...)        # produces shape-valid output
+errors = validate(draft)       # checks values, ranges, references
+if errors:
+    draft = model_call(..., feedback=errors)  # one retry with the failure list
+    if validate(draft):
+        raise OutputInvalid()
+```
+
+What goes in `validate()` depends on the task. For tool calls: arg ranges, references resolve, side effects are reversible. For data extraction: values are within sane ranges, foreign keys exist, dates are plausible. For text generation: required topics covered, banned phrases absent.
+
+> [!info] Validators are fast. Most are pure Python — no model calls. Spending 10ms to reject bad output is much cheaper than spending 30 minutes investigating a corrupted record.
+
+@feynman
+
+The validation layer is the bouncer at the door. The model's the bartender; the bouncer keeps the bar from getting destroyed when the bartender misjudges who they're serving.
+
+@card
+id: aiadg-ch05-c004
+order: 4
+title: Smart Retries
+teaser: A retry that re-runs the same prompt is praying for a different outcome. A retry that includes the failure as feedback is debugging.
+
+@explanation
+
+Naive retry loops are a tax on the wallet without much benefit on quality. The model that produced the bad output will mostly produce it again — same prompt, same temperature, similar token-distribution path.
+
+The retry that works includes the failure in the next prompt:
+
+```text
+First call:
+  System: "Triage this ticket."
+  User:   "<ticket text>"
+  Model:  { severity: "P0", owner_team: "billing", summary: "..." }
+  Validator rejects: owner_team "billing" doesn't exist; valid teams are [...]
+
+Second call:
+  System: "Triage this ticket."
+  User:   "<ticket text>"
+  Assistant (prior): { severity: "P0", owner_team: "billing", ... }
+  User:   "Validation failed: owner_team 'billing' not in allowed set [...]. Retry."
+```
+
+The model now has the constraint, the wrong answer, and the reason. Success rates on the second call are much higher than on the first.
+
+> [!warning] Cap retries. Two attempts max in most cases. A model that fails twice with feedback won't succeed on attempt seven; you've found a real edge case that needs a different model, a different prompt, or human intervention.
+
+@feynman
+
+Reading the compiler error before recompiling. Re-running without changing anything is hope; reading the error is engineering.
+
+@card
+id: aiadg-ch05-c005
+order: 5
+title: Tool Contracts
+teaser: A tool isn't done when it works. It's done when its name, description, schema, errors, and side effects are documented well enough that a model can use it correctly without context.
+
+@explanation
+
+The model's only knowledge of a tool is the name, description, and schema you give it. Everything that's clear in your head — what this tool is for, when not to use it, what arguments mean, what errors mean — has to be written down. If it isn't, the model fills in plausible nonsense.
+
+A useful tool contract has:
+
+- **Name** — verb + noun, unambiguous. `search_codebase`, not `search`.
+- **Description** — one to two sentences. What it does, when to use it, when not to.
+- **Schema** — every argument typed, every required field marked. Names that read as documentation (`max_results: int` not `n: int`).
+- **Errors** — the model needs to know what failure looks like and how to react. "Returns empty array if no match" is different from "raises if no match."
+- **Side effects** — explicit. "This sends an email" so the model knows it's irreversible.
+
+The tools that actually work in production look more like API documentation than function signatures.
+
+> [!tip] Test tool descriptions by asking the model what each tool does and when it'd use it. If its answer doesn't match your intent, the description is wrong.
+
+@feynman
+
+Tool descriptions are the README the model reads before pressing buttons. A vague README produces wrong button presses, no matter how smart the reader.
+
+@card
+id: aiadg-ch05-c006
+order: 6
+title: MCP for Reusable Tools
+teaser: The Model Context Protocol turned tools into pluggable services. Write the tool once; expose it across Claude Desktop, IDEs, your custom agent host, and tomorrow's runtime you haven't built yet.
+
+@explanation
+
+Before MCP, every agent runtime had its own tool format. The same Slack-search function got rewritten for OpenAI tools, LangChain, LlamaIndex, and your homemade loop. MCP — Anthropic's open standard, now broadly adopted — makes tools portable.
+
+An MCP server exposes tools, resources, and prompts over a stable wire format (stdio for local, HTTP+SSE for remote). Any MCP-aware host can connect: Claude Desktop, Claude Code, IDE plugins, your own agent runtime. The server doesn't care who's calling.
+
+The structural wins for production:
+
+- **One implementation, many surfaces** — your "search the company wiki" tool runs in the IDE for engineers and in the customer-support agent for users.
+- **Versioning at the boundary** — bump the server, every host gets the new tool.
+- **Auth scoping** — the server can apply per-user or per-host policies once instead of in every consumer.
+
+> [!info] You don't need to convert legacy tools day one. Run the SDK-native tools you already have alongside MCP. The migration is incremental.
+
+@feynman
+
+Microservices for prompts. The tool is a server with a contract; the agent is a client. Twenty years of API engineering becomes immediately applicable.
+
+@card
+id: aiadg-ch05-c007
+order: 7
+title: Idempotency Keys
+teaser: An agent will retry. A loop will replay. The same step will fire twice. Tools that take action have to be safe under duplicate execution — that's idempotency, and it's not optional.
+
+@explanation
+
+Anything that mutates state — sending email, charging a card, creating a record — has to assume it might be invoked twice. The model retries on transient errors. The runtime replays from a checkpoint. The user clicks the button twice. None of these scenarios should produce two emails.
+
+The standard technique is an idempotency key: the caller (the agent runtime) generates a unique ID per logical operation and passes it as part of the request. The server checks whether it's already processed that ID; if yes, it returns the cached response without re-executing.
+
+```python
+@tool
+def send_email(to: str, subject: str, body: str, idempotency_key: str) -> Result:
+    if seen(idempotency_key):
+        return cached_result(idempotency_key)
+    result = email_provider.send(to, subject, body)
+    store(idempotency_key, result)
+    return result
+```
+
+The key is generated once per logical action — typically a hash of the args plus a step ID — and reused across retries of the same logical step.
+
+> [!warning] Tool implementations that ignore idempotency hide their bug behind "it usually works." The retry that double-sends will happen; you just won't know which user got the duplicate until they complain.
+
+@feynman
+
+The "press the elevator button twice" scenario. The well-engineered elevator does the same thing whether you press once or four times. The badly engineered one sends an extra car.
+
+@card
+id: aiadg-ch05-c008
+order: 8
+title: Tracing Every Run
+teaser: You cannot debug an agent you didn't trace. Save every prompt, every tool call, every model output, every state transition — for every run. Storage is cheap; replays are priceless.
+
+@explanation
+
+A failed agent run looks like a single bad output. The actual story is in the trace: which prompt was sent, which tool was called with which args, what came back, what the next thought was, where the wheels came off.
+
+A useful trace captures, per run:
+
+- **Inputs** — user message, system prompt version, tool catalog version.
+- **Steps** — for each step, the model's input messages, the model's output (thought + tool call), the tool execution and result.
+- **Metadata** — model version, latency per step, token counts, cost.
+- **Outcome** — final answer, success/failure flag, downstream consumer feedback if any.
+
+LangSmith, Helicone, Braintrust, Logfire, OpenLLMetry, Anthropic's own tracing — all of them solve this. Pick one, integrate it, never look back. Building it yourself is months of yak-shaving for a problem that's a solved category.
+
+> [!tip] Save raw inputs and outputs in addition to summarised metrics. Six months from now you'll want to replay an old failure on a new model; only the raw trace lets you do that.
+
+@feynman
+
+Stack traces, but for prompts. Without them, debugging is "the model felt off today." With them, debugging is "step three sent the wrong tool call; here's why."
+
+@card
+id: aiadg-ch05-c009
+order: 9
+title: Live Evals on Production Traffic
+teaser: Your eval set ages. The way to keep it honest is to feed it new traces from production, label a fraction, and run every model change against the updated set.
+
+@explanation
+
+Pre-shipped eval sets stop being predictive within months. User behaviour drifts, edge cases shift, the corpus you trained on at launch is not the corpus you're running on at month six. The defence is to keep the eval set fresh from production traffic.
+
+The pattern that works:
+
+1. **Sample** — a small fraction of production runs (say, 1%) gets sent to a labelling queue.
+2. **Label** — humans rate the trace for quality, or pull the user's downstream feedback (thumbs, follow-up message, reopened ticket).
+3. **Promote** — labelled traces graduate into the eval set when they're stable.
+4. **Retire** — old traces fall out as their patterns stop appearing in production.
+
+This makes the eval set a living measurement of what you actually care about. Every prompt change, model swap, or retrieval tweak runs against it before shipping.
+
+> [!info] LLM-as-judge can scale step 2, but seed it with human-labelled examples and audit it monthly. Drift in the judge is more dangerous than drift in the agent because it's invisible.
+
+@feynman
+
+Same lesson as monitoring. The dashboard that's stuck on data from launch tells you nothing about what's happening now. The eval set that's stuck on launch examples tells you nothing about what your users currently struggle with.
+
+@card
+id: aiadg-ch05-c010
+order: 10
+title: Graceful Degradation
+teaser: Frontier model down? Use the mid one. Mid down? Use the small one with a more constrained prompt. Some answer is almost always better than no answer.
+
+@explanation
+
+Production agents have to degrade gracefully because providers have outages, rate limits hit, and budgets cap. The system that fails closed (returns nothing) feels worse than the system that fails open (returns a less ambitious answer with a clear caveat).
+
+A staged fallback ladder for a typical agent:
+
+1. **Frontier with thinking + tools** — the default, the best.
+2. **Frontier without thinking** — when latency budget is exceeded.
+3. **Mid model with same tools** — when frontier is rate-limited or down.
+4. **Small model with restricted tool set** — when even the mid model is unavailable.
+5. **Cached or templated response** — when nothing works, but the user shouldn't see an error.
+
+Each step downgrades capability while keeping the user moving. The agent communicates honestly: "I'm working in a constrained mode right now, here's the best I can do."
+
+> [!warning] Don't silently degrade. Users notice when answers get worse without explanation. A short note ("running in fast mode — let me know if you need a deeper answer") preserves trust.
+
+@feynman
+
+The CDN serving a stale page is much better than the CDN serving a 502. Same lesson, applied to model outputs.
+
+@card
+id: aiadg-ch05-c011
+order: 11
+title: Cost as a First-Class Metric
+teaser: Treat $/successful task the same way you treat p95 latency. If it isn't on a dashboard, it's drifting in the wrong direction.
+
+@explanation
+
+The instinct in engineering teams is to track latency, error rate, and request volume. Cost slips out of monitoring because it's a different system (billing, not metrics). For agents, cost has to be a first-class signal because:
+
+- Costs are non-linear with usage. A 20% growth in traffic on a thinking-heavy agent can mean 60% more spend.
+- A degradation in a single step (longer thinking, more retries, more tool calls) can quietly inflate per-task cost.
+- Provider price changes are real and unannounced. Watching $/task surfaces them within hours.
+
+The metrics worth tracking, per agent and per task type:
+
+- **Tokens in / out per task** — input and output separately; they have different prices.
+- **$ per task at p50 / p95 / p99** — the long tail is where surprises hide.
+- **Cache hit rate** — the dial that converts spend into savings.
+- **Retry rate** — every retry is paid-for compute that didn't ship a result.
+
+> [!tip] Set per-task budget caps. An agent that exceeds 10× the median cost on a single request is almost certainly in a degenerate state — kill it and surface the failure rather than letting the bill grow.
+
+@feynman
+
+Same logic as memory leaks. You don't catch them by looking at the average — you catch them by alerting when the worst-case crosses a threshold.
+
+@card
+id: aiadg-ch05-c012
+order: 12
+title: Versioning Everything
+teaser: Prompts, tools, models, and policies all evolve. Treat them as versioned artifacts so you can roll back, A/B, and explain why yesterday's run produced a different answer.
+
+@explanation
+
+A production agent is the composition of several moving parts:
+
+- The model (provider version + endpoint version).
+- The system prompt and any few-shot examples.
+- The tool catalog (names, schemas, implementations).
+- The retrieval index (corpus + embedding model).
+- The eval set against which it's measured.
+
+Each of these will change. Without versioning, "the agent got worse" is unanswerable — you can't tell which change caused it. With versioning, every production run links to the exact bundle that produced it.
+
+The minimum infrastructure:
+
+- Prompts in source control. Tag each prompt with a stable ID and a version number.
+- Tool definitions in source control. Bump the version on any schema or behaviour change.
+- Model + endpoint pinned per deployment. Don't rely on "the latest stable" — providers ship subtle changes.
+- Trace metadata records the bundle version that ran each step.
+
+> [!info] Anthropic, OpenAI, and Google all let you pin to specific dated model versions. Use them in production. "Latest" is a research convenience, not a deployment target.
+
+@feynman
+
+Same hygiene as semantic versioning for libraries. You don't ship "whatever version of React is on the developer's laptop today." You shouldn't ship "whatever version of the model the provider feels like serving today" either.

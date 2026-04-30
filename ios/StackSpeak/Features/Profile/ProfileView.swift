@@ -118,8 +118,8 @@ struct ProfileView: View {
         .accessibilityElement(children: .combine)
     }
 
-    /// P2 — Mastered & Bookmarked are now real navigation targets, not
-    /// count-only ornament rows.
+    /// P2 — Mastered & Bookmarked are real navigation targets.
+    /// Saved combines word + card bookmarks under one entry per the Pro/Books plan.
     private func collectionSection(progress: UserProgress) -> some View {
         Section {
             NavigationLink {
@@ -136,16 +136,11 @@ struct ProfileView: View {
                               count: progress.masteredWordIds.count)
             }
             NavigationLink {
-                WordListView(
-                    title: "profile.saved.title",
-                    wordIds: progress.bookmarkedWordIds,
-                    emptyTitle: "profile.saved.empty",
-                    emptyMessage: "profile.saved.empty.hint"
-                )
+                BookmarksView()
             } label: {
                 collectionRow(icon: "bookmark.fill",
                               tint: theme.colors.accent,
-                              title: "profile.saved.title",
+                              title: "bookmarks.navTitle",
                               count: progress.bookmarkedWordIds.count)
             }
         }

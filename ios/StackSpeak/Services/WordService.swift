@@ -184,7 +184,14 @@ final class WordService: WordRepository {
 
     /// Walks the shuffled queue from `startIndex`, collects up to `count` qualifying words,
     /// and returns them along with the next cursor position.
-    private func selectQualifyingWords(
+    ///
+    /// Interleaving algorithm: aims for one word from each of the 5 categories
+    /// (concepts, components, processes, patterns, qualities). When a category has
+    /// no qualifying words for the user (e.g. they only selected stacks lacking that
+    /// category), backfill from other categories so the daily set always has `count` words.
+    ///
+    /// Internal access for unit testing.
+    func selectQualifyingWords(
         from shuffled: [Word],
         startingAt startIndex: Int,
         userProgress: UserProgress,
@@ -192,22 +199,58 @@ final class WordService: WordRepository {
     ) -> (words: [Word], nextCursor: Int) {
         guard !shuffled.isEmpty else { return ([], 0) }
 
-        var selected: [Word] = []
+        let targetCategories: [WordCategory] = [
+            .concepts,
+            .components,
+            .processes,
+            .patterns,
+            .qualities
+        ]
+
+        var selectedByCategory: [WordCategory: Word] = [:]
+        var backfillPool: [Word] = []
         var cursor = startIndex % shuffled.count
         var seen = 0
         let limit = shuffled.count  // one full pass maximum
 
-        while selected.count < count && seen < limit {
+        // Pass 1: collect one word per category + build a backfill pool
+        // of additional qualifying words for categories already filled.
+        while seen < limit && (selectedByCategory.count < targetCategories.count || backfillPool.count < count) {
             let word = shuffled[cursor]
             cursor = (cursor + 1) % shuffled.count
             seen += 1
 
-            if qualifies(word: word, for: userProgress) {
-                selected.append(word)
+            guard qualifies(word: word, for: userProgress) else { continue }
+
+            let category = word.category
+            if selectedByCategory[category] == nil {
+                selectedByCategory[category] = word
+            } else {
+                backfillPool.append(word)
             }
         }
 
-        return (selected, cursor)
+        // Build ordered output: follow category sequence, backfill empty slots
+        // from the pool to ensure the daily set always returns `count` words.
+        var result: [Word] = []
+        var backfillIndex = 0
+        for category in targetCategories {
+            if let word = selectedByCategory[category] {
+                result.append(word)
+            } else if backfillIndex < backfillPool.count {
+                result.append(backfillPool[backfillIndex])
+                backfillIndex += 1
+            }
+        }
+
+        // Top up with backfill if we still have room (e.g. only 3 categories had words
+        // but user wants 5 — pull more from backfill).
+        while result.count < count && backfillIndex < backfillPool.count {
+            result.append(backfillPool[backfillIndex])
+            backfillIndex += 1
+        }
+
+        return (Array(result.prefix(count)), cursor)
     }
 
     private func qualifies(word: Word, for userProgress: UserProgress) -> Bool {
