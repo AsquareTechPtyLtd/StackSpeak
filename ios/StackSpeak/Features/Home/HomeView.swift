@@ -35,6 +35,17 @@ struct HomeView: View {
             .navigationTitle("home.navTitle")
             .navigationBarTitleDisplayMode(.large)
             .toolbar {
+                ToolbarItem(placement: .navigationBarLeading) {
+                    NavigationLink {
+                        BookmarksView()
+                    } label: {
+                        Image(systemName: "bookmark.fill")
+                            .foregroundColor(theme.colors.accent)
+                            .frame(width: 44, height: 44)
+                            .contentShape(Rectangle())
+                    }
+                    .accessibilityLabel(Text("a11y.openBookmarks"))
+                }
                 ToolbarItem(placement: .navigationBarTrailing) {
                     dayCounterBadge()
                 }
