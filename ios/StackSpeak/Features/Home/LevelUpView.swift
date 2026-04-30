@@ -160,10 +160,11 @@ struct LevelUpStackPickerSheet: View {
                         .foregroundColor(theme.colors.inkMuted)
                 }
             }
-            .alert("Save Failed", isPresented: .constant(saveError != nil), presenting: saveError) { _ in
-                Button("OK") { saveError = nil }
+            .alert("saveError.title", isPresented: .constant(saveError != nil), presenting: saveError) { _ in
+                Button("common.ok") { saveError = nil }
             } message: { error in
-                Text("Failed to save your stack selection: \(error.localizedDescription)")
+                Text(String(format: String(localized: "saveError.levelUpStacks.format"),
+                            error.localizedDescription))
             }
         }
     }

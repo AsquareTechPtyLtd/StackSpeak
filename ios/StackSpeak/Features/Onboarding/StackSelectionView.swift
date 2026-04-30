@@ -54,10 +54,11 @@ struct StackSelectionView: View {
             }
         }
         .onAppear { applySmartDefaultsOnce() }
-        .alert("Save Failed", isPresented: .constant(saveError != nil), presenting: saveError) { _ in
-            Button("OK") { saveError = nil }
+        .alert("saveError.title", isPresented: .constant(saveError != nil), presenting: saveError) { _ in
+            Button("common.ok") { saveError = nil }
         } message: { error in
-            Text("Failed to save your selection: \(error.localizedDescription)")
+            Text(String(format: String(localized: "saveError.stackSelection.format"),
+                        error.localizedDescription))
         }
     }
 
