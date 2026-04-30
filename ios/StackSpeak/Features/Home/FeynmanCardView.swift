@@ -47,6 +47,7 @@ struct FeynmanCardView: View {
     @State private var showReport = false
     @State private var showDetail = false
     @State private var advanceTrigger = 0
+    @State private var dragOffset: CGFloat = 0
     @FocusState private var explanationFocused: Bool
 
     private static let maxExplanationLength = 500
@@ -97,6 +98,7 @@ struct FeynmanCardView: View {
             RoundedRectangle(cornerRadius: RadiusTokens.card)
                 .stroke(theme.colors.line, lineWidth: 0.5)
         )
+        .offset(x: dragOffset)
         .contentShape(Rectangle())
         .simultaneousGesture(swipeAdvanceGesture)
         .sensoryFeedback(.selection, trigger: advanceTrigger)
@@ -522,10 +524,23 @@ struct FeynmanCardView: View {
     /// not handled — that gesture belongs to the navigation back-edge.
     private var swipeAdvanceGesture: some Gesture {
         DragGesture(minimumDistance: 24)
-            .onEnded { value in
+            .onChanged { value in
                 guard isSwipeAdvanceStage else { return }
-                // Yield to the system swipe-back gesture region. If the touch
-                // started in the leading-edge gutter, let UIKit handle it.
+                guard value.startLocation.x > Self.systemEdgeGutter else { return }
+                let dx = value.translation.width
+                let dy = value.translation.height
+                guard abs(dx) > abs(dy) * 1.5 else { return }
+                // Track only leftward motion; apply rubber-band damping so the
+                // card resists past the threshold instead of free-sliding.
+                let leftward = min(dx, 0)
+                dragOffset = leftward * 0.55
+            }
+            .onEnded { value in
+                let resetAnimation: Animation? = reduceMotion ? nil : MotionTokens.snappy
+                defer {
+                    withAnimation(resetAnimation) { dragOffset = 0 }
+                }
+                guard isSwipeAdvanceStage else { return }
                 guard value.startLocation.x > Self.systemEdgeGutter else { return }
                 let dx = value.translation.width
                 let dy = value.translation.height
