@@ -16,6 +16,10 @@ struct WordDetailView: View {
 
     let word: Word
     let userProgress: UserProgress
+    /// When presented as a sheet, callers should pass `true` to surface a
+    /// Done button in the leading toolbar slot. Pushed presentations rely on
+    /// the system back button instead.
+    var showsDoneButton: Bool = false
 
     var isBookmarked: Bool { userProgress.bookmarkedWordIds.contains(word.id) }
     var isMastered: Bool   { userProgress.masteredWordIds.contains(word.id) }
@@ -50,6 +54,12 @@ struct WordDetailView: View {
 
     @ToolbarContentBuilder
     private var toolbarMenu: some ToolbarContent {
+        if showsDoneButton {
+            ToolbarItem(placement: .topBarLeading) {
+                Button("common.done") { dismiss() }
+                    .foregroundColor(theme.colors.accent)
+            }
+        }
         ToolbarItem(placement: .topBarTrailing) {
             Menu {
                 Button(action: toggleBookmark) {

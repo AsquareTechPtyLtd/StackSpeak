@@ -111,7 +111,11 @@ struct FeynmanCardView: View {
         }
         .sheet(isPresented: $showDetail) {
             NavigationStack {
-                WordDetailView(word: word, userProgress: userProgress)
+                WordDetailView(
+                    word: word,
+                    userProgress: userProgress,
+                    showsDoneButton: true
+                )
             }
         }
     }
