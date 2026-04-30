@@ -64,7 +64,7 @@ struct OnboardingView: View {
                             advance()
                         }
                     } else {
-                        SwipeHint()
+                        SwipeHint(onAdvance: advance)
 
                         Button(action: skipAll) {
                             Text("onboarding.button.skip")
@@ -169,22 +169,31 @@ struct OnboardingPage {
 
 private struct SwipeHint: View {
     @Environment(\.theme) private var theme
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var nudge = false
 
+    let onAdvance: () -> Void
+
     var body: some View {
-        HStack(spacing: 6) {
-            Text("onboarding.swipeHint")
-                .font(TypographyTokens.callout)
-                .foregroundColor(theme.colors.inkMuted)
-            Image(systemName: "chevron.right")
-                .font(TypographyTokens.callout.weight(.semibold))
-                .foregroundColor(theme.colors.inkMuted)
-                .offset(x: nudge ? 4 : 0)
+        Button(action: onAdvance) {
+            HStack(spacing: 6) {
+                Text("onboarding.swipeHint")
+                    .font(TypographyTokens.callout)
+                    .foregroundColor(theme.colors.inkMuted)
+                Image(systemName: "chevron.right")
+                    .font(TypographyTokens.callout.weight(.semibold))
+                    .foregroundColor(theme.colors.inkMuted)
+                    .offset(x: nudge ? 4 : 0)
+            }
+            .frame(maxWidth: .infinity, minHeight: 52)
+            .contentShape(Rectangle())
         }
-        .frame(height: 52)
+        .buttonStyle(.plain)
         .accessibilityElement(children: .combine)
         .accessibilityLabel(String(localized: "onboarding.swipeHint"))
+        .accessibilityAddTraits(.isButton)
         .onAppear {
+            guard !reduceMotion else { return }
             withAnimation(.easeInOut(duration: 0.9).repeatForever(autoreverses: true)) {
                 nudge = true
             }
