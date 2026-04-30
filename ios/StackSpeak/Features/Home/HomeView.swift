@@ -77,13 +77,26 @@ struct HomeView: View {
             }
 
             if let error = viewModel.errorMessage {
-                VStack {
+                VStack(spacing: theme.spacing.sm) {
                     Spacer()
                     Text(error)
                         .font(TypographyTokens.callout)
                         .foregroundColor(theme.colors.warn)
-                        .padding()
+                        .multilineTextAlignment(.center)
+                    Button {
+                        Task { await initialLoad() }
+                    } label: {
+                        Text("home.error.retry")
+                            .font(TypographyTokens.headline)
+                            .foregroundColor(theme.colors.accent)
+                            .frame(minWidth: 88, minHeight: 44)
+                            .padding(.horizontal, theme.spacing.md)
+                            .background(theme.colors.accentBg)
+                            .clipShape(.rect(cornerRadius: RadiusTokens.card))
+                    }
+                    .accessibilityHint(Text(error))
                 }
+                .padding()
             }
         }
     }
