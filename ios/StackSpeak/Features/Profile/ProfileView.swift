@@ -1,29 +1,44 @@
 import SwiftUI
 
-/// P1 — converted to a native Form with grouped sections. Replaces six
-/// stacked cards with iOS-native list grouping; gets free Dynamic Type,
-/// VoiceOver, and the ambient affordance pattern users already know from
-/// Settings.app.
+/// Profile rendered as a stack of cards on the shared `surface` chrome,
+/// matching the visual language used by Home, WordDetail, and the Feynman
+/// card. Replaces the prior native `Form` (which fragmented the design
+/// language with iOS Settings grouping).
 struct ProfileView: View {
     @Environment(\.theme) private var theme
     @Environment(\.userProgress) private var userProgress
 
     var body: some View {
         NavigationStack {
-            Form {
-                if let progress = userProgress {
-                    levelSection(progress: progress)
-                    streakSection(progress: progress)
-                    statsSection(progress: progress)
-                    collectionSection(progress: progress)
-                    settingsSection(progress: progress)
+            ScrollView {
+                VStack(spacing: theme.spacing.cardGap) {
+                    if let progress = userProgress {
+                        levelSection(progress: progress)
+                        streakSection(progress: progress)
+                        statsSection(progress: progress)
+                        collectionSection(progress: progress)
+                        settingsSection(progress: progress)
+                    }
                 }
+                .padding(.horizontal, theme.spacing.lg)
+                .padding(.vertical, theme.spacing.lg)
             }
-            .scrollContentBackground(.hidden)
             .background(theme.colors.bg)
             .navigationTitle("profile.navTitle")
             .navigationBarTitleDisplayMode(.large)
         }
+    }
+
+    private func cardSurface<Content: View>(@ViewBuilder _ content: () -> Content) -> some View {
+        content()
+            .padding(theme.spacing.cardPadding)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(theme.colors.surface)
+            .clipShape(.rect(cornerRadius: RadiusTokens.card))
+            .overlay(
+                RoundedRectangle(cornerRadius: RadiusTokens.card)
+                    .stroke(theme.colors.line, lineWidth: 0.5)
+            )
     }
 
     // MARK: - Sections
@@ -31,7 +46,7 @@ struct ProfileView: View {
     @ViewBuilder
     private func levelSection(progress: UserProgress) -> some View {
         if let levelDef = LevelDefinition.definition(for: progress.level) {
-            Section {
+            cardSurface {
                 VStack(alignment: .leading, spacing: theme.spacing.sm) {
                     Text(levelDef.title)
                         .font(TypographyTokens.title2)
@@ -48,13 +63,12 @@ struct ProfileView: View {
                             .foregroundColor(theme.colors.inkMuted)
                     }
                 }
-                .padding(.vertical, theme.spacing.xs)
             }
         }
     }
 
     private func streakSection(progress: UserProgress) -> some View {
-        Section {
+        cardSurface {
             HStack(spacing: theme.spacing.xl) {
                 streakCell(
                     value: progress.displayedCurrentStreak,
@@ -69,7 +83,6 @@ struct ProfileView: View {
                 )
             }
             .frame(maxWidth: .infinity)
-            .padding(.vertical, theme.spacing.xs)
         }
     }
 
@@ -96,11 +109,13 @@ struct ProfileView: View {
     }
 
     private func statsSection(progress: UserProgress) -> some View {
-        Section {
-            statRow(label: "profile.stats.practiced", value: progress.wordsPracticedCount)
-            statRow(label: "profile.stats.assessedTwice", value: progress.wordsAssessedCorrectlyTwice)
-            statRow(label: "profile.stats.mastered", value: progress.masteredWordIds.count)
-            statRow(label: "profile.stats.bookmarked", value: progress.bookmarkedWordIds.count)
+        cardSurface {
+            VStack(spacing: theme.spacing.md) {
+                statRow(label: "profile.stats.practiced", value: progress.wordsPracticedCount)
+                statRow(label: "profile.stats.assessedTwice", value: progress.wordsAssessedCorrectlyTwice)
+                statRow(label: "profile.stats.mastered", value: progress.masteredWordIds.count)
+                statRow(label: "profile.stats.bookmarked", value: progress.bookmarkedWordIds.count)
+            }
         }
     }
 
@@ -118,30 +133,35 @@ struct ProfileView: View {
         .accessibilityElement(children: .combine)
     }
 
-    /// P2 — Mastered & Bookmarked are real navigation targets.
+    /// Mastered & Bookmarked are real navigation targets.
     /// Saved combines word + card bookmarks under one entry per the Pro/Books plan.
     private func collectionSection(progress: UserProgress) -> some View {
-        Section {
-            NavigationLink {
-                WordListView(
-                    title: "profile.mastered.title",
-                    wordIds: progress.masteredWordIds,
-                    emptyTitle: "profile.mastered.empty",
-                    emptyMessage: "profile.mastered.hint"
-                )
-            } label: {
-                collectionRow(icon: "checkmark.seal.fill",
-                              tint: theme.colors.good,
-                              title: "profile.mastered.title",
-                              count: progress.masteredWordIds.count)
-            }
-            NavigationLink {
-                BookmarksView()
-            } label: {
-                collectionRow(icon: "bookmark.fill",
-                              tint: theme.colors.accent,
-                              title: "bookmarks.navTitle",
-                              count: progress.bookmarkedWordIds.count)
+        cardSurface {
+            VStack(spacing: 0) {
+                NavigationLink {
+                    WordListView(
+                        title: "profile.mastered.title",
+                        wordIds: progress.masteredWordIds,
+                        emptyTitle: "profile.mastered.empty",
+                        emptyMessage: "profile.mastered.hint"
+                    )
+                } label: {
+                    collectionRow(icon: "checkmark.seal.fill",
+                                  tint: theme.colors.good,
+                                  title: "profile.mastered.title",
+                                  count: progress.masteredWordIds.count)
+                }
+                .buttonStyle(.plain)
+                Divider()
+                NavigationLink {
+                    BookmarksView()
+                } label: {
+                    collectionRow(icon: "bookmark.fill",
+                                  tint: theme.colors.accent,
+                                  title: "bookmarks.navTitle",
+                                  count: progress.bookmarkedWordIds.count)
+                }
+                .buttonStyle(.plain)
             }
         }
     }
@@ -160,37 +180,50 @@ struct ProfileView: View {
             Text("\(count)")
                 .font(TypographyTokens.body)
                 .foregroundColor(theme.colors.inkMuted)
+            Image(systemName: "chevron.right")
+                .font(.system(.subheadline))
+                .foregroundColor(theme.colors.inkFaint)
+                .accessibilityHidden(true)
         }
+        .padding(.vertical, theme.spacing.xs)
+        .contentShape(Rectangle())
     }
 
     private func settingsSection(progress: UserProgress) -> some View {
-        Section {
-            NavigationLink {
-                StackManagementView()
-            } label: {
-                settingsRow(
-                    icon: "square.stack.3d.up.fill",
-                    title: "profile.settings.manageStacks",
-                    subtitle: "\(progress.selectedStacks.count) active"
-                )
-            }
-            NavigationLink {
-                NotificationSettingsView()
-            } label: {
-                settingsRow(
-                    icon: "bell.fill",
-                    title: "profile.settings.notifications",
-                    subtitle: progress.notificationEnabled ? "On" : "Off"
-                )
-            }
-            NavigationLink {
-                ThemeSettingsView()
-            } label: {
-                settingsRow(
-                    icon: "paintbrush.fill",
-                    title: "profile.settings.theme",
-                    subtitle: progress.themePreference.rawValue.capitalized
-                )
+        cardSurface {
+            VStack(spacing: 0) {
+                NavigationLink {
+                    StackManagementView()
+                } label: {
+                    settingsRow(
+                        icon: "square.stack.3d.up.fill",
+                        title: "profile.settings.manageStacks",
+                        subtitle: "\(progress.selectedStacks.count) active"
+                    )
+                }
+                .buttonStyle(.plain)
+                Divider()
+                NavigationLink {
+                    NotificationSettingsView()
+                } label: {
+                    settingsRow(
+                        icon: "bell.fill",
+                        title: "profile.settings.notifications",
+                        subtitle: progress.notificationEnabled ? "On" : "Off"
+                    )
+                }
+                .buttonStyle(.plain)
+                Divider()
+                NavigationLink {
+                    ThemeSettingsView()
+                } label: {
+                    settingsRow(
+                        icon: "paintbrush.fill",
+                        title: "profile.settings.theme",
+                        subtitle: progress.themePreference.rawValue.capitalized
+                    )
+                }
+                .buttonStyle(.plain)
             }
         }
     }
@@ -209,7 +242,13 @@ struct ProfileView: View {
             Text(subtitle)
                 .font(TypographyTokens.footnote)
                 .foregroundColor(theme.colors.inkMuted)
+            Image(systemName: "chevron.right")
+                .font(.system(.subheadline))
+                .foregroundColor(theme.colors.inkFaint)
+                .accessibilityHidden(true)
         }
+        .padding(.vertical, theme.spacing.xs)
+        .contentShape(Rectangle())
     }
 }
 
