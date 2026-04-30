@@ -54,13 +54,13 @@ struct WordListView: View {
                     .foregroundColor(theme.colors.ink)
                 if progress.masteredWordIds.contains(word.id) {
                     Image(systemName: "checkmark.seal.fill")
-                        .font(.system(size: 12))
+                        .font(.system(.caption))
                         .foregroundColor(theme.colors.good)
                         .accessibilityLabel(String(localized: "a11y.mastered"))
                 }
                 if progress.bookmarkedWordIds.contains(word.id) {
                     Image(systemName: "bookmark.fill")
-                        .font(.system(size: 11))
+                        .font(.system(.caption2))
                         .foregroundColor(theme.colors.accent)
                         .accessibilityLabel(String(localized: "a11y.bookmarked"))
                 }

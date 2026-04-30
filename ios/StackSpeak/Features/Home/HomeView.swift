@@ -161,7 +161,7 @@ struct HomeView: View {
                 .foregroundColor(theme.colors.inkFaint)
             HStack(spacing: 4) {
                 Image(systemName: "flame.fill")
-                    .font(.system(size: 12))
+                    .font(.system(.caption))
                     .foregroundColor(theme.colors.streak)
                     .symbolEffect(.bounce, value: progress.displayedCurrentStreak)
                 Text(progress.displayedCurrentStreak == 0
@@ -315,7 +315,7 @@ struct HomeView: View {
             }
             Button(action: { showNotificationBanner = false }) {
                 Image(systemName: "xmark")
-                    .font(.system(size: 12))
+                    .font(.system(.caption))
                     .foregroundColor(theme.colors.inkFaint)
             }
         }
@@ -391,13 +391,13 @@ struct TodayWordRow: View {
 
             if isCompleted {
                 Image(systemName: "checkmark.seal.fill")
-                    .font(.system(size: 18))
+                    .font(.system(.headline))
                     .foregroundColor(theme.colors.good)
                     .symbolEffect(.bounce, value: isCompleted)
                     .accessibilityHidden(true)
             } else {
                 Image(systemName: "chevron.right")
-                    .font(.system(size: 14, weight: .semibold))
+                    .font(.system(.subheadline, weight: .semibold))
                     .foregroundColor(theme.colors.inkFaint)
                     .accessibilityHidden(true)
             }
@@ -479,7 +479,7 @@ struct CompletionTrackerRow: View {
 
                 if day.isComplete {
                     Image(systemName: "checkmark")
-                        .font(.system(size: 11, weight: .bold))
+                        .font(.system(.caption2, weight: .bold))
                         .foregroundColor(.white)
                         .accessibilityHidden(true)
                 }

@@ -28,7 +28,7 @@ struct BookListRow: View {
 
     private var cover: some View {
         Image(systemName: book.coverIcon)
-            .font(.system(size: 22, weight: .regular))
+            .font(.system(.title2, weight: .regular))
             .foregroundColor(coverTint)
             .frame(width: 44, height: 44)
             .background(coverTint.opacity(0.1))
@@ -98,7 +98,7 @@ private struct BookBadge: View {
     var body: some View {
         HStack(spacing: 4) {
             if let icon = leadingIcon {
-                Image(systemName: icon).font(.system(size: 10, weight: .semibold))
+                Image(systemName: icon).font(.system(.caption2, weight: .semibold))
             }
             Text(text)
                 .font(TypographyTokens.caption.weight(.semibold))

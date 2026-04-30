@@ -50,7 +50,7 @@ struct ThemeSettingsView: View {
                 Spacer()
                 if isSelected {
                     Image(systemName: "checkmark")
-                        .font(.system(size: 16, weight: .semibold))
+                        .font(.system(.callout, weight: .semibold))
                         .foregroundColor(theme.colors.accent)
                         .accessibilityHidden(true)
                 }

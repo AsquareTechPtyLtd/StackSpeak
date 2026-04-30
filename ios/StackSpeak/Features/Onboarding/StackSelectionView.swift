@@ -184,7 +184,7 @@ struct StackCard: View {
     private var cardContent: some View {
         HStack(spacing: theme.spacing.md) {
             Image(systemName: stack.icon)
-                .font(.system(size: 22))
+                .font(.system(.title2))
                 .foregroundColor(isSelected ? theme.colors.accent : theme.colors.inkMuted)
                 .frame(width: 36, height: 36)
                 .background(isSelected ? theme.colors.accentBg : theme.colors.surfaceAlt)
@@ -212,7 +212,7 @@ struct StackCard: View {
 
             if !isMandatory {
                 Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
-                    .font(.system(size: 22))
+                    .font(.system(.title2))
                     .foregroundColor(isSelected ? theme.colors.accent : theme.colors.inkFaint)
             }
         }

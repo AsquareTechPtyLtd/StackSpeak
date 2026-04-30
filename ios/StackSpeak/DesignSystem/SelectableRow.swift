@@ -117,16 +117,16 @@ struct SelectableRow<Leading: View, Trailing: View>: View {
         switch role {
         case .picker:
             Image(systemName: isSelected ? "checkmark" : "")
-                .font(.system(size: 16, weight: .semibold))
+                .font(.system(.callout, weight: .semibold))
                 .foregroundColor(theme.colors.accent)
                 .frame(width: 16)
         case .multiselect:
             Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
-                .font(.system(size: 22))
+                .font(.system(.title2))
                 .foregroundColor(isSelected ? theme.colors.accent : theme.colors.inkFaint)
         case .navigation:
             Image(systemName: "chevron.right")
-                .font(.system(size: 14))
+                .font(.system(.subheadline))
                 .foregroundColor(theme.colors.inkFaint)
         }
     }

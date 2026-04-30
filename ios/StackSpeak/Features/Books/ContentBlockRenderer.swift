@@ -131,7 +131,7 @@ struct ContentBlockView: View {
             // Phase 1+2 image bundling is not wired; render the asset path as a
             // friendly placeholder so authoring + preview still works.
             Image(systemName: "photo")
-                .font(.system(size: 36))
+                .font(.system(.largeTitle))
                 .foregroundColor(theme.colors.inkFaint)
                 .frame(maxWidth: .infinity, minHeight: 120)
                 .background(theme.colors.surfaceAlt)

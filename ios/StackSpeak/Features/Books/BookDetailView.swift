@@ -96,7 +96,7 @@ struct BookDetailView: View {
         let completed = viewModel.completedCount(for: chapter)
         return HStack(spacing: theme.spacing.md) {
             Image(systemName: chapter.icon)
-                .font(.system(size: 14))
+                .font(.system(.subheadline))
                 .foregroundColor(theme.colors.accent)
                 .frame(width: 24)
                 .accessibilityHidden(true)

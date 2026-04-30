@@ -212,7 +212,7 @@ private struct CapReachedSheet: View {
     var body: some View {
         VStack(spacing: theme.spacing.lg) {
             Image(systemName: "leaf.fill")
-                .font(.system(size: 36))
+                .font(.system(.largeTitle))
                 .foregroundColor(theme.colors.good)
                 .padding(.top, theme.spacing.xl)
             Text("books.cap.title")

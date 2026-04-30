@@ -65,7 +65,7 @@ struct BookmarksView: View {
     private func cardRow(_ row: BookmarksViewModel.CardRow) -> some View {
         HStack(spacing: theme.spacing.md) {
             Image(systemName: "doc.text")
-                .font(.system(size: 14))
+                .font(.system(.subheadline))
                 .foregroundColor(theme.colors.accent)
                 .frame(width: 24)
                 .accessibilityHidden(true)
@@ -90,7 +90,7 @@ struct BookmarksView: View {
                     .foregroundColor(theme.colors.ink)
                 if progress.masteredWordIds.contains(word.id) {
                     Image(systemName: "checkmark.seal.fill")
-                        .font(.system(size: 12))
+                        .font(.system(.caption))
                         .foregroundColor(theme.colors.good)
                         .accessibilityLabel(String(localized: "a11y.mastered"))
                 }

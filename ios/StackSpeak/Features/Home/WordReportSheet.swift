@@ -75,7 +75,7 @@ struct WordReportSheet: View {
                         action: { selectedReason = reason },
                         leading: {
                             Image(systemName: reason.icon)
-                                .font(.system(size: 18))
+                                .font(.system(.headline))
                                 .foregroundColor(selectedReason == reason ? theme.colors.accent : theme.colors.inkMuted)
                                 .frame(width: 28)
                         }

@@ -149,7 +149,7 @@ struct ProfileView: View {
     private func collectionRow(icon: String, tint: Color, title: LocalizedStringKey, count: Int) -> some View {
         HStack(spacing: theme.spacing.md) {
             Image(systemName: icon)
-                .font(.system(size: 14))
+                .font(.system(.subheadline))
                 .foregroundColor(tint)
                 .frame(width: 24)
                 .accessibilityHidden(true)
@@ -198,7 +198,7 @@ struct ProfileView: View {
     private func settingsRow(icon: String, title: LocalizedStringKey, subtitle: String) -> some View {
         HStack(spacing: theme.spacing.md) {
             Image(systemName: icon)
-                .font(.system(size: 14))
+                .font(.system(.subheadline))
                 .foregroundColor(theme.colors.accent)
                 .frame(width: 24)
                 .accessibilityHidden(true)

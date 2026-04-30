@@ -190,7 +190,7 @@ struct FeynmanCardView: View {
             }
         } label: {
             Image(systemName: "ellipsis.circle")
-                .font(.system(size: 20))
+                .font(.system(.title3))
                 .foregroundColor(theme.colors.inkFaint)
         }
         .accessibilityLabel(String(localized: "feynman.menu.label"))
@@ -370,7 +370,7 @@ struct FeynmanCardView: View {
                     .fill(isRecording ? theme.colors.bad : theme.colors.surfaceAlt)
                     .frame(width: 36, height: 36)
                 Image(systemName: isRecording ? "mic.fill" : "mic")
-                    .font(.system(size: 16, weight: .semibold))
+                    .font(.system(.callout, weight: .semibold))
                     .foregroundColor(isRecording ? .white : theme.colors.inkMuted)
                     .symbolEffect(.pulse, isActive: isRecording)
             }
