@@ -25,6 +25,9 @@ struct ColorTokens {
     /// Warm orange for the streak flame — kept distinct from `accent` so the
     /// universal flame metaphor reads correctly.
     let streak: Color
+    /// Near-black ink for icons/text drawn on top of `streak`. Fixed to a dark
+    /// value in both modes because `streak` is a bright orange/amber in both.
+    let streakInk: Color
 
     static let light = ColorTokens(
         bg: Color(hex: "F6F5F2"),
@@ -47,7 +50,8 @@ struct ColorTokens {
         good: Color(hex: "2F6F47"),
         warn: Color(hex: "B5651D"),
         bad: Color(hex: "C0392B"),
-        streak: Color(hex: "E08A1E")
+        streak: Color(hex: "E08A1E"),
+        streakInk: Color(hex: "15161A")
     )
 
     static let dark = ColorTokens(
@@ -72,7 +76,8 @@ struct ColorTokens {
         good: Color(hex: "7FCF99"),
         warn: Color(hex: "E0A878"),
         bad: Color(hex: "FF6B6B"),
-        streak: Color(hex: "F2A65A")
+        streak: Color(hex: "F2A65A"),
+        streakInk: Color(hex: "0B0C0E")
     )
 }
 

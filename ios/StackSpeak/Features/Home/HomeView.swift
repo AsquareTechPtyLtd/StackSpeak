@@ -444,7 +444,7 @@ struct CompletionTrackerRow: View {
     let days: [CompletionDay]
 
     private static let cellSize: CGFloat = 22
-    private static let cellRadius: CGFloat = 6
+    private static let cellRadius: CGFloat = RadiusTokens.inline
 
     var body: some View {
         HStack(alignment: .center, spacing: 0) {
@@ -480,7 +480,7 @@ struct CompletionTrackerRow: View {
                 if day.isComplete {
                     Image(systemName: "checkmark")
                         .font(.system(.caption2, weight: .bold))
-                        .foregroundColor(.white)
+                        .foregroundColor(theme.colors.streakInk)
                         .accessibilityHidden(true)
                 }
             }
