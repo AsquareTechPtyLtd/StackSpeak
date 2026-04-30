@@ -406,6 +406,7 @@ struct TodayWordRow: View {
                 Text(word.word)
                     .font(TypographyTokens.headline)
                     .foregroundColor(isCompleted ? theme.colors.inkMuted : theme.colors.ink)
+                    .strikethrough(isCompleted, color: theme.colors.inkFaint)
                 Text(word.pronunciation)
                     .font(TypographyTokens.mono)
                     .foregroundColor(theme.colors.inkFaint)
