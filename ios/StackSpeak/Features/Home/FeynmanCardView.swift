@@ -194,6 +194,8 @@ struct FeynmanCardView: View {
             Image(systemName: "ellipsis.circle")
                 .font(.system(.title3))
                 .foregroundColor(theme.colors.inkFaint)
+                .frame(width: 44, height: 44)
+                .contentShape(Rectangle())
         }
         .accessibilityLabel(String(localized: "feynman.menu.label"))
     }
