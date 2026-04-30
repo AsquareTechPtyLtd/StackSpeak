@@ -32,7 +32,7 @@ struct ColorTokens {
         surfaceAlt: Color(hex: "FBFAF7"),
         ink: Color(hex: "15161A"),
         inkMuted: Color(hex: "5B5E66"),
-        inkFaint: Color(hex: "9A9CA3"),
+        inkFaint: Color(hex: "6E7079"),
         line: Color(hex: "14161C").opacity(0.08),
         lineStrong: Color(hex: "14161C").opacity(0.14),
         accent: Color(hex: "3E4BDB"),
