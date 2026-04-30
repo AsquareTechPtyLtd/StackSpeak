@@ -524,6 +524,9 @@ struct FeynmanCardView: View {
         DragGesture(minimumDistance: 24)
             .onEnded { value in
                 guard isSwipeAdvanceStage else { return }
+                // Yield to the system swipe-back gesture region. If the touch
+                // started in the leading-edge gutter, let UIKit handle it.
+                guard value.startLocation.x > Self.systemEdgeGutter else { return }
                 let dx = value.translation.width
                 let dy = value.translation.height
                 let predictedDx = value.predictedEndTranslation.width
@@ -534,6 +537,9 @@ struct FeynmanCardView: View {
                 }
             }
     }
+
+    /// Width of the leading-edge gutter reserved for the system pop gesture.
+    private static let systemEdgeGutter: CGFloat = 32
 
     @ViewBuilder
     private var explainControls: some View {
