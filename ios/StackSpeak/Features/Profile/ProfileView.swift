@@ -11,13 +11,13 @@ struct ProfileView: View {
     var body: some View {
         NavigationStack {
             ScrollView {
-                VStack(spacing: theme.spacing.cardGap) {
+                VStack(alignment: .leading, spacing: theme.spacing.xl) {
                     if let progress = userProgress {
-                        levelSection(progress: progress)
-                        streakSection(progress: progress)
-                        statsSection(progress: progress)
-                        collectionSection(progress: progress)
-                        settingsSection(progress: progress)
+                        sectionGroup("profile.section.level") { levelSection(progress: progress) }
+                        sectionGroup("profile.section.streak") { streakSection(progress: progress) }
+                        sectionGroup("profile.section.stats") { statsSection(progress: progress) }
+                        sectionGroup("profile.section.collections") { collectionSection(progress: progress) }
+                        sectionGroup("profile.section.settings") { settingsSection(progress: progress) }
                     }
                 }
                 .padding(.horizontal, theme.spacing.lg)
@@ -26,6 +26,16 @@ struct ProfileView: View {
             .background(theme.colors.bg)
             .navigationTitle("profile.navTitle")
             .navigationBarTitleDisplayMode(.large)
+        }
+    }
+
+    private func sectionGroup<Content: View>(
+        _ titleKey: LocalizedStringKey,
+        @ViewBuilder _ content: () -> Content
+    ) -> some View {
+        VStack(alignment: .leading, spacing: theme.spacing.sm) {
+            SectionHeader(titleKey)
+            content()
         }
     }
 
