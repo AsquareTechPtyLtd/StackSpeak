@@ -14,6 +14,7 @@ struct StackManagementView: View {
 
     @State private var selectedOptionalStacks: Set<WordStack> = []
     @State private var saveError: Error?
+    @State private var saveSuccessTrigger = 0
 
     private var currentLevel: Int { userProgress?.level ?? 1 }
 
@@ -54,10 +55,12 @@ struct StackManagementView: View {
             }
         }
         .onAppear { loadSelectedStacks() }
-        .alert("Save Failed", isPresented: .constant(saveError != nil), presenting: saveError) { _ in
-            Button("OK") { saveError = nil }
+        .sensoryFeedback(.success, trigger: saveSuccessTrigger)
+        .alert("saveError.title", isPresented: .constant(saveError != nil), presenting: saveError) { _ in
+            Button("common.ok") { saveError = nil }
         } message: { error in
-            Text("Failed to save your changes: \(error.localizedDescription)")
+            Text(String(format: String(localized: "saveError.stackManagement.format"),
+                        error.localizedDescription))
         }
     }
 
@@ -133,6 +136,7 @@ struct StackManagementView: View {
         progress.selectedStacks = mandatory.union(optional)
         do {
             try modelContext.save()
+            saveSuccessTrigger &+= 1
             dismiss()
         } catch {
             logger.error("Failed to save stack changes: \(error.localizedDescription, privacy: .public)")
