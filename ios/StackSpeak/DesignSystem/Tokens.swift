@@ -48,7 +48,7 @@ struct ColorTokens {
         codeCom: Color(hex: "8A8A7F"),
         codeNum: Color(hex: "B5651D"),
         good: Color(hex: "2F6F47"),
-        warn: Color(hex: "B5651D"),
+        warn: Color(hex: "A85812"),
         bad: Color(hex: "C0392B"),
         streak: Color(hex: "E08A1E"),
         streakInk: Color(hex: "15161A")
