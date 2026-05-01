@@ -159,6 +159,9 @@ struct FeynmanCardView: View {
 
     private var headerRow: some View {
         HStack(alignment: .firstTextBaseline) {
+            if previousStage(from: stage) != nil {
+                backButton
+            }
             VStack(alignment: .leading, spacing: 2) {
                 Text(word.word)
                     .font(TypographyTokens.cardTitle)
@@ -172,6 +175,17 @@ struct FeynmanCardView: View {
             Spacer()
             overflowMenu
         }
+    }
+
+    private var backButton: some View {
+        Button(action: retreat) {
+            Image(systemName: "chevron.left")
+                .font(.system(.title3, weight: .semibold))
+                .foregroundColor(theme.colors.inkFaint)
+                .frame(width: 44, height: 44)
+                .contentShape(Rectangle())
+        }
+        .accessibilityLabel(Text("a11y.feynman.previousStage"))
     }
 
     /// T4 — single ⋯ replaces the three competing buttons on the word stage.
@@ -610,6 +624,24 @@ struct FeynmanCardView: View {
         case .explain:   return isComingSoon ? .done : .connector
         case .connector: return .done
         case .done:      return nil
+        }
+    }
+
+    /// Inverse of nextStage. Used by the header back button.
+    private func previousStage(from current: FeynmanStage) -> FeynmanStage? {
+        switch current {
+        case .simple:    return nil
+        case .technical: return .simple
+        case .explain:   return .technical
+        case .connector: return .explain
+        case .done:      return isComingSoon ? .explain : .connector
+        }
+    }
+
+    private func retreat() {
+        guard let prev = previousStage(from: stage) else { return }
+        withAnimation(reduceMotion ? nil : MotionTokens.standard) {
+            stage = prev
         }
     }
 
