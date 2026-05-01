@@ -282,9 +282,11 @@ struct MainTabView: View {
             .filter { progress.canAttemptAssessment(for: $0) }.count
     }
 
-    /// CC4 — iOS 18+ adaptive TabView gives iPhone the standard tab bar and
-    /// iPad a native sidebar without any per-platform code branches. The four
-    /// tabs are listed once; layout is selected per device.
+    /// Standard iOS tab bar on both iPhone and iPad. The previous
+    /// .sidebarAdaptable style produced a 720pt island on iPad because the
+    /// destination views aren't wired through a NavigationSplitView. Once
+    /// the iPad split-view IA is designed (Phase 2 council), this can move
+    /// back to .sidebarAdaptable plus the matching split-view scaffolding.
     var body: some View {
         TabView {
             Tab("home.tab", systemImage: "house.fill") {
@@ -305,6 +307,5 @@ struct MainTabView: View {
                 ProfileView()
             }
         }
-        .tabViewStyle(.sidebarAdaptable)
     }
 }
