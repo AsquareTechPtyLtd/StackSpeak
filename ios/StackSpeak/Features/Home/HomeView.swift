@@ -404,7 +404,9 @@ struct TodayWordRow: View {
 
             VStack(alignment: .leading, spacing: 2) {
                 Text(word.word)
-                    .font(TypographyTokens.headline)
+                    .font(isCompleted
+                          ? TypographyTokens.body.weight(.regular)
+                          : TypographyTokens.headline)
                     .foregroundColor(isCompleted ? theme.colors.inkMuted : theme.colors.ink)
                     .strikethrough(isCompleted, color: theme.colors.inkFaint)
                 Text(word.pronunciation)
