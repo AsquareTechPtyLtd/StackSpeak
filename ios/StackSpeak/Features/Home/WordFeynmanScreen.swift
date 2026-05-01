@@ -7,6 +7,7 @@ import SwiftUI
 struct WordFeynmanScreen: View {
     @Environment(\.theme) private var theme
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     let word: Word
     let userProgress: UserProgress
@@ -25,10 +26,14 @@ struct WordFeynmanScreen: View {
                 latestExplanation: latestExplanation,
                 onSubmit: { explanation, method, markAsMastered in
                     onSubmit(word.id, explanation, method, markAsMastered)
-                    didJustComplete = true
+                    withAnimation(reduceMotion ? nil : MotionTokens.standard) {
+                        didJustComplete = true
+                    }
                 },
                 onStageDidReachDone: {
-                    didJustComplete = true
+                    withAnimation(reduceMotion ? nil : MotionTokens.standard) {
+                        didJustComplete = true
+                    }
                 }
             )
             .padding(.horizontal, theme.spacing.lg)
