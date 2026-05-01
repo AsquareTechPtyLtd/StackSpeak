@@ -13,6 +13,7 @@ struct OnboardingView: View {
     private let logger = Logger(subsystem: "com.stackspeak.ios", category: "Onboarding")
     @State private var currentPage = 0
     @State private var showStackSelection = false
+    @State private var showSkipConfirm = false
 
     private let pages: [OnboardingPage] = [
         OnboardingPage(
@@ -40,6 +41,16 @@ struct OnboardingView: View {
                 onboardingPages
             }
         }
+        .confirmationDialog(
+            "onboarding.skipConfirm.title",
+            isPresented: $showSkipConfirm,
+            titleVisibility: .visible
+        ) {
+            Button("onboarding.skipConfirm.continue", action: skipAll)
+            Button("common.cancel", role: .cancel) { }
+        } message: {
+            Text("onboarding.skipConfirm.message")
+        }
     }
 
     private var onboardingPages: some View {
@@ -66,7 +77,7 @@ struct OnboardingView: View {
                     } else {
                         SwipeNudge("onboarding.swipeHint", direction: .forward, onAdvance: advance)
 
-                        Button(action: skipAll) {
+                        Button(action: { showSkipConfirm = true }) {
                             Text("onboarding.button.skip")
                                 .font(TypographyTokens.callout)
                                 .foregroundColor(theme.colors.inkMuted)
