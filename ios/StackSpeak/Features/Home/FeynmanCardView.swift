@@ -11,6 +11,32 @@ enum FeynmanStage: Int, CaseIterable {
     case explain
     case connector
     case done
+
+    /// Forward transition. Coming-soon words skip the connector stage because
+    /// the simple-explanation copy isn't authored yet, so there's nothing
+    /// meaningful for the connector to anchor.
+    func next(isComingSoon: Bool) -> FeynmanStage? {
+        switch self {
+        case .simple:    return .technical
+        case .technical: return .explain
+        case .explain:   return isComingSoon ? .done : .connector
+        case .connector: return .done
+        case .done:      return nil
+        }
+    }
+
+    /// Inverse of `next(isComingSoon:)`. Used by the header back button so
+    /// users can revisit a prior stage. The done -> previous traversal
+    /// honors the same coming-soon skip.
+    func previous(isComingSoon: Bool) -> FeynmanStage? {
+        switch self {
+        case .simple:    return nil
+        case .technical: return .simple
+        case .explain:   return .technical
+        case .connector: return .explain
+        case .done:      return isComingSoon ? .explain : .connector
+        }
+    }
 }
 
 /// One daily word, presented as a guided Feynman-technique flow.
@@ -622,26 +648,15 @@ struct FeynmanCardView: View {
     }
 
     /// Picks the next stage. word → simple → technical → explain → connector → done.
-    /// Coming-soon words skip the connector stage.
+    /// Forward stage delegating to FeynmanStage.next so the transition table
+    /// stays in one place (and is independently testable).
     private func nextStage(from current: FeynmanStage) -> FeynmanStage? {
-        switch current {
-        case .simple:    return .technical
-        case .technical: return .explain
-        case .explain:   return isComingSoon ? .done : .connector
-        case .connector: return .done
-        case .done:      return nil
-        }
+        current.next(isComingSoon: isComingSoon)
     }
 
     /// Inverse of nextStage. Used by the header back button.
     private func previousStage(from current: FeynmanStage) -> FeynmanStage? {
-        switch current {
-        case .simple:    return nil
-        case .technical: return .simple
-        case .explain:   return .technical
-        case .connector: return .explain
-        case .done:      return isComingSoon ? .explain : .connector
-        }
+        current.previous(isComingSoon: isComingSoon)
     }
 
     private func retreat() {
