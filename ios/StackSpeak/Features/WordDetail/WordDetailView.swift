@@ -108,9 +108,10 @@ struct WordDetailView: View {
 
     private var shortDefinition: some View {
         Text(word.shortDefinition)
-            .font(TypographyTokens.title2)
-            .foregroundColor(theme.colors.ink)
+            .font(TypographyTokens.title3)
+            .foregroundColor(theme.colors.inkMuted)
             .fixedSize(horizontal: false, vertical: true)
+            .padding(.top, theme.spacing.sm)
     }
 
     private var longDefinitionBlock: some View {
