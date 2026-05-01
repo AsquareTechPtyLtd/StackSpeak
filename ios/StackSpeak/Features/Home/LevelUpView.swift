@@ -52,7 +52,7 @@ struct LevelUpView: View {
     private var celebrationContent: some View {
         VStack(spacing: theme.spacing.lg) {
             Image(systemName: "star.circle.fill")
-                .font(.system(size: 96))
+                .scaledIcon(size: IconSizeTokens.hero)
                 .foregroundColor(theme.colors.accent)
                 .symbolEffect(.bounce.up.byLayer, value: hasAppeared)
                 .accessibilityHidden(true)

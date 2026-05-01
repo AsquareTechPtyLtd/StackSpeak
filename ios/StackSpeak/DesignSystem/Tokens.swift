@@ -106,6 +106,18 @@ struct SpacingTokens {
     var rowPadding: CGFloat { 14 }
 }
 
+/// Hero-sized icon glyphs. Reserved for illustrative moments (onboarding
+/// pages, level-up celebration, empty-state illustrations) — anything
+/// smaller belongs to the typography text-style scale via `.font(.system(.<style>))`.
+enum IconSizeTokens {
+    /// Empty-state illustrations.
+    static let large: CGFloat = 56
+    /// Onboarding hero icons.
+    static let xLarge: CGFloat = 72
+    /// Level-up / single-celebration moments.
+    static let hero: CGFloat = 96
+}
+
 /// Three considered radii. Anything else is a smell.
 enum RadiusTokens {
     /// Inline elements: chips, code blocks, small inputs.

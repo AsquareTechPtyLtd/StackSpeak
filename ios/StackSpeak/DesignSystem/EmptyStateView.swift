@@ -30,7 +30,7 @@ struct EmptyStateView: View {
         VStack(spacing: theme.spacing.lg) {
             Spacer()
             Image(systemName: icon)
-                .font(.system(size: 56, weight: .light))
+                .scaledIcon(size: IconSizeTokens.large, weight: .light)
                 .foregroundColor(theme.colors.inkFaint)
                 .accessibilityHidden(true)
             VStack(spacing: theme.spacing.xs) {
