@@ -2,6 +2,9 @@ import SwiftUI
 import SwiftData
 import OSLog
 
+/// SM3 — three popular optional stacks come pre-selected on first launch so
+/// new users don't have to make decisions before they've seen the product.
+/// Easy to deselect.
 struct StackSelectionView: View {
     @Environment(\.theme) private var theme
     @Environment(\.userProgress) private var userProgress
@@ -13,13 +16,21 @@ struct StackSelectionView: View {
 
     @State private var selectedOptionalStacks: Set<WordStack> = []
     @State private var saveError: Error?
+    @State private var didApplyDefaults = false
+
+    /// Smart defaults applied on first appearance. Three frequently-relevant
+    /// stacks for software engineers; the user can deselect any of them.
+    private static let smartDefaultIds = ["basic-api-design", "basic-testing", "basic-system-design"]
 
     private var mandatoryStacks: [WordStack] {
         WordStack.mandatoryStacks(for: 1).sorted(by: { $0.displayName < $1.displayName })
     }
 
-    private var optionalStacks: [WordStack] {
-        WordStack.availableOptionalStacks(for: 1).sorted(by: { $0.displayName < $1.displayName })
+    private var optionalStacksByCategory: [(StackCategory, [WordStack])] {
+        let stacks = Array(WordStack.availableOptionalStacks(for: 1))
+        return Dictionary(grouping: stacks, by: \.category)
+            .map { ($0.key, $0.value.sorted(by: { $0.displayName < $1.displayName })) }
+            .sorted { $0.0.sortOrder < $1.0.sortOrder }
     }
 
     var body: some View {
@@ -28,10 +39,12 @@ struct StackSelectionView: View {
 
             VStack(spacing: 0) {
                 ScrollView {
-                    VStack(spacing: theme.spacing.lg) {
+                    VStack(alignment: .leading, spacing: theme.spacing.xl) {
                         headerSection
-                        mandatoryStacksSection
-                        optionalStacksSection
+                        coreSection
+                        ForEach(optionalStacksByCategory, id: \.0) { category, stacks in
+                            optionalSection(category: category, stacks: stacks)
+                        }
                     }
                     .frame(maxWidth: 720)
                     .padding(theme.spacing.lg)
@@ -40,12 +53,12 @@ struct StackSelectionView: View {
                 continueButton
             }
         }
-        .alert("Save Failed", isPresented: .constant(saveError != nil), presenting: saveError) { _ in
-            Button("OK") {
-                saveError = nil
-            }
+        .onAppear { applySmartDefaultsOnce() }
+        .alert("saveError.title", isPresented: .constant(saveError != nil), presenting: saveError) { _ in
+            Button("common.ok") { saveError = nil }
         } message: { error in
-            Text("Failed to save your selection: \(error.localizedDescription)")
+            Text(String(format: String(localized: "saveError.stackSelection.format"),
+                        error.localizedDescription))
         }
     }
 
@@ -62,13 +75,11 @@ struct StackSelectionView: View {
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 
-    private var mandatoryStacksSection: some View {
-        VStack(alignment: .leading, spacing: theme.spacing.md) {
+    private var coreSection: some View {
+        VStack(alignment: .leading, spacing: theme.spacing.sm) {
             Text("onboarding.stacks.coreSection")
-                .font(TypographyTokens.caption)
-                .foregroundColor(theme.colors.inkFaint)
-                .textCase(.uppercase)
-                .tracking(0.5)
+                .font(TypographyTokens.subheadline.weight(.medium))
+                .foregroundColor(theme.colors.inkMuted)
                 .padding(.horizontal, theme.spacing.sm)
 
             VStack(spacing: theme.spacing.sm) {
@@ -79,17 +90,15 @@ struct StackSelectionView: View {
         }
     }
 
-    private var optionalStacksSection: some View {
-        VStack(alignment: .leading, spacing: theme.spacing.md) {
-            Text("onboarding.stacks.optionalSection")
-                .font(TypographyTokens.caption)
-                .foregroundColor(theme.colors.inkFaint)
-                .textCase(.uppercase)
-                .tracking(0.5)
+    private func optionalSection(category: StackCategory, stacks: [WordStack]) -> some View {
+        VStack(alignment: .leading, spacing: theme.spacing.sm) {
+            Text(category.displayName)
+                .font(TypographyTokens.subheadline.weight(.medium))
+                .foregroundColor(theme.colors.inkMuted)
                 .padding(.horizontal, theme.spacing.sm)
 
             VStack(spacing: theme.spacing.sm) {
-                ForEach(optionalStacks) { stack in
+                ForEach(stacks) { stack in
                     StackCard(
                         stack: stack,
                         isSelected: selectedOptionalStacks.contains(stack),
@@ -102,17 +111,24 @@ struct StackSelectionView: View {
     }
 
     private var continueButton: some View {
-        Button(action: saveAndContinue) {
-            Text("onboarding.stacks.continue")
-                .font(TypographyTokens.headline)
-                .foregroundColor(theme.colors.accentText)
-                .frame(maxWidth: .infinity)
-                .padding(.vertical, theme.spacing.lg)
-                .background(theme.colors.accent)
-                .cornerRadius(12)
+        PrimaryCTAButton("onboarding.stacks.continue") {
+            saveAndContinue()
         }
         .padding(theme.spacing.lg)
-        .background(theme.colors.surface)
+        .background(theme.colors.bg)
+    }
+
+    private func applySmartDefaultsOnce() {
+        guard !didApplyDefaults else { return }
+        didApplyDefaults = true
+
+        let availableOptional = WordStack.availableOptionalStacks(for: 1)
+        for id in Self.smartDefaultIds {
+            let stack = WordStack(rawValue: id)
+            if availableOptional.contains(stack) {
+                selectedOptionalStacks.insert(stack)
+            }
+        }
     }
 
     private func toggleStack(_ stack: WordStack) {
@@ -126,7 +142,6 @@ struct StackSelectionView: View {
     private func saveAndContinue() {
         guard let progress = userProgress else { return }
 
-        // Always include mandatory stacks — the user cannot deselect them.
         let mandatoryRawValues = Set(WordStack.mandatoryStacks(for: progress.level).map { $0.rawValue })
         let optionalRawValues = Set(selectedOptionalStacks.map { $0.rawValue })
         progress.selectedStacks = mandatoryRawValues.union(optionalRawValues)
@@ -142,6 +157,9 @@ struct StackSelectionView: View {
     }
 }
 
+/// Shared stack-row component used by Stack Selection (onboarding), Stack
+/// Management (settings), and the Level-Up sheet's optional picker. SM2 —
+/// merges what was previously two near-identical implementations.
 struct StackCard: View {
     @Environment(\.theme) private var theme
 
@@ -166,51 +184,46 @@ struct StackCard: View {
 
     private var cardContent: some View {
         HStack(spacing: theme.spacing.md) {
-                Image(systemName: stack.icon)
-                    .font(.system(size: 24))
-                    .foregroundColor(isSelected ? theme.colors.accent : theme.colors.inkMuted)
-                    .frame(width: 40, height: 40)
-                    .background(isSelected ? theme.colors.accentBg : theme.colors.surfaceAlt)
-                    .cornerRadius(8)
+            Image(systemName: stack.icon)
+                .font(.system(.title2))
+                .foregroundColor(isSelected ? theme.colors.accent : theme.colors.inkMuted)
+                .frame(width: 36, height: 36)
+                .background(isSelected ? theme.colors.accentBg : theme.colors.surfaceAlt)
+                .clipShape(.rect(cornerRadius: RadiusTokens.inline))
 
-                VStack(alignment: .leading, spacing: theme.spacing.xs) {
-                    HStack {
-                        Text(stack.displayName)
-                            .font(TypographyTokens.headline)
-                            .foregroundColor(theme.colors.ink)
-
-                        if isMandatory {
-                            Text("onboarding.stacks.required")
-                                .font(TypographyTokens.caption)
-                                .foregroundColor(theme.colors.accent)
-                                .padding(.horizontal, theme.spacing.xs)
-                                .padding(.vertical, 2)
-                                .background(theme.colors.accentBg)
-                                .cornerRadius(4)
-                        }
+            VStack(alignment: .leading, spacing: 2) {
+                HStack(spacing: theme.spacing.xs) {
+                    Text(stack.displayName)
+                        .font(TypographyTokens.headline)
+                        .foregroundColor(theme.colors.ink)
+                    if isMandatory {
+                        Text("onboarding.stacks.required")
+                            .font(TypographyTokens.caption)
+                            .foregroundColor(theme.colors.inkMuted)
                     }
-
-                    Text(stack.description)
-                        .font(TypographyTokens.callout)
-                        .foregroundColor(theme.colors.inkMuted)
-                        .multilineTextAlignment(.leading)
                 }
 
-                Spacer()
-
-                if !isMandatory {
-                    Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
-                        .font(.system(size: 24))
-                        .foregroundColor(isSelected ? theme.colors.accent : theme.colors.inkFaint)
-                }
+                Text(stack.description)
+                    .font(TypographyTokens.footnote)
+                    .foregroundColor(theme.colors.inkMuted)
+                    .multilineTextAlignment(.leading)
             }
-            .padding(theme.spacing.cardPadding(density: theme.density))
-            .background(theme.colors.surface)
-            .cornerRadius(12)
-            .overlay(
-                RoundedRectangle(cornerRadius: 12)
-                    .stroke(isSelected ? theme.colors.accent : theme.colors.line, lineWidth: isSelected ? 2 : 1)
-            )
+
+            Spacer()
+
+            if !isMandatory {
+                Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
+                    .font(.system(.title2))
+                    .foregroundColor(isSelected ? theme.colors.accent : theme.colors.inkFaint)
+            }
+        }
+        .padding(theme.spacing.cardPadding)
+        .background(isSelected ? theme.colors.accentBg : theme.colors.surface)
+        .clipShape(.rect(cornerRadius: RadiusTokens.card))
+        .overlay(
+            RoundedRectangle(cornerRadius: RadiusTokens.card)
+                .stroke(isSelected ? theme.colors.accent : theme.colors.line,
+                        lineWidth: isSelected ? 1.5 : 0.5)
+        )
     }
 }
-

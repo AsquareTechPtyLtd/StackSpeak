@@ -2,6 +2,8 @@ import SwiftUI
 import SwiftData
 import OSLog
 
+/// O1 — replaces the system page-indicator dots (which get lost on the cream
+/// background) with a hairline 3-segment progress bar at the top of the screen.
 struct OnboardingView: View {
     @Environment(\.theme) private var theme
     @Environment(\.userProgress) private var userProgress
@@ -11,22 +13,23 @@ struct OnboardingView: View {
     private let logger = Logger(subsystem: "com.stackspeak.ios", category: "Onboarding")
     @State private var currentPage = 0
     @State private var showStackSelection = false
+    @State private var showSkipConfirm = false
 
-    private let pages = [
+    private let pages: [OnboardingPage] = [
         OnboardingPage(
+            kind: .glyph("\u{201C}"),
             title: String(localized: "onboarding.page1.title"),
-            description: String(localized: "onboarding.page1.description"),
-            systemImage: "sparkles"
+            description: String(localized: "onboarding.page1.description")
         ),
         OnboardingPage(
+            kind: .icon(systemImage: "shuffle"),
             title: String(localized: "onboarding.page2.title"),
-            description: String(localized: "onboarding.page2.description"),
-            systemImage: "mic.fill"
+            description: String(localized: "onboarding.page2.description")
         ),
         OnboardingPage(
+            kind: .icon(systemImage: "mic.fill"),
             title: String(localized: "onboarding.page3.title"),
-            description: String(localized: "onboarding.page3.description"),
-            systemImage: "chart.line.uptrend.xyaxis"
+            description: String(localized: "onboarding.page3.description")
         )
     ]
 
@@ -38,6 +41,16 @@ struct OnboardingView: View {
                 onboardingPages
             }
         }
+        .confirmationDialog(
+            "onboarding.skipConfirm.title",
+            isPresented: $showSkipConfirm,
+            titleVisibility: .visible
+        ) {
+            Button("onboarding.skipConfirm.continue", action: skipAll)
+            Button("common.cancel", role: .cancel) { }
+        } message: {
+            Text("onboarding.skipConfirm.message")
+        }
     }
 
     private var onboardingPages: some View {
@@ -45,56 +58,73 @@ struct OnboardingView: View {
             theme.colors.bg.ignoresSafeArea()
 
             VStack(spacing: 0) {
-                Spacer()
+                progressBar
+                    .padding(.horizontal, theme.spacing.xl)
+                    .padding(.top, theme.spacing.lg)
 
                 TabView(selection: $currentPage) {
                     ForEach(pages.indices, id: \.self) { index in
                         OnboardingPageView(page: pages[index]).tag(index)
                     }
                 }
-                .tabViewStyle(.page(indexDisplayMode: .always))
-                .indexViewStyle(.page(backgroundDisplayMode: .always))
-
-                Spacer()
+                .tabViewStyle(.page(indexDisplayMode: .never))
+                .onChange(of: currentPage) { _, newValue in
+                    let clamped = max(0, min(newValue, pages.count - 1))
+                    if clamped != newValue {
+                        currentPage = clamped
+                    }
+                }
 
                 VStack(spacing: theme.spacing.lg) {
-                    Button(action: advance) {
-                        Text(currentPage == pages.count - 1
-                             ? String(localized: "onboarding.button.getStarted")
-                             : String(localized: "onboarding.button.next"))
-                            .font(TypographyTokens.headline)
-                            .foregroundColor(theme.colors.accentText)
-                            .frame(maxWidth: .infinity)
-                            .padding(.vertical, theme.spacing.lg)
-                            .background(theme.colors.accent)
-                            .cornerRadius(12)
-                    }
+                    if currentPage == pages.count - 1 {
+                        PrimaryCTAButton("onboarding.button.getStarted") {
+                            advance()
+                        }
+                    } else {
+                        SwipeNudge("onboarding.swipeHint", direction: .forward, onAdvance: advance)
 
-                    Button(action: skipAll) {
-                        Text("onboarding.button.skip")
-                            .font(TypographyTokens.callout)
-                            .foregroundColor(theme.colors.inkMuted)
+                        Button(action: { showSkipConfirm = true }) {
+                            Text("onboarding.button.skip")
+                                .font(TypographyTokens.callout)
+                                .foregroundColor(theme.colors.inkMuted)
+                        }
+                        .accessibilityLabel(String(localized: "a11y.skipOnboarding"))
                     }
-                    .accessibilityLabel(String(localized: "a11y.skipOnboarding"))
                 }
                 .padding(.horizontal, theme.spacing.xl)
                 .padding(.bottom, theme.spacing.xl)
+                .animation(MotionTokens.standard, value: currentPage)
             }
         }
     }
 
+    /// O1 — three thin segments. Filled segments = pages already seen +
+    /// the current one.
+    private var progressBar: some View {
+        HStack(spacing: 6) {
+            ForEach(pages.indices, id: \.self) { index in
+                Capsule()
+                    .fill(index <= currentPage ? theme.colors.accentDecoration : theme.colors.line)
+                    .frame(height: 3)
+                    .animation(MotionTokens.standard, value: currentPage)
+            }
+        }
+        .accessibilityLabel(String(format: String(localized: "a11y.onboarding.progress.format"),
+                                   currentPage + 1, pages.count))
+    }
+
     private func advance() {
         if currentPage < pages.count - 1 {
-            withAnimation { currentPage += 1 }
+            withAnimation(MotionTokens.standard) { currentPage += 1 }
         } else {
             showStackSelection = true
         }
     }
 
-    /// Skips all onboarding, selects mandatory stacks, and goes straight to the home screen.
+    /// Skips all onboarding, selects mandatory stacks, and goes straight to
+    /// the home screen.
     private func skipAll() {
         if let progress = userProgress {
-            // Ensure mandatory stacks are selected even when the user skips stack selection.
             let mandatory = Set(WordStack.mandatoryStacks(for: progress.level).map { $0.rawValue })
             if progress.selectedStacks.isEmpty {
                 progress.selectedStacks = mandatory
@@ -120,11 +150,20 @@ struct OnboardingPageView: View {
 
     var body: some View {
         VStack(spacing: theme.spacing.xl) {
-            Image(systemName: page.systemImage)
-                .font(.system(size: 72, weight: .light))
-                .foregroundColor(theme.colors.accent)
-                .padding(.bottom, theme.spacing.lg)
-                .accessibilityHidden(true)
+            switch page.kind {
+            case .icon(let symbol):
+                Image(systemName: symbol)
+                    .scaledIcon(size: IconSizeTokens.xLarge, weight: .semibold)
+                    .foregroundColor(theme.colors.accent)
+                    .padding(.bottom, theme.spacing.lg)
+                    .accessibilityHidden(true)
+            case .glyph(let character):
+                Text(character)
+                    .font(TypographyTokens.instrumentSerif(size: 144))
+                    .foregroundColor(theme.colors.accent)
+                    .padding(.bottom, theme.spacing.lg)
+                    .accessibilityHidden(true)
+            }
 
             Text(page.title)
                 .font(TypographyTokens.title1)
@@ -138,14 +177,22 @@ struct OnboardingPageView: View {
                 .multilineTextAlignment(.center)
                 .padding(.horizontal, theme.spacing.xxxl)
         }
-        .padding(.vertical, theme.spacing.xxxl)
+        .padding(.vertical, theme.spacing.xl)
     }
 }
 
 struct OnboardingPage {
+    enum Kind {
+        case icon(systemImage: String)
+        /// Single character/grapheme rendered in the brand serif as a
+        /// typographic moment — used for the lead "Teach it back" page so
+        /// the hero gestures at the product's writing-led ethos before the
+        /// SF Symbol pages take over.
+        case glyph(String)
+    }
+    let kind: Kind
     let title: String
     let description: String
-    let systemImage: String
 }
 
 #Preview("Onboarding - Light") {

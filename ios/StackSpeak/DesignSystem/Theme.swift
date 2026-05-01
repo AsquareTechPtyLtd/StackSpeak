@@ -3,7 +3,6 @@ import SwiftUI
 @Observable
 final class ThemeManager {
     var preference: ThemePreference = .system
-    var density: DensityPreference = .roomy
     /// Set by the root view via `.onChange(of: colorScheme)` so `colors` can respond to system changes.
     var systemColorScheme: ColorScheme = .light
 

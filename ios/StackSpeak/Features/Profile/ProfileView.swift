@@ -1,292 +1,273 @@
 import SwiftUI
 
+/// Profile rendered as a stack of cards on the shared `surface` chrome,
+/// matching the visual language used by Home, WordDetail, and the Feynman
+/// card. Replaces the prior native `Form` (which fragmented the design
+/// language with iOS Settings grouping).
 struct ProfileView: View {
     @Environment(\.theme) private var theme
     @Environment(\.userProgress) private var userProgress
 
     var body: some View {
         NavigationStack {
-            ZStack {
-                theme.colors.bg.ignoresSafeArea()
-
-                ScrollView {
+            ScrollView {
+                VStack(alignment: .leading, spacing: theme.spacing.xl) {
                     if let progress = userProgress {
-                        VStack(spacing: theme.spacing.lg) {
-                            levelSection(progress: progress)
-                            streakSection(progress: progress)
-                            statsSection(progress: progress)
-                            masteredSection(progress: progress)
-                            bookmarkedSection(progress: progress)
-                            settingsSection(progress: progress)
-                        }
-                        .frame(maxWidth: 720)
-                        .padding(theme.spacing.lg)
+                        sectionGroup("profile.section.level") { levelSection(progress: progress) }
+                        sectionGroup("profile.section.streak") { streakSection(progress: progress) }
+                        sectionGroup("profile.section.stats") { statsSection(progress: progress) }
+                        sectionGroup("profile.section.collections") { collectionSection(progress: progress) }
+                        sectionGroup("profile.section.settings") { settingsSection(progress: progress) }
                     }
                 }
+                .padding(.horizontal, theme.spacing.lg)
+                .padding(.vertical, theme.spacing.lg)
             }
+            .background(theme.colors.bg)
             .navigationTitle("profile.navTitle")
             .navigationBarTitleDisplayMode(.large)
         }
     }
 
+    private func sectionGroup<Content: View>(
+        _ titleKey: LocalizedStringKey,
+        @ViewBuilder _ content: () -> Content
+    ) -> some View {
+        VStack(alignment: .leading, spacing: theme.spacing.sm) {
+            SectionHeader(titleKey)
+            content()
+        }
+    }
+
+    private func cardSurface<Content: View>(@ViewBuilder _ content: () -> Content) -> some View {
+        content()
+            .padding(theme.spacing.cardPadding)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(theme.colors.surface)
+            .clipShape(.rect(cornerRadius: RadiusTokens.card))
+            .overlay(
+                RoundedRectangle(cornerRadius: RadiusTokens.card)
+                    .stroke(theme.colors.line, lineWidth: 0.5)
+            )
+    }
+
+    // MARK: - Sections
+
+    @ViewBuilder
     private func levelSection(progress: UserProgress) -> some View {
-        VStack(alignment: .leading, spacing: theme.spacing.md) {
-            if let levelDef = LevelDefinition.definition(for: progress.level) {
-                HStack {
-                    VStack(alignment: .leading, spacing: theme.spacing.xs) {
-                        Text(levelDef.title)
-                            .font(TypographyTokens.title1)
-                            .foregroundColor(theme.colors.ink)
-
-                        Text(levelDef.description)
-                            .font(TypographyTokens.callout)
-                            .foregroundColor(theme.colors.inkMuted)
-                    }
-                    Spacer()
-                }
-
-                if let levelProgress = LevelDefinition.progressToNextLevel(
-                    currentLevel: progress.level,
-                    wordsAssessedCorrectlyTwice: progress.wordsAssessedCorrectlyTwice
-                ) {
-                    VStack(alignment: .leading, spacing: theme.spacing.sm) {
+        if let levelDef = LevelDefinition.definition(for: progress.level) {
+            cardSurface {
+                VStack(alignment: .leading, spacing: theme.spacing.sm) {
+                    Text(levelDef.title)
+                        .font(TypographyTokens.title2)
+                        .foregroundColor(theme.colors.ink)
+                    if let levelProgress = LevelDefinition.progressToNextLevel(
+                        currentLevel: progress.level,
+                        wordsAssessedCorrectlyTwice: progress.wordsAssessedCorrectlyTwice
+                    ) {
                         ProgressView(value: levelProgress.progress)
                             .tint(theme.colors.accent)
                             .accessibilityLabel("Level progress: \(Int(levelProgress.progress * 100))%")
-
-                        Text("\(Int(levelProgress.progress * 100))% • \(levelProgress.wordsRemaining) words to \(levelProgress.nextLevel.title)")
-                            .font(TypographyTokens.caption)
+                        Text("\(Int(levelProgress.progress * 100))% • \(levelProgress.wordsRemaining) to \(levelProgress.nextLevel.title)")
+                            .font(TypographyTokens.footnote)
                             .foregroundColor(theme.colors.inkMuted)
                     }
                 }
             }
         }
-        .padding(theme.spacing.cardPadding(density: theme.density))
-        .background(theme.colors.surface)
-        .cornerRadius(12)
     }
 
     private func streakSection(progress: UserProgress) -> some View {
-        HStack(spacing: theme.spacing.xl) {
-            VStack(spacing: theme.spacing.xs) {
-                HStack(spacing: theme.spacing.xs) {
-                    Image(systemName: "flame.fill")
-                        .foregroundColor(theme.colors.accent)
-                        .accessibilityHidden(true)
-                    Text("\(progress.displayedCurrentStreak)")
-                        .font(TypographyTokens.title1)
-                        .foregroundColor(theme.colors.ink)
-                }
-                Text("profile.streak.current")
-                    .font(TypographyTokens.caption)
-                    .foregroundColor(theme.colors.inkMuted)
+        cardSurface {
+            HStack(spacing: theme.spacing.xl) {
+                streakCell(
+                    value: progress.displayedCurrentStreak,
+                    label: "profile.streak.current",
+                    showFlame: true
+                )
+                Divider().frame(height: 44)
+                streakCell(
+                    value: progress.longestStreak,
+                    label: "profile.streak.longest",
+                    showFlame: false
+                )
             }
             .frame(maxWidth: .infinity)
-            .accessibilityElement(children: .combine)
-            .accessibilityLabel("Current streak: \(progress.displayedCurrentStreak) days")
+        }
+    }
 
-            Divider().frame(height: 60)
-
-            VStack(spacing: theme.spacing.xs) {
-                Text("\(progress.longestStreak)")
+    private func streakCell(value: Int, label: LocalizedStringKey, showFlame: Bool) -> some View {
+        VStack(spacing: 4) {
+            HStack(spacing: 4) {
+                if showFlame {
+                    Image(systemName: "flame.fill")
+                        .foregroundColor(theme.colors.streak)
+                        .symbolEffect(.bounce, value: value)
+                        .accessibilityHidden(true)
+                }
+                Text("\(value)")
                     .font(TypographyTokens.title1)
                     .foregroundColor(theme.colors.ink)
-                Text("profile.streak.longest")
-                    .font(TypographyTokens.caption)
-                    .foregroundColor(theme.colors.inkMuted)
+                    .contentTransition(.numericText())
             }
-            .frame(maxWidth: .infinity)
-            .accessibilityElement(children: .combine)
-            .accessibilityLabel("Longest streak: \(progress.longestStreak) days")
+            Text(label)
+                .font(TypographyTokens.caption)
+                .foregroundColor(theme.colors.inkMuted)
         }
-        .padding(theme.spacing.cardPadding(density: theme.density))
-        .background(theme.colors.surface)
-        .cornerRadius(12)
+        .frame(maxWidth: .infinity)
+        .accessibilityElement(children: .combine)
     }
 
     private func statsSection(progress: UserProgress) -> some View {
-        VStack(spacing: theme.spacing.md) {
-            StatRow(label: String(localized: "profile.stats.practiced"), value: "\(progress.wordsPracticedCount)")
-            Divider().background(theme.colors.line)
-            StatRow(label: String(localized: "profile.stats.assessedTwice"), value: "\(progress.wordsAssessedCorrectlyTwice)")
-            Divider().background(theme.colors.line)
-            StatRow(label: String(localized: "profile.stats.mastered"), value: "\(progress.masteredWordIds.count)")
-            Divider().background(theme.colors.line)
-            StatRow(label: String(localized: "profile.stats.bookmarked"), value: "\(progress.bookmarkedWordIds.count)")
-        }
-        .padding(theme.spacing.cardPadding(density: theme.density))
-        .background(theme.colors.surface)
-        .cornerRadius(12)
-    }
-
-    private func masteredSection(progress: UserProgress) -> some View {
-        VStack(alignment: .leading, spacing: theme.spacing.md) {
-            Text("profile.mastered.title")
-                .font(TypographyTokens.headline)
-                .foregroundColor(theme.colors.ink)
-
-            if progress.masteredWordIds.isEmpty {
-                VStack(alignment: .leading, spacing: theme.spacing.xs) {
-                    Text("profile.mastered.empty")
-                        .font(TypographyTokens.callout)
-                        .foregroundColor(theme.colors.inkMuted)
-                    Text("profile.mastered.hint")
-                        .font(TypographyTokens.caption)
-                        .foregroundColor(theme.colors.inkFaint)
-                }
-            } else {
-                Text(String(format: String(localized: "profile.mastered.count.format"),
-                            progress.masteredWordIds.count))
-                    .font(TypographyTokens.callout)
-                    .foregroundColor(theme.colors.inkMuted)
+        cardSurface {
+            VStack(spacing: theme.spacing.md) {
+                statRow(label: "profile.stats.practiced", value: progress.wordsPracticedCount)
+                statRow(label: "profile.stats.assessedTwice", value: progress.wordsAssessedCorrectlyTwice)
+                statRow(label: "profile.stats.mastered", value: progress.masteredWordIds.count)
+                statRow(label: "profile.stats.bookmarked", value: progress.bookmarkedWordIds.count)
             }
         }
-        .padding(theme.spacing.cardPadding(density: theme.density))
-        .background(theme.colors.surface)
-        .cornerRadius(12)
     }
 
-    private func bookmarkedSection(progress: UserProgress) -> some View {
-        VStack(alignment: .leading, spacing: theme.spacing.md) {
-            Text("profile.saved.title")
-                .font(TypographyTokens.headline)
-                .foregroundColor(theme.colors.ink)
-
-            if progress.bookmarkedWordIds.isEmpty {
-                Text("profile.saved.empty")
-                    .font(TypographyTokens.callout)
-                    .foregroundColor(theme.colors.inkMuted)
-            } else {
-                Text(String(format: String(localized: "profile.saved.count.format"),
-                            progress.bookmarkedWordIds.count))
-                    .font(TypographyTokens.callout)
-                    .foregroundColor(theme.colors.inkMuted)
-            }
-        }
-        .padding(theme.spacing.cardPadding(density: theme.density))
-        .background(theme.colors.surface)
-        .cornerRadius(12)
-    }
-
-    private func settingsSection(progress: UserProgress) -> some View {
-        VStack(spacing: 0) {
-            NavigationLink(destination: StackManagementView()) {
-                SettingsRowContent(
-                    icon: "square.stack.3d.up.fill",
-                    title: String(localized: "profile.settings.manageStacks"),
-                    subtitle: "\(progress.selectedStacks.count) active"
-                )
-            }
-            .buttonStyle(.plain)
-
-            Divider().background(theme.colors.line)
-
-            NavigationLink(destination: NotificationSettingsView()) {
-                SettingsRowContent(
-                    icon: "bell.fill",
-                    title: String(localized: "profile.settings.notifications"),
-                    subtitle: progress.notificationEnabled ? "On" : "Off"
-                )
-            }
-            .buttonStyle(.plain)
-
-            Divider().background(theme.colors.line)
-
-            NavigationLink(destination: ThemeSettingsView()) {
-                SettingsRowContent(
-                    icon: "paintbrush.fill",
-                    title: String(localized: "profile.settings.theme"),
-                    subtitle: progress.themePreference.rawValue.capitalized
-                )
-            }
-            .buttonStyle(.plain)
-
-            Divider().background(theme.colors.line)
-
-            NavigationLink(destination: DensitySettingsView()) {
-                SettingsRowContent(
-                    icon: "rectangle.compress.vertical",
-                    title: String(localized: "profile.settings.density"),
-                    subtitle: progress.densityPreference.rawValue.capitalized
-                )
-            }
-            .buttonStyle(.plain)
-        }
-        .padding(theme.spacing.cardPadding(density: theme.density))
-        .background(theme.colors.surface)
-        .cornerRadius(12)
-    }
-}
-
-struct StatRow: View {
-    @Environment(\.theme) private var theme
-
-    let label: String
-    let value: String
-
-    var body: some View {
+    private func statRow(label: LocalizedStringKey, value: Int) -> some View {
         HStack {
             Text(label)
-                .font(TypographyTokens.callout)
-                .foregroundColor(theme.colors.inkMuted)
-            Spacer()
-            Text(value)
-                .font(TypographyTokens.headline)
+                .font(TypographyTokens.body)
                 .foregroundColor(theme.colors.ink)
+            Spacer()
+            Text("\(value)")
+                .font(TypographyTokens.body)
+                .foregroundColor(theme.colors.inkMuted)
+                .contentTransition(.numericText())
         }
         .accessibilityElement(children: .combine)
-        .accessibilityLabel("\(label): \(value)")
     }
-}
 
-struct SettingsRow: View {
-    @Environment(\.theme) private var theme
-
-    let icon: String
-    let title: String
-    var subtitle: String?
-    let action: () -> Void
-
-    var body: some View {
-        Button(action: action) {
-            SettingsRowContent(icon: icon, title: title, subtitle: subtitle)
+    /// Mastered & Bookmarked are real navigation targets.
+    /// Saved combines word + card bookmarks under one entry per the Pro/Books plan.
+    private func collectionSection(progress: UserProgress) -> some View {
+        cardSurface {
+            VStack(spacing: 0) {
+                NavigationLink {
+                    WordListView(
+                        title: "profile.mastered.title",
+                        wordIds: progress.masteredWordIds,
+                        emptyTitle: "profile.mastered.empty",
+                        emptyMessage: "profile.mastered.hint"
+                    )
+                } label: {
+                    collectionRow(icon: "checkmark.seal.fill",
+                                  tint: theme.colors.good,
+                                  title: "profile.mastered.title",
+                                  count: progress.masteredWordIds.count)
+                }
+                .buttonStyle(.plain)
+                Divider()
+                NavigationLink {
+                    BookmarksView()
+                } label: {
+                    collectionRow(icon: "bookmark.fill",
+                                  tint: theme.colors.accent,
+                                  title: "bookmarks.navTitle",
+                                  count: progress.bookmarkedWordIds.count)
+                }
+                .buttonStyle(.plain)
+            }
         }
-        .buttonStyle(.plain)
     }
-}
 
-struct SettingsRowContent: View {
-    @Environment(\.theme) private var theme
-
-    let icon: String
-    let title: String
-    var subtitle: String?
-
-    var body: some View {
+    private func collectionRow(icon: String, tint: Color, title: LocalizedStringKey, count: Int) -> some View {
         HStack(spacing: theme.spacing.md) {
             Image(systemName: icon)
-                .font(.system(size: 16))
-                .foregroundColor(theme.colors.accent)
+                .font(.system(.subheadline))
+                .foregroundColor(tint)
                 .frame(width: 24)
                 .accessibilityHidden(true)
-
             Text(title)
-                .font(TypographyTokens.callout)
+                .font(TypographyTokens.body)
                 .foregroundColor(theme.colors.ink)
-
             Spacer()
-
-            if let subtitle {
-                Text(subtitle)
-                    .font(TypographyTokens.caption)
-                    .foregroundColor(theme.colors.inkMuted)
-            }
-
+            Text("\(count)")
+                .font(TypographyTokens.body)
+                .foregroundColor(theme.colors.inkMuted)
             Image(systemName: "chevron.right")
-                .font(.system(size: 14))
+                .font(.system(.subheadline))
                 .foregroundColor(theme.colors.inkFaint)
                 .accessibilityHidden(true)
         }
-        .padding(.vertical, theme.spacing.sm)
+        .padding(.vertical, theme.spacing.xs)
+        .contentShape(Rectangle())
     }
+
+    private func settingsSection(progress: UserProgress) -> some View {
+        cardSurface {
+            VStack(spacing: 0) {
+                NavigationLink {
+                    StackManagementView()
+                } label: {
+                    settingsRow(
+                        icon: "square.stack.3d.up.fill",
+                        title: "profile.settings.manageStacks",
+                        subtitle: "\(progress.selectedStacks.count) active"
+                    )
+                }
+                .buttonStyle(.plain)
+                Divider()
+                NavigationLink {
+                    NotificationSettingsView()
+                } label: {
+                    settingsRow(
+                        icon: "bell.fill",
+                        title: "profile.settings.notifications",
+                        subtitle: progress.notificationEnabled ? "On" : "Off"
+                    )
+                }
+                .buttonStyle(.plain)
+                Divider()
+                NavigationLink {
+                    ThemeSettingsView()
+                } label: {
+                    settingsRow(
+                        icon: "paintbrush.fill",
+                        title: "profile.settings.theme",
+                        subtitle: progress.themePreference.rawValue.capitalized
+                    )
+                }
+                .buttonStyle(.plain)
+            }
+        }
+    }
+
+    private func settingsRow(icon: String, title: LocalizedStringKey, subtitle: String) -> some View {
+        HStack(spacing: theme.spacing.md) {
+            Image(systemName: icon)
+                .font(.system(.subheadline))
+                .foregroundColor(theme.colors.accent)
+                .frame(width: 24)
+                .accessibilityHidden(true)
+            Text(title)
+                .font(TypographyTokens.body)
+                .foregroundColor(theme.colors.ink)
+            Spacer()
+            Text(subtitle)
+                .font(TypographyTokens.footnote)
+                .foregroundColor(theme.colors.inkMuted)
+            Image(systemName: "chevron.right")
+                .font(.system(.subheadline))
+                .foregroundColor(theme.colors.inkFaint)
+                .accessibilityHidden(true)
+        }
+        .padding(.vertical, theme.spacing.xs)
+        .contentShape(Rectangle())
+    }
+}
+
+#Preview("Profile - Light") {
+    ProfileView().withTheme(ThemeManager())
+}
+
+#Preview("Profile - Dark") {
+    ProfileView()
+        .withTheme(ThemeManager())
+        .preferredColorScheme(.dark)
 }

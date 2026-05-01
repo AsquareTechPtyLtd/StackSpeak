@@ -3,6 +3,9 @@ import SwiftData
 import UserNotifications
 import OSLog
 
+/// NS1 — Form-shaped data presented as a Form. The previous nested-cards
+/// layout was hand-rolling exactly what `Form { Section { ... } }` does for
+/// free, with worse a11y and worse Dynamic Type behavior.
 struct NotificationSettingsView: View {
     @Environment(\.theme) private var theme
     @Environment(\.userProgress) private var userProgress
@@ -24,38 +27,74 @@ struct NotificationSettingsView: View {
     }
 
     var body: some View {
-        ZStack {
-            theme.colors.bg.ignoresSafeArea()
+        Form {
+            if authStatus == .denied {
+                Section { permissionDeniedRow }
+            }
 
-            ScrollView {
-                VStack(spacing: theme.spacing.lg) {
-                    if authStatus == .denied {
-                        permissionDeniedBanner
-                    }
-
-                    primaryToggleCard
-
-                    if let progress = userProgress,
-                       progress.notificationEnabled,
-                       authStatus == .authorized {
-                        primaryTimeCard
-                        secondReminderCard
+            Section {
+                Toggle(isOn: Binding(
+                    get: { userProgress?.notificationEnabled ?? false },
+                    set: { toggleNotifications($0) }
+                )) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("settings.notifications.enable")
+                            .font(TypographyTokens.body)
+                            .foregroundColor(theme.colors.ink)
+                        Text("settings.notifications.enableDesc")
+                            .font(TypographyTokens.footnote)
+                            .foregroundColor(theme.colors.inkMuted)
                     }
                 }
-                .frame(maxWidth: 720)
-                .padding(theme.spacing.lg)
+                .tint(theme.colors.accent)
+            }
+
+            if let progress = userProgress, progress.notificationEnabled, authStatus == .authorized {
+                Section {
+                    DatePicker(
+                        selection: $primaryTime,
+                        displayedComponents: .hourAndMinute
+                    ) {
+                        Text("settings.notifications.primaryTime")
+                            .font(TypographyTokens.body)
+                            .foregroundColor(theme.colors.ink)
+                    }
+                    .onChange(of: primaryTime) { _, newValue in savePrimaryTime(newValue) }
+                }
+
+                Section {
+                    Toggle(isOn: Binding(
+                        get: { userProgress?.secondReminderEnabled ?? false },
+                        set: { toggleSecondReminder($0) }
+                    )) {
+                        Text("settings.notifications.secondReminder")
+                            .font(TypographyTokens.body)
+                            .foregroundColor(theme.colors.ink)
+                    }
+                    .tint(theme.colors.accent)
+
+                    if progress.secondReminderEnabled {
+                        DatePicker(
+                            selection: $secondTime,
+                            displayedComponents: .hourAndMinute
+                        ) {
+                            Text("settings.notifications.secondTime")
+                                .font(TypographyTokens.body)
+                                .foregroundColor(theme.colors.ink)
+                        }
+                        .onChange(of: secondTime) { _, newValue in saveSecondTime(newValue) }
+                    }
+                }
             }
         }
+        .scrollContentBackground(.hidden)
+        .background(theme.colors.bg)
         .navigationTitle("settings.notifications.navTitle")
         .navigationBarTitleDisplayMode(.inline)
-        .task {
-            await loadInitialState()
-        }
+        .task { await loadInitialState() }
     }
 
-    // MARK: - Subviews
-
-    private var permissionDeniedBanner: some View {
+    private var permissionDeniedRow: some View {
         Button(action: openAppSettings) {
             HStack(spacing: theme.spacing.md) {
                 Image(systemName: "bell.slash.fill")
@@ -70,98 +109,11 @@ struct NotificationSettingsView: View {
                     .foregroundColor(theme.colors.inkMuted)
                     .accessibilityHidden(true)
             }
-            .padding(theme.spacing.md)
-            .background(theme.colors.warn.opacity(0.1))
-            .cornerRadius(12)
+            .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .accessibilityLabel(String(localized: "settings.notifications.permissionDenied"))
         .accessibilityHint("Opens iOS Settings")
-    }
-
-    private var primaryToggleCard: some View {
-        HStack(spacing: theme.spacing.md) {
-            VStack(alignment: .leading, spacing: theme.spacing.xs) {
-                Text("settings.notifications.enable")
-                    .font(TypographyTokens.headline)
-                    .foregroundColor(theme.colors.ink)
-                Text("settings.notifications.enableDesc")
-                    .font(TypographyTokens.callout)
-                    .foregroundColor(theme.colors.inkMuted)
-            }
-            Spacer()
-            Toggle("", isOn: Binding(
-                get: { userProgress?.notificationEnabled ?? false },
-                set: { enabled in toggleNotifications(enabled) }
-            ))
-            .tint(theme.colors.accent)
-            .labelsHidden()
-        }
-        .padding(theme.spacing.cardPadding(density: theme.density))
-        .background(theme.colors.surface)
-        .cornerRadius(12)
-    }
-
-    private var primaryTimeCard: some View {
-        HStack {
-            Text("settings.notifications.primaryTime")
-                .font(TypographyTokens.callout)
-                .foregroundColor(theme.colors.ink)
-            Spacer()
-            DatePicker(
-                "",
-                selection: $primaryTime,
-                displayedComponents: .hourAndMinute
-            )
-            .labelsHidden()
-            .onChange(of: primaryTime) { _, newValue in
-                savePrimaryTime(newValue)
-            }
-        }
-        .padding(theme.spacing.cardPadding(density: theme.density))
-        .background(theme.colors.surface)
-        .cornerRadius(12)
-    }
-
-    private var secondReminderCard: some View {
-        VStack(spacing: 0) {
-            HStack(spacing: theme.spacing.md) {
-                Text("settings.notifications.secondReminder")
-                    .font(TypographyTokens.callout)
-                    .foregroundColor(theme.colors.ink)
-                Spacer()
-                Toggle("", isOn: Binding(
-                    get: { userProgress?.secondReminderEnabled ?? false },
-                    set: { enabled in toggleSecondReminder(enabled) }
-                ))
-                .tint(theme.colors.accent)
-                .labelsHidden()
-            }
-            .padding(theme.spacing.cardPadding(density: theme.density))
-
-            if let progress = userProgress, progress.secondReminderEnabled {
-                Divider().background(theme.colors.line)
-
-                HStack {
-                    Text("settings.notifications.secondTime")
-                        .font(TypographyTokens.callout)
-                        .foregroundColor(theme.colors.ink)
-                    Spacer()
-                    DatePicker(
-                        "",
-                        selection: $secondTime,
-                        displayedComponents: .hourAndMinute
-                    )
-                    .labelsHidden()
-                    .onChange(of: secondTime) { _, newValue in
-                        saveSecondTime(newValue)
-                    }
-                }
-                .padding(theme.spacing.cardPadding(density: theme.density))
-            }
-        }
-        .background(theme.colors.surface)
-        .cornerRadius(12)
     }
 
     // MARK: - Actions

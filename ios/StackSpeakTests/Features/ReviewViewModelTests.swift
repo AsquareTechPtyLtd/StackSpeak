@@ -3,6 +3,7 @@ import Foundation
 @testable import StackSpeak
 
 @Suite("ReviewViewModel Tests")
+@MainActor
 struct ReviewViewModelTests {
 
     @Test("reviewedTodayCount returns count of reviews from today")

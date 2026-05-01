@@ -77,11 +77,12 @@ struct ProgressServiceTests {
         context.insert(userProgress)
 
         // First completion
+        let wordId1 = UUID()
         let dailySet1 = DailySet(
             dayString: "2026-01-01",
-            wordIds: [UUID()],
-            completedWordIds: [UUID()]
+            wordIds: [wordId1]
         )
+        dailySet1.markWordCompleted(wordId1)
         context.insert(dailySet1)
 
         userProgress.currentStreak = 0
@@ -92,11 +93,12 @@ struct ProgressServiceTests {
 
         // Complete next day (consecutive)
         userProgress.lastCompletedDate = Calendar.current.date(byAdding: .day, value: -1, to: Date())
+        let wordId2 = UUID()
         let dailySet2 = DailySet(
             dayString: DailySet.todayString(),
-            wordIds: [UUID()],
-            completedWordIds: [UUID()]
+            wordIds: [wordId2]
         )
+        dailySet2.markWordCompleted(wordId2)
         context.insert(dailySet2)
 
         try service.completeDailySet(dailySet2, userProgress: userProgress)
@@ -120,11 +122,12 @@ struct ProgressServiceTests {
         userProgress.currentStreak = 5
         userProgress.lastCompletedDate = Calendar.current.date(byAdding: .day, value: -3, to: Date())
 
+        let gapWordId = UUID()
         let dailySet = DailySet(
             dayString: DailySet.todayString(),
-            wordIds: [UUID()],
-            completedWordIds: [UUID()]
+            wordIds: [gapWordId]
         )
+        dailySet.markWordCompleted(gapWordId)
         context.insert(dailySet)
 
         try service.completeDailySet(dailySet, userProgress: userProgress)
@@ -150,11 +153,12 @@ struct ProgressServiceTests {
         userProgress.longestStreak = 5
         userProgress.lastCompletedDate = Calendar.current.date(byAdding: .day, value: -1, to: Date())
 
+        let longestWordId = UUID()
         let dailySet = DailySet(
             dayString: DailySet.todayString(),
-            wordIds: [UUID()],
-            completedWordIds: [UUID()]
+            wordIds: [longestWordId]
         )
+        dailySet.markWordCompleted(longestWordId)
         context.insert(dailySet)
 
         try service.completeDailySet(dailySet, userProgress: userProgress)

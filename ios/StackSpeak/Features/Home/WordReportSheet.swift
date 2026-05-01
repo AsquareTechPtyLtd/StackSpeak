@@ -1,15 +1,19 @@
 import SwiftUI
 import SwiftData
 
+/// WR1 — duplicate word-info card removed; the navigation title carries the
+///   word and `navigationSubtitle` (iOS 18+) carries the short definition.
+/// WR2 — reasons use the shared `SelectableRow` instead of bespoke
+///   `ReasonButton`. Same single-signal selection rules as everywhere else.
 struct WordReportSheet: View {
     @Environment(\.theme) private var theme
     @Environment(\.dismiss) private var dismiss
     @Environment(\.services) private var services
+    @Environment(\.modelContext) private var modelContext
 
     let word: Word
     let userProgress: UserProgress
-
-    @Environment(\.modelContext) private var modelContext
+    var onSubmitted: () -> Void = {}
 
     private static let maxNotesLength = 1000
 
@@ -19,13 +23,16 @@ struct WordReportSheet: View {
     @State private var showSuccess = false
 
     var body: some View {
-        NavigationView {
+        NavigationStack {
             ZStack {
                 theme.colors.bg.ignoresSafeArea()
 
                 ScrollView {
                     VStack(alignment: .leading, spacing: theme.spacing.lg) {
-                        wordInfoSection
+                        Text(word.shortDefinition)
+                            .font(TypographyTokens.subheadline)
+                            .foregroundColor(theme.colors.inkMuted)
+                            .multilineTextAlignment(.leading)
 
                         reasonsSection
 
@@ -38,49 +45,22 @@ struct WordReportSheet: View {
                     .padding(theme.spacing.lg)
                 }
             }
-            .navigationTitle("report.title")
+            .navigationTitle(word.word)
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
-                ToolbarItem(placement: .navigationBarTrailing) {
-                    Button("common.cancel") {
-                        dismiss()
-                    }
-                    .foregroundColor(theme.colors.ink)
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button("common.cancel") { dismiss() }
+                        .foregroundColor(theme.colors.ink)
                 }
             }
             .alert("report.success.title", isPresented: $showSuccess) {
                 Button("common.ok") {
+                    onSubmitted()
                     dismiss()
                 }
             } message: {
                 Text("report.success.message")
             }
-        }
-    }
-
-    private var wordInfoSection: some View {
-        VStack(alignment: .leading, spacing: theme.spacing.sm) {
-            Text("report.wordInfo.title")
-                .font(TypographyTokens.caption)
-                .foregroundColor(theme.colors.inkMuted)
-
-            VStack(alignment: .leading, spacing: theme.spacing.xs) {
-                Text(word.word)
-                    .font(TypographyTokens.title3)
-                    .foregroundColor(theme.colors.ink)
-
-                Text(word.shortDefinition)
-                    .font(TypographyTokens.callout)
-                    .foregroundColor(theme.colors.inkMuted)
-
-                Text("L\(word.unlockLevel) · \(word.wordStack.displayName)")
-                    .font(TypographyTokens.caption)
-                    .foregroundColor(theme.colors.inkFaint)
-            }
-            .padding(theme.spacing.md)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(theme.colors.surface)
-            .cornerRadius(8)
         }
     }
 
@@ -92,13 +72,18 @@ struct WordReportSheet: View {
 
             VStack(spacing: theme.spacing.sm) {
                 ForEach(WordReportReason.allCases, id: \.rawValue) { reason in
-                    ReasonButton(
-                        reason: reason,
+                    SelectableRow(
+                        title: reason.displayName,
                         isSelected: selectedReason == reason,
-                        theme: theme
-                    ) {
-                        selectedReason = reason
-                    }
+                        role: .multiselect,
+                        action: { selectedReason = reason },
+                        leading: {
+                            Image(systemName: reason.icon)
+                                .font(.system(.headline))
+                                .foregroundColor(selectedReason == reason ? theme.colors.accent : theme.colors.inkMuted)
+                                .frame(width: 28)
+                        }
+                    )
                 }
             }
         }
@@ -111,27 +96,34 @@ struct WordReportSheet: View {
                 .foregroundColor(theme.colors.ink)
 
             Text("report.notes.subtitle")
-                .font(TypographyTokens.caption)
+                .font(TypographyTokens.footnote)
                 .foregroundColor(theme.colors.inkMuted)
 
-            TextEditor(text: $additionalNotes)
-                .font(TypographyTokens.body)
-                .foregroundColor(theme.colors.ink)
-                .frame(height: 100)
-                .padding(theme.spacing.sm)
-                .background(theme.colors.surface)
-                .cornerRadius(8)
-                .textContentType(.none)
-                .autocorrectionDisabled()
-                .overlay(
-                    RoundedRectangle(cornerRadius: 8)
-                        .stroke(theme.colors.line, lineWidth: 1)
-                )
-                .onChange(of: additionalNotes) { _, newValue in
-                    if newValue.count > Self.maxNotesLength {
-                        additionalNotes = String(newValue.prefix(Self.maxNotesLength))
-                    }
+            ZStack(alignment: .topLeading) {
+                if additionalNotes.isEmpty {
+                    Text("report.notes.placeholder")
+                        .font(TypographyTokens.body)
+                        .foregroundColor(theme.colors.inkFaint)
+                        .padding(.horizontal, theme.spacing.sm + 5)
+                        .padding(.vertical, theme.spacing.sm + 8)
+                        .allowsHitTesting(false)
                 }
+                TextEditor(text: $additionalNotes)
+                    .font(TypographyTokens.body)
+                    .foregroundColor(theme.colors.ink)
+                    .scrollContentBackground(.hidden)
+                    .frame(height: 100)
+                    .padding(theme.spacing.sm)
+                    .background(theme.colors.surfaceAlt)
+                    .clipShape(.rect(cornerRadius: RadiusTokens.inline))
+                    .textContentType(.none)
+                    .autocorrectionDisabled()
+                    .onChange(of: additionalNotes) { _, newValue in
+                        if newValue.count > Self.maxNotesLength {
+                            additionalNotes = String(newValue.prefix(Self.maxNotesLength))
+                        }
+                    }
+            }
 
             HStack {
                 Spacer()
@@ -145,26 +137,14 @@ struct WordReportSheet: View {
     }
 
     private var submitButton: some View {
-        Button(action: submitReport) {
-            if isSubmitting {
-                ProgressView()
-                    .tint(theme.colors.accentText)
-            } else {
-                Text("report.submit")
-                    .font(TypographyTokens.headline)
-            }
+        PrimaryCTAButton("report.submit", isLoading: isSubmitting) {
+            submitReport()
         }
-        .foregroundColor(theme.colors.accentText)
-        .frame(maxWidth: .infinity)
-        .padding(.vertical, theme.spacing.lg)
-        .background(selectedReason == nil ? theme.colors.inkFaint : theme.colors.accent)
-        .cornerRadius(12)
         .disabled(selectedReason == nil || isSubmitting)
     }
 
     private func submitReport() {
         guard let reason = selectedReason else { return }
-
         isSubmitting = true
 
         Task {
@@ -183,46 +163,5 @@ struct WordReportSheet: View {
                 isSubmitting = false
             }
         }
-    }
-}
-
-struct ReasonButton: View {
-    let reason: WordReportReason
-    let isSelected: Bool
-    let theme: ThemeManager
-    let action: () -> Void
-
-    var body: some View {
-        Button(action: action) {
-            HStack(spacing: 12) {
-                Image(systemName: reason.icon)
-                    .font(.system(size: 20))
-                    .foregroundColor(isSelected ? theme.colors.accent : theme.colors.ink)
-                    .frame(width: 32, height: 32)
-                    .background(isSelected ? theme.colors.accentBg : theme.colors.bg)
-                    .cornerRadius(6)
-
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(reason.displayName)
-                        .font(TypographyTokens.callout.weight(.medium))
-                        .foregroundColor(theme.colors.ink)
-                }
-
-                Spacer()
-
-                if isSelected {
-                    Image(systemName: "checkmark.circle.fill")
-                        .foregroundColor(theme.colors.accent)
-                }
-            }
-            .padding(theme.spacing.md)
-            .background(theme.colors.surface)
-            .cornerRadius(8)
-            .overlay(
-                RoundedRectangle(cornerRadius: 8)
-                    .stroke(isSelected ? theme.colors.accent : theme.colors.line, lineWidth: isSelected ? 2 : 1)
-            )
-        }
-        .buttonStyle(.plain)
     }
 }

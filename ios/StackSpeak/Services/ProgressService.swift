@@ -11,21 +11,39 @@ final class ProgressService: ProgressRepository {
         self.modelContext = modelContext
     }
 
-    func markWordPracticed(wordId: UUID, sentence: String, inputMethod: InputMethod, userProgress: UserProgress) {
+    func markWordPracticed(wordId: UUID, sentence: String, inputMethod: InputMethod, markAsMastered: Bool, userProgress: UserProgress) {
         var practiced = userProgress.wordsPracticedIds
         practiced.insert(wordId)
         userProgress.wordsPracticedIds = practiced
 
-        let practicedSentence = PracticedSentence(
-            wordId: wordId,
-            sentence: sentence,
-            createdAt: Date(),
-            inputMethod: inputMethod
-        )
-        userProgress.practicedSentences.append(practicedSentence)
+        // Only record a practiced sentence when there's actual content. The coming-soon
+        // Feynman fallback calls this with an empty string to count the day without
+        // writing a junk row into the user's explanation history.
+        let trimmed = sentence.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !trimmed.isEmpty {
+            let practicedSentence = PracticedSentence(
+                wordId: wordId,
+                sentence: trimmed,
+                createdAt: Date(),
+                inputMethod: inputMethod
+            )
+            userProgress.practicedSentences.append(practicedSentence)
+        }
 
         if !userProgress.reviewStates.contains(where: { $0.wordId == wordId }) {
             userProgress.reviewStates.append(ReviewState(wordId: wordId))
+        }
+
+        // When skip or report buttons are used, immediately mark as mastered and count
+        // toward level progression so the word won't appear in future assessments.
+        if markAsMastered {
+            var mastered = userProgress.masteredWordIds
+            mastered.insert(wordId)
+            userProgress.masteredWordIds = mastered
+
+            var twoCorrect = userProgress.wordsWithTwoCorrectIds
+            twoCorrect.insert(wordId)
+            userProgress.wordsWithTwoCorrectIds = twoCorrect
         }
 
         do {

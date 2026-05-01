@@ -1,22 +1,35 @@
 import SwiftUI
 import SwiftData
 
+/// One assessment question.
+///
+/// A1 — redundant "What does this word mean?" prompt removed (the four
+///   definition options are self-evidently the question).
+/// A2 — single-signal selection on `OptionButton` (background + border, no
+///   triple-stacked icon).
+/// A3 — correct answers auto-advance after a brief read-through; incorrect
+///   answers stay until Continue is tapped so the user can see the right one.
+/// A4 — `.sensoryFeedback` `.success` / `.error` on submit.
 struct AssessmentView: View {
     @Environment(\.theme) private var theme
     @Environment(\.services) private var services
     @Environment(\.userProgress) private var userProgress
     @Environment(\.modelContext) private var modelContext
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     let word: Word
-    /// Called when the user taps Continue. `leveledUpTo` is non-nil when this answer triggered a level-up.
+    /// Called when this answer is fully resolved. `leveledUpTo` is non-nil
+    /// when this answer triggered a level-up.
     let onComplete: (_ isCorrect: Bool, _ leveledUpTo: Int?) -> Void
 
     @State private var selectedAnswer: String?
     @State private var hasSubmitted = false
     @State private var options: [String] = []
     @State private var pendingLevelUp: Int?
+    @State private var feedbackTrigger: FeedbackResult?
 
     private static let distractorCount = 3
+    private static let autoAdvanceDelay: Duration = .milliseconds(900)
 
     var isCorrect: Bool {
         selectedAnswer == word.shortDefinition
@@ -26,21 +39,26 @@ struct AssessmentView: View {
         ScrollView {
             VStack(spacing: theme.spacing.xl) {
                 questionSection
-
                 optionsSection
 
-                if hasSubmitted {
-                    feedbackSection
-                } else {
+                if hasSubmitted && !isCorrect {
+                    incorrectFeedback
+                } else if !hasSubmitted {
                     submitButton
                 }
             }
             .padding(theme.spacing.lg)
         }
-        // Generate options once per word, not on every re-appear.
         .task(id: word.id) {
             if options.isEmpty {
                 generateOptions()
+            }
+        }
+        .sensoryFeedback(trigger: feedbackTrigger) { _, new in
+            switch new {
+            case .correct: return .success
+            case .incorrect: return .error
+            case nil: return nil
             }
         }
     }
@@ -48,16 +66,11 @@ struct AssessmentView: View {
     // MARK: - Sections
 
     private var questionSection: some View {
-        VStack(spacing: theme.spacing.md) {
-            Text("review.assessment.question")
-                .font(TypographyTokens.callout)
-                .foregroundColor(theme.colors.inkMuted)
-
+        VStack(spacing: theme.spacing.sm) {
             Text(word.word)
                 .font(TypographyTokens.title1)
                 .foregroundColor(theme.colors.ink)
                 .accessibilityAddTraits(.isHeader)
-
             Text(word.pronunciation)
                 .font(TypographyTokens.mono)
                 .foregroundColor(theme.colors.inkMuted)
@@ -71,8 +84,7 @@ struct AssessmentView: View {
                 OptionButton(
                     text: option,
                     isSelected: selectedAnswer == option,
-                    isCorrect: hasSubmitted && option == word.shortDefinition,
-                    isIncorrect: hasSubmitted && selectedAnswer == option && option != word.shortDefinition,
+                    state: stateFor(option: option),
                     onTap: { selectOption(option) }
                 )
             }
@@ -80,57 +92,31 @@ struct AssessmentView: View {
         .frame(maxWidth: .infinity)
     }
 
-    private var feedbackSection: some View {
+    private var incorrectFeedback: some View {
         VStack(spacing: theme.spacing.md) {
-            HStack(spacing: theme.spacing.md) {
-                Image(systemName: isCorrect ? "checkmark.circle.fill" : "xmark.circle.fill")
-                    .font(.system(size: 24))
-                    .foregroundColor(isCorrect ? theme.colors.good : theme.colors.warn)
-
-                Text(isCorrect
-                     ? String(localized: "review.assessment.correct")
-                     : String(localized: "review.assessment.incorrect"))
-                    .font(TypographyTokens.headline)
-                    .foregroundColor(theme.colors.ink)
+            Text("review.assessment.tryAgain")
+                .font(TypographyTokens.callout)
+                .foregroundColor(theme.colors.inkMuted)
+            PrimaryCTAButton("review.assessment.continue") {
+                onComplete(isCorrect, pendingLevelUp)
             }
-            .accessibilityElement(children: .combine)
-            .accessibilityLabel(isCorrect ? String(localized: "review.assessment.correct") : String(localized: "review.assessment.incorrect"))
-
-            if !isCorrect {
-                Text("review.assessment.tryAgain")
-                    .font(TypographyTokens.callout)
-                    .foregroundColor(theme.colors.inkMuted)
-            }
-
-            Button(action: { onComplete(isCorrect, pendingLevelUp) }) {
-                Text("review.assessment.continue")
-                    .font(TypographyTokens.headline)
-                    .foregroundColor(theme.colors.accentText)
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, theme.spacing.lg)
-                    .background(theme.colors.accent)
-                    .cornerRadius(12)
-            }
-            .accessibilityLabel(String(localized: "a11y.continueNext"))
         }
-        .padding(theme.spacing.md)
-        .background(isCorrect ? theme.colors.good.opacity(0.1) : theme.colors.warn.opacity(0.1))
-        .cornerRadius(12)
     }
 
     private var submitButton: some View {
-        Button(action: submit) {
-            Text("review.assessment.submit")
-                .font(TypographyTokens.headline)
-                .foregroundColor(theme.colors.accentText)
-                .frame(maxWidth: .infinity)
-                .padding(.vertical, theme.spacing.lg)
-                .background(selectedAnswer == nil ? theme.colors.inkFaint : theme.colors.accent)
-                .cornerRadius(12)
-        }
-        .disabled(selectedAnswer == nil)
-        .accessibilityLabel(String(localized: "a11y.submitAnswer"))
-        .accessibilityHint(selectedAnswer == nil ? "Select a definition first" : "Tap to submit your answer")
+        PrimaryCTAButton("review.assessment.submit") { submit() }
+            .disabled(selectedAnswer == nil)
+            .accessibilityLabel(String(localized: "a11y.submitAnswer"))
+            .accessibilityHint(selectedAnswer == nil ? "Select a definition first" : "Tap to submit your answer")
+    }
+
+    // MARK: - State
+
+    private func stateFor(option: String) -> OptionButton.State {
+        guard hasSubmitted else { return .idle }
+        if option == word.shortDefinition { return .correct }
+        if option == selectedAnswer       { return .incorrect }
+        return .idle
     }
 
     // MARK: - Actions
@@ -144,6 +130,7 @@ struct AssessmentView: View {
         guard let selected = selectedAnswer, let progress = userProgress, let services else { return }
 
         hasSubmitted = true
+        feedbackTrigger = isCorrect ? .correct : .incorrect
 
         let newLevel = services.progress.recordAssessmentResult(
             wordId: word.id,
@@ -152,13 +139,21 @@ struct AssessmentView: View {
             correctAnswer: word.shortDefinition,
             userProgress: progress
         )
-
-        // recordAssessmentResult already saves via ProgressService
-
-        // Deliver level-up immediately so it's not lost if user swipes past Continue
         pendingLevelUp = newLevel
-        if let newLevel = newLevel {
+
+        if let newLevel {
+            // Level-up takes precedence: hand control to the parent immediately so
+            // the celebration sheet appears and isn't lost on auto-advance.
             onComplete(isCorrect, newLevel)
+            return
+        }
+
+        // A3 — correct answers auto-advance after a brief read-through.
+        if isCorrect {
+            Task {
+                try? await Task.sleep(for: Self.autoAdvanceDelay)
+                onComplete(true, nil)
+            }
         }
     }
 
@@ -170,7 +165,8 @@ struct AssessmentView: View {
         let descriptor = FetchDescriptor<Word>()
         guard let allWords = try? modelContext.fetch(descriptor) else { return }
 
-        // Distractors from words the user has practiced (more plausible); fall back to any unlocked word.
+        // Distractors from words the user has practiced (more plausible);
+        // fall back to any unlocked word.
         let practicedDistractors = allWords.filter {
             $0.id != word.id &&
             progress.wordsPracticedIds.contains($0.id) &&
@@ -187,11 +183,13 @@ struct AssessmentView: View {
         let distractors = pool.shuffled().prefix(Self.distractorCount).map { $0.shortDefinition }
 
         var allOptions = [word.shortDefinition] + Array(distractors)
-        // Deduplicate in case definitions overlap.
         allOptions = Array(NSOrderedSet(array: allOptions)) as? [String] ?? allOptions
         allOptions.shuffle()
-
         options = allOptions
+    }
+
+    private enum FeedbackResult: Equatable {
+        case correct, incorrect
     }
 }
 
@@ -200,24 +198,27 @@ struct AssessmentView: View {
 struct OptionButton: View {
     @Environment(\.theme) private var theme
 
+    enum State { case idle, correct, incorrect }
+
     let text: String
     let isSelected: Bool
-    let isCorrect: Bool
-    let isIncorrect: Bool
+    let state: State
     let onTap: () -> Void
 
-    var borderColor: Color {
-        if isCorrect   { return theme.colors.good }
-        if isIncorrect { return theme.colors.warn }
-        if isSelected  { return theme.colors.accent }
-        return theme.colors.line
+    private var border: Color {
+        switch state {
+        case .correct:   return theme.colors.good
+        case .incorrect: return theme.colors.bad
+        case .idle:      return isSelected ? theme.colors.accent : theme.colors.line
+        }
     }
 
-    var backgroundColor: Color {
-        if isCorrect   { return theme.colors.good.opacity(0.1) }
-        if isIncorrect { return theme.colors.warn.opacity(0.1) }
-        if isSelected  { return theme.colors.accentBg }
-        return theme.colors.surface
+    private var fill: Color {
+        switch state {
+        case .correct:   return theme.colors.good.opacity(0.10)
+        case .incorrect: return theme.colors.bad.opacity(0.10)
+        case .idle:      return isSelected ? theme.colors.accentBg : theme.colors.surface
+        }
     }
 
     var body: some View {
@@ -229,31 +230,25 @@ struct OptionButton: View {
                     .multilineTextAlignment(.leading)
                     .lineLimit(nil)
                     .fixedSize(horizontal: false, vertical: true)
-
                 Spacer(minLength: theme.spacing.sm)
-
-                if isCorrect {
-                    Image(systemName: "checkmark.circle.fill")
-                        .foregroundColor(theme.colors.good)
-                } else if isIncorrect {
-                    Image(systemName: "xmark.circle.fill")
-                        .foregroundColor(theme.colors.warn)
-                } else if isSelected {
-                    Image(systemName: "circle.fill")
-                        .foregroundColor(theme.colors.accent)
-                }
             }
             .padding(theme.spacing.md)
-            .background(backgroundColor)
-            .cornerRadius(12)
+            .background(fill)
+            .clipShape(.rect(cornerRadius: RadiusTokens.card))
             .overlay(
-                RoundedRectangle(cornerRadius: 12)
-                    .stroke(borderColor, lineWidth: isSelected || isCorrect || isIncorrect ? 2 : 1)
+                RoundedRectangle(cornerRadius: RadiusTokens.card)
+                    .stroke(border, lineWidth: state != .idle || isSelected ? 1.5 : 0.5)
             )
         }
         .buttonStyle(.plain)
-        .disabled(isCorrect || isIncorrect)
+        .disabled(state != .idle)
         .accessibilityLabel(text)
-        .accessibilityValue(isCorrect ? "correct" : isIncorrect ? "incorrect" : isSelected ? "selected" : "")
+        .accessibilityValue({
+            switch state {
+            case .correct:   return "correct"
+            case .incorrect: return "incorrect"
+            case .idle:      return isSelected ? "selected" : ""
+            }
+        }())
     }
 }

@@ -1,126 +1,152 @@
 import SwiftUI
 
-/// Presented as a sheet from WordCardView and as a pushed screen from LibraryView.
-/// No inner NavigationStack — the caller is responsible for wrapping in one if needed.
+/// Typography-led reader for a single word.
+///
+/// Presented as a sheet from the Feynman card's Done stage and as a pushed
+/// screen from caller. No inner NavigationStack — the caller wraps in one
+/// if needed.
+///
+/// WD1 — replaces the previous five-stacked-cards layout with a single
+/// scrollable reading column. Sections separate by whitespace and a small
+/// hairline-tracked label, not by surface fills.
 struct WordDetailView: View {
     @Environment(\.theme) private var theme
     @Environment(\.services) private var services
+    @Environment(\.dismiss) private var dismiss
 
     let word: Word
     let userProgress: UserProgress
+    /// When presented as a sheet, callers should pass `true` to surface a
+    /// Done button in the leading toolbar slot. Pushed presentations rely on
+    /// the system back button instead.
+    var showsDoneButton: Bool = false
 
-    var isBookmarked: Bool {
-        userProgress.bookmarkedWordIds.contains(word.id)
-    }
-
-    var isMastered: Bool {
-        userProgress.masteredWordIds.contains(word.id)
-    }
+    var isBookmarked: Bool { userProgress.bookmarkedWordIds.contains(word.id) }
+    var isMastered: Bool   { userProgress.masteredWordIds.contains(word.id) }
 
     var body: some View {
-        NavigationStack {
-            ZStack {
-                theme.colors.bg.ignoresSafeArea()
+        ZStack {
+            theme.colors.bg.ignoresSafeArea()
 
-                ScrollView {
-                    VStack(alignment: .leading, spacing: theme.spacing.xl) {
-                        headerSection
-                        definitionsSection
-                        contextSection
-                        exampleSentenceSection
-                        if !word.codeExampleCode.isEmpty {
-                            codeExampleSection
-                        }
-                        etymologySection
-                    }
-                    .frame(maxWidth: 720)
-                    .padding(theme.spacing.lg)
+            ScrollView {
+                VStack(alignment: .leading, spacing: theme.spacing.xxl) {
+                    headerBlock
+                    shortDefinition
+                    longDefinitionBlock
+                    if !word.techContext.isEmpty { techContextBlock }
+                    if !word.exampleSentence.isEmpty { exampleBlock }
+                    if !word.codeExampleCode.isEmpty { codeBlock }
+                    if !word.etymology.isEmpty { etymologyBlock }
+                    Spacer(minLength: theme.spacing.xxxl)
                 }
+                .frame(maxWidth: 720, alignment: .leading)
+                .padding(.horizontal, theme.spacing.xl)
+                .padding(.top, theme.spacing.lg)
+                .frame(maxWidth: .infinity, alignment: .leading)
             }
-            .navigationTitle(word.word)
-            .navigationBarTitleDisplayMode(.large)
-            .toolbar {
-                ToolbarItem(placement: .topBarTrailing) {
-                    HStack(spacing: theme.spacing.md) {
-                        Button(action: toggleBookmark) {
-                            Image(systemName: isBookmarked ? "bookmark.fill" : "bookmark")
-                                .foregroundColor(theme.colors.accent)
-                        }
-                        .accessibilityLabel(isBookmarked ? "Remove bookmark" : "Bookmark \(word.word)")
+        }
+        .navigationTitle(word.word)
+        .navigationBarTitleDisplayMode(.large)
+        .toolbar { toolbarMenu }
+    }
 
-                        Button(action: toggleMastered) {
-                            Image(systemName: isMastered ? "checkmark.circle.fill" : "checkmark.circle")
-                                .foregroundColor(isMastered ? theme.colors.good : theme.colors.inkMuted)
-                        }
-                        .accessibilityLabel(isMastered ? "Unmark as mastered" : "Mark \(word.word) as mastered")
-                    }
-                }
+    // MARK: - Toolbar (WD2 — single menu replaces twin icon buttons)
+
+    @ToolbarContentBuilder
+    private var toolbarMenu: some ToolbarContent {
+        if showsDoneButton {
+            ToolbarItem(placement: .topBarLeading) {
+                Button("common.done") { dismiss() }
+                    .foregroundColor(theme.colors.accent)
             }
+        }
+        ToolbarItem(placement: .topBarTrailing) {
+            Menu {
+                Button(action: toggleBookmark) {
+                    Label(isBookmarked
+                          ? String(localized: "wordDetail.menu.removeBookmark")
+                          : String(localized: "wordDetail.menu.bookmark"),
+                          systemImage: isBookmarked ? "bookmark.fill" : "bookmark")
+                }
+                Button(action: toggleMastered) {
+                    Label(isMastered
+                          ? String(localized: "wordDetail.menu.unmaster")
+                          : String(localized: "wordDetail.menu.master"),
+                          systemImage: isMastered ? "checkmark.circle.fill" : "checkmark.circle")
+                }
+            } label: {
+                Image(systemName: "ellipsis.circle")
+                    .foregroundColor(theme.colors.accent)
+            }
+            .accessibilityLabel(String(localized: "wordDetail.menu.label"))
         }
     }
 
-    private var headerSection: some View {
-        VStack(alignment: .leading, spacing: theme.spacing.sm) {
+    // MARK: - Sections
+
+    private var headerBlock: some View {
+        HStack(spacing: theme.spacing.sm) {
             Text(word.pronunciation)
                 .font(TypographyTokens.mono)
                 .foregroundColor(theme.colors.inkMuted)
-
-            Text(word.partOfSpeech)
-                .font(TypographyTokens.caption)
-                .foregroundColor(theme.colors.inkFaint)
-                .padding(.horizontal, theme.spacing.sm)
-                .padding(.vertical, theme.spacing.xs)
-                .background(theme.colors.accentBg)
-                .cornerRadius(4)
-
-            Text("L\(word.unlockLevel) · \(LevelDefinition.definition(for: word.unlockLevel)?.title ?? "")")
-                .font(TypographyTokens.caption)
-                .foregroundColor(theme.colors.inkFaint)
+                .accessibilityLabel(String(format: String(localized: "a11y.pronunciation.format"), word.pronunciation))
+            if isMastered {
+                Image(systemName: "checkmark.seal.fill")
+                    .foregroundColor(theme.colors.good)
+                    .accessibilityLabel(String(localized: "a11y.mastered"))
+            }
+            if isBookmarked {
+                Image(systemName: "bookmark.fill")
+                    .foregroundColor(theme.colors.accent)
+                    .accessibilityLabel(String(localized: "a11y.bookmarked"))
+            }
+            Spacer()
+            MetaCaption(level: word.unlockLevel,
+                        secondary: word.partOfSpeech)
         }
     }
 
-    private var definitionsSection: some View {
-        VStack(alignment: .leading, spacing: theme.spacing.md) {
+    private var shortDefinition: some View {
+        Text(word.shortDefinition)
+            .font(TypographyTokens.title3)
+            .foregroundColor(theme.colors.inkMuted)
+            .fixedSize(horizontal: false, vertical: true)
+            .padding(.top, theme.spacing.sm)
+    }
+
+    private var longDefinitionBlock: some View {
+        VStack(alignment: .leading, spacing: theme.spacing.sm) {
             SectionHeader(title: "wordDetail.section.definition")
-            Text(word.shortDefinition)
-                .font(TypographyTokens.body)
-                .foregroundColor(theme.colors.ink)
             Text(word.longDefinition)
-                .font(TypographyTokens.callout)
+                .font(TypographyTokens.body)
                 .foregroundColor(theme.colors.inkMuted)
+                .fixedSize(horizontal: false, vertical: true)
         }
-        .padding(theme.spacing.cardPadding(density: theme.density))
-        .background(theme.colors.surface)
-        .cornerRadius(12)
     }
 
-    private var contextSection: some View {
-        VStack(alignment: .leading, spacing: theme.spacing.md) {
+    private var techContextBlock: some View {
+        VStack(alignment: .leading, spacing: theme.spacing.sm) {
             SectionHeader(title: "wordDetail.section.techContext")
             Text(word.techContext)
-                .font(TypographyTokens.callout)
-                .foregroundColor(theme.colors.ink)
-        }
-        .padding(theme.spacing.cardPadding(density: theme.density))
-        .background(theme.colors.surface)
-        .cornerRadius(12)
-    }
-
-    private var exampleSentenceSection: some View {
-        VStack(alignment: .leading, spacing: theme.spacing.md) {
-            SectionHeader(title: "wordDetail.section.example")
-            Text(word.exampleSentence)
                 .font(TypographyTokens.body)
                 .foregroundColor(theme.colors.ink)
-                .italic()
+                .fixedSize(horizontal: false, vertical: true)
         }
-        .padding(theme.spacing.cardPadding(density: theme.density))
-        .background(theme.colors.surface)
-        .cornerRadius(12)
     }
 
-    private var codeExampleSection: some View {
-        VStack(alignment: .leading, spacing: theme.spacing.md) {
+    private var exampleBlock: some View {
+        VStack(alignment: .leading, spacing: theme.spacing.sm) {
+            SectionHeader(title: "wordDetail.section.example")
+            Text("\u{201C}\(word.exampleSentence)\u{201D}")
+                .font(TypographyTokens.etymologyLarge)
+                .foregroundColor(theme.colors.ink)
+                .fixedSize(horizontal: false, vertical: true)
+                .padding(.vertical, theme.spacing.xs)
+        }
+    }
+
+    private var codeBlock: some View {
+        VStack(alignment: .leading, spacing: theme.spacing.sm) {
             SectionHeader(title: "wordDetail.section.code")
             ScrollView(.horizontal, showsIndicators: false) {
                 Text(word.codeExampleCode)
@@ -129,25 +155,26 @@ struct WordDetailView: View {
                     .padding(theme.spacing.md)
             }
             .background(theme.colors.codeBg)
-            .cornerRadius(8)
-            .accessibilityLabel("Code example in \(word.codeExampleLanguage)")
+            .clipShape(.rect(cornerRadius: RadiusTokens.inline))
+            .overlay(
+                RoundedRectangle(cornerRadius: RadiusTokens.inline)
+                    .stroke(theme.colors.line, lineWidth: 0.5)
+            )
+            .accessibilityLabel(String(format: String(localized: "a11y.codeExample.format"), word.codeExampleLanguage))
         }
-        .padding(theme.spacing.cardPadding(density: theme.density))
-        .background(theme.colors.surface)
-        .cornerRadius(12)
     }
 
-    private var etymologySection: some View {
-        VStack(alignment: .leading, spacing: theme.spacing.md) {
+    private var etymologyBlock: some View {
+        VStack(alignment: .leading, spacing: theme.spacing.sm) {
             SectionHeader(title: "wordDetail.section.etymology")
             Text(word.etymology)
                 .font(TypographyTokens.etymology)
                 .foregroundColor(theme.colors.inkMuted)
+                .fixedSize(horizontal: false, vertical: true)
         }
-        .padding(theme.spacing.cardPadding(density: theme.density))
-        .background(theme.colors.surface)
-        .cornerRadius(12)
     }
+
+    // MARK: - Actions
 
     private func toggleBookmark() {
         services?.progress.toggleBookmark(word.id, userProgress: userProgress)
@@ -162,15 +189,3 @@ struct WordDetailView: View {
     }
 }
 
-struct SectionHeader: View {
-    @Environment(\.theme) private var theme
-    let title: LocalizedStringKey
-
-    var body: some View {
-        Text(title)
-            .font(TypographyTokens.caption)
-            .foregroundColor(theme.colors.inkFaint)
-            .textCase(.uppercase)
-            .tracking(0.5)
-    }
-}

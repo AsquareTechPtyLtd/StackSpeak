@@ -12,6 +12,11 @@ struct ColorTokens {
     let accent: Color
     let accentBg: Color
     let accentText: Color  // Text color on accent background (e.g., CTA buttons)
+    /// Decorative tint for non-CTA accent usage — progress fills, status borders,
+    /// active-state strokes. Same hue as `accent` today but kept separate so
+    /// future visual tuning (e.g., dimming progress to favor CTA prominence)
+    /// doesn't ripple into every primary action.
+    let accentDecoration: Color
     let codeBg: Color
     let codeInk: Color
     let codeKey: Color
@@ -20,6 +25,14 @@ struct ColorTokens {
     let codeNum: Color
     let good: Color
     let warn: Color
+    /// True-negative red for "Again" on flashcards and incorrect feedback.
+    let bad: Color
+    /// Warm orange for the streak flame — kept distinct from `accent` so the
+    /// universal flame metaphor reads correctly.
+    let streak: Color
+    /// Near-black ink for icons/text drawn on top of `streak`. Fixed to a dark
+    /// value in both modes because `streak` is a bright orange/amber in both.
+    let streakInk: Color
 
     static let light = ColorTokens(
         bg: Color(hex: "F6F5F2"),
@@ -27,12 +40,13 @@ struct ColorTokens {
         surfaceAlt: Color(hex: "FBFAF7"),
         ink: Color(hex: "15161A"),
         inkMuted: Color(hex: "5B5E66"),
-        inkFaint: Color(hex: "9A9CA3"),
+        inkFaint: Color(hex: "6E7079"),
         line: Color(hex: "14161C").opacity(0.08),
         lineStrong: Color(hex: "14161C").opacity(0.14),
         accent: Color(hex: "3E4BDB"),
         accentBg: Color(hex: "3E4BDB").opacity(0.08),
         accentText: .white,
+        accentDecoration: Color(hex: "3E4BDB"),
         codeBg: Color(hex: "F2F1EC"),
         codeInk: Color(hex: "15161A"),
         codeKey: Color(hex: "8B2F7A"),
@@ -40,7 +54,10 @@ struct ColorTokens {
         codeCom: Color(hex: "8A8A7F"),
         codeNum: Color(hex: "B5651D"),
         good: Color(hex: "2F6F47"),
-        warn: Color(hex: "B5651D")
+        warn: Color(hex: "A85812"),
+        bad: Color(hex: "C0392B"),
+        streak: Color(hex: "E08A1E"),
+        streakInk: Color(hex: "15161A")
     )
 
     static let dark = ColorTokens(
@@ -49,12 +66,14 @@ struct ColorTokens {
         surfaceAlt: Color(hex: "0F1013"),
         ink: Color(hex: "F2F2F4"),
         inkMuted: Color(hex: "A4A7B0"),
-        inkFaint: Color(hex: "6B6E77"),
+        inkFaint: Color(hex: "797C84"),
         line: Color(hex: "FFFFFF").opacity(0.06),
         lineStrong: Color(hex: "FFFFFF").opacity(0.12),
         accent: Color(hex: "8B93FF"),
         accentBg: Color(hex: "8B93FF").opacity(0.12),
-        accentText: .white,
+        // Near-black for WCAG-safe contrast on the lighter dark-mode accent.
+        accentText: Color(hex: "0B0C0E"),
+        accentDecoration: Color(hex: "8B93FF"),
         codeBg: Color(hex: "0F1013"),
         codeInk: Color(hex: "E6E6EA"),
         codeKey: Color(hex: "D291E7"),
@@ -62,7 +81,10 @@ struct ColorTokens {
         codeCom: Color(hex: "6B6E77"),
         codeNum: Color(hex: "E0A878"),
         good: Color(hex: "7FCF99"),
-        warn: Color(hex: "E0A878")
+        warn: Color(hex: "E0A878"),
+        bad: Color(hex: "FF6B6B"),
+        streak: Color(hex: "F2A65A"),
+        streakInk: Color(hex: "0B0C0E")
     )
 }
 
@@ -75,20 +97,49 @@ struct SpacingTokens {
     let xxl: CGFloat = 24
     let xxxl: CGFloat = 32
 
-    func cardPadding(density: DensityPreference) -> EdgeInsets {
-        switch density {
-        case .compact: return EdgeInsets(top: 16, leading: 18, bottom: 16, trailing: 18)
-        case .roomy:   return EdgeInsets(top: 22, leading: 22, bottom: 22, trailing: 22)
-        }
-    }
+    /// One well-tuned card padding. Density preference removed (F10): a single
+    /// considered default beats a personalization knob most users never touch.
+    var cardPadding: EdgeInsets { EdgeInsets(top: 20, leading: 20, bottom: 20, trailing: 20) }
 
-    func cardGap(density: DensityPreference) -> CGFloat {
-        density == .compact ? 10 : 14
-    }
+    var cardGap: CGFloat { 12 }
 
-    func rowPadding(density: DensityPreference) -> CGFloat {
-        density == .compact ? 12 : 16
-    }
+    var rowPadding: CGFloat { 14 }
+}
+
+/// Hero-sized icon glyphs. Reserved for illustrative moments (onboarding
+/// pages, level-up celebration, empty-state illustrations) — anything
+/// smaller belongs to the typography text-style scale via `.font(.system(.<style>))`.
+enum IconSizeTokens {
+    /// Empty-state illustrations.
+    static let large: CGFloat = 56
+    /// Onboarding hero icons.
+    static let xLarge: CGFloat = 72
+    /// Level-up / single-celebration moments.
+    static let hero: CGFloat = 96
+}
+
+/// Three considered radii. Anything else is a smell.
+enum RadiusTokens {
+    /// Inline elements: chips, code blocks, small inputs.
+    static let inline: CGFloat = 8
+    /// Cards, buttons, sheets.
+    static let card: CGFloat = 12
+    /// Full pill — circles, capsules.
+    static let pill: CGFloat = 999
+}
+
+/// Restrained motion language. Cross-fade for stage changes; spring only when a
+/// physical metaphor genuinely applies.
+enum MotionTokens {
+    /// Default content swap (Feynman stage advance, panel reveals).
+    static let standard: Animation = .easeInOut(duration: 0.18)
+    /// Slightly snappier confirm (button press feedback, toggle).
+    static let snappy: Animation = .easeOut(duration: 0.12)
+    /// Reserved for celebration moments (level-up appear, streak tick).
+    static let bounce: Animation = .spring(response: 0.45, dampingFraction: 0.65)
+    /// Slow, repeating ambient nudge — used by SwipeNudge to suggest direction
+    /// without commanding attention. 0.9s round-trip.
+    static let nudge: Animation = .easeInOut(duration: 0.9).repeatForever(autoreverses: true)
 }
 
 struct TypographyTokens {
@@ -123,14 +174,11 @@ struct TypographyTokens {
     static let codeLarge = jetBrainsMono(size: 16)
     static let mono      = jetBrainsMono(size: 13, weight: .medium)
 
-    static let etymology      = instrumentSerif(size: 15)
-    static let etymologyLarge = instrumentSerif(size: 17)
+    static let etymology      = instrumentSerif(size: 17)
+    static let etymologyLarge = instrumentSerif(size: 22)
 
-    static func cardTitle(density: DensityPreference) -> Font {
-        density == .compact
-            ? inter(size: 22, weight: .semibold, relativeTo: .title2)
-            : inter(size: 26, weight: .semibold, relativeTo: .title)
-    }
+    /// Single tuned card title size. Density removed (F10).
+    static let cardTitle = inter(size: 26, weight: .semibold, relativeTo: .title)
 }
 
 // MARK: - Color hex initializer
