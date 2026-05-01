@@ -8,6 +8,7 @@ struct BookDetailView: View {
     @Environment(\.services) private var services
     @Environment(\.modelContext) private var modelContext
     @Environment(\.userProgress) private var userProgress
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     let book: BookSummary
 
@@ -41,7 +42,9 @@ struct BookDetailView: View {
                     .padding(.top, theme.spacing.md)
                     .task {
                         try? await Task.sleep(nanoseconds: 2_000_000_000)
-                        withAnimation { streakToastDays = nil }
+                        withAnimation(reduceMotion ? nil : MotionTokens.standard) {
+                            streakToastDays = nil
+                        }
                     }
             }
         }
