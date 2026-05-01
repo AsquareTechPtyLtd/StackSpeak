@@ -582,25 +582,32 @@ struct FeynmanCardView: View {
     @ViewBuilder
     private var explainControls: some View {
         let trimmed = explanation.trimmingCharacters(in: .whitespacesAndNewlines)
-        HStack(spacing: theme.spacing.md) {
-            if isComingSoon {
-                Button(action: submitAsComingSoon) {
-                    Text("feynman.explain.markPracticed")
-                        .font(TypographyTokens.callout.weight(.medium))
-                        .foregroundColor(theme.colors.inkMuted)
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, theme.spacing.md)
-                        .background(theme.colors.surfaceAlt)
-                        .clipShape(.rect(cornerRadius: RadiusTokens.card))
+        VStack(spacing: theme.spacing.xs) {
+            HStack(spacing: theme.spacing.md) {
+                if isComingSoon {
+                    Button(action: submitAsComingSoon) {
+                        Text("feynman.explain.markPracticed")
+                            .font(TypographyTokens.callout.weight(.medium))
+                            .foregroundColor(theme.colors.inkMuted)
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, theme.spacing.md)
+                            .background(theme.colors.surfaceAlt)
+                            .clipShape(.rect(cornerRadius: RadiusTokens.card))
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel(String(localized: "a11y.feynman.markPracticed"))
                 }
-                .buttonStyle(.plain)
-                .accessibilityLabel(String(localized: "a11y.feynman.markPracticed"))
-            }
 
-            PrimaryCTAButton("feynman.explain.submit") {
-                submitExplanation(trimmed: trimmed)
+                PrimaryCTAButton("feynman.explain.submit") {
+                    submitExplanation(trimmed: trimmed)
+                }
+                .disabled(trimmed.isEmpty)
             }
-            .disabled(trimmed.isEmpty)
+            if trimmed.isEmpty {
+                Text("feynman.explain.submitHint")
+                    .font(TypographyTokens.footnote)
+                    .foregroundColor(theme.colors.inkMuted)
+            }
         }
     }
 
