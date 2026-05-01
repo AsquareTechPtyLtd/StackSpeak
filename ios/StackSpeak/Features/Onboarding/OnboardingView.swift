@@ -136,7 +136,7 @@ struct OnboardingPageView: View {
             switch page.kind {
             case .icon(let symbol):
                 Image(systemName: symbol)
-                    .font(.system(size: 72, weight: .light))
+                    .font(.system(size: 72, weight: .semibold))
                     .foregroundColor(theme.colors.accent)
                     .padding(.bottom, theme.spacing.lg)
                     .accessibilityHidden(true)
