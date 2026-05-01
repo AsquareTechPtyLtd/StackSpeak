@@ -32,7 +32,7 @@ struct TokenContrastTests {
     static let darkSurface     = "141519"
     static let darkInk         = "F2F2F4"
     static let darkInkMuted    = "A4A7B0"
-    static let darkInkFaint    = "797C84"
+    static let darkInkFaint    = "858891"
     static let darkAccent      = "8B93FF"
     static let darkAccentText  = "0B0C0E"
     static let darkStreak      = "F2A65A"
