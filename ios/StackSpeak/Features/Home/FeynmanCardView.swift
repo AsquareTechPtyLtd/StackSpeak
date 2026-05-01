@@ -65,6 +65,16 @@ struct FeynmanCardView: View {
     /// via submit, skip, or report). Used by `WordFeynmanScreen` to surface
     /// a post-completion CTA. Default is no-op so other call sites stay simple.
     let onStageDidReachDone: () -> Void
+    /// Optional — fires on initial appearance and on every `stage`
+    /// transition. Used by `WordFeynmanScreen` to translate stage changes
+    /// into tutorial-VM events (S1 advance, S2 retreat/rearm). Default
+    /// no-op so non-tutorial call sites stay simple.
+    let onStageChange: (FeynmanStage) -> Void
+    /// Optional — fires when the user taps ⋯ → "Show walkthrough" (§3
+    /// Branch A). The button additionally resets `stage` to `.simple`
+    /// locally before firing this callback so the host can call
+    /// `TutorialViewModel.replay()` against a fresh card state.
+    let onShowWalkthrough: () -> Void
 
     @State private var stage: FeynmanStage
     @State private var explanation: String = ""
@@ -84,7 +94,9 @@ struct FeynmanCardView: View {
         isCompleted: Bool,
         latestExplanation: PracticedSentence?,
         onSubmit: @escaping (String, InputMethod, Bool) -> Void,
-        onStageDidReachDone: @escaping () -> Void = {}
+        onStageDidReachDone: @escaping () -> Void = {},
+        onStageChange: @escaping (FeynmanStage) -> Void = { _ in },
+        onShowWalkthrough: @escaping () -> Void = {}
     ) {
         self.word = word
         self.userProgress = userProgress
@@ -92,6 +104,8 @@ struct FeynmanCardView: View {
         self.latestExplanation = latestExplanation
         self.onSubmit = onSubmit
         self.onStageDidReachDone = onStageDidReachDone
+        self.onStageChange = onStageChange
+        self.onShowWalkthrough = onShowWalkthrough
         _stage = State(initialValue: isCompleted ? .done : .simple)
     }
 
@@ -128,6 +142,9 @@ struct FeynmanCardView: View {
         .contentShape(Rectangle())
         .simultaneousGesture(swipeAdvanceGesture)
         .sensoryFeedback(.selection, trigger: advanceTrigger)
+        // MARK: Tutorial — stage observation for TutorialViewModel
+        .onAppear { onStageChange(stage) }
+        .onChange(of: stage) { _, newStage in onStageChange(newStage) }
         .sheet(isPresented: $showReport) {
             WordReportSheet(
                 word: word,
@@ -231,6 +248,13 @@ struct FeynmanCardView: View {
             }
             if stage != .done {
                 Divider()
+                // MARK: Tutorial — replay entry point (§3 Branch A)
+                Button {
+                    showWalkthrough()
+                } label: {
+                    Label(String(localized: "feynman.menu.showWalkthrough"),
+                          systemImage: "questionmark.circle")
+                }
                 Button {
                     showDetail = true
                 } label: {
@@ -386,6 +410,8 @@ struct FeynmanCardView: View {
                     .clipShape(.rect(cornerRadius: RadiusTokens.inline))
                     .focused($explanationFocused)
                     .accessibilityLabel(String(localized: "a11y.feynman.explanationInput"))
+                    // MARK: Tutorial — S2 composite anchor (TextEditor)
+                    .tutorialTarget(.explainComposite)
                     .toolbar {
                         ToolbarItemGroup(placement: .keyboard) {
                             Spacer()
@@ -441,6 +467,8 @@ struct FeynmanCardView: View {
         .accessibilityLabel(isRecording
                             ? String(localized: "a11y.feynman.stopRecording")
                             : String(localized: "a11y.feynman.startRecording"))
+        // MARK: Tutorial — S2 composite anchor (mic button)
+        .tutorialTarget(.explainComposite)
     }
 
     private var technicalStage: some View {
@@ -563,6 +591,12 @@ struct FeynmanCardView: View {
         case .simple, .technical, .connector:
             SwipeNudge("feynman.swipe.continue", direction: .backward, onAdvance: advance)
                 .accessibilityAction(named: Text("feynman.swipe.continue.a11y")) { advance() }
+                // MARK: Tutorial — S1 anchor; only published on simple stage
+                .background {
+                    if stage == .simple {
+                        Color.clear.tutorialTarget(.simpleAdvance)
+                    }
+                }
         case .explain:
             explainControls
         case .done:
@@ -639,6 +673,8 @@ struct FeynmanCardView: View {
                     submitExplanation(trimmed: trimmed)
                 }
                 .disabled(trimmed.isEmpty)
+                // MARK: Tutorial — S2 composite anchor (Submit button)
+                .tutorialTarget(.explainComposite)
             }
             if trimmed.isEmpty {
                 Text("feynman.explain.submitHint")
@@ -712,6 +748,15 @@ struct FeynmanCardView: View {
     private func reportAndSkip() {
         stopRecordingIfNeeded()
         showReport = true
+    }
+
+    // MARK: Tutorial — replay action (§3 Branch A)
+    private func showWalkthrough() {
+        explanationFocused = false
+        withAnimation(reduceMotion ? nil : MotionTokens.standard) {
+            stage = .simple
+        }
+        onShowWalkthrough()
     }
 
     /// Mutates progress (mark mastered, advance to done) only after the user

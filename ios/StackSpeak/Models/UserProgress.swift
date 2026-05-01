@@ -17,6 +17,13 @@ final class UserProgress {
     var wordsWithTwoCorrectIdsStorage: String
     var didCompleteOnboarding: Bool
 
+    /// Set true when the first-time-user tutorial walkthrough on
+    /// `WordFeynmanScreen` ends — either via natural completion
+    /// (`onStageDidReachDone` for word #1) or via Skip-confirm. Gates
+    /// re-firing on subsequent app launches. SwiftData lightweight
+    /// migration: default `false` for existing rows.
+    var didCompleteTutorial: Bool = false
+
     var notificationEnabled: Bool
     var notificationTime: Date?
     var secondReminderEnabled: Bool
@@ -115,6 +122,7 @@ final class UserProgress {
         self.wordQueueCursor = 0
         self.wordsWithTwoCorrectIdsStorage = ""
         self.didCompleteOnboarding = false
+        self.didCompleteTutorial = false
         self.notificationEnabled = false
         self.notificationTime = nil
         self.secondReminderEnabled = false
