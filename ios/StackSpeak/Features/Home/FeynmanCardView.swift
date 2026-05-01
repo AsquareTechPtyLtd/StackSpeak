@@ -510,8 +510,7 @@ struct FeynmanCardView: View {
     private var advanceControls: some View {
         switch stage {
         case .simple, .technical, .connector:
-            SwipeContinueHint()
-                .frame(maxWidth: .infinity)
+            SwipeNudge("feynman.swipe.continue", direction: .backward, onAdvance: advance)
                 .accessibilityAction(named: Text("feynman.swipe.continue.a11y")) { advance() }
         case .explain:
             explainControls
@@ -710,31 +709,3 @@ struct FeynmanCardView: View {
     }
 }
 
-/// Replaces the per-stage advance CTA. Quietly tells the user to swipe left
-/// to move on; the chevron nudges leftward in time with the gesture direction.
-private struct SwipeContinueHint: View {
-    @Environment(\.theme) private var theme
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @State private var nudge = false
-
-    var body: some View {
-        HStack(spacing: 6) {
-            Text("feynman.swipe.continue")
-                .font(TypographyTokens.callout)
-                .foregroundColor(theme.colors.inkMuted)
-            Image(systemName: "chevron.left")
-                .font(TypographyTokens.callout.weight(.semibold))
-                .foregroundColor(theme.colors.inkMuted)
-                .offset(x: nudge ? -4 : 0)
-        }
-        .frame(height: 44)
-        .accessibilityElement(children: .combine)
-        .accessibilityLabel(String(localized: "feynman.swipe.continue"))
-        .onAppear {
-            guard !reduceMotion else { return }
-            withAnimation(.easeInOut(duration: 0.9).repeatForever(autoreverses: true)) {
-                nudge = true
-            }
-        }
-    }
-}

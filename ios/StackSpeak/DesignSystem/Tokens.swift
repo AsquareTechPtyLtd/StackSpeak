@@ -125,6 +125,9 @@ enum MotionTokens {
     static let snappy: Animation = .easeOut(duration: 0.12)
     /// Reserved for celebration moments (level-up appear, streak tick).
     static let bounce: Animation = .spring(response: 0.45, dampingFraction: 0.65)
+    /// Slow, repeating ambient nudge — used by SwipeNudge to suggest direction
+    /// without commanding attention. 0.9s round-trip.
+    static let nudge: Animation = .easeInOut(duration: 0.9).repeatForever(autoreverses: true)
 }
 
 struct TypographyTokens {
