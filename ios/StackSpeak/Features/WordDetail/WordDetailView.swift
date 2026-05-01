@@ -193,15 +193,3 @@ struct WordDetailView: View {
     }
 }
 
-/// Sentence-case section label (F4). Replaces the previous UPPERCASE-tracked
-/// caption — that styling is now reserved for code/metadata, not UI chrome.
-struct SectionHeader: View {
-    @Environment(\.theme) private var theme
-    let title: LocalizedStringKey
-
-    var body: some View {
-        Text(title)
-            .font(TypographyTokens.subheadline.weight(.medium))
-            .foregroundColor(theme.colors.inkMuted)
-    }
-}
