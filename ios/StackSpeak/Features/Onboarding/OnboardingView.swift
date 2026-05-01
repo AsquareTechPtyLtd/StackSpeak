@@ -68,6 +68,12 @@ struct OnboardingView: View {
                     }
                 }
                 .tabViewStyle(.page(indexDisplayMode: .never))
+                .onChange(of: currentPage) { _, newValue in
+                    let clamped = max(0, min(newValue, pages.count - 1))
+                    if clamped != newValue {
+                        currentPage = clamped
+                    }
+                }
 
                 VStack(spacing: theme.spacing.lg) {
                     if currentPage == pages.count - 1 {
