@@ -16,7 +16,7 @@ struct OnboardingView: View {
 
     private let pages: [OnboardingPage] = [
         OnboardingPage(
-            kind: .icon(systemImage: "bubble.left.and.bubble.right"),
+            kind: .glyph("\u{201C}"),
             title: String(localized: "onboarding.page1.title"),
             description: String(localized: "onboarding.page1.description")
         ),
@@ -140,6 +140,12 @@ struct OnboardingPageView: View {
                     .foregroundColor(theme.colors.accent)
                     .padding(.bottom, theme.spacing.lg)
                     .accessibilityHidden(true)
+            case .glyph(let character):
+                Text(character)
+                    .font(TypographyTokens.instrumentSerif(size: 144))
+                    .foregroundColor(theme.colors.accent)
+                    .padding(.bottom, theme.spacing.lg)
+                    .accessibilityHidden(true)
             }
 
             Text(page.title)
@@ -161,6 +167,11 @@ struct OnboardingPageView: View {
 struct OnboardingPage {
     enum Kind {
         case icon(systemImage: String)
+        /// Single character/grapheme rendered in the brand serif as a
+        /// typographic moment — used for the lead "Teach it back" page so
+        /// the hero gestures at the product's writing-led ethos before the
+        /// SF Symbol pages take over.
+        case glyph(String)
     }
     let kind: Kind
     let title: String
