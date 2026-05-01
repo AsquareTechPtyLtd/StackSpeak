@@ -187,7 +187,6 @@ struct HomeView: View {
                 Image(systemName: "flame.fill")
                     .font(.system(.caption))
                     .foregroundColor(theme.colors.streak)
-                    .symbolEffect(.bounce, value: progress.displayedCurrentStreak)
                 Text(progress.displayedCurrentStreak == 0
                      ? String(localized: "home.streak.start")
                      : String(format: String(localized: "home.streak.day.format"),
@@ -420,7 +419,6 @@ struct TodayWordRow: View {
                 Image(systemName: "checkmark.seal.fill")
                     .font(.system(.headline))
                     .foregroundColor(theme.colors.good)
-                    .symbolEffect(.bounce, value: isCompleted)
                     .accessibilityHidden(true)
             } else {
                 Image(systemName: "chevron.right")

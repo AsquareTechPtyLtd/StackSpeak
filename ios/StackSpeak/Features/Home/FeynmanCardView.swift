@@ -474,7 +474,6 @@ struct FeynmanCardView: View {
             HStack(spacing: theme.spacing.sm) {
                 Image(systemName: "checkmark.seal.fill")
                     .foregroundColor(theme.colors.good)
-                    .symbolEffect(.bounce, value: stage)
                 Text("feynman.done.title")
                     .font(TypographyTokens.headline)
                     .foregroundColor(theme.colors.ink)
