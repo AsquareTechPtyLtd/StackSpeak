@@ -126,15 +126,10 @@ struct WordDetailView: View {
     private var techContextBlock: some View {
         VStack(alignment: .leading, spacing: theme.spacing.sm) {
             SectionHeader(title: "wordDetail.section.techContext")
-            HStack(alignment: .top, spacing: theme.spacing.md) {
-                Rectangle()
-                    .fill(theme.colors.accent.opacity(0.5))
-                    .frame(width: 2)
-                Text(word.techContext)
-                    .font(TypographyTokens.body)
-                    .foregroundColor(theme.colors.ink)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
+            Text(word.techContext)
+                .font(TypographyTokens.body)
+                .foregroundColor(theme.colors.ink)
+                .fixedSize(horizontal: false, vertical: true)
         }
     }
 
