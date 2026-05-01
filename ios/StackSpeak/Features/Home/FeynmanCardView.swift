@@ -293,6 +293,7 @@ struct FeynmanCardView: View {
                 .multilineTextAlignment(.leading)
                 .italic()
                 .fixedSize(horizontal: false, vertical: true)
+                .padding(.top, theme.spacing.lg)
         }
     }
 
@@ -324,6 +325,16 @@ struct FeynmanCardView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: theme.spacing.md) {
                 stageLabel("feynman.stage.explain")
+
+                // Explanation of the Feynman Technique and why it works
+                Text("feynman.explain.about")
+                    .font(TypographyTokens.callout)
+                    .foregroundColor(theme.colors.inkMuted)
+                    .lineSpacing(7)
+                    .multilineTextAlignment(.leading)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.vertical, theme.spacing.xs)
+
                 Text("feynman.explain.prompt")
                     .font(TypographyTokens.body)
                     .foregroundColor(theme.colors.ink)
@@ -531,6 +542,7 @@ struct FeynmanCardView: View {
                         .foregroundColor(theme.colors.ink)
                         .italic()
                         .fixedSize(horizontal: false, vertical: true)
+                        .padding(.top, theme.spacing.md)
                 }
             }
 
