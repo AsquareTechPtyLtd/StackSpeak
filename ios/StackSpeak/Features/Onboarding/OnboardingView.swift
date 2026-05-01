@@ -87,7 +87,7 @@ struct OnboardingView: View {
         HStack(spacing: 6) {
             ForEach(pages.indices, id: \.self) { index in
                 Capsule()
-                    .fill(index <= currentPage ? theme.colors.accent : theme.colors.line)
+                    .fill(index <= currentPage ? theme.colors.accentDecoration : theme.colors.line)
                     .frame(height: 3)
                     .animation(MotionTokens.standard, value: currentPage)
             }

@@ -12,6 +12,11 @@ struct ColorTokens {
     let accent: Color
     let accentBg: Color
     let accentText: Color  // Text color on accent background (e.g., CTA buttons)
+    /// Decorative tint for non-CTA accent usage — progress fills, status borders,
+    /// active-state strokes. Same hue as `accent` today but kept separate so
+    /// future visual tuning (e.g., dimming progress to favor CTA prominence)
+    /// doesn't ripple into every primary action.
+    let accentDecoration: Color
     let codeBg: Color
     let codeInk: Color
     let codeKey: Color
@@ -41,6 +46,7 @@ struct ColorTokens {
         accent: Color(hex: "3E4BDB"),
         accentBg: Color(hex: "3E4BDB").opacity(0.08),
         accentText: .white,
+        accentDecoration: Color(hex: "3E4BDB"),
         codeBg: Color(hex: "F2F1EC"),
         codeInk: Color(hex: "15161A"),
         codeKey: Color(hex: "8B2F7A"),
@@ -67,6 +73,7 @@ struct ColorTokens {
         accentBg: Color(hex: "8B93FF").opacity(0.12),
         // Near-black for WCAG-safe contrast on the lighter dark-mode accent.
         accentText: Color(hex: "0B0C0E"),
+        accentDecoration: Color(hex: "8B93FF"),
         codeBg: Color(hex: "0F1013"),
         codeInk: Color(hex: "E6E6EA"),
         codeKey: Color(hex: "D291E7"),

@@ -514,7 +514,7 @@ struct CompletionTrackerRow: View {
             .overlay(
                 RoundedRectangle(cornerRadius: Self.cellRadius)
                     .strokeBorder(
-                        day.isToday ? theme.colors.accent
+                        day.isToday ? theme.colors.accentDecoration
                                     : (day.hasAnyProgress ? theme.colors.streak.opacity(0.8) : theme.colors.line),
                         lineWidth: day.isToday ? 1.5 : 0.5
                     )

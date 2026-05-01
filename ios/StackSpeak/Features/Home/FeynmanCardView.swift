@@ -128,7 +128,7 @@ struct FeynmanCardView: View {
                 Capsule()
                     .fill(theme.colors.line)
                 Capsule()
-                    .fill(theme.colors.accent)
+                    .fill(theme.colors.accentDecoration)
                     .frame(width: geo.size.width * stageProgress)
                     .animation(reduceMotion ? nil : MotionTokens.standard, value: stageProgress)
             }
