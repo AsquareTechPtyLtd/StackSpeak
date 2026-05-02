@@ -1,0 +1,964 @@
+{
+  "chapterId": "depc-ch10-security-governance-patterns",
+  "shardIndex": 1,
+  "cards": [
+    {
+      "id": "depc-ch10-c001",
+      "order": 1,
+      "title": "Security as a Structural Concern",
+      "teaser": "Security that depends on people following a process fails when someone doesn't. Security patterns enforce access control and auditing structurally — in the pipeline and the schema, not the documentation.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Data security governance fails in two common ways:"
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Process-based governance:",
+              "marks": [
+                "bold"
+              ]
+            },
+            {
+              "text": " \"only the analytics team should query PII columns.\" The control is a policy in a wiki. When a new analyst joins, queries an unmasked PII column, and exports it to a spreadsheet, the breach was discoverable from audit logs — after the fact."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Structural governance:",
+              "marks": [
+                "bold"
+              ]
+            },
+            {
+              "text": " \"PII columns are masked by policy for any user without the "
+            },
+            {
+              "text": "pii_reader",
+              "marks": [
+                "code"
+              ]
+            },
+            {
+              "text": " role.\" The warehouse enforces the control; analysts without the role see a masked value; no policy compliance required."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Structural controls are enforcement; process controls are documentation. Both are needed, but structural controls are the foundation."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The patterns in this chapter operationalize structural governance for the most common requirements:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Column-level access control (masking, encryption)."
+              }
+            ],
+            [
+              {
+                "text": "Row-level access control (each consumer sees only their data)."
+              }
+            ],
+            [
+              {
+                "text": "Audit trails (who read what and when)."
+              }
+            ],
+            [
+              {
+                "text": "Classification and propagation (PII tags that follow data as it moves)."
+              }
+            ],
+            [
+              {
+                "text": "GDPR/CCPA deletion compliance (removing a person's data from the entire system)."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "warning",
+          "runs": [
+            {
+              "text": "\"We'll add governance after launch\" is a risky bet. Adding column masking retroactively to a table with 50 downstream consumers means updating 50 consumers' queries. Build governance into the schema from the start."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Like access control in a backend service — the control in the code beats the policy in the README every time."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "depc-ch10-c002",
+      "order": 2,
+      "title": "Column Masking",
+      "teaser": "Sensitive columns present a masked value to unauthorized users while returning the real value to authorized ones — transparently, without schema changes.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Column masking",
+              "marks": [
+                "bold"
+              ]
+            },
+            {
+              "text": " applies a function to a column's value based on the querying user's roles, transparently returning a different value (masked, hashed, partially redacted) without changing the schema or requiring application code changes."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Example in Snowflake (dynamic data masking):"
+            }
+          ]
+        },
+        {
+          "type": "code",
+          "language": "sql",
+          "code": "CREATE OR REPLACE MASKING POLICY email_mask AS (val STRING) RETURNS STRING ->\n  CASE\n    WHEN CURRENT_ROLE() IN ('PII_ANALYST', 'ADMIN') THEN val\n    ELSE REGEXP_REPLACE(val, '(.+)@', '****@')\n  END;\n\nALTER TABLE users MODIFY COLUMN email SET MASKING POLICY email_mask;"
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Now any query on "
+            },
+            {
+              "text": "users.email",
+              "marks": [
+                "code"
+              ]
+            },
+            {
+              "text": " from an unauthorized role returns "
+            },
+            {
+              "text": "****@example.com",
+              "marks": [
+                "code"
+              ]
+            },
+            {
+              "text": "; authorized roles see the real value."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Masking patterns:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Full redaction:",
+                "marks": [
+                  "bold"
+                ]
+              },
+              {
+                "text": " replace with NULL or a constant. Simplest; complete."
+              }
+            ],
+            [
+              {
+                "text": "Partial masking:",
+                "marks": [
+                  "bold"
+                ]
+              },
+              {
+                "text": " show the last 4 digits of a credit card; mask the rest."
+              }
+            ],
+            [
+              {
+                "text": "Tokenization:",
+                "marks": [
+                  "bold"
+                ]
+              },
+              {
+                "text": " replace the real value with a consistent token. The token is the same every time for the same input, enabling analytics on the token without exposing the real value."
+              }
+            ],
+            [
+              {
+                "text": "Hashing:",
+                "marks": [
+                  "bold"
+                ]
+              },
+              {
+                "text": " one-way hash. Enables checking \"is this the same person?\" without reversibility."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Where column masking applies:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "PII fields (email, name, phone, SSN, health data)."
+              }
+            ],
+            [
+              {
+                "text": "Financial data (account numbers, full card data)."
+              }
+            ],
+            [
+              {
+                "text": "Credentials or secrets accidentally stored in data tables."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "info",
+          "runs": [
+            {
+              "text": "Column masking in the warehouse doesn't protect against someone exporting a table before the mask is in place. Implement masking before the data lands, not after it's been accessed."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Like a driver's license that shows age but not the actual birthdate to bar staff — the information needed for the decision is available without exposing the underlying record."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "depc-ch10-c003",
+      "order": 3,
+      "title": "Row-Level Security",
+      "teaser": "Each consumer sees only the rows they're permitted to see — enforced in the warehouse, not in application logic.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Row-level security (RLS)",
+              "marks": [
+                "bold"
+              ]
+            },
+            {
+              "text": " filters the rows returned by a query based on the querying user's identity or role, enforced at the warehouse layer without requiring consumers to add WHERE clauses to every query."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "When RLS applies:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "A multi-tenant SaaS platform where each tenant's users should only see their own rows."
+              }
+            ],
+            [
+              {
+                "text": "A regional data warehouse where EU analysts should only see EU customer data."
+              }
+            ],
+            [
+              {
+                "text": "A shared analytics environment where each team sees only their cost center's spend data."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Implementation in BigQuery:"
+            }
+          ]
+        },
+        {
+          "type": "code",
+          "language": "sql",
+          "code": "-- Row access policy: each analyst sees only their region's rows\nCREATE ROW ACCESS POLICY region_filter\nON analytics.orders\nGRANT TO ('user:emea-analyst@company.com')\nFILTER USING (region = 'EMEA');"
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "In Snowflake: row access policies use a policy function that returns a boolean."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Without RLS, the control has to live in application code — every query must include the right WHERE clause, every BI tool must be configured with the right filter, every new consumer must remember the rule. One missed filter exposes all tenants' data."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "RLS limitations:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Performance:",
+                "marks": [
+                  "bold"
+                ]
+              },
+              {
+                "text": " complex row filters (subqueries, JOINs in the policy) can make every query expensive."
+              }
+            ],
+            [
+              {
+                "text": "Aggregations:",
+                "marks": [
+                  "bold"
+                ]
+              },
+              {
+                "text": " aggregations across filtered rows may still expose information through the aggregate value. A user who can't see individual rows but can query the sum may be able to infer individual values if the cardinality is low."
+              }
+            ],
+            [
+              {
+                "text": "Audit trail:",
+                "marks": [
+                  "bold"
+                ]
+              },
+              {
+                "text": " RLS filters rows silently; it doesn't log that someone tried to access rows they couldn't see."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "tip",
+          "runs": [
+            {
+              "text": "For multi-tenant data warehouses, RLS combined with separate warehouse roles per tenant is the most robust access control pattern. The role controls column masking; RLS controls row visibility."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Like a view that's enforced for everyone whether they remember to use it or not — the filter is in the warehouse, not in every downstream query."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "depc-ch10-c004",
+      "order": 4,
+      "title": "Audit Log Tee-Off",
+      "teaser": "Copy every data access event to an append-only audit log. Who queried what, when, from which role — the record that answers \"did anyone access this sensitive data?\"",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Audit log tee-off",
+              "marks": [
+                "bold"
+              ]
+            },
+            {
+              "text": " routes access events — query execution, table reads, column touches, role changes — to a separate, append-only log store that can be queried for compliance and investigation purposes."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "What an audit log should capture:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Who:",
+                "marks": [
+                  "bold"
+                ]
+              },
+              {
+                "text": " username or role identity."
+              }
+            ],
+            [
+              {
+                "text": "What:",
+                "marks": [
+                  "bold"
+                ]
+              },
+              {
+                "text": " the query text (or at minimum the accessed tables and columns)."
+              }
+            ],
+            [
+              {
+                "text": "When:",
+                "marks": [
+                  "bold"
+                ]
+              },
+              {
+                "text": " timestamp to millisecond precision."
+              }
+            ],
+            [
+              {
+                "text": "From where:",
+                "marks": [
+                  "bold"
+                ]
+              },
+              {
+                "text": " IP address, application name, query tool."
+              }
+            ],
+            [
+              {
+                "text": "Result:",
+                "marks": [
+                  "bold"
+                ]
+              },
+              {
+                "text": " did the query succeed? How many rows were returned?"
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Sources of audit events:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Snowflake:",
+                "marks": [
+                  "bold"
+                ]
+              },
+              {
+                "text": " "
+              },
+              {
+                "text": "ACCOUNT_USAGE.QUERY_HISTORY",
+                "marks": [
+                  "code"
+                ]
+              },
+              {
+                "text": " view captures all queries across the account with user, role, query text, duration, and row count."
+              }
+            ],
+            [
+              {
+                "text": "BigQuery:",
+                "marks": [
+                  "bold"
+                ]
+              },
+              {
+                "text": " Cloud Audit Logs captures every API call. Data Access Audit Logs capture table-level reads."
+              }
+            ],
+            [
+              {
+                "text": "AWS:",
+                "marks": [
+                  "bold"
+                ]
+              },
+              {
+                "text": " CloudTrail captures Glue, Athena, and Redshift API calls."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Making audit logs useful:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Write audit data to an immutable store (S3 with Object Lock, append-only Kafka topic)."
+              }
+            ],
+            [
+              {
+                "text": "Build alerts on sensitive access patterns: \"notify the data governance team when anyone queries the "
+              },
+              {
+                "text": "users.ssn",
+                "marks": [
+                  "code"
+                ]
+              },
+              {
+                "text": " column.\""
+              }
+            ],
+            [
+              {
+                "text": "Retain audit logs for the legally required period (HIPAA requires 6 years; GDPR requires it as long as the personal data exists)."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "warning",
+          "runs": [
+            {
+              "text": "Audit logs that are readable only by the security team are less useful. Build a self-service audit query interface so teams can answer \"did our pipeline ever access this user's data\" without filing a ticket."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Like server access logs in an application — not prevention, but the record that enables investigation and accountability."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "depc-ch10-c005",
+      "order": 5,
+      "title": "Classification and Tag Propagation",
+      "teaser": "Tag sensitive data at the source and propagate those tags automatically as data moves through transformations. Manual re-tagging on every new derived table doesn't scale.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Classification and tag propagation",
+              "marks": [
+                "bold"
+              ]
+            },
+            {
+              "text": " means sensitive data (PII, financial, health) gets tagged at the point of ingestion, and those tags follow the data automatically through every downstream transformation and table."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Without propagation: a data engineer manually tags the raw "
+            },
+            {
+              "text": "users.email",
+              "marks": [
+                "code"
+              ]
+            },
+            {
+              "text": " column. Months later, a new "
+            },
+            {
+              "text": "customer_profile",
+              "marks": [
+                "code"
+              ]
+            },
+            {
+              "text": " model is built that includes "
+            },
+            {
+              "text": "email",
+              "marks": [
+                "code"
+              ]
+            },
+            {
+              "text": ". The engineer forgets to tag the new column. The audit report shows "
+            },
+            {
+              "text": "customer_profile.email",
+              "marks": [
+                "code"
+              ]
+            },
+            {
+              "text": " as unclassified, compliance fails."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "With propagation: when the transformation engine detects that a column in the output derives from a tagged column in the input, it automatically applies the same tags to the output column."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Tools and approaches:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "dbt column-level lineage + tags:",
+                "marks": [
+                  "bold"
+                ]
+              },
+              {
+                "text": " dbt tracks column lineage and allows tag propagation through the lineage graph."
+              }
+            ],
+            [
+              {
+                "text": "Snowflake object tagging:",
+                "marks": [
+                  "bold"
+                ]
+              },
+              {
+                "text": " tags can be set on individual columns and propagated to downstream views."
+              }
+            ],
+            [
+              {
+                "text": "Data catalog integration:",
+                "marks": [
+                  "bold"
+                ]
+              },
+              {
+                "text": " Collibra, Atlan, and DataHub build tag propagation on top of lineage graphs from multiple sources."
+              }
+            ],
+            [
+              {
+                "text": "LLM-assisted classification:",
+                "marks": [
+                  "bold"
+                ]
+              },
+              {
+                "text": " newer tools use LLMs to scan column names, sample values, and descriptions and suggest PII classifications. Human review confirms; the tool applies tags."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Classification taxonomy example:"
+            }
+          ]
+        },
+        {
+          "type": "code",
+          "language": "",
+          "code": "pii:email, pii:name, pii:phone, pii:ssn\nfinancial:account_number, financial:transaction_amount\nhealth:diagnosis_code, health:medication\ninternal:cost, internal:salary"
+        },
+        {
+          "type": "callout",
+          "variant": "info",
+          "runs": [
+            {
+              "text": "Classification is only as good as its coverage. Schedule quarterly reviews of new tables against the classification taxonomy. New tables are the most likely to be unclassified."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Like metadata tags on a photo that travel with it when you share it — the label stays attached, not on the original file only."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "depc-ch10-c006",
+      "order": 6,
+      "title": "Deletion Cascades for Compliance",
+      "teaser": "GDPR and CCPA require that a person's data be deletable on request. In a normalized operational database, this is a few rows. In a denormalized data warehouse, it's a multi-system operation.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Right to erasure",
+              "marks": [
+                "bold"
+              ]
+            },
+            {
+              "text": " (GDPR Article 17) requires that a person's personal data be deleted across all systems when they request it. In an operational database with foreign key constraints, this is manageable. In a data warehouse with bronze/silver/gold layers, denormalized fact tables, and ML training sets, it's a cross-system coordination problem."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The challenge: a single user's data may exist in:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Bronze raw event logs."
+              }
+            ],
+            [
+              {
+                "text": "Silver cleaned tables (deduplicated, parsed)."
+              }
+            ],
+            [
+              {
+                "text": "Gold aggregated tables (may be impossible to fully remove — aggregates don't support individual deletion without full recomputation)."
+              }
+            ],
+            [
+              {
+                "text": "ML training datasets (potentially in many model training artifacts)."
+              }
+            ],
+            [
+              {
+                "text": "BI tool cached query results."
+              }
+            ],
+            [
+              {
+                "text": "Snapshot tables in multiple stages of the medallion architecture."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Patterns for deletable data systems:"
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Tokenization at ingest:",
+              "marks": [
+                "bold"
+              ]
+            },
+            {
+              "text": " replace PII with a token at the bronze layer. Store the PII-to-token mapping in a separate, tightly-controlled key vault. On deletion request: delete the key. All tokenized references become unresolvable. No pipeline changes required."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Partition-aligned identifiers:",
+              "marks": [
+                "bold"
+              ]
+            },
+            {
+              "text": " structure the data so that a single user's data is isolatable within a manageable number of partitions. On deletion, rewrite those partitions with the user's rows removed."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Deletion log pattern:",
+              "marks": [
+                "bold"
+              ]
+            },
+            {
+              "text": " maintain a "
+            },
+            {
+              "text": "deleted_users",
+              "marks": [
+                "code"
+              ]
+            },
+            {
+              "text": " table. Downstream queries join to exclude deleted users. Simple to implement; requires every downstream query to include the anti-join."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Regular snapshot purging:",
+              "marks": [
+                "bold"
+              ]
+            },
+            {
+              "text": " if historical snapshots contain PII, define a retention period after which snapshots are deleted. Compliance by expiration rather than targeted deletion."
+            }
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "warning",
+          "runs": [
+            {
+              "text": "Aggregated tables (daily active users, revenue by segment) may include a deleted user in the aggregate. Whether this constitutes a GDPR violation depends on whether the individual is re-identifiable from the aggregate. Seek legal guidance for your specific case."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Like unsubscribing from email — simple in principle; complicated when you've CC'd fifty mailing lists and don't know which ones have your address."
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
