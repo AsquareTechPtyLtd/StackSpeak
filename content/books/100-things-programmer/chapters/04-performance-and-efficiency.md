@@ -1,0 +1,277 @@
+@chapter
+id: ttp-ch04-performance-and-efficiency
+order: 4
+title: Performance and Efficiency
+summary: Performance problems are almost never where you think they are — profile first, understand the cost hierarchy, and treat performance as a design constraint you set before writing the code, not a firefight you run after shipping it.
+
+@card
+id: ttp-ch04-c001
+order: 1
+title: Profile Before Optimizing
+teaser: Your intuition about where the bottleneck lives is usually wrong — the slowness is almost never in the CPU math you're worried about.
+
+@explanation
+
+The most reliable way to spend optimization effort on the wrong thing is to guess. Experienced engineers guess better than newcomers, but they still guess wrong often enough that it matters. The bottleneck in a production web service is rarely a tight algorithm — it's a database query that does a full table scan, a serialization step that runs on every request, or an N+1 query pattern that multiplies database roundtrips by the number of items in a list.
+
+This is why profiling comes first. A profiler gives you a flamegraph — a visualization of where your program actually spends its time — and the flamegraph is almost always surprising. The function you assumed was fast is the hot spot. The loop you optimized last month is not in the top ten.
+
+The tools that tell the truth:
+- **Profilers** (Instruments for iOS/macOS, async-profiler for JVM, py-spy for Python) show CPU time by function and call path.
+- **Flamegraphs** convert that data into a visual where wide bars are the slow things.
+- **APM tools** (Datadog, New Relic, Honeycomb) show slowness at the request level in production, including time spent waiting on I/O, external services, and database queries.
+- **Query analyzers** (pg_stat_statements, slow query logs) surface the specific SQL that consumes the most aggregate time.
+
+Profile in the environment that matches production. Profiling on synthetic test data with a warm local database tells you almost nothing about what's slow for real users at real scale.
+
+> [!warning] Optimizing code you haven't profiled is almost always optimizing the wrong thing. You spend time, reduce readability, and the performance doesn't improve.
+
+@feynman
+
+Trying to fix a slow system without profiling is like treating a patient's symptoms by guessing the diagnosis — you might get lucky, but you're more likely to cause harm.
+
+@card
+id: ttp-ch04-c002
+order: 2
+title: Big-O as a Design Tool, Not Exam Material
+teaser: The difference between O(n) and O(n²) is academic at 10 items and catastrophic at 10,000 — learning to see it in your own code before it ships is the point.
+
+@explanation
+
+Big-O notation gets introduced in computer science courses as an abstract complexity measure. In practice it's a design tool for reasoning about what happens to your code as the input size grows. You don't need to derive it formally; you need to recognize it on sight.
+
+The math is simple. At 1,000 items:
+- O(n): roughly 1,000 operations
+- O(n log n): roughly 10,000 operations
+- O(n²): roughly 1,000,000 operations
+
+That difference is irrelevant at a dozen items and becomes the difference between "responds in 5ms" and "times out in production" at a thousand.
+
+The two patterns that produce O(n²) most often in real code:
+
+**Nested loops over the same collection.** For every item, iterate the full list to check something. This reads naturally and fails badly at scale.
+
+**Nested database queries.** Fetch a list of users, then for each user fetch their orders. This is the N+1 query pattern — N users means N+1 database roundtrips. At 100 users it's slow; at 10,000 it's untenable. The fix is a JOIN or a batch fetch, reducing N+1 roundtrips to 2.
+
+You catch this by asking one question while writing: "Does the work I'm doing here grow with the size of the outer collection?" If yes, that's O(n²) unless you restructure it.
+
+> [!info] The most expensive O(n²) bugs are the ones that don't show up in development — they show up three months after launch when the data set reaches a size no one tested at.
+
+@feynman
+
+It's like the difference between mailing each person in a city a letter one at a time vs. printing the same letter once and distributing it — at ten recipients it barely matters; at a million, the first approach is impossible.
+
+@card
+id: ttp-ch04-c003
+order: 3
+title: The Cost Hierarchy: Where Latency Actually Lives
+teaser: L1 cache is roughly 1 nanosecond; a cross-region network call is roughly 100 milliseconds — that's a 100-million-to-one gap, and most performance problems live in the wide end.
+
+@explanation
+
+Every operation your program performs has a cost, and those costs differ by many orders of magnitude. If you don't have these numbers internalized roughly, you'll make architectural decisions that don't reflect reality.
+
+Approximate latency numbers worth memorizing:
+- **L1 cache access:** ~1 ns
+- **L2 cache access:** ~4 ns
+- **RAM access:** ~100 ns (100x slower than L1)
+- **SSD random read:** ~100 μs (100,000x slower than L1)
+- **Network roundtrip (same datacenter):** ~1 ms (1,000,000x slower than L1)
+- **Cross-region network call:** ~100 ms (100,000,000x slower than L1)
+
+The implication is not subtle: keeping hot data in memory rather than fetching it from a database is not a micro-optimization, it's a 1,000x improvement. Keeping data local rather than calling a cross-region service is not an architectural nicety, it's a 100,000x improvement in that operation's cost.
+
+The practical version of this: the most reliable performance lever you have is data locality — putting the data your hot paths need close to where the computation happens. That's why caches exist, why connection pools matter, why batch reads outperform serial reads, and why co-locating services in the same availability zone is worth the operational complexity.
+
+When a system is slow and you're trying to understand why, look at what's crossing the expensive boundaries: network calls, disk reads, and database roundtrips are the operations that dominate latency in most real systems.
+
+> [!info] Jeff Dean's original "numbers every programmer should know" slides are worth reading once and keeping as a reference. The exact numbers shift as hardware improves; the relative ratios are stable.
+
+@feynman
+
+It's the same reason you keep frequently-used tools on your desk instead of in a storage unit across town — the work is the same, but the retrieval cost is completely different.
+
+@card
+id: ttp-ch04-c004
+order: 4
+title: Caching: Three Questions Before You Add One
+teaser: A cache that's rarely hit, misses badly, or can't be invalidated is worse than no cache — answer three questions before you reach for one.
+
+@explanation
+
+Caching is one of the highest-leverage performance tools available, and one of the most frequently misused. Before adding a cache, you need honest answers to three questions.
+
+**What is the expected hit rate?** A cache with a 90% hit rate eliminates 90% of the expensive operations. A cache with a 20% hit rate adds complexity and a failure mode while barely improving performance. Hit rate depends on how many distinct keys your access pattern has — a cache over 10 users has a very different hit rate than a cache over 10 million users.
+
+**What happens on a miss?** On a cache miss, you fall back to the slow path. If the slow path is a database query that takes 200ms, a 10% miss rate means 10% of requests still take 200ms — which may be fine or may violate your SLA. If the slow path can fail, your cache miss handling needs to account for that.
+
+**How do you invalidate?** This is the one that breaks systems. Cache entries become stale when the underlying data changes. If you can't reliably invalidate on change, you serve stale data. The three common strategies: time-to-live (entries expire after N seconds — simple, but stale for up to N seconds), event-driven invalidation (invalidate when the source changes — fresh, but complex), and write-through (update the cache and the source together — consistent, but requires careful coordination).
+
+The two hardest problems in computer science — naming things and cache invalidation — are both, at root, communication problems: agreement on what something is called and agreement on when a value is no longer valid.
+
+> [!warning] Cache-aside (your code checks the cache, falls back to the source, populates the cache) is the most common pattern and the easiest to reason about. Read-through and write-through add complexity; reach for them only when cache-aside demonstrably falls short.
+
+@feynman
+
+A cache is like a sticky note you write to avoid re-reading the manual — useful if you write it down correctly, dangerous if it's wrong and you trust it anyway, and useless if you never look at it.
+
+@card
+id: ttp-ch04-c005
+order: 5
+title: Database Query Performance: The Index Is the Lever
+teaser: A missing index turns a 5ms query into a 30-second full table scan — and your ORM won't tell you it's happening.
+
+@explanation
+
+Most database performance problems are, at root, index problems. Understanding this saves you from a lot of expensive investigations.
+
+When a query runs without a supporting index, the database reads every row in the table to find the matching ones. That's a full table scan. At 10,000 rows it's slow; at 10 million it's a production incident. An index on the right column turns that into a seek — the database jumps directly to the matching rows. The difference is often two to three orders of magnitude.
+
+The diagnostic tool is the query execution plan. In PostgreSQL, `EXPLAIN ANALYZE` shows you exactly what the query optimizer chose to do, whether it used an index or a sequential scan, and how long each step took. In MySQL, `EXPLAIN` does the same. The output is dense, but the key signal is simple: `Seq Scan` on a large table means no index was used, and that's usually the problem.
+
+ORMs hide bad queries. When you write `User.where(status: :active).includes(:orders)`, the ORM generates SQL for you. The SQL might be fine or it might be doing a full table scan on a ten-million-row table. You won't know without looking at the SQL. Enable query logging in development — most ORMs have a config option — and look at what's actually being sent to the database.
+
+N+1 queries are the ORM's most common gift to production slowness. One query to fetch 100 users, then 100 queries to fetch their orders, totals 101 database roundtrips. The fix is an eager load (JOIN or separate batch query), reducing it to 2.
+
+> [!tip] When a page or endpoint is slow and you're not sure why, count the number of database queries it makes. If the count scales with the number of records on the page, you've found your N+1.
+
+@feynman
+
+An index is like the index of a book — without it, finding one fact means reading the whole thing; with it, you jump directly to the right page.
+
+@card
+id: ttp-ch04-c006
+order: 6
+title: Premature Optimization: What Knuth Actually Said
+teaser: "The root of all evil" is optimizing things that aren't bottlenecks — not ignoring performance; the real advice is about where you spend optimization effort.
+
+@explanation
+
+The full Knuth quote is: "We should forget about small efficiencies, say about 97% of the time: premature optimization is the root of all evil. Yet we should not pass up our opportunities in that critical 3%."
+
+The advice is often misread as "don't optimize" or "performance doesn't matter until the user complains." That's not what it says. The advice is: spend your optimization effort on the things that are actually slow, not on hypothetical future bottlenecks that your profiler has never surfaced.
+
+What premature optimization looks like in practice:
+- Rewriting a readable algorithm in a lower-level form because it "might be slow" before measuring whether it's slow.
+- Introducing a cache before establishing that the un-cached path is too slow for the use case.
+- Choosing a complex data structure over a simple one because of Big-O characteristics at a scale the system will never reach.
+- Avoiding allocations in a path that runs once per user session, at the cost of code clarity.
+
+The cost is not zero: premature optimizations reduce readability, increase complexity, and make the code harder to change. And they almost never optimize the actual bottleneck, which you find only by profiling.
+
+The correct sequence is: write code that is clear and correct, profile in a realistic environment, find the specific hotspot, and optimize that specific thing. The 3% Knuth refers to — the things worth optimizing — are identifiable only after profiling, not before.
+
+> [!info] Premature optimization is expensive in two ways: it makes the code harder to maintain, and it usually doesn't make it faster, because you optimized the wrong thing.
+
+@feynman
+
+It's like improving the aerodynamics on a delivery truck before measuring whether the truck's speed is actually what limits delivery time — the bottleneck might be loading, routing, or traffic, and you just spent a week on the wrong problem.
+
+@card
+id: ttp-ch04-c007
+order: 7
+title: Memory Allocation and GC Pressure
+teaser: Every object you allocate in a hot path is work the garbage collector has to undo — in high-throughput systems, allocation patterns matter as much as algorithm choice.
+
+@explanation
+
+In garbage-collected languages (Java, Kotlin, C#, Swift with ARC, Go), memory management is automatic — you allocate, the runtime collects. This is a significant productivity win and a source of subtle performance problems in high-throughput systems.
+
+Every object allocation is a cost. The object must be initialized, a reference to it must be tracked, and eventually the GC must identify it as unreachable and reclaim the memory. In a system processing 10,000 requests per second, if each request allocates 200 short-lived objects, you're allocating 2 million objects per second. At some threshold this saturates the GC, causing GC pauses — brief stops where your program freezes while the collector runs. In a latency-sensitive system, these pauses show up in your p99 and p999 latency numbers even when median latency looks fine.
+
+Strategies for hot paths:
+- **Object pooling:** Pre-allocate a pool of objects, check one out for use, return it when done. Eliminates allocation on the hot path. Common in connection pools, thread pools, and byte buffer pools.
+- **Value types over reference types:** A struct on the stack (C#, Swift, Rust) doesn't add GC pressure; a heap-allocated class object does. For small, short-lived data in high-frequency code, prefer value semantics.
+- **Pre-sizing collections:** Allocating a `List` with an initial capacity avoids resizing allocations as the list grows. A small detail, significant in tight loops.
+
+The profiler will tell you whether allocations are your problem. GC-pause profiling tools (async-profiler's allocation profiling for JVM, .NET's EventPipe GC events) show you exactly which allocations are happening most. Optimize only what shows up there.
+
+> [!info] In Swift specifically, classes are reference types with ARC overhead; structs are value types with no heap allocation. Preferring structs for small data in hot paths is idiomatic Swift, not micro-optimization.
+
+@feynman
+
+An allocation in a tight loop is like hiring a temporary contractor for every task instead of having staff — each hire-and-fire cycle is overhead, and at high enough volume the overhead dominates the work.
+
+@card
+id: ttp-ch04-c008
+order: 8
+title: Concurrency vs. Parallelism: The Right Tool for the Job
+teaser: Async/await makes I/O-bound code faster by not blocking threads while waiting — it does nothing for CPU-bound bottlenecks, which need actual parallel execution.
+
+@explanation
+
+Concurrency and parallelism are used interchangeably in conversation and mean different things in practice. Getting the distinction wrong leads to refactors that don't solve the actual problem.
+
+**Concurrency** is the ability to manage multiple things at once. A single-threaded event loop that handles thousands of network connections is concurrent — it interleaves progress on each connection without running them simultaneously. The key word is "manage."
+
+**Parallelism** is actually doing multiple things at the same time, typically on multiple CPU cores. A computation that divides a dataset into four chunks and processes each chunk on a separate thread is parallel. The key word is "simultaneously."
+
+Where async/await helps:
+- **I/O-bound operations:** database queries, network calls, file reads. The thread that would have blocked waiting for a response is freed to do other work. This increases throughput — more concurrent operations per thread — without adding CPU resources.
+- **UI responsiveness:** moving work off the main thread keeps the interface responsive while the operation runs.
+
+Where async/await doesn't help:
+- **CPU-bound bottlenecks:** if a computation takes 2 seconds of CPU time, making it async doesn't reduce that 2 seconds. You need parallelism — splitting the work across cores — or a faster algorithm.
+
+The mismatch: an engineer adds async/await to a slow image processing pipeline, expecting a speedup. Image processing is CPU-bound. The async refactor adds overhead and makes the code harder to follow without improving performance. The fix is parallelism (splitting the workload across cores) or moving the work to a background queue, not async/await.
+
+> [!tip] Ask first: is the slowness from waiting (I/O-bound) or from computing (CPU-bound)? The answer determines whether concurrency tools or parallelism tools are the right lever.
+
+@feynman
+
+Concurrency is one chef juggling ten orders efficiently; parallelism is ten chefs each cooking one order simultaneously — the first helps when the bottleneck is coordination, the second helps when the bottleneck is actual cooking time.
+
+@card
+id: ttp-ch04-c009
+order: 9
+title: Benchmarking Correctly: When Numbers Lie
+teaser: A micro-benchmark that runs 100x faster in isolation and delivers no improvement in production is not a win — the benchmark was measuring the wrong thing.
+
+@explanation
+
+Benchmarks are the only way to know whether a change made the system faster. They're also easy to do wrong in ways that produce convincing but meaningless results.
+
+The common ways micro-benchmarks mislead:
+
+**JIT warmup.** JVM, .NET CLR, and similar runtimes compile bytecode to native machine code at runtime. A benchmark that runs once measures the interpreted path, not the compiled path. Benchmarks must include a warmup phase — typically hundreds or thousands of invocations — before the measurement window. JMH (Java Microbenchmark Harness) and BenchmarkDotNet handle this automatically; rolling your own doesn't.
+
+**Dead code elimination.** If the compiler can determine that a computation's result is never used, it may eliminate the computation entirely. A benchmark that computes a value and discards it may be benchmarking nothing. Well-designed benchmark harnesses consume results to prevent this.
+
+**Unrealistic data sets.** A benchmark on a sorted list of 100 integers tells you nothing about performance on an unsorted list of 10 million integers from production. The access patterns, cache behavior, and branch prediction profile are all different.
+
+**Single-run comparisons.** Run the benchmark once, compare two numbers, call it done. Any two runs have variance. Statistical significance requires multiple runs, computing mean and standard deviation, and verifying the difference exceeds the noise floor. BenchmarkDotNet and criterion (Rust) do this automatically.
+
+The benchmark that matters is the one that exercises realistic data, realistic concurrency, and the realistic hot path. End-to-end load tests against a staging environment are more useful than micro-benchmarks for most production performance questions.
+
+> [!warning] If your benchmark results are suspiciously good — 100x improvement from a small change — suspect dead code elimination or warmup effects before celebrating.
+
+@feynman
+
+A micro-benchmark that doesn't match production conditions is like testing a car's fuel efficiency on a flat, empty track in ideal weather — the number is real, it just doesn't predict what happens in traffic.
+
+@card
+id: ttp-ch04-c010
+order: 10
+title: Performance Budgets: Set the Bar Before You Ship
+teaser: "We'll optimize it after launch" is the most expensive sentence in software — retrofitting performance into a system designed without it costs far more than designing for it from the start.
+
+@explanation
+
+A performance budget is an explicit, measurable threshold set before development begins: p99 latency under 200ms, memory footprint under 500MB, app launch time under 1 second. These are feature requirements, not post-launch aspirations.
+
+Without a budget, performance review happens late — typically when a user complains or a monitor fires. By that point, the architecture is fixed, the data model is deployed, and the expensive changes required to hit a reasonable target conflict with the features already built on top of the slow foundation. The retrofit is expensive, disruptive, and often incomplete.
+
+With a budget, performance becomes part of every design review:
+- Does this data model support the queries we need without a full table scan at target data volume?
+- Does this API call pattern stay within the latency budget when the service is under load?
+- Does adding this feature push memory usage over the budget on a mid-range device?
+
+Setting budgets also forces a conversation about what "done" means for performance. A feature that works but takes 8 seconds to load isn't done. A service that's correct but has p99 latency of 4 seconds isn't done. Making this explicit before implementation means the team isn't surprised when a performance standard is enforced at review.
+
+The practical setup: identify the two or three metrics that matter most for your system (latency, memory, throughput, battery — depends on context), set numeric thresholds, and add them to your definition of done. Automate measurement in CI where possible so regressions are caught before they ship.
+
+> [!info] The cost of a performance feature is lowest when it's designed in, moderate when it's added during development, and highest when it's retrofitted into a shipped system. This is the same curve as security and accessibility — the earlier the constraint, the cheaper the compliance.
+
+@feynman
+
+A performance budget is like a structural load limit set by the architect before construction — much cheaper than discovering the floor can't hold the furniture after the building is occupied.

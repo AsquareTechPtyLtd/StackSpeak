@@ -1,0 +1,290 @@
+@chapter
+id: azr-ch07-traffic-management-and-cdn
+order: 7
+title: Traffic Management and CDN
+summary: Azure gives you five overlapping traffic tools — Load Balancer, Application Gateway, Front Door, Traffic Manager, and CDN — and the job is knowing which layer each operates at, where they fit together, and when stacking them makes sense.
+
+@card
+id: azr-ch07-c001
+order: 1
+title: Azure Load Balancer Layer 4 Basics
+teaser: Azure Load Balancer operates at TCP/UDP and makes routing decisions purely on IP and port — no application-layer awareness, just fast, stateless distribution.
+
+@explanation
+
+Azure Load Balancer is a Layer 4 (transport layer) load balancer. It doesn't read HTTP headers, paths, or cookies — it sees a TCP/UDP flow and distributes it based on a 5-tuple hash: source IP, source port, destination IP, destination port, and protocol. Traffic lands on the same backend as long as that 5-tuple stays constant, which gives you basic per-connection affinity without session state.
+
+There are two SKUs and you should default to Standard in any production workload:
+
+- **Basic SKU** — no SLA, no zone redundancy, open network security group by default, limited to 300 instances in the backend pool. Fine for dev/test; don't use it for anything real.
+- **Standard SKU** — 99.99% SLA (with 2+ healthy VMs), zone-redundant frontend IPs, up to 1,000 backend instances, HTTPS health probes, diagnostics via Azure Monitor. Required for Availability Zones.
+
+The key components to understand:
+
+- **Frontend IP configuration** — the public or private IP the load balancer listens on. You can have multiple.
+- **Backend pool** — the set of VMs or scale set instances that receive traffic.
+- **Health probes** — TCP, HTTP, or HTTPS checks that mark backends healthy or unhealthy. A backend that fails the probe stops receiving new connections.
+- **Load balancing rules** — bind a frontend IP:port to a backend pool:port. One rule per port.
+
+> [!warning] Standard Load Balancer blocks all inbound traffic by default — you must explicitly allow it via Network Security Groups. Teams migrating from Basic get surprised by this.
+
+@feynman
+
+It's a network-level traffic cop that doesn't know what language the cars are speaking — it just counts axles and sends them to the right lane.
+
+@card
+id: azr-ch07-c002
+order: 2
+title: Azure Application Gateway Layer 7 Routing
+teaser: Application Gateway is a regional Layer 7 load balancer that can route by URL path, host header, and more — it actually reads your HTTP requests before deciding where to send them.
+
+@explanation
+
+Where Load Balancer operates on TCP/UDP headers, Application Gateway operates on HTTP, HTTPS, and WebSocket traffic. Because it terminates the connection and reads the request, it can make routing decisions that Load Balancer can't:
+
+- **URL path-based routing** — send `/api/*` to one backend pool and `/static/*` to another.
+- **Host-header routing** — route `app1.example.com` and `app2.example.com` to different pools behind a single Application Gateway.
+- **Cookie-based session affinity** — Application Gateway sets an affinity cookie; subsequent requests from the same browser go to the same backend instance. Useful when your app stores session state in memory.
+- **SSL termination** — the client TLS session terminates at the gateway; traffic to backends goes as plain HTTP (cheaper and simpler). Or configure **end-to-end SSL** to re-encrypt traffic from gateway to backend if your security policy requires it.
+
+Application Gateway v2 (the current generation) adds autoscaling — you specify a min and max instance count and it scales within that range based on traffic. V1 requires you to provision a fixed size; use v2 for all new deployments.
+
+The **WAF SKU** layers OWASP-based web application firewall inspection on top of the v2 load balancing features. It adds cost (~30–50% over the standard v2 tier) and latency, but you get it in the same resource rather than a separate appliance.
+
+> [!info] Application Gateway is regional — it distributes traffic to backends within a single region. If you need multi-region routing, Application Gateway is not the tool; Front Door or Traffic Manager handles that layer.
+
+@feynman
+
+Load Balancer is a telephone switchboard that just connects you to an available line; Application Gateway is the receptionist who reads your request form before deciding which department to route you to.
+
+@card
+id: azr-ch07-c003
+order: 3
+title: Application Gateway WAF and OWASP Rule Sets
+teaser: The WAF SKU on Application Gateway gives you OWASP core rule set protection at the edge of your app — but detection mode and prevention mode are not the same thing, and you need to tune before you flip the switch.
+
+@explanation
+
+Application Gateway WAF uses OWASP Core Rule Set (CRS) to inspect inbound HTTP requests. CRS 3.2 is the current recommended version; it covers the OWASP Top 10 — SQL injection, cross-site scripting, path traversal, remote code execution, and others.
+
+Two modes:
+
+- **Detection mode** — requests that match rules are logged but allowed through. Use this when you first enable the WAF. You'll see what would have been blocked without breaking production.
+- **Prevention mode** — requests that match rules are blocked and logged. This is what you want once you've reviewed the detection logs and confirmed you're not blocking legitimate traffic.
+
+WAF policies let you manage rules as a separate resource attached to an Application Gateway (or even at the per-listener or per-routing-rule level). This means you can apply different WAF policies to different parts of your app from a single gateway.
+
+Tuning levers:
+
+- **Custom rules** — evaluated before the managed OWASP rules. You can allow or block based on IP ranges, geolocation, request attributes, or rate limiting (rate limiting requires CRS 3.2+).
+- **Exclusion lists** — suppress a specific OWASP rule for a specific request attribute. Useful when a legitimate header or form field contains characters that trigger a false positive (a rich-text editor that sends HTML in a POST body, for example).
+
+> [!tip] Enable WAF in detection mode first, run it for at least a week, then audit the logs before switching to prevention mode. A single misconfigured exclusion can silently break a form submission for every user.
+
+@feynman
+
+Detection mode is a smoke alarm that logs where there's smoke but doesn't trigger the sprinklers — useful for calibrating before you let it cause real disruption.
+
+@card
+id: azr-ch07-c004
+order: 4
+title: Azure Front Door Global L7 Load Balancer
+teaser: Azure Front Door is a globally distributed Layer 7 load balancer and CDN combined — traffic enters at one of 170+ points of presence worldwide and gets routed to your origin before a dedicated connection from a far-off data center ever has a chance to introduce latency.
+
+@explanation
+
+Front Door sits at the edge of Microsoft's global network. When a user in Tokyo hits your app, the TLS handshake and HTTP connection terminate at the Tokyo PoP (one of 170+ globally), not at your East US origin. From there, Microsoft's backbone carries the request to your origin over a pre-warmed, optimized connection. This typically saves 50–200ms on the first request in high-latency regions.
+
+Front Door combines several capabilities in one service:
+
+- **Global load balancing** with multiple routing methods: latency (send to the lowest-latency origin), priority (active/standby), weighted (gradual traffic shift for canary deploys), and session affinity.
+- **Health probes** — configurable interval, path, and protocol to determine which origins are healthy.
+- **WAF at the edge** — same WAF policy model as Application Gateway, but enforced at the PoP before traffic reaches your origin.
+- **Caching** — static assets can be cached at PoPs globally, with configurable caching rules, cache purge on demand, and compression.
+- **URL rewrite and redirect** — rewrite paths or redirect HTTP to HTTPS at the edge, before the request reaches your origin.
+
+Two tiers:
+
+- **Standard** — CDN plus global routing, WAF, caching. No managed rule sets in WAF.
+- **Premium** — adds Microsoft-managed WAF rule sets (OWASP CRS + Microsoft Threat Intelligence), Private Link origins (your origin doesn't need a public IP), and security analytics.
+
+> [!info] Front Door Standard/Premium replaced the classic Azure CDN products from Verizon and Akamai for new workloads. If you're starting fresh, use Front Door.
+
+@feynman
+
+Front Door is a ring of bouncers stationed in every major city — they check IDs locally and only forward approved guests through a private corridor to the main venue, instead of making everyone commute to the venue first.
+
+@card
+id: azr-ch07-c005
+order: 5
+title: Front Door vs Application Gateway — Picking the Right Layer
+teaser: Front Door handles global multi-region routing; Application Gateway handles regional workload routing — they're not competitors, they're different layers of the same stack.
+
+@explanation
+
+The cleanest way to remember the split: Front Door is internet-facing and global; Application Gateway is regional and typically internal to a VNet or behind a private endpoint.
+
+**Use Front Door when:**
+- You have backends in multiple regions and need users routed to the nearest or healthiest one.
+- You want CDN caching and edge WAF with no additional infrastructure.
+- You need global failover — e.g., active East US + standby West Europe.
+- Your origin is a public-facing service (App Service, AKS, VMs with public IPs, or via Premium's Private Link).
+
+**Use Application Gateway when:**
+- You have a single region and need URL path-based or host-header routing to multiple backends.
+- Your backends are in a VNet and you don't want public IPs on them.
+- You need cookie-based session affinity or end-to-end SSL at the regional layer.
+- You're fronting an internal API or microservice mesh.
+
+**Stack both when:**
+Front Door in front of regional Application Gateways is a common production pattern. Front Door handles global routing, caching, and edge WAF. Application Gateway handles regional routing, session affinity, and backend-level WAF. The Application Gateway can have a private frontend IP — only Front Door's backend IP ranges are allowed through the NSG, which limits the attack surface.
+
+> [!warning] Don't put Application Gateway in front of Front Door — it reverses the intended hierarchy and adds cost and latency without benefit. Front Door goes at the outermost edge.
+
+@feynman
+
+Front Door is the airline routing passengers to the right city; Application Gateway is the airport shuttle routing them to the right terminal once they land.
+
+@card
+id: azr-ch07-c006
+order: 6
+title: Azure Traffic Manager DNS-Based Load Balancing
+teaser: Traffic Manager routes users to the right endpoint by returning a different DNS answer — it never touches your actual traffic, which means it's fast to configure and limited by how long DNS caches survive.
+
+@explanation
+
+Traffic Manager is a DNS-based load balancer. It does not proxy traffic. When a client resolves your Traffic Manager profile's DNS name, Traffic Manager returns the IP of whichever endpoint it selects. The client then connects directly to that IP. Traffic Manager never sees the actual HTTP requests.
+
+This makes Traffic Manager simple and cheap — there's no data plane to scale — but it has one important caveat: DNS TTL. Traffic Manager sets a minimum TTL of 0 seconds on its responses, but clients, operating systems, and ISP resolvers often cache DNS answers longer. In a failover scenario, some clients may continue hitting the failed endpoint for 30–300 seconds after Traffic Manager has updated its response. Design your health probes and failover expectations around this.
+
+Routing methods:
+
+- **Performance** — routes to the lowest-latency endpoint based on the client's DNS resolver location.
+- **Weighted** — distributes traffic proportionally; useful for canary releases (e.g., 10% to new deployment, 90% to stable).
+- **Priority** — active/standby; traffic goes to the highest-priority healthy endpoint.
+- **Geographic** — routes based on the geographic location of the DNS query, for data residency requirements.
+- **Multivalue** — returns multiple healthy endpoints in a single DNS response; client picks one.
+- **Subnet** — routes based on client IP subnet ranges.
+
+**Nested profiles** let you combine methods — e.g., a priority profile with two children that are each weighted profiles. This handles multi-region weighted failover patterns.
+
+> [!info] Traffic Manager is the right tool when your routing requirement is DNS-level (geographic compliance, DNS-based failover) and not HTTP-level. For HTTP routing with headers, paths, or cookies, use Front Door.
+
+@feynman
+
+Traffic Manager is the phone book that tells you which office to call — it doesn't patch you through, it just gives you the right number, and your local copy might be a few minutes out of date.
+
+@card
+id: azr-ch07-c007
+order: 7
+title: Azure CDN Profiles, Endpoints, and Providers
+teaser: Azure CDN caches your static content at edge nodes globally — but the product landscape has consolidated, and for most new workloads Front Door has replaced standalone Azure CDN.
+
+@explanation
+
+Azure CDN delivers static content (images, JS, CSS, video) from edge nodes close to users rather than from your origin. The structure is: a **CDN profile** (container that defines the provider and pricing tier) contains one or more **CDN endpoints** (each endpoint has an origin, a hostname like `yourapp.azureedge.net`, and caching rules).
+
+The **origin** is where CDN fetches content on a cache miss — a storage account, App Service, a VM's public IP, or any publicly reachable host.
+
+**Three classic providers** under the Azure CDN umbrella:
+
+- **Microsoft CDN (Classic)** — built on the same edge infrastructure as Azure. Good default for most use cases.
+- **Verizon (Standard and Premium)** — historically strong CDN with advanced rules engine in Premium. Azure has announced end-of-life migration path to Front Door for Verizon customers.
+- **Akamai** — high-volume media delivery, deep PoP coverage. Also being migrated to Front Door in the Azure portal.
+
+Key configuration options on an endpoint:
+
+- **Caching rules** — override origin Cache-Control headers, set TTLs per path, or bypass cache entirely for dynamic content.
+- **Custom domains and HTTPS** — bring your own domain (CNAME the CDN hostname), and Azure will provision and auto-renew a managed TLS certificate at no extra cost.
+- **Compression** — CDN compresses responses (gzip/brotli) before delivering to clients, reducing transfer size.
+
+> [!info] For new projects, use Azure Front Door Standard/Premium instead of standalone CDN. Front Door gives you CDN plus global load balancing, WAF, and URL rewrite in a single resource. The classic CDN products remain supported but are no longer the recommended starting point.
+
+@feynman
+
+A CDN endpoint is a chain of vending machines stocked from a central warehouse — the first person to request an item causes a warehouse trip; everyone after that gets it from the machine next door.
+
+@card
+id: azr-ch07-c008
+order: 8
+title: Azure DDoS Protection Basic vs Standard
+teaser: Every Azure resource gets Basic DDoS protection for free, but Standard is a separate paid product — and at roughly $2,944 per month per VNet, it's only worth buying when the cost of a successful attack exceeds that by a meaningful margin.
+
+@explanation
+
+**DDoS Protection Basic** is automatic and free for all Azure customers. It protects the Azure platform infrastructure — volumetric attacks large enough to affect Microsoft's network get absorbed at the platform level. You get this without configuring anything, and it provides no per-application tuning or visibility. It won't protect your app from an attack sized to target just your workload.
+
+**DDoS Protection Standard** is enabled per virtual network and costs approximately $2,944/month (USD, as of 2025) for the first 100 public IP resources, plus per-IP fees beyond that. You get:
+
+- **Adaptive tuning** — traffic baselines are profiled per protected public IP; the mitigation policy tightens around your normal traffic patterns rather than using generic thresholds.
+- **Real-time attack metrics and alerts** — integrated with Azure Monitor; you can see an active attack in progress, not just after it ends.
+- **DDoS Rapid Response (DRR) team** — Microsoft engineers you can engage during an active attack for support and manual mitigation assistance.
+- **Cost protection credits** — if a DDoS attack causes your resources to scale out, Microsoft credits the scale-out costs against that attack period.
+
+When is it worth the price? Typical candidates: financial services, gaming, media streaming, e-commerce, any workload where a 1-hour outage during an attack costs more than a month of DDoS Protection Standard fees. If your workload is low-profile internal tooling, Basic is almost certainly sufficient.
+
+> [!tip] DDoS Protection Standard protects public IPs attached to resources in the enabled VNet — including Load Balancer frontends, Application Gateway, and VM NICs. Front Door has its own built-in DDoS mitigation that does not require a Standard plan on your origin VNet.
+
+@feynman
+
+Basic DDoS is the fire department that shows up when your block is burning — Standard DDoS is a sprinkler system that activates the moment smoke appears in your specific room.
+
+@card
+id: azr-ch07-c009
+order: 9
+title: Azure Private Link Service — Exposing Your Service Privately
+teaser: Private Link Service is the provider side of Private Link — it lets you expose your own service to other VNets or tenants without peering or public IPs, over a private endpoint that lives entirely within the consumer's network.
+
+@explanation
+
+Most Azure Private Link content focuses on the **consumer** side: you create a private endpoint in your VNet that gives you a private IP address resolving to an Azure service (Storage, SQL, Key Vault). But Private Link Service is the **provider** side: you build a service and expose it to consumers without requiring VNet peering or public exposure.
+
+How it works:
+
+1. You front your service with a Standard Load Balancer (internal, private frontend IP).
+2. You create a Private Link Service resource associated with that Load Balancer's frontend.
+3. Azure issues a Private Link Service alias — a string like `myservice.12345.southeastasia.azure.privatelinkservice`.
+4. A consumer in another VNet (or another Azure tenant) creates a private endpoint pointed at your alias.
+5. The connection request appears in your Private Link Service's approval list. You approve or reject it.
+6. Once approved, the consumer's private endpoint gets a private IP in their VNet. Traffic flows from consumer endpoint → Microsoft backbone → your Load Balancer → your service. No public IPs, no VNet peering, no route table changes.
+
+DNS considerations: the consumer needs their DNS to resolve to the private endpoint's IP, not a public hostname. They configure a Private DNS Zone in their VNet (or their on-premises DNS server with a conditional forwarder).
+
+The key distinction:
+
+- **Consuming a private endpoint** (customer role) — you add a private IP in your VNet for an Azure PaaS service or someone else's Private Link Service.
+- **Creating a Private Link Service** (provider role) — you expose your own service to be consumed via private endpoint. You control the approval list.
+
+> [!info] Private Link Service requires a Standard (not Basic) Load Balancer. The NAT IP configuration on the Private Link Service must be in a dedicated subnet with no other resources.
+
+@feynman
+
+Consuming a private endpoint is having someone else's phone number in your contacts; creating a Private Link Service is publishing your own number on a directory only approved contacts can dial.
+
+@card
+id: azr-ch07-c010
+order: 10
+title: Cross-Region Load Balancing Patterns
+teaser: Azure gives you three tools for spreading load across regions — Front Door, Traffic Manager, and paired regions — and the right pattern depends on whether you need active-active traffic distribution or DNS-level failover with data residency constraints.
+
+@explanation
+
+No single Azure service handles every cross-region scenario. The pattern depends on what you're optimizing for.
+
+**Active-active with Front Door:**
+Front Door continuously probes all origins and routes each request to the lowest-latency healthy origin. If East US fails a health probe, Front Door stops sending traffic there — typically within 30–60 seconds. This is as close to transparent failover as Azure offers for HTTP workloads. Use this when you want users always routed to the best available origin with no DNS cache delays.
+
+**DNS-level failover with Traffic Manager:**
+Traffic Manager returns a DNS answer pointing to the healthy endpoint. Failover delay is governed by the health probe interval (minimum 10 seconds), the number of probe failures before marking unhealthy (default 3), and the DNS TTL (minimum 0, but practically 30–60 seconds for most resolvers). Total failover time: commonly 1–5 minutes end-to-end. Acceptable for services where a short DNS propagation delay is tolerable and where you want geographic routing or subnet-based routing that Front Door doesn't support.
+
+**Health probe design to avoid split-brain:**
+A health probe endpoint should check the full stack — not just whether the web server responds with 200, but whether the database is reachable, the cache is warm, and any downstream dependency is healthy. A probe that only checks the web tier can mark an origin healthy while its database is unhealthy, causing requests to succeed at the traffic layer and fail at the application layer. Return a meaningful status from your `/health` endpoint, not just HTTP 200.
+
+**Paired regions and data residency:**
+Azure region pairs (e.g., East US + West US, North Europe + West Europe) share a replication path and receive platform updates in sequence to reduce simultaneous outage risk. For geo-redundant storage or SQL geo-replication, traffic should fail over within a pair to avoid violating data residency requirements. Traffic Manager's Geographic routing method enforces this at the DNS level.
+
+> [!warning] Stacking Front Door in front of regional Application Gateways is well-supported. Stacking Traffic Manager in front of Front Door is technically possible but rarely necessary — Front Door already handles latency-based routing. Don't stack tools that solve the same problem.
+
+@feynman
+
+Active-active is two hospital ERs taking patients simultaneously with an ambulance dispatcher choosing the less busy one; DNS failover is rerouting all ambulances to the backup hospital after the primary is declared offline — the first is seamless, the second has a few minutes of chaos while the new address propagates.

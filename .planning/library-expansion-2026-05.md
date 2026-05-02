@@ -373,6 +373,10 @@ A chapter that lands under 8 cards is a signal that concepts have been merged ra
 - Starting in Data Engineering → `side-`
 - Project Management Foundations → `pmf-`
 - Building on Microsoft Fabric → `bmf-`
+- AWS Essentials → `aws-`
+- Azure Essentials → `azr-`
+- 100 Things Every Programmer Should Know → `ttp-`
+- 100 Things Every Data Engineer Should Know → `tde-`
 
 ---
 
@@ -559,12 +563,143 @@ Then Phase 2 (Communicating with Data + 2 Shortcuts) → Phase 3 (deferred decis
 
 ---
 
+## Phase 3 — Cloud + Programmer Wisdom Books (Locked)
+
+Four new books approved (2026-05-03):
+
+| Book | ID | Prefix | Chapters | Cards | accentHex | coverIcon |
+|------|----|--------|----------|-------|-----------|-----------|
+| AWS Essentials | `aws-essentials` | `aws-` | 13 | ~143 | `#FF9900` | `cloud.fill` |
+| Azure Essentials | `azure-essentials` | `azr-` | 12 | ~132 | `#0078D4` | `cloud.fill` |
+| 100 Things Every Programmer Should Know | `100-things-programmer` | `ttp-` | 10 | 100 | `#E040FB` | `chevron.left.forwardslash.chevron.right` |
+| 100 Things Every Data Engineer Should Know | `100-things-data-engineer` | `tde-` | 10 | 100 | `#66BB6A` | `cylinder.split.1x2` |
+
+### Execution Rule (5-at-a-time)
+
+**Never run more than 5 background agents simultaneously.** Each agent writes exactly one chapter file then exits. Launch in batches of 5; wait for all 5 to complete before launching the next batch. After each batch, spot-check card counts — any chapter under density target gets a fresh expansion agent before proceeding.
+
+---
+
+### Book 8 — AWS Essentials (`aws-`)
+
+13 chapters, 10–11 cards each (~143 total). 10 cards/chapter minimum.
+
+| Ch | Title | Key topics |
+|----|-------|-----------|
+| 01 | AWS Fundamentals | Regions, AZs, edge locations, the Shared Responsibility Model, IAM root account, service categories, AWS CLI basics |
+| 02 | Compute with EC2 | Instance types/families, AMIs, purchasing options (on-demand/spot/reserved/savings plans), placement groups, user data, EBS vs instance store |
+| 03 | Serverless with Lambda | Event-driven execution, invocation models (sync/async/stream), cold starts, layers, concurrency limits, Lambda URLs, Step Functions |
+| 04 | Containers on AWS | ECS (EC2 vs Fargate), EKS, App Runner, ECR, task definitions, service auto-scaling, sidecars pattern |
+| 05 | Object Storage with S3 | Buckets, storage classes (Standard/IA/Glacier tiers), versioning, lifecycle rules, multipart upload, presigned URLs, S3 Select, access patterns |
+| 06 | Block, File, and Archive Storage | EBS volume types, EFS vs FSx, AWS Backup, S3 Glacier Deep Archive, DataSync, Snow family |
+| 07 | Networking with VPC | VPCs, subnets (public/private), route tables, internet gateways, NAT gateways, security groups vs NACLs, VPC peering, PrivateLink, Transit Gateway |
+| 08 | Traffic Management and CDN | ALB vs NLB, Route 53 routing policies, CloudFront distributions, WAF basics, Global Accelerator |
+| 09 | Databases on AWS | RDS (multi-AZ, read replicas), Aurora serverless, DynamoDB (partition key design, GSIs), ElastiCache, Redshift basics, DocumentDB |
+| 10 | IAM and Security | IAM users/roles/policies, assume-role patterns, AWS Organizations, SCPs, Secrets Manager vs Parameter Store, KMS, CloudTrail |
+| 11 | Data and Analytics | Glue (catalog + ETL), Athena, Kinesis (Streams/Firehose/Data Analytics), EMR, Lake Formation, OpenSearch, MSK |
+| 12 | Observability and IaC | CloudWatch (metrics/logs/alarms), X-Ray, CloudFormation vs CDK vs Terraform on AWS, SSM, AWS Config, Service Catalog |
+| 13 | Cost, AI Services, and Architecture Patterns | Cost Explorer, Budgets, Trusted Advisor, Bedrock, SageMaker basics, Well-Architected pillars, common multi-tier architecture patterns |
+
+### Book 9 — Azure Essentials (`azr-`)
+
+12 chapters, 10–11 cards each (~132 total). 10 cards/chapter minimum.
+
+| Ch | Title | Key topics |
+|----|-------|-----------|
+| 01 | Azure Fundamentals | Regions, availability zones, resource groups, subscriptions, management groups, Azure Resource Manager, portal + CLI + Bicep basics |
+| 02 | Compute: VMs and App Service | VM sizes/series, availability sets vs zones, scale sets, Azure Bastion, App Service plans, deployment slots, WebJobs |
+| 03 | Serverless with Azure Functions | Hosting plans (Consumption/Flex/Premium), triggers, bindings, Durable Functions, Logic Apps comparison |
+| 04 | Containers on Azure | AKS, Container Apps, Container Instances, Azure Container Registry, KEDA-based scaling, Dapr sidecar |
+| 05 | Storage | Blob (tiers, lifecycle, ADLS Gen2), Queue Storage, Table Storage, Files, managed disks, SAS tokens, shared access policies |
+| 06 | Networking with VNet | VNets, subnets, NSGs, ASGs, VNet peering, Private Endpoints, VPN Gateway, ExpressRoute, Azure DNS |
+| 07 | Traffic Management and CDN | Azure Load Balancer, Application Gateway (+ WAF), Front Door, Traffic Manager, Azure CDN |
+| 08 | Databases | Azure SQL (elastic pools, hyperscale), Cosmos DB (partition key design, consistency levels), PostgreSQL Flexible Server, Redis Cache, Synapse Analytics |
+| 09 | Identity and Security | Azure AD (Entra ID), RBAC, managed identities, Key Vault, Defender for Cloud, Policy, Blueprints, PIM |
+| 10 | Data and Analytics | Azure Data Factory, Event Hubs, Stream Analytics, Databricks on Azure, Purview, HDInsight, Azure OpenAI Service integration |
+| 11 | Observability and IaC | Azure Monitor, Log Analytics, Application Insights, Bicep vs ARM vs Terraform, Azure DevOps pipelines, GitHub Actions on Azure |
+| 12 | Cost, AI, and Architecture Patterns | Cost Management + Advisor, Reservations, Azure AI services, Azure OpenAI, Landing Zones, common PaaS architecture patterns |
+
+### Book 10 — 100 Things Every Programmer Should Know (`ttp-`)
+
+10 chapters × 10 cards = 100 cards. Based on the "97 Things Every Programmer Should Know" O'Reilly collection, renamed to "100 Things" with 3 extra cards authored fresh.
+
+**3 additions (new cards, not from source):**
+- "Treat AI-generated code like a PR from a stranger" — review it with the same skepticism; understand before merging
+- "Observability is a design decision, not a retrofit" — instrument from day one; logs/metrics/traces are architecture
+- "Write for the maintainer who has no context" — the reader is future-you at 2am with no memory of this codebase
+
+| Ch | Title | Focus |
+|----|-------|-------|
+| 01 | Code as Communication | Readability, naming, intent, comments that add not repeat, the cost of clever |
+| 02 | Design Principles | DRY, SOLID, YAGNI, the right abstraction level, coupling vs cohesion |
+| 03 | Testing and Reliability | Unit vs integration vs e2e, TDD mindset, test what matters, flaky tests, fail fast |
+| 04 | Performance and Efficiency | Profile before optimizing, algorithmic complexity, memory vs CPU tradeoffs, caching right |
+| 05 | Security Fundamentals | Input validation, least privilege, secrets management, dependency risk, threat modeling basics |
+| 06 | Collaboration and Code Review | PR etiquette, review mindset, giving and receiving feedback, shared ownership |
+| 07 | Developer Tooling and Productivity | Editor fluency, CLI habits, debugging systematically, local environment discipline |
+| 08 | Data and State | State management, data structures that match the problem, immutability benefits, the cost of mutation |
+| 09 | Career and Professional Growth | Deliberate practice, T-shaped skills, communication as a skill, knowing when to ask |
+| 10 | Modern Engineering (2026) | AI-generated code review, observability as design, writing for maintainers, staying current without chasing hype |
+
+### Book 11 — 100 Things Every Data Engineer Should Know (`tde-`)
+
+10 chapters × 10 cards = 100 cards. Based on the "97 Things Every Data Engineer Should Know" O'Reilly collection, renamed to "100 Things" with 3 extra cards authored fresh.
+
+**3 additions (new cards, not from source):**
+- "Treat your data pipeline like production software" — version it, test it, monitor it, on-call it
+- "Build LLM-ready pipelines from the start" — chunking, embedding, metadata, structured outputs are data engineering problems
+- "The local-first analytics mindset — DuckDB before Spark" — reach for the simpler tool first; scale only when you must
+
+| Ch | Title | Focus |
+|----|-------|-------|
+| 01 | Data Engineering Foundations | What data engineers do, pipeline thinking, the modern data stack, responsibility boundaries |
+| 02 | Data Storage and Formats | Parquet, ORC, Avro, Delta/Iceberg, choosing a format, compression tradeoffs |
+| 03 | Data Pipeline Design | Idempotency, late-arriving data, exactly-once semantics, pipeline contracts |
+| 04 | Data Quality and Testing | Expectations, schema enforcement, anomaly detection, testing dbt models |
+| 05 | Orchestration and Scheduling | DAG design, dependency management, sensors, retries, idempotent tasks |
+| 06 | Streaming and Real-Time | Kafka fundamentals, event sourcing, windowing, stateful processing, Lambda vs Kappa |
+| 07 | Data Governance and Security | Lineage, cataloging, column masking, row-level security, access audit, PII handling |
+| 08 | Cloud Data Platforms | Warehouse vs lakehouse, BigQuery/Redshift/Snowflake tradeoffs, cost-per-query patterns |
+| 09 | Analytics Engineering and Modeling | dbt basics, star vs wide table, semantic layer, metrics consistency across reports |
+| 10 | Modern Data Engineering (2026) | Production pipeline mindset, LLM-ready pipeline design, local-first analytics with DuckDB |
+
+---
+
+## Current Status (as of 2026-05-03)
+
+Books committed to library (11 total):
+
+| Book | Prefix | Chapters | Cards |
+|------|--------|----------|-------|
+| Engineering Data Systems | eds- | 13 | 153 |
+| The Data Engineering Pattern Catalog | depc- | 13 | ~156 |
+| Working with DuckDB | wdd- | 13 | 162 |
+| Effective Data Visualization | edv- | 13 | 130 |
+| Communication Patterns for Engineers | cpe- | 12 | 144 |
+| Communicating with Data | cwd- | 10 | 120 |
+| Critical Thinking for Engineers | cte- | 5 | 39 |
+| Emotional Intelligence at Work | eiw- | 5 | 39 |
+| AI Agents (Definitive Guide) | — | 7 | 85 |
+| LLM Patterns | — | 10 | 120 |
+| Software Architecture | — | 16 | 160 |
+
+**Pending (Phase 3):** aws-essentials (13 ch), azure-essentials (12 ch), 100-things-programmer (10 ch), 100-things-data-engineer (10 ch) = 45 chapters total.
+
+---
+
 ## Next Concrete Step
 
-Start **The Data Engineering Pattern Catalog** following the proven flow:
+Start Phase 3 books. Launch 5 agents at a time (one chapter per agent). Order:
 
-1. Propose chapter spine (12-15 chapters covering pattern families: ingestion, transformation, modeling, orchestration, ML pipelines, observability, etc.) with reworded title/chapter names + 2026-current pattern selection
-2. Get sign-off
-3. Author chapter 1 for tone/density check
-4. If approved, author chapters 2-N autonomously
-5. Build → sync → verify → commit per the established workflow
+**Batch 1 (first 5 agents):**
+1. aws-essentials ch01
+2. aws-essentials ch02
+3. azure-essentials ch01
+4. azure-essentials ch02
+5. 100-things-programmer ch01
+
+Continue in batches of 5 until all 45 chapters are done. After each book, run:
+```
+node scripts/build-books.js && ./scripts/sync-books.sh
+```
+Then verify card counts and commit.
