@@ -67,7 +67,7 @@ The generated `.xcodeproj` is git-ignored. Re-run `xcodegen generate` after pull
 - Follow MVVM strictly — no business logic in Views.
 - Support light and dark mode via `theme.colors` tokens. **Never hardcode colors, fonts, or spacing.**
 - All user-facing strings in `Localizable.strings` (English only for MVP).
-- One type per file, file name must match type name exactly.
+- One type per file, file name must match type name exactly. **Exception:** large SwiftUI views with shared `@State` may be split across multiple files using extensions, named `<TypeName>+<Concern>.swift` (e.g. `FeynmanCardView+Stages.swift`, `FeynmanCardView+Actions.swift`). Keep all stored properties + `init` + `body` in the primary file.
 - No files longer than 300 lines — split if needed.
 
 ### Swift / SwiftUI
@@ -121,19 +121,19 @@ A feature is complete when:
 cd ios && xcodegen generate && cd ..
 
 # Build (any available iOS Simulator)
-xcodebuild -project ios/StackSpeak/StackSpeak.xcodeproj -scheme StackSpeak -destination 'generic/platform=iOS Simulator'
+xcodebuild -project ios/StackSpeak.xcodeproj -scheme StackSpeak -destination 'generic/platform=iOS Simulator'
 
 # Run tests
-xcodebuild test -project ios/StackSpeak/StackSpeak.xcodeproj -scheme StackSpeak -destination 'generic/platform=iOS Simulator'
+xcodebuild test -project ios/StackSpeak.xcodeproj -scheme StackSpeak -destination 'generic/platform=iOS Simulator'
 
 # Build for a specific simulator
-xcodebuild -project ios/StackSpeak/StackSpeak.xcodeproj -scheme StackSpeak -destination 'platform=iOS Simulator,name=iPhone 17'
+xcodebuild -project ios/StackSpeak.xcodeproj -scheme StackSpeak -destination 'platform=iOS Simulator,name=iPhone 17'
 
 # List available simulators
 xcrun simctl list devices available
 
 # Open in Xcode
-open ios/StackSpeak/StackSpeak.xcodeproj
+open ios/StackSpeak.xcodeproj
 
 # Sync word data from shared/ to iOS bundle (index + stack files)
 ./scripts/sync-words.sh
