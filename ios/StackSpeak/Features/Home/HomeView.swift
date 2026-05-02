@@ -304,7 +304,6 @@ struct HomeView: View {
                 word: word,
                 userProgress: progress,
                 isCompleted: viewModel.isWordCompleted(wordId),
-                isFirstWordOfDay: viewModel.todaysWords.first?.id == wordId,
                 latestExplanation: viewModel.latestExplanation(for: wordId, userProgress: progress),
                 onSubmit: { id, explanation, method, markAsMastered in
                     submit(wordId: id, explanation: explanation, method: method, markAsMastered: markAsMastered, progress: progress)
