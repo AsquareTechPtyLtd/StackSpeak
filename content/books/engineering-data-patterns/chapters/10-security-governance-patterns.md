@@ -212,3 +212,147 @@ Patterns for deletable data systems:
 @feynman
 
 Like unsubscribing from email — simple in principle; complicated when you've CC'd fifty mailing lists and don't know which ones have your address.
+
+@card
+id: depc-ch10-c007
+order: 7
+title: IAM and Role-Based Access for Data
+teaser: Permissions in data systems should be attached to roles, not individuals. IAM roles and warehouse RBAC are the foundation; principals are assigned to roles, not directly to resources.
+
+@explanation
+
+**Identity and Access Management (IAM)** in data systems means defining who can do what to which data resource. The pattern is consistent across cloud platforms and warehouses: permissions attach to roles; principals (users, service accounts, pipelines) are assigned to roles.
+
+Principles for data IAM:
+- **Least privilege:** grant only the access needed for the job. An ingestion pipeline that reads from source and writes to bronze needs read on source and write on bronze — nothing else.
+- **Role-based, not user-based:** granting permissions directly to users means every new team member requires the same grant operations. Roles simplify this to a single assignment.
+- **Service accounts for pipelines:** pipelines should not use a human's credentials. Service accounts can be rotated, audited, and scoped independently.
+
+Data warehouse RBAC (Snowflake example):
+```sql
+-- Create roles by function
+CREATE ROLE analyst_read;
+CREATE ROLE pipeline_write;
+
+-- Grant to roles, not users
+GRANT SELECT ON DATABASE analytics TO ROLE analyst_read;
+GRANT INSERT, UPDATE ON TABLE raw_events TO ROLE pipeline_write;
+
+-- Assign users and service accounts to roles
+GRANT ROLE analyst_read TO USER alice;
+GRANT ROLE pipeline_write TO USER airflow_service_account;
+```
+
+Cloud IAM for pipeline infrastructure: the Airflow service account needs `s3:GetObject` on the source bucket and `s3:PutObject` on the destination bucket. It does not need `s3:DeleteBucket` or access to any other bucket.
+
+> [!warning] IAM roles that accumulate permissions over time (no one removes the ones that were "temporary") become an access sprawl problem. Quarterly access reviews should check that each role's permissions match its current function.
+
+@feynman
+
+Like UNIX file permissions with groups — you set permissions on groups, not files per user; assigning a user to a group is the operation that grants access.
+
+@card
+id: depc-ch10-c008
+order: 8
+title: Secret Management in Pipelines
+teaser: Credentials hardcoded in pipeline code or config files are a breach waiting to happen. Centralized secret management keeps credentials out of version control and enables rotation.
+
+@explanation
+
+Pipeline credentials — database passwords, API keys, OAuth tokens, service account keys — are high-value targets. The wrong storage choices create serious exposure.
+
+**Credential anti-patterns:**
+- Hardcoded in pipeline code: visible in git history, shared across all users with repo access, can't be rotated without a code change.
+- In plaintext config files committed to git: same problems; sometimes exported in CI logs.
+- Passed as environment variables in Docker Compose files checked into git.
+- In `.env` files that developers share via Slack.
+
+**Secure credential storage:**
+- **AWS Secrets Manager:** store credentials by name; pipelines retrieve at runtime via SDK; rotation is automated; all accesses are logged.
+- **GCP Secret Manager:** equivalent to AWS Secrets Manager.
+- **HashiCorp Vault:** self-hosted, supports dynamic secrets (generates a short-lived database credential per request, eliminating shared passwords).
+- **Kubernetes Secrets:** for K8s-deployed pipelines; inject as environment variables at pod start, not at image build time.
+
+Pattern in Python:
+```python
+import boto3
+
+def get_db_password():
+    client = boto3.client('secretsmanager')
+    return client.get_secret_value(SecretId='prod/db/password')['SecretString']
+```
+
+Credential rotation: automated rotation (Secrets Manager can rotate RDS passwords on a schedule) is better than manual rotation. Manual rotation is forgotten; automated rotation is calendar-independent.
+
+> [!warning] If a developer has a credential in their local `.env` file, assume it will eventually appear in a git commit. Use pre-commit hooks to block files matching `*.env` or patterns like `password=`.
+
+@feynman
+
+Like a password manager instead of a sticky note — centralized, access-controlled, audited, and independent of the person who originally set the password.
+
+@card
+id: depc-ch10-c009
+order: 9
+title: Encryption Patterns for Data at Rest and in Transit
+teaser: Encryption at rest protects data from physical media theft. Encryption in transit protects data from interception. Both are required; each has different implementation points.
+
+@explanation
+
+**Encryption at rest** ensures that data stored on disk (S3 objects, warehouse blocks, database pages) is unreadable without the decryption key.
+
+Cloud storage defaults:
+- S3 server-side encryption (SSE-S3): AWS manages keys; zero configuration; transparent. The default and sufficient for most cases.
+- SSE-KMS: keys managed in AWS KMS; supports key rotation policies, CloudTrail key usage audit, and cross-account access control. Use for regulated data where key ownership must be explicitly controlled.
+- SSE-C: customer-managed keys not stored in AWS. Maximum control; highest operational complexity; rare in practice.
+
+**Encryption in transit** ensures data moving across a network is unreadable without the session key. Implementation:
+- TLS for all database connections (`sslmode=require` or `sslmode=verify-full` in Postgres connection strings).
+- TLS for API calls to cloud services (enforced by default by all major cloud SDKs).
+- VPC-level controls to require encrypted connections.
+
+Key management practices:
+- **Key rotation:** rotate encryption keys annually (or more frequently for sensitive data). KMS handles key rotation transparently — old data encrypted with old keys is automatically re-encrypted.
+- **Key access logging:** CloudTrail logs every KMS key usage. An unexpected pattern of key accesses can indicate a breach.
+- **Envelope encryption:** for large datasets, the data is encrypted with a data encryption key (DEK); the DEK is encrypted with a key encryption key (KEK). Only the KEK needs to be stored in KMS.
+
+> [!info] "Encrypted at rest" is a box on a compliance checklist, but only meaningful if access to the decryption key is also controlled. Encrypting data with a key that's readable by anyone defeats the purpose.
+
+@feynman
+
+Like a locked safe inside a locked building — encryption at rest is the safe; network controls and IAM are the building; both layers are necessary.
+
+@card
+id: depc-ch10-c010
+order: 10
+title: Network-Level Controls for Data Infrastructure
+teaser: Database credentials are one attack surface. Network controls ensure that even valid credentials can only be used from authorized network locations.
+
+@explanation
+
+**Network-level access control** for data infrastructure means restricting which network locations (IPs, VPCs, subnets) can connect to a database, warehouse, or object store — independent of credentials.
+
+Why this matters: a leaked credential is dangerous only if the attacker can reach the target. A credential that's only usable from within a specific VPC is much harder to exploit than one accessible from the public internet.
+
+Key patterns:
+
+**VPC-only access:** databases and warehouses should not be accessible from the public internet. Place them in private subnets with no internet gateway route. Connections must come from within the VPC (through a bastion host, VPN, or from compute in the same VPC).
+
+**Security group IP allowlisting:** for services that must be accessible from outside the VPC (e.g., a Snowflake account), configure network policies that only allow connections from known IP ranges (the company VPN, the Airflow worker cluster's NAT IP).
+
+```sql
+-- Snowflake network policy: allow only known IPs
+CREATE NETWORK POLICY analytics_access
+  ALLOWED_IP_LIST = ('10.0.1.0/24', '203.0.113.42');
+
+ALTER USER airflow_service APPLY NETWORK POLICY analytics_access;
+```
+
+**Private endpoints:** use PrivateLink (AWS) or Private Service Connect (GCP) to route traffic to managed services through private IPs, never touching the public internet.
+
+**Egress filtering:** restrict outbound connections from compute that handles sensitive data. A data transformation job that processes PII should not be able to make arbitrary outbound HTTP calls to unknown hosts.
+
+> [!tip] Add VPC-only access to new data infrastructure from day one. Retrofitting it later — after analysts have added their home IP to the allowlist and set up direct connections — is a painful conversation.
+
+@feynman
+
+Like a firewall in front of a server — credentials are the key; the firewall decides which doors the key can even approach.

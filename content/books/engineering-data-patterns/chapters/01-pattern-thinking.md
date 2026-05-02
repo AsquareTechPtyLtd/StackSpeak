@@ -141,3 +141,124 @@ The recurring forces in data systems:
 @feynman
 
 Same as how GoF patterns respond to recurring OOP forces — coupling, extensibility, state — each pattern here responds to a recurring data-systems force.
+
+@card
+id: depc-ch01-c006
+order: 6
+title: How to Document a Pattern
+teaser: A pattern without documentation is a tribal practice. The documentation is what turns an informal solution into something the next engineer can apply correctly.
+
+@explanation
+
+A well-documented pattern has a fixed structure that communicates both the solution and the context in which it's valid.
+
+The minimum documentation for a reusable pattern:
+
+**Name:** a short, memorable name the team agrees to use. "CDC-ingestion" is a name; "the thing we do for Postgres" is not.
+
+**Problem statement:** one paragraph on the recurring problem this pattern addresses. Be specific — "sources that change records without producing events" is better than "data movement challenges."
+
+**Solution:** how the pattern works. Concrete enough to implement, not so detailed that it's tied to one tool. "Use the source database's replication log as a stream of change events" rather than "run Debezium 2.3 with these specific settings."
+
+**Consequences:** what the pattern costs. Operational complexity, latency, infrastructure, and the scenarios where it degrades.
+
+**Known uses:** one or two examples of where this pattern is applied in your system. New engineers benefit from seeing a live instance, not just an abstract description.
+
+**Related patterns:** patterns that are often combined with this one, or patterns that solve related problems.
+
+A pattern documented in a wiki page at this level is useful for onboarding, architecture review, and debugging. Undocumented patterns exist only in the minds of the engineers who built them.
+
+> [!tip] A team retrospective after solving a new recurring problem is the right moment to document it. The context is fresh, the solution is working, and the failure modes are clear from recent experience.
+
+@feynman
+
+Like a recipe card — the dish can be cooked from memory, but the card makes it reproducible by anyone, including the cook who made it six months ago.
+
+@card
+id: depc-ch01-c007
+order: 7
+title: Pattern Evolution Over Time
+teaser: Patterns reflect the constraints of when they were designed. As tools, scale, and infrastructure change, patterns that were once correct become outdated.
+
+@explanation
+
+Patterns are not timeless. They represent the best known solution to a recurring problem given a specific set of constraints — tools, scale, team size, cost structure. When those constraints change, the pattern may no longer be optimal or correct.
+
+Examples of patterns that have evolved:
+
+**Lambda architecture** (2011–2020): originally proposed by Nathan Marz to serve both real-time (speed layer) and historical (batch layer) queries from a single system. Required maintaining two separate code paths. As stream processing matured (Flink, Spark Structured Streaming), the Kappa architecture replaced it for most teams — one streaming layer serves both.
+
+**Hadoop HDFS + MapReduce** (2007–2016): the dominant big data pattern before cloud object storage became cheap and reliable. Object stores (S3, GCS) with Parquet replaced HDFS for most new systems by 2018.
+
+**Full denormalization in NoSQL** (2010–2018): a reaction to relational database scalability limits. As NewSQL databases and distributed PostgreSQL improved, the tradeoffs of full denormalization became harder to justify for many use cases.
+
+**Manual schema management** (pre-2020): managing warehouse schemas through handwritten migrations. dbt formalized schema-as-code and made version-controlled schema management the standard.
+
+How to tell a pattern has become outdated:
+- The problem it solves is no longer a real problem at your scale.
+- The tools it was designed to work around have been replaced.
+- A simpler approach delivers the same outcome with less complexity.
+
+> [!info] When learning patterns from older sources (books published before 2020, blog posts from the Hadoop era), check whether the pattern's problem statement still applies before adopting it.
+
+@feynman
+
+Like design patterns that predate garbage collection — valid in their era, not always the right choice today when the language does it for you.
+
+@card
+id: depc-ch01-c008
+order: 8
+title: The Pattern Selection Mindset
+teaser: Experienced engineers don't pattern-match against a catalog — they reason from problem constraints to the solution space, then use the catalog to name what they find.
+
+@explanation
+
+The catalog in this book is a vocabulary, not a flowchart. The right use of it:
+
+1. **Start with the problem.** What is the concrete pressure the system faces? Low latency? High volume? Schema instability? Auditability?
+
+2. **Characterize the constraints.** What does the source support? What can the team operate? What's the freshness budget? What does it cost if this goes wrong?
+
+3. **Reason toward a solution.** Given those constraints, what kind of approach fits? Incremental? Event-driven? Aggregated? Normalized?
+
+4. **Name it from the catalog.** Once you've reasoned toward the shape, find the pattern name that matches. The name is the vocabulary item — it didn't determine your reasoning, it describes the conclusion.
+
+5. **Validate against the pattern's known failure modes.** Does your system have the conditions that make this pattern break? If so, either address them or choose a different pattern.
+
+This is the opposite of: "we need to ingest data, which pattern is most popular?" or "the blog post used Kafka so we should use Kafka."
+
+The selection mindset produces teams that can reason about new problems with no catalog entry — because they're reasoning from principles, not pattern-matching against a list.
+
+> [!info] The best indication that a team has internalized patterns is when they discover the right approach independently and then find it already has a name. The name is a confirmation, not a discovery.
+
+@feynman
+
+Like how a physicist approaches a new problem — they reason from first principles and then recognize that the result is a known configuration, rather than starting from the known configurations and seeing which fits.
+
+@card
+id: depc-ch01-c009
+order: 9
+title: Patterns Across the Lifecycle
+teaser: Patterns don't exist in isolation — they span the data lifecycle. An ingestion pattern constrains the transformation pattern available to it; a modeling choice constrains serving.
+
+@explanation
+
+The chapters in this book are organized by lifecycle stage, but real data systems don't have clean stage boundaries. Choosing a pattern in one stage often constrains or enables choices in adjacent stages.
+
+Some cross-stage dependencies that matter:
+
+**Ingestion → Transformation:** CDC ingestion produces event records with `before` and `after` fields. The transformation stage must be designed to handle this format — a staging model that expects a simple INSERT-shaped record will not work against CDC events without an upstream flatten step.
+
+**Storage layout → Modeling:** a bronze layer that uses date partitioning and file-per-day granularity affects how the transformation step can do incremental processing. The modeling step's SCD Type 2 dimension requires that the silver layer preserves historical versions, not just current state.
+
+**Transformation → Serving:** an idempotent, date-partitioned transformation makes backfilling easy for analytical serving. The same transformation used as a feature pipeline for ML serving has different requirements — it must be point-in-time correct, not just correct-as-of-today.
+
+**Modeling → Security:** a wide-table model that embeds PII columns directly (customer email, name) in every fact row requires column masking to be applied everywhere. A narrow fact table that joins to a separate `dim_customer` table can mask at the dimension level only.
+
+The implication: when changing a pattern in one stage, audit downstream stages for cascading impacts. A CDC upgrade from watermark ingestion is not complete until the transformation stage has been updated to consume the new event format.
+
+> [!tip] Before finalizing a pattern choice, trace it forward: "if we use CDC here, what does the transformation stage need to handle that it doesn't today?"
+
+@feynman
+
+Like changing an API signature — the change is complete only when all callers have been updated; the downstream impact is the work, not the change itself.

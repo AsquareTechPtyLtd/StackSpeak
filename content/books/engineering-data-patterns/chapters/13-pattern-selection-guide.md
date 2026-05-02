@@ -246,3 +246,100 @@ teaser: One reference card covering the full data lifecycle, with the primary pa
 @feynman
 
 Like a style guide — follow the default until you have a specific reason not to; deviations should be documented, not assumed.
+
+@card
+id: depc-ch13-c008
+order: 8
+title: Reading Team and Scale Context
+teaser: The right pattern for a 3-person startup is not the right pattern for a 50-person data platform. Context — team size, data volume, operational maturity — shapes pattern selection as much as technical fit.
+
+@explanation
+
+**Context signals** that should influence pattern selection, beyond the technical requirements:
+
+**Team size:**
+- 1–3 engineers → avoid patterns that require dedicated operational expertise (self-hosted Kafka, Flink clusters, custom feature stores). Choose managed services and simple patterns that one person can reason about entirely.
+- 5–10 engineers → dedicated operational roles become viable. Platform patterns (shared CDC infrastructure, centralized feature store) start paying back.
+- 10+ engineers → distributed ownership patterns (team-owned pipelines, data contracts, catalog-enforced governance) become necessary. Simple shared-everything models break at this team size.
+
+**Data volume:**
+- < 1 TB → DuckDB or any warehouse handles this; complex architecture is premature.
+- 1–100 TB → standard warehouse or lakehouse patterns fit well.
+- 100 TB – 1 PB → performance optimization patterns (clustering, compaction, partition pruning) become necessary.
+- 1 PB+ → specialist architecture choices; generic patterns may not apply.
+
+**Operational maturity:**
+- No on-call rotation → avoid patterns that require monitoring and rapid response (streaming, CDC, sub-hourly freshness SLAs).
+- Established SRE practices → streaming and real-time patterns are supportable.
+
+**Regulatory context:**
+- GDPR/HIPAA/PCI-DSS → deletion cascade, audit log, column masking, and encryption patterns are not optional.
+- No regulated data → governance patterns are good practice but not compliance requirements.
+
+> [!tip] Before proposing a new architecture, write down the team size, data volume, and operational maturity on a whiteboard. The combination usually narrows the viable pattern space significantly.
+
+@feynman
+
+Like prescribing medication — the right dosage depends on the patient's weight and condition, not just the diagnosis.
+
+@card
+id: depc-ch13-c009
+order: 9
+title: Pattern Combinations That Work Well
+teaser: Certain pattern combinations appear together in production systems repeatedly because they address complementary concerns — knowing the common pairings saves architectural design time.
+
+@explanation
+
+Some patterns are natural complements that address different concerns in the same system:
+
+**Medallion + Open table format:** bronze/silver/gold layering organizes quality; Iceberg or Delta provides ACID transactions, schema evolution, and time travel within each layer. Virtually every modern lakehouse uses both.
+
+**CDC ingestion + Snapshot-plus-stream bootstrap:** CDC provides ongoing change capture; snapshot+stream solves the "how do I get the historical data" bootstrap problem every CDC pipeline faces on initial setup.
+
+**Kimball star schema + Semantic layer:** Kimball provides the physical fact/dim tables; the semantic layer exposes business metrics consistently to all consumers. The physical model and the business vocabulary are separated.
+
+**Expectation testing + Circuit breakers:** expectations catch specific known failures; circuit breakers catch catastrophic volume and schema failures the expectations didn't anticipate. Both serve quality in different ways.
+
+**Idempotent writes + Partition overwrite:** the combination makes backfills trivially safe — a backfill run over 30 days deletes and rewrites each day's partition without any risk of duplication.
+
+**SCD Type 2 dimensions + Feature store point-in-time joins:** SCD Type 2 maintains the dimension history; the feature store's `get_historical_features` uses that history to join features as-of a label timestamp. Without SCD Type 2, point-in-time correctness is impossible.
+
+**FinOps tagging + Cost attribution dashboard:** tags are the instrumentation; the dashboard is the output. Tags without a dashboard are wasted work; a dashboard without tags has nothing to display.
+
+> [!info] The inverse is also useful: some pattern combinations appear often because people copied them without thinking, not because they're complementary. Kafka + Flink for 50 events per second is a frequently-copied anti-combination.
+
+@feynman
+
+Like classic ingredient pairings in cooking — salt and caramel work together because they address complementary flavor dimensions; knowing the pairs saves experimentation.
+
+@card
+id: depc-ch13-c010
+order: 10
+title: The Minimum Viable Pattern Set
+teaser: A team starting from scratch doesn't need all 40 patterns on day one. A minimum viable set covers the critical concerns without imposing patterns that will only pay off at 10× scale.
+
+@explanation
+
+For a team building their first production data system, a minimal pattern set that handles the most critical concerns:
+
+**Ingestion:** incremental watermark with cursor persistence. Handles most sources; simple to operate; upgradeable to CDC when freshness demands it.
+
+**Storage:** medallion architecture (bronze/silver/gold) with date partitioning. Adds auditability and consumer isolation from day one; no lakehouse complexity until volume demands it.
+
+**Transformation:** staging-then-mart with idempotent partition overwrites. Separates ingestion from transformation; makes backfills safe.
+
+**Quality:** volume circuit breakers + three dbt schema tests (`unique`, `not_null`, `relationships`) per critical table. Catches catastrophic failures and common data problems with minimal setup.
+
+**Orchestration:** a simple DAG with well-named tasks and retry configuration. Works for most teams before dynamic tasks or event-driven patterns are necessary.
+
+**Modeling:** Kimball star schema for the first 3-5 business domains. Familiar to analysts, well-supported by BI tools, expandable later.
+
+**Security:** column masking on PII columns + a service account for pipelines. Minimum structural security that prevents the most common exposure.
+
+This set is implementable by a two-person team in 6–8 weeks and handles most data engineering requirements for a mid-size product. Additional patterns are added when a specific constraint makes the minimum insufficient — not before.
+
+> [!tip] The minimum viable pattern set is not the final architecture — it's the architecture that's sufficient until proven otherwise. Expand it incrementally when evidence shows a specific pattern is needed.
+
+@feynman
+
+Like an MVP product — solve the real problems first, with the simplest approach that works; add sophistication when the constraints demand it, not when it sounds interesting.

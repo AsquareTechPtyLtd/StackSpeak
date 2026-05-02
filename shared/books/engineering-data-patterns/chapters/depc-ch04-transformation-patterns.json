@@ -1035,6 +1035,687 @@
           ]
         }
       ]
+    },
+    {
+      "id": "depc-ch04-c007",
+      "order": 7,
+      "title": "Partition Overwrite Pattern",
+      "teaser": "Delete the destination partition before writing. A single, specific idempotency technique that handles most batch pipeline cases with minimal overhead.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Partition overwrite",
+              "marks": [
+                "bold"
+              ]
+            },
+            {
+              "text": " is the most common idempotent write pattern for batch pipelines: before writing the results for a given time period, delete that period's partition and replace it entirely."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The mechanic:"
+            }
+          ]
+        },
+        {
+          "type": "code",
+          "language": "python",
+          "code": "# Spark with dynamic partition overwrite\nspark.conf.set(\"spark.sql.sources.partitionOverwriteMode\", \"dynamic\")\ndf.write.mode(\"overwrite\").partitionBy(\"date\").parquet(\"s3://bucket/table/\")"
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "With "
+            },
+            {
+              "text": "dynamic",
+              "marks": [
+                "code"
+              ]
+            },
+            {
+              "text": " partition overwrite mode, Spark only overwrites the partitions present in the DataFrame — not all partitions. A run for "
+            },
+            {
+              "text": "date=2026-05-01",
+              "marks": [
+                "code"
+              ]
+            },
+            {
+              "text": " overwrites only that partition; other dates are untouched."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Why it works for idempotency: if the same run is triggered twice (manual, retry, backfill), the second run deletes and rewrites the same partition. The final state is identical to a single run."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Limitations:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Streaming pipelines:",
+                "marks": [
+                  "bold"
+                ]
+              },
+              {
+                "text": " continuous micro-batch writers can't pause to overwrite a partition; a different strategy is needed."
+              }
+            ],
+            [
+              {
+                "text": "Mid-day updates:",
+                "marks": [
+                  "bold"
+                ]
+              },
+              {
+                "text": " if the pipeline runs hourly and results accumulate within a day, overwriting at the day partition drops all hours except the current one. Use hourly partitions or a MERGE in this case."
+              }
+            ],
+            [
+              {
+                "text": "Cross-run aggregations:",
+                "marks": [
+                  "bold"
+                ]
+              },
+              {
+                "text": " if the output aggregates data that spans partitions (e.g., a trailing 7-day window that needs 7 input partitions), overwrite alone isn't enough — the input range must be correct."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "tip",
+          "runs": [
+            {
+              "text": "Use dynamic partition overwrite mode rather than full-table overwrite unless you genuinely need to replace the entire table. Full-table overwrite on a multi-year dataset to update one day is unnecessary and risky."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Like "
+            },
+            {
+              "text": "git stash && git apply",
+              "marks": [
+                "code"
+              ]
+            },
+            {
+              "text": " — you cleanly replace the change for that specific unit without touching anything else."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "depc-ch04-c008",
+      "order": 8,
+      "title": "Merge and Upsert Pattern",
+      "teaser": "Insert new rows and update existing ones in a single operation — the write pattern for tables that must handle both new records and corrections to old ones.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Merge (upsert)",
+              "marks": [
+                "bold"
+              ]
+            },
+            {
+              "text": " combines insert and update logic: if a row with the matching key already exists, update it; otherwise insert a new row. It's the write pattern for tables where records can be both created and subsequently corrected."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "SQL syntax (ANSI MERGE):"
+            }
+          ]
+        },
+        {
+          "type": "code",
+          "language": "sql",
+          "code": "MERGE INTO target t\nUSING source s\n  ON t.order_id = s.order_id\nWHEN MATCHED THEN\n  UPDATE SET t.status = s.status, t.updated_at = s.updated_at\nWHEN NOT MATCHED THEN\n  INSERT (order_id, status, created_at, updated_at)\n  VALUES (s.order_id, s.status, s.created_at, s.updated_at)"
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Delta Lake, Iceberg, and Snowflake all support MERGE natively. dbt's incremental model uses MERGE when configured with "
+            },
+            {
+              "text": "unique_key",
+              "marks": [
+                "code"
+              ]
+            },
+            {
+              "text": "."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "When MERGE is the right write strategy:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "The source can produce both new records and corrections to existing records."
+              }
+            ],
+            [
+              {
+                "text": "CDC pipelines where insert/update/delete events all must be applied."
+              }
+            ],
+            [
+              {
+                "text": "SCD Type 1 dimensions where you want the latest value, not history."
+              }
+            ],
+            [
+              {
+                "text": "Tables where partition overwrite is impractical (no clear partition key, or updates span many partitions)."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Performance considerations:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "MERGE is more expensive than INSERT. The database must check for each incoming row whether a match exists."
+              }
+            ],
+            [
+              {
+                "text": "Large MERGE operations (millions of rows) can be slow if the merge key is not indexed."
+              }
+            ],
+            [
+              {
+                "text": "For very high-volume tables, partition overwrite is usually faster than MERGE; use MERGE when correctness requires it."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "warning",
+          "runs": [
+            {
+              "text": "MERGE on a table without a unique key on the target side will update multiple rows per source row if duplicates exist. Always verify uniqueness of the merge key in the target before relying on MERGE semantics."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Like a database upsert in application code — the same logic, applied to entire batches of rows in a single operation."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "depc-ch04-c009",
+      "order": 9,
+      "title": "Incremental Processing with dbt",
+      "teaser": "dbt incremental models process only new or changed rows on each run — the practical implementation of incremental-then-merge for SQL-based transformation.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "dbt incremental models",
+              "marks": [
+                "bold"
+              ]
+            },
+            {
+              "text": " apply transformation logic only to rows that have changed since the last run, appending or merging the results into a destination table instead of rebuilding it from scratch."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Configuration:"
+            }
+          ]
+        },
+        {
+          "type": "code",
+          "language": "sql",
+          "code": "{{ config(\n    materialized='incremental',\n    unique_key='order_id',\n    on_schema_change='fail'\n) }}\n\nSELECT order_id, customer_id, amount, status, updated_at\nFROM {{ ref('stg_orders') }}\n\n{% if is_incremental() %}\n  WHERE updated_at > (SELECT MAX(updated_at) FROM {{ this }})\n{% endif %}"
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "On the first run, this processes all rows (full refresh). On subsequent runs, only rows with "
+            },
+            {
+              "text": "updated_at",
+              "marks": [
+                "code"
+              ]
+            },
+            {
+              "text": " newer than the last run are processed and merged."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The "
+            },
+            {
+              "text": "unique_key",
+              "marks": [
+                "code"
+              ]
+            },
+            {
+              "text": " parameter determines merge behavior: rows with a matching "
+            },
+            {
+              "text": "unique_key",
+              "marks": [
+                "code"
+              ]
+            },
+            {
+              "text": " are updated; rows without a match are inserted. Without "
+            },
+            {
+              "text": "unique_key",
+              "marks": [
+                "code"
+              ]
+            },
+            {
+              "text": ", dbt appends without deduplication."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "When dbt incrementals work well:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Source tables have a reliable "
+              },
+              {
+                "text": "updated_at",
+                "marks": [
+                  "code"
+                ]
+              },
+              {
+                "text": " column."
+              }
+            ],
+            [
+              {
+                "text": "The incremental volume per run is small relative to the total table size."
+              }
+            ],
+            [
+              {
+                "text": "Full rebuilds would be too slow to run on every deployment."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "When full refresh is safer:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "The transformation logic changes significantly — the incremental filter may have missed rows affected by the logic change."
+              }
+            ],
+            [
+              {
+                "text": "The "
+              },
+              {
+                "text": "updated_at",
+                "marks": [
+                  "code"
+                ]
+              },
+              {
+                "text": " column on the source isn't reliable."
+              }
+            ],
+            [
+              {
+                "text": "The table is small enough that a full refresh takes under 60 seconds."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "tip",
+          "runs": [
+            {
+              "text": "After any change to an incremental model's SQL logic, run "
+            },
+            {
+              "text": "dbt run --full-refresh",
+              "marks": [
+                "code"
+              ]
+            },
+            {
+              "text": " for that model to reprocess history with the new logic. Incremental runs after a logic change only process new rows, leaving old rows in the old shape."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Like an append-only build cache — the first build processes everything; subsequent builds only process what changed since the last run."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "depc-ch04-c010",
+      "order": 10,
+      "title": "Schema Evolution in Transforms",
+      "teaser": "Source schemas change without warning. Transformation logic that hardcodes column names or types breaks silently. Build in tolerance for schema change.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Schema evolution",
+              "marks": [
+                "bold"
+              ]
+            },
+            {
+              "text": " in transformation pipelines means handling source schema changes — added columns, renamed columns, type changes, dropped columns — without breaking downstream consumers."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Common failure modes when transforms don't handle schema evolution:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "A column is renamed at the source; the downstream SELECT fails with \"column not found.\""
+              }
+            ],
+            [
+              {
+                "text": "A column type changes from INT to BIGINT; a comparison downstream silently overflows."
+              }
+            ],
+            [
+              {
+                "text": "A new column appears; the transform's "
+              },
+              {
+                "text": "SELECT *",
+                "marks": [
+                  "code"
+                ]
+              },
+              {
+                "text": " starts passing it downstream where it breaks a schema-strict destination."
+              }
+            ],
+            [
+              {
+                "text": "A column is dropped; the transform writes NULL for all downstream rows."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Strategies for evolution tolerance:"
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Explicit column selection over `SELECT *`:",
+              "marks": [
+                "bold"
+              ]
+            },
+            {
+              "text": " name the columns you need. New columns are ignored; a drop produces a clear error rather than a silent NULL."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Schema drift detection:",
+              "marks": [
+                "bold"
+              ]
+            },
+            {
+              "text": " validate the input schema against a registered expected schema before running the transform. Fail loudly if a breaking change is detected. Tools: dbt "
+            },
+            {
+              "text": "on_schema_change",
+              "marks": [
+                "code"
+              ]
+            },
+            {
+              "text": " parameter, Glue Schema Registry, Great Expectations."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Nullable-first design:",
+              "marks": [
+                "bold"
+              ]
+            },
+            {
+              "text": " accept that any column might be NULL in any given run. Downstream logic should handle NULLs explicitly rather than assuming presence."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Column aliasing for renames:",
+              "marks": [
+                "bold"
+              ]
+            },
+            {
+              "text": " when a source renames a column, add a COALESCE or CASE to handle both the old and new names during the transition period:"
+            }
+          ]
+        },
+        {
+          "type": "code",
+          "language": "sql",
+          "code": "COALESCE(new_column_name, old_column_name) AS canonical_name"
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "dbt's "
+            },
+            {
+              "text": "on_schema_change",
+              "marks": [
+                "code"
+              ]
+            },
+            {
+              "text": " setting controls behavior when the destination table schema differs from the model output: "
+            },
+            {
+              "text": "'fail'",
+              "marks": [
+                "code"
+              ]
+            },
+            {
+              "text": " stops the run; "
+            },
+            {
+              "text": "'append_new_columns'",
+              "marks": [
+                "code"
+              ]
+            },
+            {
+              "text": " adds new columns; "
+            },
+            {
+              "text": "'sync_all_columns'",
+              "marks": [
+                "code"
+              ]
+            },
+            {
+              "text": " drops and adds to match."
+            }
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "warning",
+          "runs": [
+            {
+              "text": "SELECT *",
+              "marks": [
+                "code"
+              ]
+            },
+            {
+              "text": " in a transformation that writes to a schema-enforced destination will fail when upstream adds a column. Use explicit column lists."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Like a function that validates its inputs — you don't assume the caller always sends the right shape; you check and handle deviations explicitly."
+            }
+          ]
+        }
+      ]
     }
   ]
 }

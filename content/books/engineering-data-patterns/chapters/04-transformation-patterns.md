@@ -197,3 +197,159 @@ One useful test: run the transform on the same date partition twice and compare 
 @feynman
 
 Like making a function pure — given the same inputs, it always produces the same outputs, regardless of when you call it.
+
+@card
+id: depc-ch04-c007
+order: 7
+title: Partition Overwrite Pattern
+teaser: Delete the destination partition before writing. A single, specific idempotency technique that handles most batch pipeline cases with minimal overhead.
+
+@explanation
+
+**Partition overwrite** is the most common idempotent write pattern for batch pipelines: before writing the results for a given time period, delete that period's partition and replace it entirely.
+
+The mechanic:
+```python
+# Spark with dynamic partition overwrite
+spark.conf.set("spark.sql.sources.partitionOverwriteMode", "dynamic")
+df.write.mode("overwrite").partitionBy("date").parquet("s3://bucket/table/")
+```
+
+With `dynamic` partition overwrite mode, Spark only overwrites the partitions present in the DataFrame — not all partitions. A run for `date=2026-05-01` overwrites only that partition; other dates are untouched.
+
+Why it works for idempotency: if the same run is triggered twice (manual, retry, backfill), the second run deletes and rewrites the same partition. The final state is identical to a single run.
+
+Limitations:
+- **Streaming pipelines:** continuous micro-batch writers can't pause to overwrite a partition; a different strategy is needed.
+- **Mid-day updates:** if the pipeline runs hourly and results accumulate within a day, overwriting at the day partition drops all hours except the current one. Use hourly partitions or a MERGE in this case.
+- **Cross-run aggregations:** if the output aggregates data that spans partitions (e.g., a trailing 7-day window that needs 7 input partitions), overwrite alone isn't enough — the input range must be correct.
+
+> [!tip] Use dynamic partition overwrite mode rather than full-table overwrite unless you genuinely need to replace the entire table. Full-table overwrite on a multi-year dataset to update one day is unnecessary and risky.
+
+@feynman
+
+Like `git stash && git apply` — you cleanly replace the change for that specific unit without touching anything else.
+
+@card
+id: depc-ch04-c008
+order: 8
+title: Merge and Upsert Pattern
+teaser: Insert new rows and update existing ones in a single operation — the write pattern for tables that must handle both new records and corrections to old ones.
+
+@explanation
+
+**Merge (upsert)** combines insert and update logic: if a row with the matching key already exists, update it; otherwise insert a new row. It's the write pattern for tables where records can be both created and subsequently corrected.
+
+SQL syntax (ANSI MERGE):
+```sql
+MERGE INTO target t
+USING source s
+  ON t.order_id = s.order_id
+WHEN MATCHED THEN
+  UPDATE SET t.status = s.status, t.updated_at = s.updated_at
+WHEN NOT MATCHED THEN
+  INSERT (order_id, status, created_at, updated_at)
+  VALUES (s.order_id, s.status, s.created_at, s.updated_at)
+```
+
+Delta Lake, Iceberg, and Snowflake all support MERGE natively. dbt's incremental model uses MERGE when configured with `unique_key`.
+
+When MERGE is the right write strategy:
+- The source can produce both new records and corrections to existing records.
+- CDC pipelines where insert/update/delete events all must be applied.
+- SCD Type 1 dimensions where you want the latest value, not history.
+- Tables where partition overwrite is impractical (no clear partition key, or updates span many partitions).
+
+Performance considerations:
+- MERGE is more expensive than INSERT. The database must check for each incoming row whether a match exists.
+- Large MERGE operations (millions of rows) can be slow if the merge key is not indexed.
+- For very high-volume tables, partition overwrite is usually faster than MERGE; use MERGE when correctness requires it.
+
+> [!warning] MERGE on a table without a unique key on the target side will update multiple rows per source row if duplicates exist. Always verify uniqueness of the merge key in the target before relying on MERGE semantics.
+
+@feynman
+
+Like a database upsert in application code — the same logic, applied to entire batches of rows in a single operation.
+
+@card
+id: depc-ch04-c009
+order: 9
+title: Incremental Processing with dbt
+teaser: dbt incremental models process only new or changed rows on each run — the practical implementation of incremental-then-merge for SQL-based transformation.
+
+@explanation
+
+**dbt incremental models** apply transformation logic only to rows that have changed since the last run, appending or merging the results into a destination table instead of rebuilding it from scratch.
+
+Configuration:
+```sql
+{{ config(
+    materialized='incremental',
+    unique_key='order_id',
+    on_schema_change='fail'
+) }}
+
+SELECT order_id, customer_id, amount, status, updated_at
+FROM {{ ref('stg_orders') }}
+
+{% if is_incremental() %}
+  WHERE updated_at > (SELECT MAX(updated_at) FROM {{ this }})
+{% endif %}
+```
+
+On the first run, this processes all rows (full refresh). On subsequent runs, only rows with `updated_at` newer than the last run are processed and merged.
+
+The `unique_key` parameter determines merge behavior: rows with a matching `unique_key` are updated; rows without a match are inserted. Without `unique_key`, dbt appends without deduplication.
+
+When dbt incrementals work well:
+- Source tables have a reliable `updated_at` column.
+- The incremental volume per run is small relative to the total table size.
+- Full rebuilds would be too slow to run on every deployment.
+
+When full refresh is safer:
+- The transformation logic changes significantly — the incremental filter may have missed rows affected by the logic change.
+- The `updated_at` column on the source isn't reliable.
+- The table is small enough that a full refresh takes under 60 seconds.
+
+> [!tip] After any change to an incremental model's SQL logic, run `dbt run --full-refresh` for that model to reprocess history with the new logic. Incremental runs after a logic change only process new rows, leaving old rows in the old shape.
+
+@feynman
+
+Like an append-only build cache — the first build processes everything; subsequent builds only process what changed since the last run.
+
+@card
+id: depc-ch04-c010
+order: 10
+title: Schema Evolution in Transforms
+teaser: Source schemas change without warning. Transformation logic that hardcodes column names or types breaks silently. Build in tolerance for schema change.
+
+@explanation
+
+**Schema evolution** in transformation pipelines means handling source schema changes — added columns, renamed columns, type changes, dropped columns — without breaking downstream consumers.
+
+Common failure modes when transforms don't handle schema evolution:
+- A column is renamed at the source; the downstream SELECT fails with "column not found."
+- A column type changes from INT to BIGINT; a comparison downstream silently overflows.
+- A new column appears; the transform's `SELECT *` starts passing it downstream where it breaks a schema-strict destination.
+- A column is dropped; the transform writes NULL for all downstream rows.
+
+Strategies for evolution tolerance:
+
+**Explicit column selection over `SELECT *`:** name the columns you need. New columns are ignored; a drop produces a clear error rather than a silent NULL.
+
+**Schema drift detection:** validate the input schema against a registered expected schema before running the transform. Fail loudly if a breaking change is detected. Tools: dbt `on_schema_change` parameter, Glue Schema Registry, Great Expectations.
+
+**Nullable-first design:** accept that any column might be NULL in any given run. Downstream logic should handle NULLs explicitly rather than assuming presence.
+
+**Column aliasing for renames:** when a source renames a column, add a COALESCE or CASE to handle both the old and new names during the transition period:
+```sql
+COALESCE(new_column_name, old_column_name) AS canonical_name
+```
+
+dbt's `on_schema_change` setting controls behavior when the destination table schema differs from the model output: `'fail'` stops the run; `'append_new_columns'` adds new columns; `'sync_all_columns'` drops and adds to match.
+
+> [!warning] `SELECT *` in a transformation that writes to a schema-enforced destination will fail when upstream adds a column. Use explicit column lists.
+
+@feynman
+
+Like a function that validates its inputs — you don't assume the caller always sends the right shape; you check and handle deviations explicitly.

@@ -205,3 +205,158 @@ In 2026, semantic layers have become increasingly important as LLM-powered analy
 @feynman
 
 Like a well-named API — consumers call `getRevenue(month, tier)` and don't need to know which tables or joins that involves.
+
+@card
+id: depc-ch05-c007
+order: 7
+title: Grain Definition
+teaser: The grain of a fact table is the single most important design decision — one row represents exactly what? Getting this wrong makes every aggregation suspect.
+
+@explanation
+
+The **grain** of a fact table defines what each row represents. It must be stated precisely before any columns are chosen, any keys are assigned, or any joins are designed.
+
+Good grain definitions:
+- "One row per order" — clear.
+- "One row per order line item" — clear, and different from "per order."
+- "One row per user per day" — clear; aggregate grain.
+- "One row per impression" — clear; atomic grain.
+
+Ambiguous grain definitions that cause problems:
+- "Transaction data" — is it one row per transaction? Per transaction line? Per settlement batch?
+- "User activity" — is it one row per event? Per session? Per day?
+
+Why grain matters:
+
+**Duplicate detection:** at the wrong grain, the same fact can appear multiple times. "One row per order" that accidentally includes order-level and line-level data produces doubled revenue when summed.
+
+**JOIN behavior:** joining a fact table to a dimension at a different grain produces fan-out (row multiplication) that inflates counts and sums. An "orders" fact table joined to "order lines" produces one order row per line — revenue appears doubled.
+
+**Aggregation correctness:** at an aggregate grain (one row per user per day), a `SUM(revenue)` is already pre-aggregated. Joining this to a raw transaction table requires careful handling to avoid double-counting.
+
+> [!tip] Write the grain definition in a comment at the top of every fact table's model SQL. "-- Grain: one row per order, NOT per order line." Anyone maintaining the model has the contract visible.
+
+@feynman
+
+Like a database table's primary key — defining it precisely up front prevents every kind of subtle data error that comes from ambiguity about what a row is.
+
+@card
+id: depc-ch05-c008
+order: 8
+title: Conformed Dimensions
+teaser: When multiple fact tables share the same dimension — customer, date, product — they should reference the same dimension table. Separate copies diverge.
+
+@explanation
+
+**Conformed dimensions** are dimension tables that are shared across multiple fact tables in the warehouse, providing a consistent view of the same entities from different business perspectives.
+
+The problem without conformed dimensions: team A builds a `customers` dimension for the orders fact table. Team B builds a separate `customers` table for the support tickets fact table. After six months, the two tables define "customer tier" differently, have different customer ID formats, and disagree on which customers are active. A cross-domain query joining orders and support tickets produces wrong results.
+
+The solution: one `dim_customer` table, shared by both fact tables. Team A and Team B both reference `ref('dim_customer')`. Schema changes, backfills, and corrections happen in one place.
+
+Conformed dimensions enable **drill-across** queries — joining two fact tables through their shared dimensions:
+```sql
+-- Drill-across: orders + support tickets per customer tier
+SELECT c.tier,
+       SUM(o.revenue)            AS total_revenue,
+       COUNT(t.ticket_id)        AS support_tickets
+FROM dim_customer c
+LEFT JOIN fact_orders o ON o.customer_key = c.customer_key
+LEFT JOIN fact_support_tickets t ON t.customer_key = c.customer_key
+GROUP BY c.tier
+```
+
+This query is only meaningful if `dim_customer` is the same table in both facts.
+
+In practice, conformed dimensions require cross-team coordination: who owns the dimension, how are changes reviewed, what's the SLA for updates. The ownership model matters as much as the technical structure.
+
+> [!info] dbt's `ref()` macro makes conformed dimensions natural — both fact models `ref('dim_customer')` from the same place. Without dbt, achieving this requires explicit organizational discipline.
+
+@feynman
+
+Like a shared library in a monorepo — both teams import the same module; divergence is impossible because there's only one copy.
+
+@card
+id: depc-ch05-c009
+order: 9
+title: Bridge Tables
+teaser: When the relationship between a fact and a dimension is many-to-many, a bridge table resolves the relationship without duplicating fact rows or aggregating dimensions.
+
+@explanation
+
+Most Kimball schemas assume a fact row has exactly one value for each dimension. But real data often has many-to-many relationships: an order can have multiple promotions applied; an article can have multiple authors; a patient can have multiple diagnoses per visit.
+
+Without a **bridge table**, options are:
+- Repeating the fact row once per dimension value (fan-out): inflates counts, breaks aggregations.
+- Concatenating dimension values into a single column: makes filtering and grouping impossible.
+- Pre-aggregating to a single value: loses information.
+
+A bridge table resolves the relationship by sitting between the fact table and the dimension:
+
+```
+fact_orders (one row per order)
+    ↓
+bridge_order_promotions (one row per order-promotion pair)
+    ↓
+dim_promotion (one row per promotion)
+```
+
+Each order can have multiple promotions through the bridge. Counting promotions per order is a bridge table count; calculating order-level metrics uses only the fact table.
+
+Weighting in bridge tables: when multiple dimension values contribute to a measure, a `weight` column in the bridge distributes the metric proportionally:
+```sql
+SELECT p.promotion_type, SUM(o.revenue * b.weight) AS attributed_revenue
+FROM fact_orders o
+JOIN bridge_order_promotions b ON o.order_key = b.order_key
+JOIN dim_promotion p ON b.promotion_key = p.promotion_key
+GROUP BY p.promotion_type
+```
+
+Bridge tables add query complexity. Evaluate whether the many-to-many relationship is truly multi-valued or whether a reasonable simplification (first promotion, primary diagnosis) is acceptable before adding the bridge.
+
+> [!warning] Bridge tables make queries more complex and are a source of fan-out bugs when forgotten. Always join to the bridge explicitly; never join fact directly to a multi-valued dimension.
+
+@feynman
+
+Like a junction table in a relational database — the standard resolution for a many-to-many relationship, applied to dimensional modeling.
+
+@card
+id: depc-ch05-c010
+order: 10
+title: Anchor Modeling
+teaser: An extreme normalization strategy where each attribute of an entity lives in its own table. High maintenance overhead — only warranted when attribute volatility is extremely high.
+
+@explanation
+
+**Anchor modeling** takes the normalization idea of Data Vault even further: rather than grouping related attributes into satellites, each individual attribute gets its own table. An entity with 20 attributes has 20 satellite tables.
+
+Structure for a `customer` entity:
+- `anchor_customer` — just the customer key.
+- `attribute_customer_name` — one row per name change per customer.
+- `attribute_customer_email` — one row per email change.
+- `attribute_customer_tier` — one row per tier change.
+- …and so on per attribute.
+
+Why anyone would do this:
+
+**Extreme schema evolution.** Adding a new attribute is adding a new table — no migration of existing tables, no impact on existing queries for unrelated attributes.
+
+**Independent historization.** Each attribute has its own independent history. Querying "when did the name change" and "when did the tier change" don't require any shared SCD logic.
+
+**Parallel loading.** Each attribute table loads independently, with no dependencies between attributes.
+
+Costs that limit adoption:
+
+**Query complexity.** A "current customer profile" query joins the anchor to 20 attribute tables. Even with views, this is complex to generate and optimize.
+
+**Extreme table proliferation.** A 50-entity model with 20 attributes each produces 1,000+ tables.
+
+**Tooling support.** Most BI tools and query engines are optimized for wide tables, not extreme normalization.
+
+Anchor modeling is used in some Nordic financial institutions and large enterprise data warehouses. For most teams, Data Vault provides sufficient auditability without anchor modeling's query complexity.
+
+> [!info] Anchor modeling has a dedicated community and tooling (Anchor Modeler tool at anchormodeling.com). It's a real production pattern — just one with a narrow use case.
+
+@feynman
+
+Like extreme dependency injection — maximum flexibility and separation at the cost of a configuration so verbose it requires scaffolding to manage.

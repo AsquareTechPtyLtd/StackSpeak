@@ -1,0 +1,1376 @@
+{
+  "chapterId": "eds-ch12-serialization-and-compression-formats",
+  "shardIndex": 1,
+  "cards": [
+    {
+      "id": "eds-ch12-c001",
+      "order": 1,
+      "title": "Why Format Matters Underneath The Abstraction",
+      "teaser": "You usually think in tables and queries, not in bytes on disk. But every storage choice rests on a serialization format with specific cost, performance, and compatibility trade-offs.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The format your data lives in dictates:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Storage cost",
+                "marks": [
+                  "bold"
+                ]
+              },
+              {
+                "text": " — JSON vs Parquet for the same data is often a 5-10× difference."
+              }
+            ],
+            [
+              {
+                "text": "Query speed",
+                "marks": [
+                  "bold"
+                ]
+              },
+              {
+                "text": " — column-oriented formats let queries skip irrelevant columns; row-oriented formats force full reads."
+              }
+            ],
+            [
+              {
+                "text": "Schema evolution",
+                "marks": [
+                  "bold"
+                ]
+              },
+              {
+                "text": " — some formats handle adding/removing fields gracefully; others require regeneration."
+              }
+            ],
+            [
+              {
+                "text": "Tool compatibility",
+                "marks": [
+                  "bold"
+                ]
+              },
+              {
+                "text": " — every engine reads Parquet; not every engine reads ORC; very few read Avro natively."
+              }
+            ],
+            [
+              {
+                "text": "Streaming vs batch fit",
+                "marks": [
+                  "bold"
+                ]
+              },
+              {
+                "text": " — Avro's per-record framing makes it good for streams; Parquet's columnar structure makes it bad."
+              }
+            ],
+            [
+              {
+                "text": "Compression effectiveness",
+                "marks": [
+                  "bold"
+                ]
+              },
+              {
+                "text": " — column-oriented formats compress dramatically better than row-oriented."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "For most day-to-day data engineering, the choice is \"Parquet for analytical storage, Avro for streaming records, JSON for human-debuggable transit.\" Knowing why those defaults exist — and when to deviate — is the substance of this appendix."
+            }
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "info",
+          "runs": [
+            {
+              "text": "Data engineers who can't explain why Parquet beats CSV at scale tend to have warehouse bills they can't explain either."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Same as understanding file formats in software — you can write apps without it, but debugging is much harder when you don't."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "eds-ch12-c002",
+      "order": 2,
+      "title": "Row-Oriented Versus Column-Oriented Storage",
+      "teaser": "The most fundamental design choice in data formats. Determines what's fast, what's slow, and what's affordable to query.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Row-oriented.",
+              "marks": [
+                "bold"
+              ]
+            },
+            {
+              "text": " All values for one row stored contiguously."
+            }
+          ]
+        },
+        {
+          "type": "code",
+          "language": "",
+          "code": "Row 1: [name=Ada,    age=37, city=Austin]\nRow 2: [name=Linus,  age=54, city=Helsinki]\nRow 3: [name=Grace,  age=42, city=NYC]"
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Reading row 1 means reading one chunk: name + age + city together. Optimal for \"give me everything about row 1\" — the OLTP workload."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Column-oriented.",
+              "marks": [
+                "bold"
+              ]
+            },
+            {
+              "text": " All values for one column stored contiguously."
+            }
+          ]
+        },
+        {
+          "type": "code",
+          "language": "",
+          "code": "Names:   [Ada, Linus, Grace, ...]\nAges:    [37, 54, 42, ...]\nCities:  [Austin, Helsinki, NYC, ...]"
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Reading \"all names\" means reading one contiguous chunk. Optimal for \"compute average age\" — analytical workloads scanning many rows but few columns."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Implications:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Compression",
+                "marks": [
+                  "bold"
+                ]
+              },
+              {
+                "text": " — column storage compresses dramatically better. The "
+              },
+              {
+                "text": "Cities",
+                "marks": [
+                  "code"
+                ]
+              },
+              {
+                "text": " column has many repeated values; the row stream interleaves cities with names and ages."
+              }
+            ],
+            [
+              {
+                "text": "Skipping",
+                "marks": [
+                  "bold"
+                ]
+              },
+              {
+                "text": " — analytical queries can read only the columns they need. Row formats force reading everything."
+              }
+            ],
+            [
+              {
+                "text": "Update cost",
+                "marks": [
+                  "bold"
+                ]
+              },
+              {
+                "text": " — row storage handles single-row inserts cleanly. Column storage prefers batch writes."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The split:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Row-oriented formats",
+                "marks": [
+                  "bold"
+                ]
+              },
+              {
+                "text": " — Avro, JSON, CSV (ish), protobuf. Used in OLTP, streaming, RPC."
+              }
+            ],
+            [
+              {
+                "text": "Column-oriented formats",
+                "marks": [
+                  "bold"
+                ]
+              },
+              {
+                "text": " — Parquet, ORC, Arrow (in-memory). Used in analytics, data lakes."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "info",
+          "runs": [
+            {
+              "text": "If your warehouse is built on row-oriented storage, you're paying 10-50× more for analytical queries than you should. The fix is migrating to columnar, not tuning queries."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Same trade-off as struct-of-arrays vs array-of-structs in low-level programming. Choose the layout matching how you'll iterate."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "eds-ch12-c003",
+      "order": 3,
+      "title": "Parquet — The Columnar Default",
+      "teaser": "Parquet has become the de facto standard for analytical data. Knowing its structure explains why it's so much faster than CSV at scale.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "A Parquet file is structured as:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "File",
+                "marks": [
+                  "bold"
+                ]
+              },
+              {
+                "text": " — top-level container."
+              }
+            ],
+            [
+              {
+                "text": "Row groups",
+                "marks": [
+                  "bold"
+                ]
+              },
+              {
+                "text": " — subsets of rows (typically 100k-1M each), the unit of parallelism."
+              }
+            ],
+            [
+              {
+                "text": "Column chunks",
+                "marks": [
+                  "bold"
+                ]
+              },
+              {
+                "text": " — within each row group, one chunk per column. Each is independently compressed and encoded."
+              }
+            ],
+            [
+              {
+                "text": "Pages",
+                "marks": [
+                  "bold"
+                ]
+              },
+              {
+                "text": " — within column chunks, smaller units (typically 1MB) that are individually encoded."
+              }
+            ],
+            [
+              {
+                "text": "Footer",
+                "marks": [
+                  "bold"
+                ]
+              },
+              {
+                "text": " — metadata: schema, row group offsets, statistics for each column chunk (min, max, null count)."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Why this matters:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Predicate pushdown.",
+                "marks": [
+                  "bold"
+                ]
+              },
+              {
+                "text": " A query "
+              },
+              {
+                "text": "WHERE date > '2026-01-01'",
+                "marks": [
+                  "code"
+                ]
+              },
+              {
+                "text": " reads the footer first, skips row groups whose date column max is below the threshold. Only relevant row groups are read from disk."
+              }
+            ],
+            [
+              {
+                "text": "Column pruning.",
+                "marks": [
+                  "bold"
+                ]
+              },
+              {
+                "text": " A query "
+              },
+              {
+                "text": "SELECT name FROM users",
+                "marks": [
+                  "code"
+                ]
+              },
+              {
+                "text": " reads only the name column chunks. The rest stays on disk."
+              }
+            ],
+            [
+              {
+                "text": "Parallelism.",
+                "marks": [
+                  "bold"
+                ]
+              },
+              {
+                "text": " Different row groups can be read by different threads or workers."
+              }
+            ],
+            [
+              {
+                "text": "Per-column encoding.",
+                "marks": [
+                  "bold"
+                ]
+              },
+              {
+                "text": " Strings dictionary-encoded; integers run-length-encoded; floats bit-packed. Each column gets the encoding that compresses it best."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Statistics in the footer make the difference. A 10TB Parquet table with good column statistics often serves analytical queries reading just GB of actual data."
+            }
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "tip",
+          "runs": [
+            {
+              "text": "When designing Parquet layouts, sort by the columns most often filtered. Sorting concentrates value ranges in fewer row groups, making predicate pushdown maximally effective."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Same idea as a book index — read the index first, jump to the relevant pages, ignore everything else."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "eds-ch12-c004",
+      "order": 4,
+      "title": "ORC, Avro, And Other Formats",
+      "teaser": "Beyond Parquet, several other formats serve specific niches. Knowing which fits which use case prevents wasted effort.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "ORC (Optimized Row Columnar).",
+              "marks": [
+                "bold"
+              ]
+            },
+            {
+              "text": " Columnar like Parquet; originated in the Hortonworks/Hive ecosystem. Similar performance characteristics. Less common in cloud-native workflows; still seen in Hadoop-heritage stacks."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Avro.",
+              "marks": [
+                "bold"
+              ]
+            },
+            {
+              "text": " Row-oriented binary format with embedded schema. Each record carries enough metadata to deserialize. Designed for streaming and RPC. The default for Kafka payloads in many setups, often with a schema registry to avoid embedding the full schema in every message."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Wins: schema evolution is well-defined; RPC-friendly; per-record processing. Losses: not analytical-query-friendly; no column pruning."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Protobuf (Protocol Buffers).",
+              "marks": [
+                "bold"
+              ]
+            },
+            {
+              "text": " Google's RPC serialization format. Highly compact, schema-defined, fast serialize/deserialize. Used heavily in microservices and Google-flavored systems."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Wins: smallest wire format; strongly typed; great cross-language support. Losses: schema lives outside the data (in "
+            },
+            {
+              "text": ".proto",
+              "marks": [
+                "code"
+              ]
+            },
+            {
+              "text": " files); not human-readable; not analytical-friendly."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Apache Arrow.",
+              "marks": [
+                "bold"
+              ]
+            },
+            {
+              "text": " In-memory columnar format. Not for storage; for analytical processing. Many engines (DuckDB, Pandas 2.x, Polars, Spark via Arrow) use it as their internal representation. Eliminates serialization cost between Arrow-aware tools."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "JSON / JSONL.",
+              "marks": [
+                "bold"
+              ]
+            },
+            {
+              "text": " Text-based; schemaless; ubiquitous. Fine for APIs, configs, small datasets, debugging. Terrible for analytical storage at scale."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "CSV.",
+              "marks": [
+                "bold"
+              ]
+            },
+            {
+              "text": " Plain text rows. Fine for human-readable export. Awful for almost everything else — no types, no schema, ambiguous parsing rules, terrible compression."
+            }
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "info",
+          "runs": [
+            {
+              "text": "Modern stacks use a small mix: Parquet at rest, Avro in streams, JSON for APIs, Arrow internally. CSV only for humans."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Same toolbox as encodings in software — different tools for different jobs; misuse is a common source of pain."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "eds-ch12-c005",
+      "order": 5,
+      "title": "Compression Algorithms — The Speed-Versus-Ratio Trade",
+      "teaser": "All compression sits on a curve from \"fast and modest ratio\" to \"slow but tight.\" Picking right depends on whether your bottleneck is CPU, disk, or network.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The major algorithms in data systems:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Snappy.",
+                "marks": [
+                  "bold"
+                ]
+              },
+              {
+                "text": " Google's; very fast compress/decompress; modest ratio (~1.5-2.5×). Default for many engines because decompression doesn't slow queries."
+              }
+            ],
+            [
+              {
+                "text": "LZ4.",
+                "marks": [
+                  "bold"
+                ]
+              },
+              {
+                "text": " Even faster than Snappy; similar ratio. Good when CPU is the bottleneck."
+              }
+            ],
+            [
+              {
+                "text": "Gzip.",
+                "marks": [
+                  "bold"
+                ]
+              },
+              {
+                "text": " Older; slow compress, decent ratio (3-4×). Common for archive data; less common for hot tables."
+              }
+            ],
+            [
+              {
+                "text": "Zstd.",
+                "marks": [
+                  "bold"
+                ]
+              },
+              {
+                "text": " Modern; tunable level (1-22). At default levels, faster than gzip with better ratio. Often the best general-purpose choice today."
+              }
+            ],
+            [
+              {
+                "text": "Brotli.",
+                "marks": [
+                  "bold"
+                ]
+              },
+              {
+                "text": " Designed for web; high ratio, slow compress. Common for static content delivery."
+              }
+            ],
+            [
+              {
+                "text": "LZMA / XZ.",
+                "marks": [
+                  "bold"
+                ]
+              },
+              {
+                "text": " Highest ratios; very slow compress; moderate decompress. Used for cold archive."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Where each fits in data systems:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Hot analytical tables",
+                "marks": [
+                  "bold"
+                ]
+              },
+              {
+                "text": " — Snappy or Zstd at low level. Decompression speed matters more than tightest ratio."
+              }
+            ],
+            [
+              {
+                "text": "Streaming data in transit",
+                "marks": [
+                  "bold"
+                ]
+              },
+              {
+                "text": " — Snappy or LZ4. Speed dominates."
+              }
+            ],
+            [
+              {
+                "text": "Cold archive in object storage",
+                "marks": [
+                  "bold"
+                ]
+              },
+              {
+                "text": " — Zstd at high level or Gzip. Ratio matters; access is rare."
+              }
+            ],
+            [
+              {
+                "text": "Backup files",
+                "marks": [
+                  "bold"
+                ]
+              },
+              {
+                "text": " — Gzip or Zstd. Decent ratio, broadly compatible."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "A common pattern: Zstd has been quietly displacing Gzip and even Snappy in many workloads — better ratio than Snappy, much faster than Gzip at default settings, tunable when needed."
+            }
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "info",
+          "runs": [
+            {
+              "text": "Most analytical workloads are I/O-bound, not CPU-bound. Spending CPU on better compression to save I/O is usually a net win — which is why Zstd and Snappy beat \"no compression\" for almost everything."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Same trade-off as image compression — JPEG vs PNG vs WebP. Different sweet spots for different content and access patterns."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "eds-ch12-c006",
+      "order": 6,
+      "title": "Column Encodings Within Parquet",
+      "teaser": "Parquet doesn't just compress columns — it encodes them per-column based on what's most efficient for that data shape.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Inside a Parquet column chunk, several encodings combine before final compression:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Plain encoding.",
+                "marks": [
+                  "bold"
+                ]
+              },
+              {
+                "text": " Just the raw values, one after another. Used for high-cardinality columns where nothing smarter helps."
+              }
+            ],
+            [
+              {
+                "text": "Dictionary encoding.",
+                "marks": [
+                  "bold"
+                ]
+              },
+              {
+                "text": " Build a dictionary of unique values; replace each occurrence with a small integer index. Optimal for low-cardinality columns (country codes, status enums, repeated strings)."
+              }
+            ],
+            [
+              {
+                "text": "Run-length encoding (RLE).",
+                "marks": [
+                  "bold"
+                ]
+              },
+              {
+                "text": " When a column has runs of identical values, encode as "
+              },
+              {
+                "text": "(value, count)",
+                "marks": [
+                  "code"
+                ]
+              },
+              {
+                "text": " pairs. "
+              },
+              {
+                "text": "[US, US, US, US, UK]",
+                "marks": [
+                  "code"
+                ]
+              },
+              {
+                "text": " becomes "
+              },
+              {
+                "text": "[(US, 4), (UK, 1)]",
+                "marks": [
+                  "code"
+                ]
+              },
+              {
+                "text": ". Often combined with dictionary encoding."
+              }
+            ],
+            [
+              {
+                "text": "Bit packing.",
+                "marks": [
+                  "bold"
+                ]
+              },
+              {
+                "text": " When integer values fit in fewer bits than a full int, pack them. A column of values 0-7 only needs 3 bits each."
+              }
+            ],
+            [
+              {
+                "text": "Delta encoding.",
+                "marks": [
+                  "bold"
+                ]
+              },
+              {
+                "text": " For sorted or near-sorted numeric columns, store the difference from the previous value. "
+              },
+              {
+                "text": "[1000, 1001, 1003, 1004]",
+                "marks": [
+                  "code"
+                ]
+              },
+              {
+                "text": " → "
+              },
+              {
+                "text": "[1000, 1, 2, 1]",
+                "marks": [
+                  "code"
+                ]
+              },
+              {
+                "text": "."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Then on top of all that, the encoded column chunk is compressed (Snappy, Zstd, etc.)."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The result: a column of 1B repeated country codes might land at a few KB on disk. The Parquet writer chooses encoding per column automatically; you usually don't tune it manually."
+            }
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "info",
+          "runs": [
+            {
+              "text": "Compression ratio of 10-100× on well-shaped analytical data is normal. If your Parquet files are barely smaller than the source CSV, your data has high cardinality everywhere or your writer is misconfigured."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Same magic as compressing log files — repeated "
+            },
+            {
+              "text": "INFO",
+              "marks": [
+                "code"
+              ]
+            },
+            {
+              "text": " prefixes, timestamps that monotonically increase, mostly-the-same source patterns. The compression algorithm finds the redundancy."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "eds-ch12-c007",
+      "order": 7,
+      "title": "Schema Evolution In Practice",
+      "teaser": "Different formats handle schema changes very differently. Picking a format that supports the changes you'll need saves expensive migrations later.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "What schema evolution scenarios you'll face:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Add a column.",
+                "marks": [
+                  "bold"
+                ]
+              },
+              {
+                "text": " Should be safe; readers ignore unknown columns or get null for missing ones."
+              }
+            ],
+            [
+              {
+                "text": "Drop a column.",
+                "marks": [
+                  "bold"
+                ]
+              },
+              {
+                "text": " Old data still has the column; new data doesn't."
+              }
+            ],
+            [
+              {
+                "text": "Rename a column.",
+                "marks": [
+                  "bold"
+                ]
+              },
+              {
+                "text": " Treat as drop + add; old data has the old name."
+              }
+            ],
+            [
+              {
+                "text": "Change a column's type.",
+                "marks": [
+                  "bold"
+                ]
+              },
+              {
+                "text": " Often unsafe; readers expect specific types."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "How major formats handle these:"
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Parquet:",
+              "marks": [
+                "bold"
+              ]
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Schema lives in the file footer; readers detect and adapt."
+              }
+            ],
+            [
+              {
+                "text": "Adding columns is safe; readers get nulls for old files missing the column."
+              }
+            ],
+            [
+              {
+                "text": "Renaming is harder — newer Iceberg/Delta layers (column IDs) add support; raw Parquet doesn't track renames."
+              }
+            ],
+            [
+              {
+                "text": "Type changes generally require rewriting affected files."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Avro:",
+              "marks": [
+                "bold"
+              ]
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Schema-on-write embedded in each file (or referenced from a schema registry)."
+              }
+            ],
+            [
+              {
+                "text": "Reader and writer schemas can differ; resolution rules handle adds, drops, renames (with aliases)."
+              }
+            ],
+            [
+              {
+                "text": "Type changes have well-defined compatibility rules."
+              }
+            ],
+            [
+              {
+                "text": "Strongest schema-evolution story of the major formats."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Iceberg / Delta:",
+              "marks": [
+                "bold"
+              ]
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Maintain table metadata that handles evolution at a table level above Parquet."
+              }
+            ],
+            [
+              {
+                "text": "Column IDs decouple field identity from name — renames work cleanly."
+              }
+            ],
+            [
+              {
+                "text": "Hidden partitioning lets you change partition strategy without rewriting data."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "JSON / JSONL:",
+              "marks": [
+                "bold"
+              ]
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "No enforced schema; evolution is \"just write the new shape.\""
+              }
+            ],
+            [
+              {
+                "text": "Readers must handle missing or unexpected fields."
+              }
+            ],
+            [
+              {
+                "text": "Maximum flexibility, maximum operational burden."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "tip",
+          "runs": [
+            {
+              "text": "If you expect schema evolution (you will), prefer Iceberg or Delta over raw Parquet. The metadata layer is what makes evolution survivable."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Same problem as API versioning — backward compatibility is achievable with discipline, painful without."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "eds-ch12-c008",
+      "order": 8,
+      "title": "Format Choices For Streaming Data",
+      "teaser": "Streaming workflows have different format requirements from analytical storage. Picking the right one prevents the most common streaming pain.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Streaming systems handle data record-by-record (or in small micro-batches). What this needs from a format:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Per-record framing.",
+                "marks": [
+                  "bold"
+                ]
+              },
+              {
+                "text": " Reader can decode individual records without reading the whole file."
+              }
+            ],
+            [
+              {
+                "text": "Compact encoding.",
+                "marks": [
+                  "bold"
+                ]
+              },
+              {
+                "text": " Network bandwidth and broker storage matter."
+              }
+            ],
+            [
+              {
+                "text": "Schema awareness.",
+                "marks": [
+                  "bold"
+                ]
+              },
+              {
+                "text": " Producers and consumers must agree on shape; ideally enforced."
+              }
+            ],
+            [
+              {
+                "text": "Forward/backward compatibility.",
+                "marks": [
+                  "bold"
+                ]
+              },
+              {
+                "text": " Producers and consumers deploy independently; messages from old producers must remain readable."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Formats that fit:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Avro.",
+                "marks": [
+                  "bold"
+                ]
+              },
+              {
+                "text": " Default for Kafka in many setups. Per-record framing; embedded schema or schema-registry reference; mature compatibility model."
+              }
+            ],
+            [
+              {
+                "text": "Protobuf.",
+                "marks": [
+                  "bold"
+                ]
+              },
+              {
+                "text": " Compact, fast, well-supported. Schema lives in "
+              },
+              {
+                "text": ".proto",
+                "marks": [
+                  "code"
+                ]
+              },
+              {
+                "text": " files; requires distribution to all producers/consumers."
+              }
+            ],
+            [
+              {
+                "text": "JSON.",
+                "marks": [
+                  "bold"
+                ]
+              },
+              {
+                "text": " Easy for debugging, no compatibility tooling, larger wire size. Common for early-stage Kafka usage; teams usually migrate away as scale grows."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Schema registry adds:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Single source of truth",
+                "marks": [
+                  "bold"
+                ]
+              },
+              {
+                "text": " for schemas — produce against a registered schema; consumers fetch the schema by ID embedded in each message."
+              }
+            ],
+            [
+              {
+                "text": "Compatibility enforcement",
+                "marks": [
+                  "bold"
+                ]
+              },
+              {
+                "text": " — incompatible schema changes are rejected at registration time."
+              }
+            ],
+            [
+              {
+                "text": "Reduced message size",
+                "marks": [
+                  "bold"
+                ]
+              },
+              {
+                "text": " — messages carry a 5-byte schema ID instead of the full schema."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The trap to avoid: starting with JSON-on-Kafka for convenience and ending up with a coordination problem when the team grows. Schema registry + Avro from the start is more discipline; less pain later."
+            }
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "info",
+          "runs": [
+            {
+              "text": "If your Kafka setup is more than 10 producers / 10 consumers, you need a schema registry. Without one, every breaking change is a coordinated production incident."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Same lesson as REST APIs — formal schema contracts (OpenAPI, JSON Schema) save you from coordination problems that grow with team size."
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

@@ -1476,6 +1476,504 @@
           ]
         }
       ]
+    },
+    {
+      "id": "depc-ch02-c010",
+      "order": 10,
+      "title": "Schema Evolution During Ingestion",
+      "teaser": "Sources change their schemas without warning. Ingestion pipelines that fail on schema change are brittle; ones that silently ignore it propagate bad data. Neither is acceptable.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Schema evolution",
+              "marks": [
+                "bold"
+              ]
+            },
+            {
+              "text": " at the ingestion boundary happens when a source changes the shape of its data — renamed columns, added columns, dropped columns, type changes. The ingestion pipeline is the first place that change can be detected and handled."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Handling strategies:"
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Fail fast and alert:",
+              "marks": [
+                "bold"
+              ]
+            },
+            {
+              "text": " detect the schema mismatch before writing. Stop the ingestion run, alert the team, and wait for an explicit fix. Safest for quality; highest operational overhead; appropriate for critical pipelines."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Absorb new columns:",
+              "marks": [
+                "bold"
+              ]
+            },
+            {
+              "text": " if the destination table is flexible (open table format with schema evolution enabled), new columns from the source are added automatically. Existing consumers are unaffected; new consumers can start using the new column."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Map to canonical schema:",
+              "marks": [
+                "bold"
+              ]
+            },
+            {
+              "text": " maintain an explicit column mapping from source → destination. New or renamed source columns fall through to NULL until the mapping is updated. Predictable but requires mapping maintenance."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Full schema capture (bronze layer):",
+              "marks": [
+                "bold"
+              ]
+            },
+            {
+              "text": " write every source record as a raw JSON blob in the bronze layer. No schema enforcement at ingest; schema is applied in silver. The bronze layer never breaks on schema change; the silver transformation catches the mismatch in a controlled environment."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The recommended default for most teams: full schema capture at bronze + schema enforcement at silver-to-gold. Bronze absorbs all source changes; silver's validation step produces a clear, actionable error when a change breaks downstream logic."
+            }
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "info",
+          "runs": [
+            {
+              "text": "The most dangerous schema evolution handling is silent: new column appears → it's ignored → no alert. New column disappears → downstream gets NULL → no alert. Both should produce visible events."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Like an API gateway that logs unknown request fields before forwarding — the unknown data doesn't crash the system, but someone knows about it."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "depc-ch02-c011",
+      "order": 11,
+      "title": "Parallel Ingestion Patterns",
+      "teaser": "Large sources that support range-based or partition-based extraction can be read in parallel — multiple workers reading non-overlapping slices simultaneously rather than one worker reading the whole source sequentially.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Parallel ingestion",
+              "marks": [
+                "bold"
+              ]
+            },
+            {
+              "text": " divides a large source into non-overlapping slices and reads them concurrently, reducing wall-clock extraction time proportionally to the number of parallel readers."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "When parallel ingestion is beneficial:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "A source table too large to extract sequentially within the scheduling window."
+              }
+            ],
+            [
+              {
+                "text": "An API that supports cursor-based pagination across independent key ranges."
+              }
+            ],
+            [
+              {
+                "text": "A source that can be split by a partition key (date, user ID modulo, region)."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Strategies:"
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Partition-level parallelism (databases):",
+              "marks": [
+                "bold"
+              ]
+            },
+            {
+              "text": " read from each source database partition in a separate Spark task. Spark's "
+            },
+            {
+              "text": "jdbc",
+              "marks": [
+                "code"
+              ]
+            },
+            {
+              "text": " reader supports this natively via "
+            },
+            {
+              "text": "numPartitions",
+              "marks": [
+                "code"
+              ]
+            },
+            {
+              "text": ", "
+            },
+            {
+              "text": "lowerBound",
+              "marks": [
+                "code"
+              ]
+            },
+            {
+              "text": ", "
+            },
+            {
+              "text": "upperBound",
+              "marks": [
+                "code"
+              ]
+            },
+            {
+              "text": ", and "
+            },
+            {
+              "text": "partitionColumn",
+              "marks": [
+                "code"
+              ]
+            },
+            {
+              "text": "."
+            }
+          ]
+        },
+        {
+          "type": "code",
+          "language": "python",
+          "code": "spark.read.jdbc(\n    url=jdbc_url,\n    table=\"orders\",\n    column=\"order_id\",\n    lowerBound=1,\n    upperBound=10_000_000,\n    numPartitions=100,\n    properties=connection_props\n)"
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "This creates 100 parallel readers, each fetching a 100K row slice."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Date-range fanout:",
+              "marks": [
+                "bold"
+              ]
+            },
+            {
+              "text": " generate a list of daily date ranges; map each to a separate task. Dynamic task mapping in Airflow makes this straightforward."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "API fanout by key prefix:",
+              "marks": [
+                "bold"
+              ]
+            },
+            {
+              "text": " for APIs that support filtering by entity key ranges, generate one job per prefix and run them concurrently."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Risks:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Source overload:",
+                "marks": [
+                  "bold"
+                ]
+              },
+              {
+                "text": " 100 parallel readers create 100× the load on the source database. Coordinate with source system owners before enabling high parallelism on production OLTP systems."
+              }
+            ],
+            [
+              {
+                "text": "Resource contention:",
+                "marks": [
+                  "bold"
+                ]
+              },
+              {
+                "text": " parallel extraction consumes proportionally more compute on both source and destination. Size the extraction cluster to match."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "warning",
+          "runs": [
+            {
+              "text": "Parallel ingestion from a production OLTP database requires explicit coordination with the DBA or source team. A 100-reader parallel scan during business hours is an incident, not an optimization."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Like parallel download threads — the file arrives faster because many workers fill different sections simultaneously, but you need the server to handle the concurrent connections."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "depc-ch02-c012",
+      "order": 12,
+      "title": "Choosing an Ingestion Pattern",
+      "teaser": "The right ingestion pattern is determined by freshness requirement, source capabilities, and operational capacity — in that order.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Decision framework for ingestion pattern selection:",
+              "marks": [
+                "bold"
+              ]
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Step 1 — What freshness does the consumer actually need?",
+              "marks": [
+                "bold"
+              ]
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Sub-minute → CDC or event streaming. Nothing else delivers this."
+              }
+            ],
+            [
+              {
+                "text": "Sub-hour → incremental watermark with frequent scheduling, or micro-batched streaming."
+              }
+            ],
+            [
+              {
+                "text": "Daily → batch refresh (small tables) or incremental watermark (large tables)."
+              }
+            ],
+            [
+              {
+                "text": "Weekly → batch refresh is almost always sufficient."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Step 2 — What does the source support?",
+              "marks": [
+                "bold"
+              ]
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Database with accessible replication log → CDC is possible."
+              }
+            ],
+            [
+              {
+                "text": "Database with "
+              },
+              {
+                "text": "updated_at",
+                "marks": [
+                  "code"
+                ]
+              },
+              {
+                "text": " column → incremental watermark is natural."
+              }
+            ],
+            [
+              {
+                "text": "Database with no change indicator → batch refresh only."
+              }
+            ],
+            [
+              {
+                "text": "REST API with cursor pagination → API polling pattern."
+              }
+            ],
+            [
+              {
+                "text": "Webhook-capable SaaS → push-based ingestion."
+              }
+            ],
+            [
+              {
+                "text": "Application log files → log shipping."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Step 3 — What operational capacity does the team have?",
+              "marks": [
+                "bold"
+              ]
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "< 3 engineers on the data platform → managed CDC (Fivetran, Airbyte) is safer than self-hosted Debezium + Kafka."
+              }
+            ],
+            [
+              {
+                "text": "Established Kafka cluster already running → self-hosted CDC is reasonable."
+              }
+            ],
+            [
+              {
+                "text": "Early-stage team, everything is new → start with batch/incremental; upgrade when freshness becomes a real constraint."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Common mistake: jumping to CDC or streaming because they feel more sophisticated, when the consumer's actual requirement is daily freshness. Batch refresh with incremental watermark is simpler, cheaper, and sufficient."
+            }
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "tip",
+          "runs": [
+            {
+              "text": "Ask the consumer \"what is the worst acceptable staleness?\" before choosing an ingestion pattern. Most will say \"I thought you updated it in real-time\" — find the actual decision their work is based on and work backward from the real requirement."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Like choosing a vehicle based on the trip — a daily commuter doesn't need a sports car; the right vehicle is the simplest one that reliably meets the requirement."
+            }
+          ]
+        }
+      ]
     }
   ]
 }

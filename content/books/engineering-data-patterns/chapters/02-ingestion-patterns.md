@@ -311,3 +311,115 @@ Idempotent writes + cursor persistence = a resumable, replay-safe pipeline. If t
 @feynman
 
 Like reading a long book with a bookmark — you can always pick up where you left off, as long as you don't lose the bookmark.
+
+@card
+id: depc-ch02-c010
+order: 10
+title: Schema Evolution During Ingestion
+teaser: Sources change their schemas without warning. Ingestion pipelines that fail on schema change are brittle; ones that silently ignore it propagate bad data. Neither is acceptable.
+
+@explanation
+
+**Schema evolution** at the ingestion boundary happens when a source changes the shape of its data — renamed columns, added columns, dropped columns, type changes. The ingestion pipeline is the first place that change can be detected and handled.
+
+Handling strategies:
+
+**Fail fast and alert:** detect the schema mismatch before writing. Stop the ingestion run, alert the team, and wait for an explicit fix. Safest for quality; highest operational overhead; appropriate for critical pipelines.
+
+**Absorb new columns:** if the destination table is flexible (open table format with schema evolution enabled), new columns from the source are added automatically. Existing consumers are unaffected; new consumers can start using the new column.
+
+**Map to canonical schema:** maintain an explicit column mapping from source → destination. New or renamed source columns fall through to NULL until the mapping is updated. Predictable but requires mapping maintenance.
+
+**Full schema capture (bronze layer):** write every source record as a raw JSON blob in the bronze layer. No schema enforcement at ingest; schema is applied in silver. The bronze layer never breaks on schema change; the silver transformation catches the mismatch in a controlled environment.
+
+The recommended default for most teams: full schema capture at bronze + schema enforcement at silver-to-gold. Bronze absorbs all source changes; silver's validation step produces a clear, actionable error when a change breaks downstream logic.
+
+> [!info] The most dangerous schema evolution handling is silent: new column appears → it's ignored → no alert. New column disappears → downstream gets NULL → no alert. Both should produce visible events.
+
+@feynman
+
+Like an API gateway that logs unknown request fields before forwarding — the unknown data doesn't crash the system, but someone knows about it.
+
+@card
+id: depc-ch02-c011
+order: 11
+title: Parallel Ingestion Patterns
+teaser: Large sources that support range-based or partition-based extraction can be read in parallel — multiple workers reading non-overlapping slices simultaneously rather than one worker reading the whole source sequentially.
+
+@explanation
+
+**Parallel ingestion** divides a large source into non-overlapping slices and reads them concurrently, reducing wall-clock extraction time proportionally to the number of parallel readers.
+
+When parallel ingestion is beneficial:
+- A source table too large to extract sequentially within the scheduling window.
+- An API that supports cursor-based pagination across independent key ranges.
+- A source that can be split by a partition key (date, user ID modulo, region).
+
+Strategies:
+
+**Partition-level parallelism (databases):** read from each source database partition in a separate Spark task. Spark's `jdbc` reader supports this natively via `numPartitions`, `lowerBound`, `upperBound`, and `partitionColumn`.
+
+```python
+spark.read.jdbc(
+    url=jdbc_url,
+    table="orders",
+    column="order_id",
+    lowerBound=1,
+    upperBound=10_000_000,
+    numPartitions=100,
+    properties=connection_props
+)
+```
+
+This creates 100 parallel readers, each fetching a 100K row slice.
+
+**Date-range fanout:** generate a list of daily date ranges; map each to a separate task. Dynamic task mapping in Airflow makes this straightforward.
+
+**API fanout by key prefix:** for APIs that support filtering by entity key ranges, generate one job per prefix and run them concurrently.
+
+Risks:
+- **Source overload:** 100 parallel readers create 100× the load on the source database. Coordinate with source system owners before enabling high parallelism on production OLTP systems.
+- **Resource contention:** parallel extraction consumes proportionally more compute on both source and destination. Size the extraction cluster to match.
+
+> [!warning] Parallel ingestion from a production OLTP database requires explicit coordination with the DBA or source team. A 100-reader parallel scan during business hours is an incident, not an optimization.
+
+@feynman
+
+Like parallel download threads — the file arrives faster because many workers fill different sections simultaneously, but you need the server to handle the concurrent connections.
+
+@card
+id: depc-ch02-c012
+order: 12
+title: Choosing an Ingestion Pattern
+teaser: The right ingestion pattern is determined by freshness requirement, source capabilities, and operational capacity — in that order.
+
+@explanation
+
+**Decision framework for ingestion pattern selection:**
+
+**Step 1 — What freshness does the consumer actually need?**
+- Sub-minute → CDC or event streaming. Nothing else delivers this.
+- Sub-hour → incremental watermark with frequent scheduling, or micro-batched streaming.
+- Daily → batch refresh (small tables) or incremental watermark (large tables).
+- Weekly → batch refresh is almost always sufficient.
+
+**Step 2 — What does the source support?**
+- Database with accessible replication log → CDC is possible.
+- Database with `updated_at` column → incremental watermark is natural.
+- Database with no change indicator → batch refresh only.
+- REST API with cursor pagination → API polling pattern.
+- Webhook-capable SaaS → push-based ingestion.
+- Application log files → log shipping.
+
+**Step 3 — What operational capacity does the team have?**
+- < 3 engineers on the data platform → managed CDC (Fivetran, Airbyte) is safer than self-hosted Debezium + Kafka.
+- Established Kafka cluster already running → self-hosted CDC is reasonable.
+- Early-stage team, everything is new → start with batch/incremental; upgrade when freshness becomes a real constraint.
+
+Common mistake: jumping to CDC or streaming because they feel more sophisticated, when the consumer's actual requirement is daily freshness. Batch refresh with incremental watermark is simpler, cheaper, and sufficient.
+
+> [!tip] Ask the consumer "what is the worst acceptable staleness?" before choosing an ingestion pattern. Most will say "I thought you updated it in real-time" — find the actual decision their work is based on and work backward from the real requirement.
+
+@feynman
+
+Like choosing a vehicle based on the trip — a daily commuter doesn't need a sports car; the right vehicle is the simplest one that reliably meets the requirement.

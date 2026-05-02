@@ -228,3 +228,109 @@ Iceberg has the broadest ecosystem adoption as of 2026. Delta Lake has the deepe
 @feynman
 
 Like going from a shared file folder to a proper database — you keep the files, but you gain transactions, history, and the ability to fix mistakes without starting over.
+
+@card
+id: depc-ch03-c008
+order: 8
+title: Copy-on-Write vs Merge-on-Read
+teaser: Two strategies for how a table format handles updates and deletes — one optimizes reads, the other optimizes writes. Which fits depends on how often you write vs how often you query.
+
+@explanation
+
+**Copy-on-Write (CoW)** and **Merge-on-Read (MoR)** are the two strategies table formats use for handling upserts and deletes.
+
+**Copy-on-Write:** when a row is updated or deleted, the entire file containing that row is rewritten with the new version. Writers pay a high cost (rewriting large files); readers pay no cost (every file is already fully resolved).
+
+Read performance: excellent — no merge logic, files are always in final form.
+Write performance: expensive — large files must be fully rewritten for small changes.
+Best for: analytical workloads with infrequent writes and frequent reads.
+
+**Merge-on-Read:** updates and deletes write small delta files (change logs) alongside the original data files. Readers must merge the delta files with the base files to resolve the current state.
+
+Write performance: excellent — appending a small delta file is fast.
+Read performance: more expensive — readers must merge delta files on every scan.
+Best for: high-frequency upsert workloads (CDC ingestion, frequent corrections).
+
+Where each appears:
+- **Delta Lake:** CoW is the default; MoR mode available for faster writes.
+- **Apache Hudi:** MoR is the primary mode for streaming ingestion workloads; CoW available for read-heavy tables.
+- **Apache Iceberg:** uses CoW by default with compaction to keep files manageable.
+
+**Compaction** converts MoR tables to an effective CoW state by merging delta files into base files on a schedule. After compaction, read performance recovers.
+
+> [!tip] Start with CoW for analytical workloads. Switch to MoR only when write frequency is high enough that CoW rewrite times are impacting ingestion latency.
+
+@feynman
+
+Like logging changes vs copying the whole document — logging is fast to write and slow to read; copying is slow to write and fast to read.
+
+@card
+id: depc-ch03-c009
+order: 9
+title: Data Clustering and Z-Ordering
+teaser: Partitioning prunes at the file level. Clustering and Z-ordering organize rows within files so that queries on non-partition columns also skip large amounts of data.
+
+@explanation
+
+**Partitioning** skips entire files based on a filter. But within a partition, rows are often in arbitrary order — a query filtering on `user_id` within a `date` partition still scans every row in the partition.
+
+**Clustering** (also called **Z-ordering** in Delta Lake and Iceberg) physically co-locates rows with similar values for one or more columns within the same files, enabling sub-partition scan skipping.
+
+How Z-ordering works: a Z-order curve maps multi-dimensional data to a one-dimensional sequence that preserves locality — rows with similar values on multiple columns are stored close to each other. A query filtering on `user_id = 12345` and `event_type = 'purchase'` can skip files that have no rows matching both conditions.
+
+Delta Lake:
+```sql
+OPTIMIZE events ZORDER BY (user_id, event_type)
+```
+
+Iceberg sort orders:
+```sql
+ALTER TABLE events WRITE ORDERED BY user_id, event_type
+```
+
+When clustering helps:
+- High-cardinality columns (`user_id`, `session_id`) that are commonly filtered but too high-cardinality to partition on (1M+ distinct values → 1M+ partitions).
+- Multi-dimensional filters where no single column is always filtered.
+
+When clustering doesn't help:
+- Append-only streaming ingestion — clustering requires OPTIMIZE/rewrite, which conflicts with continuous small writes.
+- Very low selectivity filters (e.g., filtering to 50% of rows) — clustering helps most when filters are highly selective.
+
+> [!info] Combine partitioning and Z-ordering: partition by date for temporal filters; Z-order by user_id within each partition for entity filters. The combination skips both dimensions efficiently.
+
+@feynman
+
+Like alphabetizing within each section of a filing cabinet — the cabinet itself is partitioned by year, but within each year, finding a name is still O(1) after you sort by name.
+
+@card
+id: depc-ch03-c010
+order: 10
+title: Table Maintenance Operations
+teaser: Open table formats accumulate small files, expired snapshots, and orphaned data over time. Scheduled maintenance keeps them performant and cost-efficient.
+
+@explanation
+
+Open table formats (Iceberg, Delta Lake, Hudi) build up technical debt over time without active maintenance. Three maintenance operations address the most common accumulations:
+
+**File compaction** merges many small files into fewer, larger files. Reduces query scan overhead and object store LIST pressure.
+- Delta: `OPTIMIZE table_name`
+- Iceberg: `CALL system.rewrite_data_files('db.table')`
+- Hudi: built-in compaction job scheduled via inline compaction or a separate compaction service
+
+**Snapshot expiry** removes old table snapshots (the history of every write operation). Snapshots accumulate quickly in active tables; retaining them indefinitely inflates storage. Set a retention window (e.g., 7 days of snapshots for time-travel queries; older snapshots are expired).
+- Iceberg: `CALL system.expire_snapshots('db.table', TIMESTAMP '2026-04-25 00:00:00')`
+- Delta: `VACUUM table_name RETAIN 168 HOURS`
+
+**Orphan file removal** deletes files that are no longer referenced by any snapshot — typically produced by failed write transactions that wrote files but never committed them.
+- Iceberg: `CALL system.remove_orphan_files('db.table')`
+
+Recommended maintenance schedule for an active lakehouse table:
+- Daily OPTIMIZE (or after large ingest runs).
+- Weekly snapshot expiry (retaining 7-14 days for time travel).
+- Monthly orphan file cleanup.
+
+> [!warning] Running `VACUUM` in Delta with a retention period shorter than the longest running query can cause read failures. Delta enforces a 168-hour minimum unless you explicitly disable the safety check.
+
+@feynman
+
+Like vacuuming and defragging a hard drive — performance degrades without it, the process is well-defined, and scheduling it prevents the problem rather than reacting to it.

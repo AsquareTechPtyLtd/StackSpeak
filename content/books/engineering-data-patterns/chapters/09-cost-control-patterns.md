@@ -204,3 +204,142 @@ ALTER SESSION SET QUERY_TAG = 'team:analytics,pipeline:orders-daily-etl';
 @feynman
 
 Like labeling every expense in an expense report — obvious in hindsight, painful to reconstruct if you didn't do it at the time.
+
+@card
+id: depc-ch09-c007
+order: 7
+title: Warehouse Sizing and Auto-Scaling
+teaser: An oversized warehouse burns credits on idle capacity; an undersized one queues queries and breaks SLAs. Right-sizing is an ongoing tuning exercise, not a one-time decision.
+
+@explanation
+
+Cloud warehouses (Snowflake virtual warehouses, BigQuery slots, Redshift clusters) are sized independently of storage. The cost of compute is directly controlled by warehouse configuration.
+
+**Snowflake** bills per-second of warehouse uptime (minimum 60 seconds per resume). A XL warehouse costs 2× a L, which costs 2× a M. Larger warehouses don't always mean faster queries — they mean more parallelism for queries that benefit from it.
+
+Right-sizing heuristics for Snowflake:
+- Most dashboard and reporting queries run fine on an XS or S warehouse.
+- Large historical scans, complex multi-table joins, and ML model training benefit from M or L.
+- Multi-user concurrent workloads (many analysts querying simultaneously) benefit from multi-cluster warehouses with auto-scaling.
+
+**Auto-suspend and auto-resume:** configure every warehouse to auto-suspend after 60 seconds of inactivity. A warehouse resumed for a single 3-second query costs 60 seconds of credit — the minimum. Even so, auto-suspend prevents hours of idle billing.
+
+**Workload isolation:** separate warehouses for ETL vs analytics vs dashboards. This prevents a large ETL job from starving analyst queries, and lets you right-size each workload independently.
+
+**BigQuery slot reservations:** BigQuery can run in on-demand mode (pay per byte scanned) or reserved slot mode (fixed monthly cost). Reserved slots are cheaper at high query volumes but require capacity planning.
+
+> [!tip] Query the Snowflake `ACCOUNT_USAGE.WAREHOUSE_METERING_HISTORY` view to see credit consumption per warehouse per hour. The first time you run this, you will almost always find a warehouse that was running while no one was using it.
+
+@feynman
+
+Like choosing server instance sizes in a cloud deployment — you right-size to the workload, monitor utilization, and resize when the workload changes.
+
+@card
+id: depc-ch09-c008
+order: 8
+title: Spot and Preemptible Instances for Batch
+teaser: Batch transformation and ML training pipelines that tolerate interruption can run on spot instances at 60–80% lower compute cost than on-demand.
+
+@explanation
+
+**Spot instances** (AWS) and **preemptible VMs** (GCP) are excess cloud compute capacity offered at steep discounts — typically 60–80% below on-demand prices — with the catch that the cloud provider can reclaim the instance with 2 minutes notice.
+
+This trade-off is a natural fit for batch data engineering workloads that are:
+- **Restartable:** the job can be re-run from a checkpoint without losing all progress.
+- **Long-running:** the savings compound on jobs that run for hours or days.
+- **Not time-critical:** running on spot may extend wall-clock time due to interruptions; that's acceptable for non-SLA-sensitive batch work.
+
+Workloads that work well on spot:
+- Spark batch transforms (with checkpointing enabled).
+- ML model training (with checkpoint-based restart).
+- Large historical backfills.
+- Data quality scan jobs.
+
+Workloads that shouldn't use spot:
+- Streaming consumers (interruption means gap in the stream; recovery is complex).
+- Time-sensitive pipelines with hard SLAs.
+- Interactive queries.
+
+AWS Spot best practices:
+- Use **Spot Fleet** or **EMR managed scaling** to automatically replace interrupted instances.
+- Enable **checkpointing** in Spark (`spark.checkpoint.dir`); on resume, the job picks up from the last checkpoint, not the beginning.
+- Mix spot and on-demand: 80% spot, 20% on-demand ensures a minimum cluster exists even during spot shortages.
+
+> [!info] A 10-hour Spark job running on spot at 70% discount costs the same as a 3-hour on-demand job. If it can tolerate interruption and occasional restart, the math strongly favors spot.
+
+@feynman
+
+Like flying standby — cheaper, occasionally disrupted, worth it for trips where you have flexibility.
+
+@card
+id: depc-ch09-c009
+order: 9
+title: Egress Cost Reduction Patterns
+teaser: Moving data between regions or clouds triggers per-GB egress fees. Architecture choices made without considering egress can easily cost more in network fees than in compute.
+
+@explanation
+
+Cloud egress fees — charges for data leaving a cloud provider's network — are one of the most surprising line items in data infrastructure bills. They're low-per-GB but multiply across high-volume data movement.
+
+Typical egress pricing (approximate):
+- Same-region, same-cloud: free.
+- Cross-AZ, same-region: $0.01/GB (AWS).
+- Cross-region, same-cloud: $0.02–0.09/GB.
+- Cross-cloud or to internet: $0.05–0.15/GB.
+
+Where data engineering generates egress:
+- **Multi-region warehouse access:** analysts in EU-West querying a warehouse in US-East. Every query result crosses regions.
+- **Cross-region pipeline movement:** Spark cluster in us-east-1 reading raw data from S3 in us-west-2.
+- **Reverse ETL to SaaS:** pushing data to Salesforce, HubSpot, or other SaaS systems that live in a different cloud or region.
+- **Cross-cloud data sharing:** sending data to a partner on a different cloud.
+
+Reduction strategies:
+- **Compute close to data:** run Spark or Flink in the same region as S3.
+- **Compress before shipping:** reduce bytes transferred proportionally to the compression ratio. Parquet/Snappy gives 5–10× compression over CSV.
+- **Use private connectivity:** AWS PrivateLink, GCP Private Service Connect often eliminate NAT gateway fees that compound egress.
+- **Cache query results:** a materialized table in the EU served from EU storage avoids cross-region result transfer on every query.
+
+> [!warning] A pipeline that moves 10 TB/month across regions adds $200–900/month in egress alone at AWS pricing. This isn't visible until the bill arrives. Audit data movement paths when designing cross-region architectures.
+
+@feynman
+
+Like international roaming — cheap to use, expensive to abuse, and the bill arrives after the trip is already over.
+
+@card
+id: depc-ch09-c010
+order: 10
+title: Cost Attribution and Showback
+teaser: Sharing a warehouse across teams without cost attribution means nobody is accountable for spend. Showback makes the cost of each team's usage visible without requiring chargeback.
+
+@explanation
+
+**Cost attribution** connects cloud infrastructure spend to the specific teams, products, or pipelines that generated it. **Showback** means making that attribution visible to the teams — "your pipelines cost $4,200 last month" — without requiring them to pay from their budget (which would be **chargeback**).
+
+Why showback works when no attribution doesn't: teams that can see their own costs change their behavior. A team that learns their ad-hoc query cluster runs $800/week during business hours often finds ways to consolidate or cache that are invisible without the signal.
+
+Attribution in Snowflake:
+```sql
+-- Tag each session with team and pipeline
+ALTER SESSION SET QUERY_TAG = '{"team":"analytics","pipeline":"orders-dashboard"}';
+```
+
+Query the results:
+```sql
+SELECT
+    PARSE_JSON(query_tag):team::STRING AS team,
+    SUM(credits_used) AS credits
+FROM ACCOUNT_USAGE.QUERY_HISTORY
+WHERE start_time >= DATEADD('day', -30, CURRENT_DATE)
+GROUP BY team
+ORDER BY credits DESC
+```
+
+Attribution in BigQuery: label datasets, jobs, and reservations by team. BigQuery exports billing data to BigQuery (recursively) for detailed cost analysis.
+
+Monthly showback report: a one-page summary per team showing their top 5 most expensive queries or pipelines, their credit/dollar spend, and how it compares to the prior month. Delivered to engineering leads, not finance.
+
+> [!tip] Start showback before costs become a problem. The first report creates visibility; subsequent reports create accountability; eventually teams self-regulate. Starting after a cost crisis feels punitive rather than informational.
+
+@feynman
+
+Like showing developers their test coverage numbers — the metric itself changes behavior more than any mandate would.

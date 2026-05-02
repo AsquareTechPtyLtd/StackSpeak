@@ -199,3 +199,146 @@ Building it:
 @feynman
 
 Like a CI/CD dashboard for code — test pass rates and build health in one place, so you see the trend, not just today's state.
+
+@card
+id: depc-ch08-c007
+order: 7
+title: Structured Logging for Pipelines
+teaser: Text logs tell you something happened. Structured logs tell you what happened, to which pipeline, in which run, on which date — queryable, aggregatable, actionable.
+
+@explanation
+
+**Structured logging** emits log events as structured data (JSON or key-value pairs) rather than freeform text. A structured log is queryable; a text log requires regex to extract meaning.
+
+Unstructured log:
+```
+[2026-05-01 06:12:44] Processing complete. 42,321 rows written.
+```
+
+Structured log:
+```json
+{
+  "timestamp": "2026-05-01T06:12:44Z",
+  "pipeline": "orders_daily_etl",
+  "run_id": "2026-05-01T06:00:00Z",
+  "stage": "load",
+  "rows_written": 42321,
+  "duration_seconds": 47.2,
+  "partition_date": "2026-05-01"
+}
+```
+
+The structured version is searchable by pipeline, aggregatable by rows_written, joinable to alert history by run_id.
+
+Key fields to include in every pipeline log event:
+- `pipeline` or `dag_id` — identifies the pipeline.
+- `run_id` or `execution_date` — correlates all log events for one run.
+- `stage` — which step (extract, validate, transform, load).
+- `status` — success, failure, warning.
+- `row_count` — rows processed at this stage.
+- `duration_seconds` — time taken.
+- `error_message` — on failure, the specific error.
+
+Log destinations: CloudWatch Logs, Datadog, Splunk, OpenSearch. Most support structured log ingestion and querying directly.
+
+> [!tip] Add a `run_id` to every log event and link it in your alerting. "Find all logs for run 2026-05-01T06:00:00Z" turns a debugging session from 30 minutes to 2 minutes.
+
+@feynman
+
+Like typed structs vs printf debugging — structured data is first-class; you can query it, aggregate it, and alert on it without writing a parser.
+
+@card
+id: depc-ch08-c008
+order: 8
+title: Alerting Strategies
+teaser: An alert that fires every day for a non-urgent issue gets ignored. Alert fatigue is as dangerous as no alerts. Design alerts to be specific, routed correctly, and actionable.
+
+@explanation
+
+**Alert fatigue** — the condition where on-call engineers begin ignoring alerts because too many fire for non-critical events — is a data observability failure mode as common as missing alerts.
+
+Alert categories and routing:
+
+**P0 — Immediate page:** data is actively wrong and consumers are affected. Example: the `fact_orders` table freshness is 8 hours past SLA on a business day. Routes to: on-call engineer's phone.
+
+**P1 — Slack alert, same-business-day response:** a quality check is failing but data is still loading. Example: the null rate in `customer_email` spiked from 2% to 18%. Routes to: team Slack channel.
+
+**P2 — Email digest:** trend that needs investigation but isn't urgent. Example: pipeline duration has increased 40% over the past week. Routes to: weekly report or email.
+
+Alert content must be actionable:
+- What broke (specific table, specific check).
+- What the expected vs actual value is.
+- A link to the runbook or dashboard.
+- A link to the failing pipeline run.
+
+An alert that says "data quality check failed" with no context is worse than no alert — it requires manual investigation to determine severity.
+
+Reducing alert noise:
+- **Suppression windows:** don't alert during expected maintenance windows or known data latencies.
+- **Correlation:** if 5 tables all fail for the same reason (upstream source outage), fire one alert, not five.
+- **Deferred alerting:** wait 15 minutes before paging; many transient failures self-resolve.
+
+> [!warning] Every alert that fires without being actioned trains the team to ignore alerts. Audit your alert history monthly: which alerts resolved without action? Those are candidates for demotion or suppression.
+
+@feynman
+
+Like a good code review comment — specific, actionable, with enough context to understand the issue without looking everything up from scratch.
+
+@card
+id: depc-ch08-c009
+order: 9
+title: Column-Level vs Table-Level Lineage
+teaser: Table-level lineage tells you which tables feed which tables. Column-level lineage tells you which specific column in the source produced which column in the output — the difference matters for debugging.
+
+@explanation
+
+**Table-level lineage** traces the relationships between tables: "table C was produced by a job that read tables A and B." It answers "which upstream sources could have caused this table to be wrong?"
+
+**Column-level lineage** traces individual column derivations: "the `revenue` column in `fact_orders_daily` is derived from `SUM(amount)` on `stg_stripe_charges.charge_amount`, filtered by `status = 'succeeded'`." It answers "which specific source field, transformation, and filter produced this specific column?"
+
+When table-level lineage is enough: you need to understand data flow for governance (which tables contain PII that flows downstream), dependency management (which pipelines to re-run after a source change), or impact analysis (what breaks if this table is deleted).
+
+When column-level lineage is needed: a specific metric is wrong and you need to trace the computation back to the source field. A regulatory request requires proving which source data contributed to a reported figure. A schema change in a specific source column needs to be tracked forward through all derived columns.
+
+Column-level lineage is harder to collect:
+- dbt provides column-level lineage through its graph if models are written with explicit column selection (not `SELECT *`).
+- OpenLineage captures column-level lineage from Spark operations automatically.
+- Data catalog tools (DataHub, Atlan) display column-level lineage when available.
+
+Cost of column-level lineage: collecting it requires parsing SQL and tracing derivations, which is compute-intensive and imperfect for complex transformations. Not every pipeline or tool can produce it.
+
+> [!info] Build table-level lineage first — it's achievable with all orchestrators and dbt. Add column-level incrementally for the most critical tables where debugging granularity justifies the investment.
+
+@feynman
+
+Like stack traces vs thread dumps — both are lineage; one tells you which function called which; the other tells you what value each variable held.
+
+@card
+id: depc-ch08-c010
+order: 10
+title: SLA Breach Response Patterns
+teaser: When a freshness or quality SLA is breached, the response sequence matters as much as the technical fix. A defined playbook resolves breaches faster than improvised investigation.
+
+@explanation
+
+An SLA breach is not the same as a pipeline failure. A breach means a consumer-facing guarantee has been violated — it has business impact. The response must be proportional.
+
+A structured response sequence:
+
+**1. Triage (0–5 minutes):** is the breach real or a monitoring false positive? Check whether the table actually has stale data, not just that a freshness check fired.
+
+**2. Assess consumer impact (5–10 minutes):** who depends on this table? Is a dashboard currently visible to stakeholders showing wrong or old data? Is a model inference job blocked waiting for fresh features? Impact determines urgency.
+
+**3. Communicate proactively (before fixing):** notify affected consumers before they notice and ping you. "The orders table is 4 hours behind SLA; we're investigating; estimated resolution by 9 AM." A proactive message is 10× better than a reactive one.
+
+**4. Diagnose (10–30 minutes):** follow the standard diagnostic order — networking → authentication → source health → data quality → downstream. The runbook should cover the three most common causes for this specific pipeline.
+
+**5. Fix and validate (30–90 minutes):** fix the root cause, re-run the pipeline, verify the table freshness and quality before declaring resolution.
+
+**6. Post-incident (next day):** document the timeline and root cause. Update the runbook with the new failure mode. If the same breach has happened before, escalate to a permanent fix.
+
+> [!tip] Write a status page entry for the breach, even if it's just an internal Slack thread. "Known issue, being investigated, ETA 9 AM" stops the stream of "is the data broken?" messages.
+
+@feynman
+
+Like incident response in SRE — the playbook exists so you don't improvise under pressure; the steps are the same every time; the specifics change.

@@ -187,3 +187,143 @@ Better alternatives:
 @feynman
 
 Like a build that compiles with warnings instead of errors — it "works," but the warnings are telling you something broke and you're choosing not to see it.
+
+@card
+id: depc-ch12-c007
+order: 7
+title: The God Pipeline
+teaser: A single pipeline that ingests, transforms, validates, and serves all data for a domain is fast to build and impossible to maintain. Monolithic pipelines accumulate every concern into one failure domain.
+
+@explanation
+
+A **god pipeline** is a data pipeline that does too many things: it extracts from multiple sources, joins them, applies business logic, validates, aggregates, and writes to multiple destinations — all in one job. The individual steps may be correct; the problem is their coupling.
+
+How god pipelines form: a data engineer builds a pipeline for a new domain. Over time, requirements are added to it because "it's already loading that data." Three years later, a 2,000-line Spark job owns all the data for a domain. Touching it requires full regression testing on every change.
+
+Failure modes of god pipelines:
+- A source schema change in one of the many inputs breaks the entire pipeline, blocking all outputs.
+- A performance issue in one transformation step slows all other outputs.
+- Different parts of the pipeline need different retry strategies; they're all forced to share one.
+- Testing requires mocking all inputs simultaneously.
+- The pipeline is too big for any one person to fully understand.
+
+What to do instead:
+- **One job, one output:** each pipeline job has one clear output and one failure domain.
+- **Shared libraries, not shared jobs:** common transformation logic lives in a shared library; each pipeline calls it independently.
+- **dbt DAG decomposition:** break the monolith into a graph of models, each testable and independently rerunnable.
+
+> [!warning] The god pipeline is recognizable when: changing it requires a "this touches everything" comment, the on-call runbook says "be careful with this one," and no single person can explain all the steps in one sitting.
+
+@feynman
+
+Like a function that's 3,000 lines long — technically works, practically unmaintainable, and the first place something breaks when requirements change.
+
+@card
+id: depc-ch12-c008
+order: 8
+title: Hardcoded Business Logic in SQL
+teaser: Business rules embedded directly in a SQL transform — magic numbers, status codes, tier thresholds — become undocumented debt that breaks when the rule changes.
+
+@explanation
+
+**Hardcoded business logic** is decision-making embedded directly in SQL or pipeline code in a way that's opaque, undocumented, and fragile when the rule changes.
+
+Examples:
+```sql
+-- Hardcoded: what do these numbers mean?
+WHERE status IN (2, 4, 7)
+  AND amount > 500
+  AND region_code NOT IN ('XX', 'YY', 'ZZ')
+```
+
+Three months later: nobody knows what statuses 2, 4, and 7 represent. The threshold 500 — is it dollars? Cents? Orders? Which currency? Region codes XX and YY — were those countries removed from the product? Did someone manually add a new one?
+
+What to do instead:
+
+**Named constants via dbt vars or source definitions:**
+```sql
+WHERE status IN {{ var('completed_status_codes') }}
+  AND amount > {{ var('minimum_order_threshold') }}
+```
+
+**Reference dimension tables:**
+```sql
+WHERE o.status_code IN (SELECT code FROM dim_order_statuses WHERE is_completed = true)
+  AND o.region_key IN (SELECT region_key FROM dim_regions WHERE is_supported = true)
+```
+
+**dbt project variables or seeds:** put configurable constants in a `dbt_project.yml` vars block or a seed CSV with column documentation.
+
+**Code comments are not a solution:** a comment next to a hardcoded value documents it at a moment in time; the comment doesn't update when the rule changes.
+
+The cost of business logic in SQL vs in a governed location: when the rule changes, a governed reference table requires updating one row; hardcoded SQL requires finding every pipeline that embeds the same constant and updating each one.
+
+> [!tip] Every time you write a number or string literal that represents a business concept in a SQL WHERE clause, ask: is there a table or variable that should own this value instead of this query?
+
+@feynman
+
+Like magic numbers in application code — every developer knows the rule when it's written; nobody knows it two years later.
+
+@card
+id: depc-ch12-c009
+order: 9
+title: Ignoring Pipeline Idempotency
+teaser: A pipeline that appends on retry will silently double-count. The failure is invisible until someone notices a metric is twice what it should be.
+
+@explanation
+
+A **non-idempotent pipeline** produces different results when run more than once on the same input. The most common manifestation: an `INSERT INTO` that appends without checking for existing rows.
+
+The scenario: a daily pipeline runs at 6 AM, processes yesterday's orders, and inserts them into `fact_orders`. The Airflow task fails at 6:15 AM for an unrelated reason (network timeout). Airflow retries at 6:20 AM. The retry succeeds. The orders from yesterday are now in `fact_orders` twice.
+
+This doubles revenue in any dashboard that aggregates `fact_orders`. If nobody checks yesterday's order count against the source, the duplicate persists indefinitely.
+
+Why this isn't caught immediately:
+- Revenue went up, not down. An increase is less alarming than a decrease.
+- The duplicate affects only yesterday's partition; the daily total change is invisible in weekly trends.
+- No quality check validates row count against the source system.
+
+Detection: a reconciliation query that compares fact row counts to the source:
+```sql
+SELECT order_date, COUNT(*) AS fact_count,
+       (SELECT COUNT(*) FROM source_orders WHERE DATE(created_at) = order_date) AS source_count
+FROM fact_orders
+GROUP BY order_date
+HAVING fact_count != source_count
+```
+
+Prevention: partition overwrite, MERGE/upsert, or a deduplication step on the unique key before any INSERT. The principle is: design the write so that repeating it produces the same state as running it once.
+
+> [!warning] `INSERT INTO` in a scheduled pipeline is almost always the wrong write pattern. Default to partition overwrite or MERGE; use INSERT only for append-only tables where duplicates genuinely can't occur.
+
+@feynman
+
+Like a financial ledger that posts every entry twice on retry — the balance is wrong, but it's wrong in a direction that's easy to miss.
+
+@card
+id: depc-ch12-c010
+order: 10
+title: Over-Engineering Early
+teaser: Applying enterprise-scale data infrastructure to startup-scale problems creates complexity without value. The patterns are real — the problem must be real-size too.
+
+@explanation
+
+**Over-engineering** in data systems means solving a problem at a scale or complexity the team doesn't have, producing infrastructure that is harder to maintain than the problem it solved warranted.
+
+Common manifestations:
+
+**Full lakehouse architecture for 10 GB of data.** Bronze/silver/gold + Iceberg + Spark + Airflow is excellent at petabyte scale. For a team with 10 GB of data and three analysts, DuckDB + dbt + a simple scheduler solves the same problem in 1/10th the infrastructure.
+
+**Kafka for 100 events per second.** Kafka is designed for millions of messages per second and high-throughput stream processing. At 100 events/second, a simple SQS queue with a Lambda consumer is simpler, cheaper, and easier to operate.
+
+**Microservice data architecture on a two-person team.** Each team owning their own data store and pipeline requires cross-team coordination that a two-person team doesn't need. A shared warehouse they both query is sufficient.
+
+**Feature store for two ML models.** Feature stores are valuable when many ML models share features and training-serving consistency is a proven problem. For two models in early development, a simple Parquet-backed feature table is sufficient.
+
+The pattern: a team learns a sophisticated tool or architecture from a conference talk or blog post about a company 10× their scale, and applies it because it's "best practice." The complexity is real; the payoff isn't, yet.
+
+> [!tip] A useful heuristic: if the architecture is harder to explain than the data problem it solves, the architecture is probably over-engineered for the problem's current size.
+
+@feynman
+
+Like deploying Kubernetes for a single-server app — the tool is real and valuable at its intended scale; the problem isn't at that scale yet.

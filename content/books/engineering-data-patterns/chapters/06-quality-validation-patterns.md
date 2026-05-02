@@ -228,3 +228,154 @@ Anomaly detection generates alerts that require human interpretation — it tell
 @feynman
 
 Like setting a smoke detector in addition to a carbon monoxide detector — each catches a different class of problem; you need both.
+
+@card
+id: depc-ch06-c007
+order: 7
+title: Data Contracts
+teaser: A data contract is the formal agreement between a data producer and its consumers — schema, freshness, completeness, and SLA — that makes pipelines trustworthy across team boundaries.
+
+@explanation
+
+A **data contract** is an explicit, versioned specification of what a data producer commits to deliver and what consumers can rely on. It's the data equivalent of an API contract.
+
+What a data contract defines:
+- **Schema:** the columns, types, nullability, and constraints of the output table.
+- **Freshness SLA:** "this table will have data no older than 2 hours by 9 AM UTC."
+- **Volume guarantees:** "this table will have between 50K and 500K rows after each daily load."
+- **Semantics:** what `order_status = 'shipped'` means, what counts as a "conversion event," how revenue is calculated.
+- **Versioning policy:** how breaking changes are communicated and how much notice consumers get.
+- **Owner:** who to contact when the contract is violated.
+
+Without data contracts, cross-team data sharing depends on tribal knowledge. When the producer changes the schema, consumers find out when their pipelines break.
+
+Implementing contracts:
+- **YAML specification:** maintain a `contract.yml` alongside each published table. Include schema, expectations, and freshness.
+- **Automated enforcement:** run expectation tests on every pipeline run. If the contract is violated, alert both the producer team and subscribed consumer teams.
+- **Schema registry:** for streaming data, a schema registry enforces contracts at write time — producers can't publish events that violate the registered schema.
+
+Tools: Atlan data contracts, Monte Carlo, custom dbt schema tests + alerting, Soda data contracts.
+
+> [!tip] Start with a simple 10-line YAML contract for your most critical tables. The act of writing down the freshness SLA and schema invariants surfaces assumptions the team didn't know it was making.
+
+@feynman
+
+Like an OpenAPI spec for a REST service — downstream consumers can rely on the shape without needing to know the implementation.
+
+@card
+id: depc-ch06-c008
+order: 8
+title: Referential Integrity Checks
+teaser: Fact rows that reference dimension keys that don't exist produce silent gaps in analytical output. Referential integrity validation catches orphaned foreign keys before they reach consumers.
+
+@explanation
+
+**Referential integrity** means every foreign key in a fact table has a corresponding row in the referenced dimension table. In an OLTP database with foreign key constraints, this is enforced by the database engine. In a data warehouse or lakehouse, it is usually not enforced at the storage level — it must be validated explicitly.
+
+Why referential integrity breaks in analytical systems:
+- The dimension refresh runs after the fact load. New orders reference customers who haven't been loaded into `dim_customer` yet.
+- The fact table includes records from a time before a particular dimension entity existed.
+- The ETL from the source system uses a different key format for one source.
+
+What broken referential integrity looks like: a dashboard aggregating revenue by customer tier shows revenue that can't be attributed to any tier — the orphaned rows either appear as NULL or are silently dropped from the result, depending on the join type.
+
+Detection pattern:
+```sql
+-- Find fact rows with no matching dimension key
+SELECT COUNT(*) AS orphaned_count
+FROM fact_orders f
+LEFT JOIN dim_customer c ON f.customer_key = c.customer_key
+WHERE c.customer_key IS NULL
+```
+
+In dbt, the `relationships` test runs this check automatically:
+```yaml
+- name: customer_key
+  tests:
+    - relationships:
+        to: ref('dim_customer')
+        field: customer_key
+```
+
+Resolution strategies:
+- Add an "unknown" sentinel row to the dimension (key = -1) to capture orphaned references without losing the fact row.
+- Delay fact loads until the dimension is current.
+- Load in sequence: dimensions before facts.
+
+> [!warning] A LEFT JOIN that silently drops orphaned rows is not the same as a fact table with clean referential integrity. The query works; the aggregations are wrong.
+
+@feynman
+
+Like foreign key constraints in application code — the database enforces them automatically; in a warehouse you have to add the check yourself.
+
+@card
+id: depc-ch06-c009
+order: 9
+title: Volume Validation Patterns
+teaser: An empty load that silently wipes a table is a worse outcome than a failed load that alerts. Row count bounds are the simplest, most impactful quality check you can add.
+
+@explanation
+
+**Volume validation** checks whether the number of rows in a pipeline output is within the expected range. It catches the most catastrophic quality failures — zero-row loads, truncated extractions, runaway duplications — before they reach consumers.
+
+Types of volume checks:
+
+**Absolute bounds:** "this table must have between 10,000 and 500,000 rows." Catches complete failures (zero rows) and unexpected explosions (join fan-out producing 10× expected rows). Best for tables with relatively stable row counts.
+
+**Relative change bounds:** "today's row count must be within 20% of yesterday's row count." Catches sudden drops or spikes without requiring a hardcoded absolute range. Better for tables with growing data.
+
+**Period-over-period comparison:** "today's order count must be within 30% of the same day last week." Accounts for weekly seasonality — Monday traffic is different from Saturday traffic.
+
+**Partition volume checks:** validate the row count for the most recently loaded partition specifically. A partition with 0 rows is more suspicious than a full table with the right total count.
+
+dbt custom test example:
+```sql
+-- Fails if today's partition has zero rows
+SELECT COUNT(*) AS row_count
+FROM {{ ref('fact_orders') }}
+WHERE order_date = CURRENT_DATE
+HAVING COUNT(*) = 0
+```
+
+Integration with circuit breakers: when volume validation fails, the circuit breaker should prevent the write to the destination. A zero-row extraction that passes validation and overwrites the destination is an incident.
+
+> [!info] Volume checks are the cheapest, highest-leverage quality gate. A count query is sub-second on most systems; it catches the majority of catastrophic failures before consumers see wrong data.
+
+@feynman
+
+Like a scale check at a factory — if the package weighs zero, something went wrong before you inspect the contents.
+
+@card
+id: depc-ch06-c010
+order: 10
+title: Schema Registry for Event Streams
+teaser: Without a schema registry, Kafka producers can publish events in any shape and consumers break silently. A registry enforces contracts at write time.
+
+@explanation
+
+A **schema registry** is a centralized repository of message schemas for event streaming systems. Producers serialize events against a registered schema; consumers deserialize using the same registry. Incompatible changes are rejected at publish time.
+
+How it works (Confluent Schema Registry):
+1. Producer registers a schema (Avro, Protobuf, or JSON Schema) with the registry.
+2. Each message is serialized with a schema ID prefix (4 bytes).
+3. Consumer reads the schema ID, fetches the corresponding schema from the registry, and deserializes.
+4. If the schema has evolved, the registry uses compatibility rules to determine whether the change is allowed.
+
+Compatibility modes:
+- **BACKWARD:** new schema can read data written with the old schema. Consumers can be upgraded before producers.
+- **FORWARD:** old schema can read data written with the new schema. Producers can be upgraded before consumers.
+- **FULL:** both backward and forward compatible. Safest; most restrictive.
+- **NONE:** no compatibility checking. Dangerous in production.
+
+What schema registries prevent:
+- Producers adding or removing fields without consumer knowledge.
+- Type changes that break deserialization.
+- Silent NULL injection when field names drift between producer and consumer.
+
+Tools: Confluent Schema Registry (Kafka), AWS Glue Schema Registry (Kinesis + MSK), Apicurio (open source).
+
+> [!tip] Set compatibility to BACKWARD at minimum for production topics. A single `NONE` topic where a producer changes the schema without coordination is a consumer-incident waiting to happen.
+
+@feynman
+
+Like a typed API between services — the contract is enforced at the boundary, not left to convention and hope.

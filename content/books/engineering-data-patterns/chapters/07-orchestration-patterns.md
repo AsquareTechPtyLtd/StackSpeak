@@ -215,3 +215,139 @@ Use task groups when:
 @feynman
 
 Like modules in a codebase — task groups are namespacing for readability, not separate binaries.
+
+@card
+id: depc-ch07-c007
+order: 7
+title: Cross-DAG Dependencies
+teaser: When one pipeline must wait for another team's pipeline to complete, the dependency must be explicit — and it must be decoupled enough that one team can deploy independently.
+
+@explanation
+
+**Cross-DAG dependencies** arise when a downstream pipeline can only run after an upstream pipeline from a different DAG (often owned by a different team) has completed.
+
+The tight-coupling approach: use Airflow's `ExternalTaskSensor` to wait for a specific task in another DAG to complete. Simple; no extra infrastructure; but creates a compile-time coupling between two separately-deployed DAGs. If the upstream DAG is renamed or the task is reorganized, the downstream sensor silently never fires.
+
+The decoupled approach: use a **data-availability signal** instead of a task dependency. After the upstream pipeline completes, it writes a sentinel file or flag (an S3 object, a database row, a Kafka event). The downstream pipeline uses an `S3KeySensor` or `SqlSensor` to wait for the signal.
+
+Benefits of signal-based decoupling:
+- The upstream team can rename tasks, change DAG structure, or migrate to a different orchestrator without breaking downstream sensors.
+- The signal is inspectable by human operators ("has today's sentinel appeared?").
+- The signal can carry metadata (row count, completion timestamp, schema version).
+
+Signal naming convention: `s3://data-signals/{dataset_name}/{date}/SUCCESS` is a common pattern. The upstream job writes the SUCCESS file after validating its output; downstream jobs poll for it.
+
+> [!tip] If your ExternalTaskSensor references a task ID that was renamed six months ago, the sensor is in a permanent wait state that only shows up as a long-running sensor. Signal-based dependencies fail more clearly.
+
+@feynman
+
+Like a webhook notification rather than polling an internal state variable — you decouple the observer from the implementation details of the producer.
+
+@card
+id: depc-ch07-c008
+order: 8
+title: Retry Strategies and Backoff
+teaser: How a pipeline retries failed tasks determines whether it recovers gracefully or amplifies the failure. Immediate retries, exponential backoff, and dead-letter routing each fit different failure modes.
+
+@explanation
+
+A failed task isn't an incident — it's an expected event. How the orchestrator handles retries determines whether the failure resolves automatically or escalates.
+
+**Immediate retry:** retry the task immediately after failure. Works for transient failures (brief network blip, lock contention that resolves in seconds). Wrong for failures caused by downstream overload — retrying immediately may make the overload worse.
+
+**Exponential backoff with jitter:** retry after a delay that doubles with each attempt, plus random jitter to prevent synchronized retry storms. Standard for API calls and external service dependencies.
+
+```python
+# Airflow task with exponential backoff
+my_task = PythonOperator(
+    task_id='call_api',
+    retry_delay=timedelta(seconds=30),
+    retries=5,
+    retry_exponential_backoff=True,
+    max_retry_delay=timedelta(minutes=30),
+)
+```
+
+**Fixed retry with extended delay:** for pipeline failures caused by upstream data not yet being available (e.g., a source that delivers "sometime between midnight and 6 AM"), retry every 30 minutes instead of immediately. The task will eventually succeed when the data arrives.
+
+**Dead-letter routing:** after N retries, stop retrying and route to a failure queue or alert channel. The task needs human intervention; continuing to retry would mask the failure.
+
+Retry strategy by failure category:
+- Network timeout → exponential backoff, up to 5 retries.
+- Source data not available → fixed interval retry, up to 12 attempts over 6 hours.
+- Schema mismatch → no retry; alert immediately (retrying won't fix a schema problem).
+- Out of memory → no retry; alert; the task needs to be redesigned.
+
+> [!warning] Retrying schema failures wastes compute and delays alerting. Distinguish failure categories in error handling and only retry failures that are likely to resolve on their own.
+
+@feynman
+
+Like reconnect logic in a network client — exponential backoff prevents hammering an overloaded server while still recovering automatically when it comes back.
+
+@card
+id: depc-ch07-c009
+order: 9
+title: Event-Driven Orchestration
+teaser: Schedule-driven pipelines run whether upstream data is ready or not. Event-driven pipelines start when data actually arrives — lower latency, lower idle compute, fewer races.
+
+@explanation
+
+**Event-driven orchestration** triggers pipeline runs in response to data events rather than on a fixed schedule.
+
+Why schedule-driven orchestration creates problems:
+- A 6 AM scheduled run starts before upstream data arrives, fails, retries, eventually succeeds — but the SLA was missed.
+- A 6 AM scheduled run starts after upstream data arrived at 3 AM. Three hours of unnecessary latency.
+- A scheduled run that has nothing to process still occupies an orchestrator slot.
+
+Event sources that can trigger pipeline runs:
+- **Object storage events:** S3 event notifications or SNS trigger a Lambda/Cloud Function that starts the DAG when a new file lands.
+- **Message queue messages:** an SQS/Pub/Sub message published by an upstream service triggers the consumer pipeline.
+- **Database CDC events:** a change in the source database triggers the ingestion pipeline via Debezium.
+- **Webhook calls:** a third-party system calls your webhook endpoint on data ready, triggering a DAG via Airflow's REST API.
+
+Airflow REST API trigger:
+```bash
+curl -X POST \
+  "http://airflow/api/v1/dags/orders_etl/dagRuns" \
+  -H "Content-Type: application/json" \
+  -d '{"conf": {"source_file": "s3://bucket/2026-05-01/orders.parquet"}}'
+```
+
+Prefect, Dagster, and Temporal all have first-class event-driven execution models with built-in connectors for common event sources.
+
+> [!info] Schedule-driven orchestration is simpler to reason about and debug. Event-driven reduces latency and idle compute. Most production systems use both: event-driven for latency-sensitive paths, schedule-driven as a fallback and for batch jobs.
+
+@feynman
+
+Like an interrupt-driven program vs a polling loop — the interrupt fires when something actually happens; the poll checks whether something happened and usually finds nothing.
+
+@card
+id: depc-ch07-c010
+order: 10
+title: DAG Deployment and Versioning
+teaser: Deploying a changed DAG while runs are in flight can break in-progress runs. Safe deployment requires understanding how your orchestrator handles DAG code changes mid-run.
+
+@explanation
+
+**DAG deployment** — pushing new pipeline code to production — is riskier in orchestrated data systems than in stateless web services. An in-flight DAG run may hold references to task definitions that no longer exist in the new code.
+
+Failure modes from naive deployment:
+- A running DAG has tasks A → B → C. You deploy a new version that renames task B to B2. The running instance tries to start B; it no longer exists in the DAG definition; the run fails.
+- A paused sensor is waiting on a task ID that was reorganized. After deployment, the task ID doesn't match; the sensor never fires.
+- Task retry state held in the Airflow metadata database references a task that was removed.
+
+Safe deployment strategies:
+
+**Versioned DAG IDs:** name DAGs with a version suffix (`orders_etl_v2`). The old version runs to completion; the new version starts fresh for new runs. Expensive in large deployments but safest.
+
+**Pause-then-deploy:** before deploying a changed DAG, pause it (prevent new runs from starting), wait for in-flight runs to complete, deploy, resume. Works for pipelines with short run times.
+
+**Blue-green DAG deployment:** run two versions of the DAG simultaneously for a switchover period. New runs start on the new version; old runs complete on the old version. Requires naming convention discipline.
+
+**Non-breaking changes only:** design changes to be additive (new tasks added, old tasks kept with no changes). Removes the deployment risk entirely for most routine changes.
+
+> [!tip] Treat mid-flight failures after a deployment as a distinct failure category in your runbook. "Did we deploy recently?" is always in the first three diagnostic questions.
+
+@feynman
+
+Like database schema migrations — forward-compatible changes can be deployed at any time; breaking changes require a coordinated cutover.
