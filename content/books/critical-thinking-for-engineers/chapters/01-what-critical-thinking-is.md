@@ -1,0 +1,234 @@
+@chapter
+id: cte-ch01-what-critical-thinking-is
+order: 1
+title: What Critical Thinking Is in Tech
+summary: Critical thinking is not negativity or contrarianism — it's structured reasoning applied before acting. In engineering, where claims without evidence are common and decisions compound, it's a professional requirement.
+
+@card
+id: cte-ch01-c001
+order: 1
+title: What Critical Thinking Actually Is
+teaser: Critical thinking is structured, disciplined analysis applied before acting — not a personality trait, but a repeatable process for reducing the cost of wrong decisions.
+
+@explanation
+
+Critical thinking is not a vague disposition toward skepticism. It's a specific practice: examining a claim, a decision, or a course of action by asking what evidence supports it, what assumptions it depends on, what it predicts, and what would falsify it — before committing.
+
+The definition that holds up in engineering contexts:
+
+- **Structured:** follows a consistent sequence of steps rather than reacting to how a claim feels.
+- **Disciplined:** applies equally to ideas you like and ideas you dislike. Selective skepticism is not critical thinking.
+- **Applied before acting:** the point is to improve decisions, not to criticize outcomes after the fact.
+
+Critical thinking is not the same as:
+- Intelligence — smart people make bad decisions when they skip the analysis step.
+- Domain expertise — deep knowledge of a system doesn't automatically produce better reasoning about it.
+- Personality — whether you're naturally agreeable or combative has nothing to do with whether you evaluate evidence correctly.
+
+In engineering, the cost of skipping structured analysis before a major decision compounds. A bad architecture chosen without real analysis locks teams in for years. A vendor chosen on a sales demo instead of a proof-of-concept burns budget and credibility. Critical thinking is not optional at that level of consequence.
+
+> [!info] Critical thinking is a skill, not a trait. It degrades under time pressure and social pressure, which is precisely when it matters most.
+
+@feynman
+
+Like code review — not about finding problems with the author, but about applying a structured process to the output before it ships.
+
+@card
+id: cte-ch01-c002
+order: 2
+title: What Critical Thinking Is Not
+teaser: The word "critical" is the problem — it implies negativity, opposition, and being the person who says no. None of that is what this is.
+
+@explanation
+
+The most common reason engineers avoid the label is that "critical thinking" sounds like professional obstruction — the person who makes every meeting longer, questions every decision, and never ships.
+
+That's a different behavior with a different name: contrarianism. The distinction matters:
+
+**Contrarianism:**
+- Opposes ideas based on who proposed them, not what they contain.
+- Has a conclusion before the analysis.
+- Optimizes for looking skeptical rather than for improving the decision.
+- Is socially motivated — the point is the opposition, not the outcome.
+
+**Critical thinking:**
+- Examines the idea, not the person behind it.
+- Follows the evidence wherever it leads, including toward agreement.
+- Is outcome-motivated — the point is the best decision, not the performance of doubt.
+- Reaches "yes" frequently, when the evidence supports it.
+
+Similarly, critical thinking is not:
+- **Negativity.** Rigorous analysis can and often should conclude that the proposal is good.
+- **Delay.** A structured 20-minute evaluation is faster than a post-incident review that lasts a week.
+- **Expertise theater.** Asking hard questions doesn't require knowing all the answers.
+
+The engineers who apply this well are often the ones who accelerate decisions — because their analysis surfaces the right questions early, before the team has committed resources.
+
+> [!tip] If you find yourself agreeing with every critical analysis you perform, you're doing contrarianism. Real analysis is wrong about the direction roughly as often as it's right.
+
+@feynman
+
+Like a compiler's type checker — it blocks invalid programs, but its job is to let valid programs through; a good type checker approves most code it sees.
+
+@card
+id: cte-ch01-c003
+order: 3
+title: Fast Thinking vs. Deliberate Analysis
+teaser: The default mode of technical decision-making is pattern recognition — fast, confident, and frequently wrong on novel problems.
+
+@explanation
+
+Cognitive science distinguishes between two modes of thought: fast, automatic, pattern-matching reasoning (System 1) and slow, effortful, deliberate reasoning (System 2). Both are present in technical work, and both have failure modes.
+
+Fast thinking in engineering looks like:
+- "We used Postgres for the last three projects and it worked, so we'll use it here."
+- "This startup has impressive infrastructure — their approach must be sound."
+- "The vendor showed a demo that matched our use case, so the product fits."
+
+These judgments can be right. Pattern recognition built from real experience is valuable. The failure mode is applying it to situations that look like prior patterns but aren't — novel problems, unfamiliar scales, or decisions with asymmetric downside.
+
+Deliberate analysis is slower by design. It requires:
+- Naming the specific claim being evaluated.
+- Identifying what evidence would change the conclusion.
+- Separating what is known from what is assumed.
+- Checking whether the problem resembles prior patterns in the ways that matter, not just superficially.
+
+The engineering context makes this hard: time pressure is real, social pressure to align is real, and technical confidence in one domain can bleed into false confidence in adjacent domains. Fast thinking has social rewards — you look decisive. Deliberate analysis can look slow or difficult.
+
+The cost structure matters: fast thinking is cheap upfront and expensive at the tail. Deliberate analysis has the costs inverted.
+
+> [!warning] The situations where fast thinking feels most natural — urgent incidents, confident vendor pitches, decisions made by senior engineers — are exactly the situations where it's most likely to fail on novel inputs.
+
+@feynman
+
+Like running code without tests because it looks right — it works most of the time, and the failures are disproportionately expensive.
+
+@card
+id: cte-ch01-c004
+order: 4
+title: When Critical Thinking Is Required
+teaser: Not every decision needs a structured analysis — but the ones that do are predictable, and skipping the analysis on them has a well-documented cost.
+
+@explanation
+
+Critical thinking has a cost: time and cognitive effort. The goal is not to apply it uniformly to every decision, but to apply it reliably to the decisions where the cost of being wrong is high and the probability of being wrong without it is non-trivial.
+
+The categories that consistently warrant structured analysis in engineering:
+
+**Vendor and tooling evaluation.**
+Sales demos are optimized to show fit, not to surface limitations. Proof-of-concept work, reference checks with existing customers in similar contexts, and explicit performance claims testing are all applications of critical thinking to a vendor decision.
+
+**Architecture decisions.**
+Architectural choices constrain everything downstream — team structure, performance envelope, operational complexity, and future optionality. The cost of reversing them is high. Every significant architectural proposal benefits from explicit assumption naming and failure-mode enumeration before adoption.
+
+**Incident response.**
+Under pressure, fast thinking dominates. Structured analysis during an incident means distinguishing between symptoms and causes, between correlation and causation, and between what is known and what is assumed — before making changes that could worsen the situation.
+
+**Performance and reliability claims.**
+"This will scale to 10× our current load" is a claim with specific, testable implications. Accepting it without identifying what the claim depends on is a recurring source of production failures.
+
+**Post-incident reviews.**
+When the goal is learning rather than blame, structured analysis is required to separate contributing causes from root causes, and to design mitigations that address the actual failure mode.
+
+> [!info] Architecture decisions and vendor selections are the two categories where skipping critical analysis most reliably produces multi-year consequences.
+
+@feynman
+
+Like knowing when to write unit tests vs. just running it manually — not everything needs the full treatment, but the high-stakes paths always do.
+
+@card
+id: cte-ch01-c005
+order: 5
+title: Why Tech Has an Evidence Problem
+teaser: Engineering culture combines high status for confident assertions with low incentive to retract them — a combination that produces a lot of claims that outlive their evidence base.
+
+@explanation
+
+Claims without adequate evidence propagate faster in tech than in most other fields. Several structural reasons:
+
+**The demo-to-production gap.**
+Tools, frameworks, and architectures are evaluated in demo conditions that don't replicate production load, edge cases, or operational reality. The claim "this works" is accurate for the demo; the inference "this will work for us" requires evidence that the demo doesn't provide.
+
+**Thought leadership incentives.**
+Blog posts, conference talks, and public architecture write-ups reward novelty and confidence, not accuracy. A post that says "we switched to X and everything is better" generates engagement; a post that says "we switched to X and it was a mixed result with these specific tradeoffs" gets less attention. The incentive structure selects for overclaiming.
+
+**Compounding authority.**
+When a widely respected company, engineer, or tool adopts an approach, the approach inherits credibility independent of whether the context generalizes. "Netflix uses Kafka" is a fact; "therefore Kafka is the right choice for our event volume" is a non sequitur that nonetheless circulates as guidance.
+
+**Short feedback loops obscure long-term costs.**
+Decisions that look correct at low scale or low team size may have serious costs that only appear later. The engineer who made the decision has often moved on before the cost is visible.
+
+The implication is that the default posture in technical decision-making should be to require evidence proportional to the consequence of the decision — not to accept claims because they come from credible sources.
+
+> [!warning] "Everyone is using it" and "it worked for them" are social proof, not technical evidence. Social proof is a reasonable weak signal, not a sufficient basis for consequential decisions.
+
+@feynman
+
+Like accepting benchmark results without reading the methodology section — the number is real, the conditions under which it was measured are what matter.
+
+@card
+id: cte-ch01-c006
+order: 6
+title: The Dispositions of a Critical Thinker
+teaser: Critical thinking is a skill built on a small set of attitudes — intellectual humility, curiosity, and evidence-orientation. Without these, the techniques don't hold.
+
+@explanation
+
+The techniques of critical thinking — argument mapping, assumption identification, evidence evaluation — can be taught. But they require a foundation of dispositions to work reliably under pressure.
+
+**Intellectual humility.**
+The recognition that your current beliefs are probably wrong in some ways, and that being shown where is useful rather than threatening. In practice: treating a strong counterargument as evidence to update on, not as an attack to rebut. Engineers with deep domain expertise are specifically at risk of losing this — expertise in one area does not transfer to calibrated confidence in adjacent areas.
+
+**Curiosity.**
+Genuine interest in what is actually true, independent of whether the answer is comfortable. This shows up as: following a line of questioning even when the answers are inconvenient, asking "why" past the first answer, and being more interested in understanding a system than in defending a position about it.
+
+**Evidence-orientation.**
+The default question is "what would show this is wrong?" rather than "how do I explain why this is right?" Evidence-orientation means assigning weight to evidence proportional to its quality, not proportional to how well it supports the preferred conclusion.
+
+**Fair-mindedness.**
+Applying the same standard of scrutiny to ideas you agree with and ideas you disagree with. It is easy to be rigorous about claims you're skeptical of and generous about claims you want to be true.
+
+These dispositions don't come naturally under pressure. They require deliberate cultivation — specifically, building habits that trigger the dispositions in high-stakes situations.
+
+> [!tip] A practical proxy for intellectual humility: can you state, precisely, what evidence would change your mind on this decision? If you can't, you're not reasoning — you're rationalizing.
+
+@feynman
+
+Like good code review habits — they have to be practiced consistently on code you like before they're reliable on code you're skeptical of.
+
+@card
+id: cte-ch01-c007
+order: 7
+title: The Steel-Man Habit
+teaser: Engaging with the weakest version of an opposing view is easy and unproductive. Engaging with the strongest version is what produces durable decisions.
+
+@explanation
+
+A straw man is a weakened, distorted version of an opposing argument — easier to defeat than the real argument, and therefore useless as a test of your own position. The steel man is the opposite: the strongest, most charitable reconstruction of the opposing view. Engaging with it seriously is harder and more valuable.
+
+Why the steel-man habit matters in engineering:
+
+**It surfaces real risks.** The strongest version of the argument against your architecture proposal contains the actual failure modes of that architecture. Dismissing the weakest version leaves those failure modes unexamined.
+
+**It builds alignment.** When someone disagrees with a decision, engaging with the strongest version of their concern — rather than the most dismissible version — produces better outcomes and better working relationships.
+
+**It improves your own position.** If your proposal can't withstand its strongest counterargument, the proposal has a problem worth fixing before shipping.
+
+How to apply it:
+
+1. When you encounter an opposing view, restate it in its most reasonable form — the version the proponent would agree is fair.
+2. Engage with that version directly: what evidence does it rely on? What assumptions? Where is it correct?
+3. If you still disagree after engaging with the strong version, your disagreement is better grounded. If you now partly agree, the decision is improved.
+
+The habit is hardest to apply when:
+- You have high confidence in your own position.
+- The person presenting the opposing view is doing so poorly.
+- The decision is time-pressured.
+
+Those are precisely the conditions under which it's most valuable.
+
+> [!tip] A team norm worth establishing: before a major decision is finalized, one person is assigned to make the best case against it. Not to block the decision — to harden it.
+
+@feynman
+
+Like defensive programming — you're not assuming the system will fail, you're making sure that if it does, you've already thought through the path.
