@@ -1,0 +1,455 @@
+@chapter
+id: apid-ch03-rpc-and-grpc
+order: 3
+title: RPC and gRPC
+summary: RPC is the right shape when the call is procedure-like, not resource-like — and gRPC's typed contracts, streaming, and code generation make it the default for service-to-service calls inside a data center.
+
+@card
+id: apid-ch03-c001
+order: 1
+title: RPC vs REST — Choosing the Right Shape
+teaser: REST models your system as resources you manipulate; RPC models it as procedures you invoke — and picking the wrong shape creates friction that compounds across every endpoint you add.
+
+@explanation
+
+When you design a service, the first question is not which framework to use — it's whether the domain is better described as things or actions.
+
+REST's resource model fits naturally when you're exposing entities that clients create, read, update, and delete: orders, users, products. The URL encodes identity, the HTTP method encodes intent, and the shape of the system stays self-documenting.
+
+RPC's procedure model fits better when the operation is the unit of thought, not the resource:
+
+- `SendInvoice(invoiceId)` is a command, not a state mutation you can express cleanly as a `PATCH`.
+- `RunBackfill(jobSpec)` has no obvious resource identity.
+- `StreamLogEvents(filter)` returns an open-ended sequence, not a bounded collection.
+
+In service-to-service communication inside a data center, most calls look more like procedures than resource mutations. Engineers are calling a function that lives on another machine — the HTTP method and URL are just transport bookkeeping. gRPC makes this framing explicit by generating typed client stubs that look like local function calls.
+
+The practical signal: if you find yourself using verbs as nouns in your REST URLs (`/orders/send`, `/jobs/run`), your domain is probably RPC-shaped.
+
+> [!info] Neither model is universally correct. REST is the better default for public APIs and browser clients. RPC is the better default for internal services with typed consumers.
+
+@feynman
+
+REST is like a filing system where you pull and update folders; RPC is like calling a colleague and asking them to do something — the difference is whether the domain is about records or about actions.
+
+@card
+id: apid-ch03-c002
+order: 2
+title: Protocol Buffers — Schema Language and Wire Format
+teaser: Protocol Buffers give you a typed, language-neutral schema for your data and a compact binary encoding — and the schema is the contract every generated client and server enforces at compile time.
+
+@explanation
+
+Protocol Buffers (protobuf) are the IDL and serialization format underlying gRPC. You write `.proto` files; the `protoc` compiler generates code in Go, TypeScript, Java, Python, and many other languages.
+
+A minimal service definition:
+
+```proto
+syntax = "proto3";
+
+package orders.v1;
+
+message GetOrderRequest {
+  string order_id = 1;
+}
+
+message Order {
+  string order_id = 1;
+  string customer_id = 2;
+  repeated LineItem line_items = 3;
+  int64 created_at_unix = 4;
+}
+
+service OrderService {
+  rpc GetOrder(GetOrderRequest) returns (Order);
+}
+```
+
+The numbers — `= 1`, `= 2` — are **field numbers**, not values. They are the field's identity on the wire. The field name can change; the field number cannot. This is the contract between schema versions.
+
+Key type facts:
+
+- Scalar types: `string`, `int32`, `int64`, `bool`, `bytes`, `float`, `double`.
+- `repeated` means a list.
+- `message` types can be nested.
+- `oneof` encodes a discriminated union.
+- `enum` encodes a finite set of integer-backed values.
+
+Binary encoding is compact: field numbers are varint-encoded alongside their wire type. A 32-byte JSON object commonly becomes 8–12 bytes in protobuf. At millions of calls per second, this matters.
+
+> [!tip] Keep your `.proto` files in a dedicated repository (or Buf module) that both client and server teams depend on. Treat it like a shared header file — changes go through review, not surprise.
+
+@feynman
+
+A `.proto` file is like a strongly typed API contract written in a language every team's compiler can read — both sides agree on the shape before a single byte is sent.
+
+@card
+id: apid-ch03-c003
+order: 3
+title: The Four gRPC Call Types
+teaser: gRPC has four call patterns built on HTTP/2 streams — unary for request/response, server-streaming for pushed sequences, client-streaming for bulk uploads, and bidirectional for real-time duplex flows.
+
+@explanation
+
+All four patterns are declared in the same `.proto` syntax, with `stream` added to the request or response type (or both):
+
+```proto
+service LogService {
+  // Unary: one request, one response
+  rpc GetLog(GetLogRequest) returns (LogEntry);
+
+  // Server-streaming: one request, many responses
+  rpc TailLog(TailLogRequest) returns (stream LogEntry);
+
+  // Client-streaming: many requests, one response
+  rpc UploadLogs(stream LogEntry) returns (UploadResult);
+
+  // Bidirectional: many requests, many responses
+  rpc SyncLogs(stream LogEntry) returns (stream LogEntry);
+}
+```
+
+When to use each:
+
+- **Unary** — the default. Use for any operation with a bounded, single response. Covers 80% of service-to-service calls.
+- **Server-streaming** — use when the server produces a sequence the client consumes incrementally: log tailing, event feeds, search results that arrive progressively.
+- **Client-streaming** — use when the client sends a batch the server aggregates: bulk metric uploads, chunked file transfers.
+- **Bidirectional** — use for real-time interactive flows: chat, collaborative editing state sync, IoT sensor negotiation. The call stays open until either side closes it.
+
+HTTP/2 multiplexing means all four patterns share a single TCP connection, avoiding the per-request connection overhead that HTTP/1.1 imposes.
+
+> [!warning] Bidirectional streaming is powerful but hard to reason about under partial failure. Both sides must handle the case where the other side closes the stream unexpectedly. Start with unary and add streaming only when you can name the specific latency or throughput problem it solves.
+
+@feynman
+
+gRPC's four call types are like four conversation formats: a question with one answer, a question that gets a newsletter, a long dictation that gets one receipt, and a live back-and-forth phone call.
+
+@card
+id: apid-ch03-c004
+order: 4
+title: Code Generation and the Typed-Stubs Advantage
+teaser: protoc turns your .proto file into typed client and server stubs — and the advantage is not just convenience, it's that type errors are caught at compile time instead of at runtime in production.
+
+@explanation
+
+After defining your service in protobuf, you run the compiler to generate language-specific code:
+
+```bash
+# Go: generates .pb.go and _grpc.pb.go files
+protoc --go_out=. --go-grpc_out=. orders/v1/orders.proto
+
+# TypeScript: using the Buf CLI (preferred over raw protoc plugins)
+buf generate
+```
+
+The generated Go client looks like any other Go interface:
+
+```go
+client := orderpb.NewOrderServiceClient(conn)
+resp, err := client.GetOrder(ctx, &orderpb.GetOrderRequest{
+    OrderId: "ord_123",
+})
+```
+
+You're calling a typed function. The compiler tells you if you pass the wrong type, omit a required context, or misread the return type. Compare this to a REST client calling `http.Post` with a hand-rolled JSON body — a typo in a field name silently produces a 400 at runtime.
+
+The tradeoff is in distribution. Generated stubs must be regenerated and redistributed when the schema changes. This means you need a process: a shared Buf module, a generated-code repository, or committed generated files checked in alongside the `.proto` source. Teams that skip this end up with clients and servers on different schema versions, which the binary encoding makes silently wrong rather than loudly wrong.
+
+[Buf](https://buf.build) is the modern toolchain for managing this: it handles linting, breaking-change detection, code generation, and schema registry in a single CLI.
+
+> [!tip] Use `buf breaking` in CI to catch field number reuse, removed fields, or type changes before they reach any consumer. A breaking change in protobuf is often not a compile error — it's corrupted data.
+
+@feynman
+
+Generated stubs are like a typed SDK that gets rebuilt automatically when the API spec changes — the contract is enforced by the compiler, not by whoever last read the documentation.
+
+@card
+id: apid-ch03-c005
+order: 5
+title: gRPC vs REST — Real Tradeoffs
+teaser: gRPC wins on performance, type safety, and streaming; REST wins on toolability, browser support, and human readability — and the right choice depends on who is consuming the API.
+
+@explanation
+
+The concrete differences:
+
+**Wire format and efficiency:**
+- gRPC uses binary protobuf over HTTP/2. Payloads are smaller (often 5–10x) and parsing is faster than JSON.
+- REST typically uses JSON over HTTP/1.1. Every hop in your stack — load balancers, proxies, logging agents — can read and log JSON without special tooling.
+
+**Browser support:**
+- HTTP/2 raw streaming is not directly accessible from browser JavaScript. gRPC cannot be called from a browser without an intermediary layer (gRPC-Web or Connect).
+- REST works natively in every browser with `fetch`.
+
+**Toolability:**
+- REST is explorable with `curl`, Postman, browser DevTools, and any HTTP client.
+- gRPC requires a client that speaks HTTP/2 and understands protobuf framing: `grpcurl`, `grpcui`, or a generated stub.
+
+**Type safety:**
+- gRPC enforces schema at compile time through generated stubs.
+- REST is as type-safe as your OpenAPI spec — which is often not enforced at compile time and drifts from the implementation.
+
+**Streaming:**
+- gRPC has first-class streaming built into the protocol.
+- REST achieves streaming through Server-Sent Events or WebSockets, which are separate protocols with different semantics.
+
+The practical summary: for internal service-to-service APIs with typed consumers and no browser clients, gRPC is the better default. For public APIs, partner APIs, or APIs consumed by browsers directly, REST (or GraphQL) is more pragmatic.
+
+> [!info] The "REST vs gRPC" debate is mostly a debate about who the consumers are. If every consumer is a service with a generated client, gRPC wins. If any consumer is a human with curl, REST wins.
+
+@feynman
+
+gRPC is a high-speed private rail line between services; REST is a public road — the rail is faster and more efficient, but the road is usable by anyone without special equipment.
+
+@card
+id: apid-ch03-c006
+order: 6
+title: gRPC-Web — The Browser Bridge
+teaser: gRPC-Web lets browser JavaScript call gRPC services by running a translating proxy between the browser and the server — but it adds an infrastructure component and gives up bidirectional streaming.
+
+@explanation
+
+Native gRPC relies on HTTP/2 trailer frames that browsers do not expose through the `fetch` API. gRPC-Web works around this with a translation layer: the browser sends a gRPC-Web-encoded request to a proxy (typically Envoy or an in-process middleware), and the proxy forwards it as native gRPC to the backend.
+
+The architecture:
+
+```
+Browser → [HTTP/1.1 or HTTP/2, gRPC-Web encoding] → Envoy proxy → [native gRPC/HTTP2] → gRPC backend
+```
+
+What gRPC-Web provides:
+- Typed generated TypeScript clients that call your gRPC service from the browser.
+- Unary and server-streaming calls work.
+
+What gRPC-Web does not provide:
+- Client-streaming and bidirectional streaming are not supported. The browser cannot stream to the server with gRPC-Web's encoding.
+- The proxy is a required piece of infrastructure. There is no gRPC-Web-to-gRPC translation in most gRPC server libraries without an external component.
+
+The overhead is real: adding Envoy to every service that needs browser access increases operational surface. For teams that already run Envoy as a sidecar (in a service mesh), the marginal cost is low. For teams that don't, it's a substantial addition.
+
+> [!warning] If you need browser clients with streaming or want to avoid the proxy requirement, look at Connect (Buf's protocol) before committing to gRPC-Web. Connect supports both HTTP/1.1 and HTTP/2 natively from the browser without a separate proxy.
+
+@feynman
+
+gRPC-Web is like a translator booth at a conference — your browser speaks a dialect the gRPC server doesn't understand, so the proxy translates in real time, but neither side changes how they work natively.
+
+@card
+id: apid-ch03-c007
+order: 7
+title: Connect — The Modern Alternative
+teaser: Connect (from Buf) is a protocol built on gRPC's semantics that works over HTTP/1.1, speaks JSON natively, and requires no proxy for browser clients — while remaining wire-compatible with native gRPC.
+
+@explanation
+
+[Connect](https://connectrpc.com) is Buf's answer to the browser gap and the toolability gap in gRPC. It uses the same `.proto` service definitions and the same generated stubs, but the wire protocol is designed to be accessible without special infrastructure.
+
+Key properties:
+
+- **HTTP/1.1 compatible.** A Connect server answers both HTTP/1.1 and HTTP/2 clients on the same port. You don't need a proxy to accept browser requests.
+- **JSON support.** Connect supports both protobuf binary and JSON encoding. A generated Connect client in the browser can send JSON, which means requests are readable in DevTools and debuggable with `curl`.
+- **gRPC wire compatibility.** A Connect server can accept native gRPC requests. A Connect client can call a native gRPC server. You can migrate incrementally.
+- **No Envoy dependency.** Browser clients use the Connect protocol directly; no translation proxy is required.
+
+The tradeoff: Connect is a newer protocol with a smaller ecosystem than gRPC. Not all languages have production-quality Connect libraries yet. The Go and TypeScript libraries (from Buf) are mature. Others are in various states.
+
+A Connect handler in Go:
+
+```go
+// Generated by buf generate; implement the interface
+func (s *OrderServer) GetOrder(
+    ctx context.Context,
+    req *connect.Request[orderpb.GetOrderRequest],
+) (*connect.Response[orderpb.Order], error) {
+    // ...
+}
+```
+
+> [!tip] If you're starting a new internal API that needs both browser and service consumers, Connect is worth evaluating before defaulting to gRPC + gRPC-Web. It eliminates the proxy and gives you JSON debugging for free.
+
+@feynman
+
+Connect is like a bilingual speaker who can talk to both the old guard and the newcomers without needing an interpreter — the same server handles native gRPC clients and browser clients on the same port.
+
+@card
+id: apid-ch03-c008
+order: 8
+title: Schema Evolution — Safe and Unsafe Changes
+teaser: Protobuf schema evolution is safe as long as you add fields and never reuse field numbers — reusing a field number is the one mistake that corrupts data silently across client and server versions.
+
+@explanation
+
+Protobuf is designed for schema evolution in distributed systems where you cannot update every client and server simultaneously. The rules are straightforward:
+
+**Safe (backward and forward compatible):**
+- Adding a new field with a new field number.
+- Renaming a field (names are not on the wire; field numbers are).
+- Changing a field from `required` to `optional` (proto2 only; proto3 fields are optional by default).
+- Adding a new enum value.
+- Adding a new RPC to a service.
+
+**Unsafe (breaking changes):**
+- Removing a field and reusing its field number for a different field — old clients will deserialize the new data into the wrong field.
+- Changing a field's type to an incompatible wire type (e.g., `int32` to `string`).
+- Renumbering a field.
+- Removing an enum value that clients depend on.
+
+The `reserved` keyword is how you permanently retire a field number or name:
+
+```proto
+message Order {
+  reserved 5, 6;           // field numbers that must never be reused
+  reserved "legacy_sku";   // field name that must never be reused
+
+  string order_id = 1;
+  string customer_id = 2;
+}
+```
+
+Reserving prevents future contributors from accidentally reusing a retired number. Treat it as mandatory housekeeping whenever you remove a field.
+
+> [!warning] Field number reuse is catastrophic and silent. An old client receiving a new message with a reused field number will deserialize the wrong bytes into the wrong type, with no error. Use `buf breaking` in CI to make this class of mistake impossible to merge.
+
+@feynman
+
+Protobuf field numbers are like apartment numbers in a building — you can renovate or repurpose a unit, but you must never give the same number to a different apartment while old mail is still being delivered.
+
+@card
+id: apid-ch03-c009
+order: 9
+title: The gRPC Error Model
+teaser: gRPC defines 16 canonical status codes for errors — they are richer than HTTP 5xx/4xx but still coarser than what most applications need, which is why the error detail extension exists.
+
+@explanation
+
+gRPC replaces HTTP status codes with its own status code enum. The most important ones in practice:
+
+- `OK` (0) — success.
+- `CANCELLED` (1) — the caller cancelled the request (client-side deadline or explicit cancellation).
+- `UNKNOWN` (2) — catch-all for unrecognized errors.
+- `INVALID_ARGUMENT` (3) — the client sent a malformed request (analogous to HTTP 400).
+- `NOT_FOUND` (5) — the requested resource does not exist (analogous to HTTP 404).
+- `ALREADY_EXISTS` (6) — the resource the client tried to create already exists.
+- `PERMISSION_DENIED` (7) — authenticated but not authorized (analogous to HTTP 403).
+- `UNAUTHENTICATED` (16) — not authenticated (analogous to HTTP 401).
+- `RESOURCE_EXHAUSTED` (8) — quota or rate limit exceeded.
+- `UNAVAILABLE` (14) — the server is temporarily unavailable; retry may succeed.
+- `DEADLINE_EXCEEDED` (4) — the deadline expired before the operation completed.
+
+For richer error details, gRPC defines a `google.rpc.Status` message with a `details` repeated `Any` field. Google publishes a standard set of error detail types (`BadRequest`, `RetryInfo`, `ErrorInfo`, `ResourceInfo`) that clients can unpack to understand exactly what went wrong.
+
+The gap compared to REST: gRPC errors carry no HTTP-like body, so the detail mechanism is required to convey machine-readable error information. Many teams skip this and return only a code and a string message — which is fine for internal services but painful for any client that needs to distinguish error cases programmatically.
+
+> [!info] `UNAVAILABLE` is the signal for retries; `DEADLINE_EXCEEDED` may mean the upstream timed out even if the operation succeeded. Treat these codes differently in your retry logic — retrying `DEADLINE_EXCEEDED` blindly can cause duplicate operations.
+
+@feynman
+
+gRPC status codes are like a well-defined set of exit codes for a command-line tool — you know immediately whether to retry, fix your input, or escalate, without parsing a freeform error message.
+
+@card
+id: apid-ch03-c010
+order: 10
+title: Deadlines and Cancellation
+teaser: gRPC propagates deadlines and cancellation signals across service boundaries — a discipline that REST lacks by default and that prevents the cascading slow-call failures that take down distributed systems.
+
+@explanation
+
+In gRPC, every call carries a deadline: a point in time after which the caller will stop waiting. The deadline propagates transitively through the call chain. If Service A calls Service B with a 500ms deadline, and Service B calls Service C, Service B passes the remaining deadline to Service C. If the deadline expires, gRPC cancels the in-flight calls at every level.
+
+In Go, this looks like:
+
+```go
+ctx, cancel := context.WithTimeout(ctx, 500*time.Millisecond)
+defer cancel()
+
+resp, err := orderClient.GetOrder(ctx, &orderpb.GetOrderRequest{
+    OrderId: orderId,
+})
+if status.Code(err) == codes.DeadlineExceeded {
+    // Handle timeout
+}
+```
+
+The cancel function returned by `WithTimeout` is also propagated: if the user cancels a request, the context is cancelled, gRPC propagates the `CANCELLED` status downstream, and every service in the chain stops doing work. This is in contrast to REST over HTTP/1.1, where a cancelled client request typically leaves in-flight server work running to completion even though the result will never be consumed.
+
+Why this matters at scale:
+- Without deadlines, a slow downstream causes callers to queue, threads to exhaust, and the outage to propagate upward.
+- With deadlines, each service sheds load when its allotted time budget is exceeded rather than backing up indefinitely.
+
+> [!warning] Always set a deadline. A gRPC call with no deadline will wait forever — or until the TCP connection breaks. The default behavior is no timeout.
+
+@feynman
+
+A gRPC deadline is like a relay race baton with a timer — if the baton isn't passed within the time limit, the whole relay is called off, not just one leg.
+
+@card
+id: apid-ch03-c011
+order: 11
+title: Interceptors and Middleware
+teaser: gRPC interceptors are the equivalent of HTTP middleware — they run cross-cutting logic (auth, logging, tracing, retries) around every call, and the pattern is the same on both client and server.
+
+@explanation
+
+gRPC interceptors intercept calls before they reach the handler (server side) or before they leave the process (client side). They compose, so you can stack authentication, logging, and retry logic without touching any handler.
+
+A server-side unary interceptor in Go:
+
+```go
+func loggingInterceptor(
+    ctx context.Context,
+    req interface{},
+    info *grpc.UnaryServerInfo,
+    handler grpc.UnaryHandler,
+) (interface{}, error) {
+    start := time.Now()
+    resp, err := handler(ctx, req)
+    log.Printf("%s took %s, err=%v", info.FullMethod, time.Since(start), err)
+    return resp, err
+}
+
+server := grpc.NewServer(
+    grpc.UnaryInterceptor(loggingInterceptor),
+)
+```
+
+Common interceptors in production:
+
+- **Auth** — validate JWTs or mTLS certificates, inject caller identity into the context.
+- **Logging** — record method name, duration, and status code for every call.
+- **Tracing** — extract and propagate distributed trace headers (OpenTelemetry).
+- **Retry** — automatically retry `UNAVAILABLE` responses with backoff (client-side).
+- **Deadline enforcement** — ensure outbound calls inherit the incoming deadline budget.
+- **Rate limiting** — reject requests that exceed a per-method or per-caller quota.
+
+Libraries like [`go-grpc-middleware`](https://github.com/grpc-ecosystem/go-grpc-middleware) and Connect's interceptor API provide chain utilities so you don't have to nest interceptors manually.
+
+> [!tip] Auth and tracing belong in interceptors, never in handlers. A handler that checks tokens directly is both harder to test and easier to forget to apply to a new method.
+
+@feynman
+
+A gRPC interceptor is like a checkpoint on a highway — every vehicle passes through it automatically, so the checkpoint handles inspection once instead of having each driver carry their own inspection kit.
+
+@card
+id: apid-ch03-c012
+order: 12
+title: When NOT to Reach for gRPC
+teaser: gRPC is the right default for internal typed service calls — but it is the wrong choice for public APIs, browser-first products, and teams that haven't adopted protobuf tooling yet.
+
+@explanation
+
+gRPC solves real problems, and the ecosystem around it (Buf, Connect, generated stubs) has matured significantly. But there are contexts where it creates more friction than it removes:
+
+**Public-facing APIs.** External developers expect REST and JSON. They have `curl`, Postman, and HTTP clients in every language. Asking them to install `protoc`, manage `.proto` files, and regenerate stubs to call your API is a significant barrier. REST with an OpenAPI spec is the right default for any API with external consumers.
+
+**Browser-first products without a BFF.** If your frontend is a web app calling your backend directly, gRPC requires gRPC-Web or Connect with HTTP/1.1 support. Either adds complexity. If you don't have a backend-for-frontend layer already, REST is simpler.
+
+**Teams without protobuf tooling fluency.** The protobuf + `protoc` + Buf ecosystem has real learning curve. Schema evolution rules are non-obvious. If your team is not already comfortable with the toolchain, the operational overhead of managing `.proto` files, generated code repositories, and breaking-change detection will slow delivery in ways that offset gRPC's performance advantages.
+
+**Simple CRUD services with no performance pressure.** If you're building an internal admin tool with ten users, the binary efficiency and type safety of gRPC are not solving any real problem. REST is fine.
+
+**Polyglot teams with uneven protobuf library support.** Some languages have mature gRPC libraries; others have thin or unmaintained ones. Check the library quality for your stack before committing.
+
+> [!info] The clearest signal that gRPC is wrong for your context: you spend more time managing the schema toolchain than building features. That is a process problem, not a protocol problem, but it is still a reason to reach for REST instead.
+
+@feynman
+
+Choosing gRPC when your consumers are external developers or browser users is like installing a private rail line for a route that already has a perfectly good road — the efficiency gains only matter if the volume and the consumers justify the infrastructure.
