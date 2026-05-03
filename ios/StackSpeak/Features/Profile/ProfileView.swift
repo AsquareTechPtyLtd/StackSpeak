@@ -66,12 +66,7 @@ struct ProfileView: View {
         content()
             .padding(theme.spacing.cardPadding)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background(theme.colors.surface)
-            .clipShape(.rect(cornerRadius: RadiusTokens.card))
-            .overlay(
-                RoundedRectangle(cornerRadius: RadiusTokens.card)
-                    .stroke(theme.colors.line, lineWidth: 0.5)
-            )
+            .cardChrome()
     }
 
     // MARK: - Sections

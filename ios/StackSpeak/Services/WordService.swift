@@ -2,7 +2,7 @@ import Foundation
 import OSLog
 import SwiftData
 
-private let logger = Logger(subsystem: "com.stackspeak.ios", category: "WordService")
+private let logger = Logger(category: "WordService")
 
 @MainActor
 final class WordService: WordRepository {
@@ -157,7 +157,7 @@ final class WordService: WordRepository {
             words = words.filter { ids.contains($0.id) }
         }
 
-        return words.sorted { $0.word < $1.word }
+        return words.sorted(using: KeyPathComparator(\.word))
     }
 
     // MARK: - Private helpers
@@ -173,7 +173,7 @@ final class WordService: WordRepository {
     /// a stable FNV-1a hash instead of Swift's randomized hashValue.
     private func deterministicShuffle(_ words: [Word], seed: UUID) -> [Word] {
         // Canonical input order ensures the shuffle is reproducible regardless of DB fetch order.
-        var result = words.sorted { $0.id.uuidString < $1.id.uuidString }
+        var result = words.sorted(using: KeyPathComparator(\.id.uuidString))
         var rng = SeededRandomGenerator(seed: stableHash(seed.uuidString + "v1"))
         for i in stride(from: result.count - 1, through: 1, by: -1) {
             let j = Int(rng.next() % UInt64(i + 1))

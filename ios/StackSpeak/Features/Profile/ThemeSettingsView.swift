@@ -9,7 +9,7 @@ struct ThemeSettingsView: View {
     @Environment(\.userProgress) private var userProgress
     @Environment(\.modelContext) private var modelContext
 
-    private let logger = Logger(subsystem: "com.stackspeak.ios", category: "Settings")
+    private let logger = Logger(category: "Settings")
 
     private let options: [(ThemePreference, LocalizedStringKey, LocalizedStringKey)] = [
         (.system, "settings.theme.system", "settings.theme.systemDesc"),

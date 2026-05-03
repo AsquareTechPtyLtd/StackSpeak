@@ -2,7 +2,7 @@ import SwiftUI
 import SwiftData
 import OSLog
 
-private let logger = Logger(subsystem: "com.stackspeak.ios", category: "App")
+private let logger = Logger(category: "App")
 
 @main
 struct StackSpeakApp: App {
@@ -278,7 +278,7 @@ struct MainTabView: View {
 
     private var reviewBadge: Int {
         guard let progress = userProgress else { return 0 }
-        return progress.wordsEligibleForAssessment()
+        return progress.wordsEligibleForAssessment
             .filter { progress.canAttemptAssessment(for: $0) }.count
     }
 

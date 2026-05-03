@@ -40,7 +40,7 @@ final class ReviewViewModel {
     }
 
     func loadEligibleAssessmentWords(wordService: any WordRepository, userProgress: UserProgress) async {
-        let eligible = userProgress.wordsEligibleForAssessment()
+        let eligible = userProgress.wordsEligibleForAssessment
 
         var loaded: [Word] = []
         for wordId in eligible {

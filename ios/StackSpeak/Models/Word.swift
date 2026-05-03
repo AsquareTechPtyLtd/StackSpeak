@@ -9,15 +9,12 @@ enum WordCategory: String, Codable {
     case patterns        // Repeatable approaches (singleton, observer, scrum)
     case qualities       // Properties & characteristics (stateless, concise, distributed)
 
-    var emoji: String {
-        switch self {
-        case .concepts: return "🔵"
-        case .components: return "🟢"
-        case .processes: return "🟠"
-        case .patterns: return "🟣"
-        case .qualities: return "🔴"
-        }
-    }
+    private static let emojiMap: [WordCategory: String] = [
+        .concepts: "🔵", .components: "🟢", .processes: "🟠",
+        .patterns: "🟣", .qualities: "🔴"
+    ]
+
+    var emoji: String { Self.emojiMap[self] ?? "🔵" }
 
     var displayName: String {
         switch self {

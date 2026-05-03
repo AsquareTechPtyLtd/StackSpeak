@@ -47,7 +47,7 @@ struct HomeView: View {
                     .accessibilityLabel(Text("a11y.openBookmarks"))
                 }
                 ToolbarItem(placement: .navigationBarTrailing) {
-                    dayCounterBadge()
+                    dayCounterBadge
                 }
             }
             .navigationDestination(for: UUID.self) { wordId in
@@ -63,9 +63,7 @@ struct HomeView: View {
                 }
             }
             .onChange(of: viewModel.justCompletedDay) { _, completed in
-                if completed, let progress = userProgress {
-                    handleDayJustCompleted(progress: progress)
-                }
+                if completed { viewModel.justCompletedDay = false }
             }
             .alert("notifications.prompt.title", isPresented: $showNotificationPrompt) {
                 notificationAlertButtons
@@ -153,16 +151,16 @@ struct HomeView: View {
                     message: "home.allMastered.message"
                 )
             } else {
-                sectionDivider()
+                sectionDivider
                     .padding(.horizontal, theme.spacing.lg)
 
                 CompletionTrackerRow(days: lastTenDays())
                     .padding(.horizontal, theme.spacing.lg)
 
-                sectionDivider()
+                sectionDivider
                     .padding(.horizontal, theme.spacing.lg)
 
-                instructionLine()
+                instructionLine
                     .padding(.horizontal, theme.spacing.lg)
 
                 wordList(progress: progress)
@@ -202,7 +200,7 @@ struct HomeView: View {
     }
 
     /// Compact badge showing today's completion (e.g., "0/5").
-    private func dayCounterBadge() -> some View {
+    private var dayCounterBadge: some View {
         let total = viewModel.dailySet?.wordIds.count ?? 0
         let done = (viewModel.dailySet?.wordIds ?? [])
             .filter { viewModel.isWordCompleted($0) }
@@ -247,7 +245,7 @@ struct HomeView: View {
     }
 
     /// Subtle decorative divider — thin gradient fade for gentle section breaks.
-    private func sectionDivider() -> some View {
+    private var sectionDivider: some View {
         LinearGradient(
             colors: [
                 theme.colors.line.opacity(0),
@@ -264,7 +262,7 @@ struct HomeView: View {
 
     /// Quiet instruction that does what the dropped `.word` stage used to do —
     /// asks the user to say each word aloud before tapping into the deeper flow.
-    private func instructionLine() -> some View {
+    private var instructionLine: some View {
         Text("home.instruction")
             .font(TypographyTokens.subheadline)
             .foregroundColor(theme.colors.inkMuted)
@@ -365,12 +363,6 @@ struct HomeView: View {
         }
     }
 
-    private func handleDayJustCompleted(progress: UserProgress) {
-        viewModel.justCompletedDay = false
-        // Level-up is triggered by assessments, not Feynman submissions.
-        _ = progress
-    }
-
     private func checkNotificationStatus() async {
         guard let services else { return }
         notificationAuthStatus = await services.notification.checkAuthorizationStatus()
@@ -429,12 +421,7 @@ struct TodayWordRow: View {
         }
         .padding(theme.spacing.md)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(theme.colors.surface)
-        .clipShape(.rect(cornerRadius: RadiusTokens.card))
-        .overlay(
-            RoundedRectangle(cornerRadius: RadiusTokens.card)
-                .stroke(theme.colors.line, lineWidth: 0.5)
-        )
+        .cardChrome()
         .accessibilityElement(children: .combine)
         .accessibilityLabel("\(word.word). \(isCompleted ? String(localized: "a11y.completed") : "")")
     }

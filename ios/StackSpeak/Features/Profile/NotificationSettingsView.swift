@@ -12,7 +12,7 @@ struct NotificationSettingsView: View {
     @Environment(\.modelContext) private var modelContext
     @Environment(\.openURL) private var openURL
 
-    private let logger = Logger(subsystem: "com.stackspeak.ios", category: "Settings")
+    private let logger = Logger(category: "Settings")
 
     @State private var authStatus: UNAuthorizationStatus = .notDetermined
     @State private var primaryTime: Date = Self.defaultPrimaryTime

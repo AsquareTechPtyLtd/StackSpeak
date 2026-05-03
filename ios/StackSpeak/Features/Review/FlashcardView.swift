@@ -50,12 +50,7 @@ struct FlashcardView: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .padding(theme.spacing.xxl)
-        .background(theme.colors.surface)
-        .clipShape(.rect(cornerRadius: RadiusTokens.card))
-        .overlay(
-            RoundedRectangle(cornerRadius: RadiusTokens.card)
-                .stroke(theme.colors.line, lineWidth: 0.5)
-        )
+        .cardChrome()
         .rotationEffect(.degrees(isFlipped ? 0 : -1))
         .animation(reduceMotion ? nil : MotionTokens.snappy, value: isFlipped)
         .onTapGesture {

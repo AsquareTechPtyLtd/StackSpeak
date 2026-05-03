@@ -5,7 +5,7 @@ import OSLog
 @MainActor
 final class ReviewSchedulerService: ReviewRepository {
     private let modelContext: ModelContext
-    private let logger = Logger(subsystem: "com.stackspeak.ios", category: "ReviewSchedulerService")
+    private let logger = Logger(category: "ReviewSchedulerService")
 
     init(modelContext: ModelContext) {
         self.modelContext = modelContext

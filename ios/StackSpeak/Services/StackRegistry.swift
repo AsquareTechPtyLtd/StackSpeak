@@ -1,7 +1,7 @@
 import Foundation
 import OSLog
 
-private let logger = Logger(subsystem: "com.stackspeak.ios", category: "StackRegistry")
+private let logger = Logger(category: "StackRegistry")
 
 final class StackRegistry: @unchecked Sendable {
     static let shared = StackRegistry()

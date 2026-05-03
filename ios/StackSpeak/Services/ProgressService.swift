@@ -5,7 +5,7 @@ import OSLog
 @MainActor
 final class ProgressService: ProgressRepository {
     private let modelContext: ModelContext
-    private let logger = Logger(subsystem: "com.stackspeak.ios", category: "ProgressService")
+    private let logger = Logger(category: "ProgressService")
 
     init(modelContext: ModelContext) {
         self.modelContext = modelContext

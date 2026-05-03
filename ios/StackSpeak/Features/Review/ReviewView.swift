@@ -63,15 +63,9 @@ struct ReviewView: View {
 
     @ViewBuilder
     private var assessmentSection: some View {
-        if !viewModel.assessmentLoaded {
-            EmptyStateView(
-                icon: "checkmark.circle",
-                title: "review.assessment.empty.title",
-                message: "review.assessment.empty.message"
-            )
-        } else if !viewModel.eligibleAssessmentWords.isEmpty {
+        if viewModel.assessmentLoaded, !viewModel.eligibleAssessmentWords.isEmpty {
             assessmentCardsView
-        } else if let progress = userProgress, progress.wordsPracticedIds.isEmpty {
+        } else if !viewModel.assessmentLoaded || (userProgress?.wordsPracticedIds.isEmpty ?? true) {
             EmptyStateView(
                 icon: "checkmark.circle",
                 title: "review.assessment.empty.title",
@@ -111,22 +105,14 @@ struct ReviewView: View {
 
     /// R2 — quiet caption replaces the surface-tinted stats bar.
     private func assessmentStatsCaption(progress: UserProgress) -> some View {
-        HStack {
-            Text(String(format: String(localized: "review.stats.ofCount.format"),
-                        viewModel.currentAssessmentIndex + 1,
-                        viewModel.eligibleAssessmentWords.count))
-                .font(TypographyTokens.mono)
-                .foregroundColor(theme.colors.inkMuted)
-
-            Spacer()
-
-            if let currentWord = viewModel.eligibleAssessmentWords[safe: viewModel.currentAssessmentIndex] {
-                let correct = progress.correctAssessmentCount(for: currentWord.id)
-                Text(String(format: String(localized: "review.stats.correctCount.format"), correct))
-                    .font(TypographyTokens.mono)
-                    .foregroundColor(theme.colors.inkMuted)
-            }
+        let left = String(format: String(localized: "review.stats.ofCount.format"),
+                          viewModel.currentAssessmentIndex + 1,
+                          viewModel.eligibleAssessmentWords.count)
+        let right = viewModel.eligibleAssessmentWords[safe: viewModel.currentAssessmentIndex].map {
+            String(format: String(localized: "review.stats.correctCount.format"),
+                   progress.correctAssessmentCount(for: $0.id))
         }
+        return statsHStack(left: left, right: right)
     }
 
     // MARK: - Flashcards
@@ -169,17 +155,23 @@ struct ReviewView: View {
     }
 
     private var statsCaption: some View {
+        let left = String(format: String(localized: "review.stats.ofCount.format"),
+                          viewModel.currentIndex + 1, viewModel.dueReviews.count)
+        let right = userProgress.map {
+            String(format: String(localized: "review.stats.reviewedToday.format"),
+                   viewModel.reviewedTodayCount(userProgress: $0))
+        }
+        return statsHStack(left: left, right: right)
+    }
+
+    private func statsHStack(left: String, right: String?) -> some View {
         HStack {
-            Text(String(format: String(localized: "review.stats.ofCount.format"),
-                        viewModel.currentIndex + 1, viewModel.dueReviews.count))
+            Text(left)
                 .font(TypographyTokens.mono)
                 .foregroundColor(theme.colors.inkMuted)
-
             Spacer()
-
-            if let progress = userProgress {
-                Text(String(format: String(localized: "review.stats.reviewedToday.format"),
-                            viewModel.reviewedTodayCount(userProgress: progress)))
+            if let right {
+                Text(right)
                     .font(TypographyTokens.mono)
                     .foregroundColor(theme.colors.inkMuted)
             }

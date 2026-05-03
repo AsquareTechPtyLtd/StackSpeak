@@ -20,12 +20,7 @@ extension FeynmanCardView {
             if isComingSoon {
                 comingSoonBody
             } else {
-                Text(word.simpleDefinition)
-                    .font(TypographyTokens.body)
-                    .foregroundColor(theme.colors.ink)
-                    .lineSpacing(8)
-                    .multilineTextAlignment(.leading)
-                    .fixedSize(horizontal: false, vertical: true)
+                Text(word.simpleDefinition).bodyParagraph()
             }
         }
     }
@@ -39,12 +34,8 @@ extension FeynmanCardView {
                 .lineSpacing(7)
                 .multilineTextAlignment(.leading)
             Text(word.connector)
-                .font(TypographyTokens.body)
-                .foregroundColor(theme.colors.ink)
-                .lineSpacing(8)
-                .multilineTextAlignment(.leading)
                 .italic()
-                .fixedSize(horizontal: false, vertical: true)
+                .bodyParagraph()
                 .padding(.top, theme.spacing.lg)
         }
     }
@@ -61,12 +52,7 @@ extension FeynmanCardView {
                 .multilineTextAlignment(.leading)
                 .fixedSize(horizontal: false, vertical: true)
             Divider().background(theme.colors.line)
-            Text(word.shortDefinition)
-                .font(TypographyTokens.body)
-                .foregroundColor(theme.colors.ink)
-                .lineSpacing(8)
-                .multilineTextAlignment(.leading)
-                .fixedSize(horizontal: false, vertical: true)
+            Text(word.shortDefinition).bodyParagraph()
         }
     }
 
@@ -76,12 +62,7 @@ extension FeynmanCardView {
                 stageLabel("feynman.stage.technical")
 
                 section(title: "wordDetail.section.definition") {
-                    Text(word.longDefinition)
-                        .font(TypographyTokens.body)
-                        .foregroundColor(theme.colors.ink)
-                        .lineSpacing(8)
-                        .multilineTextAlignment(.leading)
-                        .fixedSize(horizontal: false, vertical: true)
+                    Text(word.longDefinition).bodyParagraph()
                 }
 
                 if !word.techContext.isEmpty {
@@ -97,13 +78,7 @@ extension FeynmanCardView {
 
                 if !word.exampleSentence.isEmpty {
                     section(title: "wordDetail.section.example") {
-                        Text(word.exampleSentence)
-                            .font(TypographyTokens.body)
-                            .foregroundColor(theme.colors.ink)
-                            .lineSpacing(8)
-                            .multilineTextAlignment(.leading)
-                            .italic()
-                            .fixedSize(horizontal: false, vertical: true)
+                        Text(word.exampleSentence).italic().bodyParagraph()
                     }
                 }
 
@@ -199,4 +174,23 @@ extension FeynmanCardView {
             content()
         }
     }
+}
+
+/// Body-text paragraph: body font, ink color, line-spacing 8, leading-aligned,
+/// and grows vertically. Used throughout Feynman card stages.
+private struct BodyParagraph: ViewModifier {
+    @Environment(\.theme) private var theme
+
+    func body(content: Content) -> some View {
+        content
+            .font(TypographyTokens.body)
+            .foregroundColor(theme.colors.ink)
+            .lineSpacing(8)
+            .multilineTextAlignment(.leading)
+            .fixedSize(horizontal: false, vertical: true)
+    }
+}
+
+extension View {
+    func bodyParagraph() -> some View { modifier(BodyParagraph()) }
 }

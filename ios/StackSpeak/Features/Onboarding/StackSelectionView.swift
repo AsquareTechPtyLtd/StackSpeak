@@ -10,7 +10,7 @@ struct StackSelectionView: View {
     @Environment(\.userProgress) private var userProgress
     @Environment(\.modelContext) private var modelContext
 
-    private let logger = Logger(subsystem: "com.stackspeak.ios", category: "Onboarding")
+    private let logger = Logger(category: "Onboarding")
 
     @Binding var showOnboarding: Bool
 
@@ -211,13 +211,20 @@ struct StackCard: View {
         }
     }
 
+    private enum CardState { case locked, active, idle }
+
+    private var cardState: CardState {
+        if isLocked { return .locked }
+        return isSelected ? .active : .idle
+    }
+
     private var cardContent: some View {
         HStack(spacing: theme.spacing.md) {
             Image(systemName: stack.icon)
                 .font(.system(.title2))
-                .foregroundColor(isLocked ? theme.colors.inkFaint : (isSelected ? theme.colors.accent : theme.colors.inkMuted))
+                .foregroundColor(iconForeground)
                 .frame(width: 36, height: 36)
-                .background(isLocked ? theme.colors.surfaceAlt : (isSelected ? theme.colors.accentBg : theme.colors.surfaceAlt))
+                .background(iconBackground)
                 .clipShape(.rect(cornerRadius: RadiusTokens.inline))
 
             VStack(alignment: .leading, spacing: 2) {
@@ -241,20 +248,32 @@ struct StackCard: View {
             Spacer()
 
             if !isMandatory {
-                Image(systemName: isLocked ? "circle" : (isSelected ? "checkmark.circle.fill" : "circle"))
+                Image(systemName: cardState == .active ? "checkmark.circle.fill" : "circle")
                     .font(.system(.title2))
-                    .foregroundColor(isLocked ? theme.colors.inkFaint : (isSelected ? theme.colors.accent : theme.colors.inkFaint))
+                    .foregroundColor(cardState == .active ? theme.colors.accent : theme.colors.inkFaint)
             }
         }
         .padding(theme.spacing.cardPadding)
-        .background(isLocked ? theme.colors.surface : (isSelected ? theme.colors.accentBg : theme.colors.surface))
+        .background(cardState == .active ? theme.colors.accentBg : theme.colors.surface)
         .clipShape(.rect(cornerRadius: RadiusTokens.card))
         .overlay(
             RoundedRectangle(cornerRadius: RadiusTokens.card)
                 .stroke(
-                    (!isLocked && isSelected) ? theme.colors.accent : theme.colors.line,
-                    lineWidth: (!isLocked && isSelected) ? 1.5 : 0.5
+                    cardState == .active ? theme.colors.accent : theme.colors.line,
+                    lineWidth: cardState == .active ? 1.5 : 0.5
                 )
         )
+    }
+
+    private var iconForeground: Color {
+        switch cardState {
+        case .locked: return theme.colors.inkFaint
+        case .active: return theme.colors.accent
+        case .idle:   return theme.colors.inkMuted
+        }
+    }
+
+    private var iconBackground: Color {
+        cardState == .active ? theme.colors.accentBg : theme.colors.surfaceAlt
     }
 }

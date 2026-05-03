@@ -158,6 +158,18 @@ final class PracticedSentence {
 
 @Model
 final class ReviewState {
+    /// SM-2 spaced-repetition algorithm tuning constants.
+    private enum SM2 {
+        static let initialEasiness = 2.5
+        static let minEasiness = 1.3
+        static let easinessIncrement = 0.1
+        static let easinessQualityCoeff = 0.08
+        static let easinessQualitySquaredCoeff = 0.02
+        static let qualityFailThreshold = 3
+        static let firstInterval = 1
+        static let secondInterval = 6
+    }
+
     var wordId: UUID
     var easinessFactor: Double
     var interval: Int
@@ -167,8 +179,8 @@ final class ReviewState {
 
     init(wordId: UUID) {
         self.wordId = wordId
-        self.easinessFactor = 2.5
-        self.interval = 1
+        self.easinessFactor = SM2.initialEasiness
+        self.interval = SM2.firstInterval
         self.repetitions = 0
         self.dueDate = Calendar.current.date(byAdding: .day, value: 1, to: Date()) ?? Date()
         self.lastReviewedAt = nil
@@ -177,18 +189,18 @@ final class ReviewState {
     func updateAfterReview(quality: Int) {
         lastReviewedAt = Date()
 
-        if quality < 3 {
+        if quality < SM2.qualityFailThreshold {
             repetitions = 0
-            interval = 1
+            interval = SM2.firstInterval
         } else {
-            easinessFactor = max(1.3, easinessFactor + (0.1 - Double(5 - quality) * (0.08 + Double(5 - quality) * 0.02)))
+            let qDelta = Double(5 - quality)
+            let efAdjustment = SM2.easinessIncrement - qDelta * (SM2.easinessQualityCoeff + qDelta * SM2.easinessQualitySquaredCoeff)
+            easinessFactor = max(SM2.minEasiness, easinessFactor + efAdjustment)
 
-            if repetitions == 0 {
-                interval = 1
-            } else if repetitions == 1 {
-                interval = 6
-            } else {
-                interval = Int(Double(interval) * easinessFactor)
+            switch repetitions {
+            case 0: interval = SM2.firstInterval
+            case 1: interval = SM2.secondInterval
+            default: interval = Int(Double(interval) * easinessFactor)
             }
 
             repetitions += 1
@@ -243,7 +255,7 @@ extension UserProgress {
         wordsWithTwoCorrectIds = Set(wordCorrectCounts.filter { $0.value >= 2 }.keys)
     }
 
-    func wordsEligibleForAssessment() -> Set<UUID> {
+    var wordsEligibleForAssessment: Set<UUID> {
         wordsPracticedIds.subtracting(wordsWithTwoCorrectIds)
     }
 }
@@ -257,44 +269,41 @@ extension UserProgress {
         return expiry > Date()
     }
 
-    /// Records that one more vocab load-more card was served today.
-    /// Resets the counter at local midnight before incrementing.
-    func recordWordsLoadedToday(now: Date = Date(), calendar: Calendar = .current) {
+    /// Resets `counter` to 0 if `resetDate` is in a previous local day, then advances `resetDate`.
+    private func resetDailyCounterIfNewDay(
+        counter: ReferenceWritableKeyPath<UserProgress, Int>,
+        resetDate: ReferenceWritableKeyPath<UserProgress, Date>,
+        now: Date,
+        calendar: Calendar
+    ) {
         let today = calendar.startOfDay(for: now)
-        if today > lastWordsLoadedResetDate {
-            wordsLoadedToday = 0
-            lastWordsLoadedResetDate = today
+        if today > self[keyPath: resetDate] {
+            self[keyPath: counter] = 0
+            self[keyPath: resetDate] = today
         }
+    }
+
+    /// Records that one more vocab load-more card was served today.
+    func recordWordsLoadedToday(now: Date = Date(), calendar: Calendar = .current) {
+        resetDailyCounterIfNewDay(counter: \.wordsLoadedToday, resetDate: \.lastWordsLoadedResetDate, now: now, calendar: calendar)
         wordsLoadedToday += 1
     }
 
     /// Resets the daily vocab load-more counter if a new local day has begun.
     /// Use before reading `wordsLoadedToday` for cap checks.
     func refreshWordsLoadedTodayIfNeeded(now: Date = Date(), calendar: Calendar = .current) {
-        let today = calendar.startOfDay(for: now)
-        if today > lastWordsLoadedResetDate {
-            wordsLoadedToday = 0
-            lastWordsLoadedResetDate = today
-        }
+        resetDailyCounterIfNewDay(counter: \.wordsLoadedToday, resetDate: \.lastWordsLoadedResetDate, now: now, calendar: calendar)
     }
 
-    /// Records that one more book card was read today. Resets at local midnight.
+    /// Records that one more book card was read today.
     func recordBookCardRead(now: Date = Date(), calendar: Calendar = .current) {
-        let today = calendar.startOfDay(for: now)
-        if today > lastBookReadingResetDate {
-            bookCardsReadToday = 0
-            lastBookReadingResetDate = today
-        }
+        resetDailyCounterIfNewDay(counter: \.bookCardsReadToday, resetDate: \.lastBookReadingResetDate, now: now, calendar: calendar)
         bookCardsReadToday += 1
     }
 
     /// Resets the book reading counter if a new local day has begun. Idempotent.
     func refreshBookCardsReadIfNeeded(now: Date = Date(), calendar: Calendar = .current) {
-        let today = calendar.startOfDay(for: now)
-        if today > lastBookReadingResetDate {
-            bookCardsReadToday = 0
-            lastBookReadingResetDate = today
-        }
+        resetDailyCounterIfNewDay(counter: \.bookCardsReadToday, resetDate: \.lastBookReadingResetDate, now: now, calendar: calendar)
     }
 
     /// True when the user has opted into a daily book-reading cap and hit it today.

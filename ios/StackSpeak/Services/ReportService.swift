@@ -19,7 +19,7 @@ protocol ReportServiceProtocol {
 @MainActor
 final class ReportService: ReportServiceProtocol {
     private let modelContext: ModelContext
-    private let logger = Logger(subsystem: "com.stackspeak.ios", category: "ReportService")
+    private let logger = Logger(category: "ReportService")
 
     init(modelContext: ModelContext) {
         self.modelContext = modelContext

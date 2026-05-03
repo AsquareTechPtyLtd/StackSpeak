@@ -14,7 +14,7 @@ struct LevelUpView: View {
     @Environment(\.dismiss) private var dismiss
     @Environment(\.modelContext) private var modelContext
 
-    private let logger = Logger(subsystem: "com.stackspeak.ios", category: "LevelUp")
+    private let logger = Logger(category: "LevelUp")
 
     let newLevel: Int
     let userProgress: UserProgress
@@ -107,7 +107,7 @@ struct LevelUpStackPickerSheet: View {
     @Environment(\.dismiss) private var dismiss
     @Environment(\.modelContext) private var modelContext
 
-    private let logger = Logger(subsystem: "com.stackspeak.ios", category: "LevelUp")
+    private let logger = Logger(category: "LevelUp")
 
     let newLevel: Int
     let userProgress: UserProgress

@@ -88,12 +88,7 @@ struct FeynmanCardView: View {
         }
         .padding(theme.spacing.cardPadding)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-        .background(theme.colors.surface)
-        .clipShape(.rect(cornerRadius: RadiusTokens.card))
-        .overlay(
-            RoundedRectangle(cornerRadius: RadiusTokens.card)
-                .stroke(theme.colors.line, lineWidth: 0.5)
-        )
+        .cardChrome()
         .offset(x: dragOffset)
         .contentShape(Rectangle())
         .simultaneousGesture(swipeAdvanceGesture)

@@ -160,32 +160,29 @@ struct AssessmentView: View {
     // MARK: - Options generation
 
     private func generateOptions() {
-        guard let progress = userProgress else { return }
+        guard let progress = userProgress,
+              let allWords = try? modelContext.fetch(FetchDescriptor<Word>()) else { return }
 
-        let descriptor = FetchDescriptor<Word>()
-        guard let allWords = try? modelContext.fetch(descriptor) else { return }
-
-        // Distractors from words the user has practiced (more plausible);
-        // fall back to any unlocked word.
-        let practicedDistractors = allWords.filter {
-            $0.id != word.id &&
-            progress.wordsPracticedIds.contains($0.id) &&
-            $0.shortDefinition != word.shortDefinition
-        }
-
-        let fallbackPool = allWords.filter {
-            $0.id != word.id &&
-            $0.unlockLevel <= progress.level &&
-            $0.shortDefinition != word.shortDefinition
-        }
-
-        let pool = practicedDistractors.count >= Self.distractorCount ? practicedDistractors : fallbackPool
-        let distractors = pool.shuffled().prefix(Self.distractorCount).map { $0.shortDefinition }
-
-        var allOptions = [word.shortDefinition] + Array(distractors)
+        let distractors = Self.buildDistractors(for: word, count: Self.distractorCount,
+                                                allWords: allWords, progress: progress)
+        var allOptions = [word.shortDefinition] + distractors
         allOptions = Array(NSOrderedSet(array: allOptions)) as? [String] ?? allOptions
         allOptions.shuffle()
         options = allOptions
+    }
+
+    /// Picks plausible wrong-answer definitions: prefers words the user has practiced,
+    /// falls back to any unlocked word at the user's current level.
+    private static func buildDistractors(for word: Word, count: Int,
+                                         allWords: [Word], progress: UserProgress) -> [String] {
+        func excludesTarget(_ w: Word) -> Bool {
+            w.id != word.id && w.shortDefinition != word.shortDefinition
+        }
+        let practiced = allWords.filter { excludesTarget($0) && progress.wordsPracticedIds.contains($0.id) }
+        let pool = practiced.count >= count
+            ? practiced
+            : allWords.filter { excludesTarget($0) && $0.unlockLevel <= progress.level }
+        return pool.shuffled().prefix(count).map(\.shortDefinition)
     }
 
     private enum FeedbackResult: Equatable {

@@ -11,7 +11,7 @@ struct StackManagementView: View {
     @Environment(\.modelContext) private var modelContext
     @Environment(\.dismiss) private var dismiss
 
-    private let logger = Logger(subsystem: "com.stackspeak.ios", category: "Settings")
+    private let logger = Logger(category: "Settings")
 
     @State private var selectedOptionalStacks: Set<WordStack> = []
     @State private var selectedMandatoryStacks: Set<WordStack> = []

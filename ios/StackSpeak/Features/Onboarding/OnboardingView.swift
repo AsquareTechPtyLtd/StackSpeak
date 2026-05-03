@@ -10,7 +10,7 @@ struct OnboardingView: View {
     @Environment(\.modelContext) private var modelContext
 
     @Binding var showOnboarding: Bool
-    private let logger = Logger(subsystem: "com.stackspeak.ios", category: "Onboarding")
+    private let logger = Logger(category: "Onboarding")
     @State private var currentPage = 0
     @State private var showStackSelection = false
     @State private var showSkipConfirm = false
