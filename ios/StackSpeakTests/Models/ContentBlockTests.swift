@@ -148,6 +148,7 @@ struct BookContentTypesCodableTests {
             title: "Title",
             author: nil,
             summary: "summary",
+            categories: [.codeCraft],
             chapters: []
         )
         let data = try JSONEncoder().encode(manifest)
@@ -169,6 +170,7 @@ struct BookContentTypesCodableTests {
                     coverIcon: "book",
                     accentHex: "#7B61FF",
                     tags: ["agents"],
+                    categories: [.aiML],
                     chapterCount: 1,
                     cardCount: 5,
                     manifestVersion: 1,

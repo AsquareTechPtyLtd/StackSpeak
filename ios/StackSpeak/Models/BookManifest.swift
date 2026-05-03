@@ -26,5 +26,8 @@ struct BookManifest: Codable, Sendable, Identifiable, Hashable {
     let title: String
     let author: String?
     let summary: String
+    /// Locked taxonomy of categories — duplicated from the catalog so a manifest
+    /// is self-describing if loaded directly.
+    let categories: [BookCategory]
     let chapters: [ChapterSummary]
 }

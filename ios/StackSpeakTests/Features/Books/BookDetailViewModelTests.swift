@@ -31,7 +31,7 @@ struct BookDetailViewModelChapterTests {
     private func manifest(_ chapters: [ChapterSummary]) -> BookManifest {
         BookManifest(
             id: "book-1", version: 1, title: "Book", author: nil,
-            summary: "summary", chapters: chapters
+            summary: "summary", categories: [.codeCraft], chapters: chapters
         )
     }
 
@@ -110,6 +110,7 @@ struct BookDetailViewModelStreakToastTests {
         BookManifest(
             id: "book-1", version: 1, title: "Book", author: nil,
             summary: "summary",
+            categories: [.codeCraft],
             chapters: [
                 ChapterSummary(
                     id: "ch1", order: 1, title: "Ch1", summary: "",

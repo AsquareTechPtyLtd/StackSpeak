@@ -39,7 +39,8 @@ struct BookCatalogServiceLockStateTests {
     private func makeBook(id: String, freeForAll: Bool) -> BookSummary {
         BookSummary(
             id: id, title: id, author: nil, summary: "s", coverIcon: "book",
-            accentHex: nil, tags: [], chapterCount: 1, cardCount: 1,
+            accentHex: nil, tags: [], categories: [.codeCraft],
+            chapterCount: 1, cardCount: 1,
             manifestVersion: 1, manifestPath: "books/\(id)/manifest.json",
             freeForAll: freeForAll, sizeBytes: 0
         )

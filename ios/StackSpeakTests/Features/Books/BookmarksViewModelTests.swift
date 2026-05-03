@@ -43,6 +43,7 @@ struct BookmarksViewModelTests {
                 BookSummary(
                     id: "book-1", title: "Book One", author: nil, summary: "s",
                     coverIcon: "book", accentHex: nil, tags: [],
+                    categories: [.codeCraft],
                     chapterCount: 1, cardCount: 2, manifestVersion: 1,
                     manifestPath: "books/book-1/manifest.json",
                     freeForAll: true, sizeBytes: 0
@@ -55,6 +56,7 @@ struct BookmarksViewModelTests {
         BookManifest(
             id: "book-1", version: 1, title: "Book One", author: nil,
             summary: "summary",
+            categories: [.codeCraft],
             chapters: [
                 ChapterSummary(
                     id: "ch1", order: 1, title: "Ch1", summary: "",

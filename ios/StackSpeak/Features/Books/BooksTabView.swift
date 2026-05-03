@@ -12,6 +12,26 @@ struct BooksTabView: View {
     @State private var viewModel = BooksTabViewModel()
     @State private var paywallBook: BookSummary?
 
+    /// Persists category selection across view backgrounding (and navigation
+    /// pushes/pops within the tab). Stored as a comma-joined string of raw IDs;
+    /// resets on full app relaunch by virtue of `@SceneStorage`.
+    @SceneStorage("books.selectedCategories") private var selectedCategoriesRaw: String = ""
+
+    private var selectedCategoriesBinding: Binding<Set<BookCategory>> {
+        Binding(
+            get: {
+                Set(selectedCategoriesRaw.split(separator: ",").compactMap {
+                    BookCategory(rawValue: String($0))
+                })
+            },
+            set: { newValue in
+                let ids = newValue.sorted { $0.sortOrder < $1.sortOrder }.map(\.rawValue)
+                selectedCategoriesRaw = ids.joined(separator: ",")
+                viewModel.selectedCategories = newValue
+            }
+        )
+    }
+
     var body: some View {
         NavigationStack {
             content
@@ -19,6 +39,10 @@ struct BooksTabView: View {
                 .navigationBarTitleDisplayMode(.large)
                 .searchable(text: $viewModel.query, prompt: "books.search.prompt")
                 .task { await loadIfNeeded() }
+                .onAppear {
+                    // Hydrate the view model from persisted scene storage on first appear.
+                    viewModel.selectedCategories = selectedCategoriesBinding.wrappedValue
+                }
                 .sheet(item: $paywallBook) { book in
                     BookLockedSheet(book: book)
                         .presentationDetents([.medium])
@@ -42,15 +66,21 @@ struct BooksTabView: View {
                 message: "books.empty.message"
             )
             .background(theme.colors.bg)
-        } else if viewModel.filteredBooks.isEmpty {
-            EmptyStateView(
-                icon: "magnifyingglass",
-                title: "books.empty.noMatches.title",
-                message: "books.empty.noMatches.message"
-            )
-            .background(theme.colors.bg)
         } else {
-            bookList
+            VStack(spacing: 0) {
+                CategoryFilterRow(selectedCategories: selectedCategoriesBinding)
+                    .background(theme.colors.bg)
+                if viewModel.filteredBooks.isEmpty {
+                    EmptyStateView(
+                        icon: "magnifyingglass",
+                        title: "books.empty.noMatches.title",
+                        message: "books.empty.noMatches.message"
+                    )
+                    .background(theme.colors.bg)
+                } else {
+                    bookList
+                }
+            }
         }
     }
 

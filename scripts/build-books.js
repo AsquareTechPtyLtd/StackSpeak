@@ -34,6 +34,40 @@
 
 const CALLOUT_VARIANTS = new Set(['info', 'tip', 'warning']);
 
+// Locked taxonomy of book categories. Every `book.json` MUST carry `categories: [...]`
+// with each entry drawn from this set. See `.planning/library-expansion-phase-4-2026-05-03.md`
+// → "Locked: Library Categories" for the contract behind these IDs.
+const BOOK_CATEGORIES = new Set([
+  'ai-ml',
+  'architecture',
+  'code-craft',
+  'cloud',
+  'data',
+  'testing',
+  'people'
+]);
+
+function validateCategories(bookMeta) {
+  const cats = bookMeta.categories;
+  if (!Array.isArray(cats) || cats.length === 0) {
+    throw new Error(
+      `Book "${bookMeta.id}" is missing required field "categories" (non-empty string array). ` +
+      `Allowed IDs: ${[...BOOK_CATEGORIES].sort().join(', ')}.`
+    );
+  }
+  for (const c of cats) {
+    if (typeof c !== 'string' || !BOOK_CATEGORIES.has(c)) {
+      throw new Error(
+        `Book "${bookMeta.id}" has unknown category "${c}". ` +
+        `Allowed: ${[...BOOK_CATEGORIES].sort().join(', ')}.`
+      );
+    }
+  }
+  if (new Set(cats).size !== cats.length) {
+    throw new Error(`Book "${bookMeta.id}" has duplicate categories: ${cats.join(', ')}.`);
+  }
+}
+
 // ─────────────────────────────────────────────────────────────────
 // Markdown → ContentBlock parser (preserves the Phase 1 API)
 // ─────────────────────────────────────────────────────────────────
@@ -364,6 +398,7 @@ function buildBook(bookDir, sharedRoot, fs, path) {
     throw new Error(`Missing book.json at ${bookMetaPath}`);
   }
   const bookMeta = JSON.parse(fs.readFileSync(bookMetaPath, 'utf8'));
+  validateCategories(bookMeta);
   const chaptersSrc = path.join(bookDir, 'chapters');
   if (!fs.existsSync(chaptersSrc)) {
     throw new Error(`Missing chapters/ directory at ${chaptersSrc}`);
@@ -418,6 +453,7 @@ function buildBook(bookDir, sharedRoot, fs, path) {
     title: bookMeta.title,
     author: bookMeta.author ?? null,
     summary: bookMeta.summary,
+    categories: [...bookMeta.categories],
     chapters
   };
   const manifestJson = JSON.stringify(manifest, null, 2);
@@ -432,6 +468,7 @@ function buildBook(bookDir, sharedRoot, fs, path) {
     coverIcon: bookMeta.coverIcon ?? 'book',
     accentHex: bookMeta.accentHex ?? null,
     tags: Array.isArray(bookMeta.tags) ? bookMeta.tags : [],
+    categories: [...bookMeta.categories],
     chapterCount: chapters.length,
     cardCount: totalCards,
     manifestVersion: manifest.version,
@@ -485,7 +522,9 @@ module.exports = {
   parseMetadataLines,
   tokenizeSections,
   buildAllBooks,
-  buildBook
+  buildBook,
+  validateCategories,
+  BOOK_CATEGORIES
 };
 
 // CLI:

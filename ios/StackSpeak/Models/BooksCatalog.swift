@@ -14,6 +14,9 @@ struct BookSummary: Codable, Sendable, Identifiable, Hashable {
     let coverIcon: String
     let accentHex: String?
     let tags: [String]
+    /// Locked taxonomy of book categories — drives the Books tab filter row.
+    /// Every book carries at least one. First entry is the dominant category.
+    let categories: [BookCategory]
     let chapterCount: Int
     let cardCount: Int
     let manifestVersion: Int

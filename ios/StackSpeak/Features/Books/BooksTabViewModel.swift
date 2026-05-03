@@ -15,24 +15,52 @@ final class BooksTabViewModel {
     var books: [BookSummary] = []
     var loadError: (any Error)?
 
+    /// Active category filter. Empty set = "All" (no filter). OR-semantics — a book
+    /// matches if any of its categories is in `selectedCategories`. Persisted across
+    /// view backgrounding by the view (`@SceneStorage`); resets on full app launch.
+    var selectedCategories: Set<BookCategory> = []
+
     /// `bookId → progress` so per-row metadata is O(1).
     private(set) var progressByBookId: [String: BookProgress] = [:]
 
-    /// Result of the search filter applied to the current `books` list.
+    /// Result of the combined search + category filter applied to the current `books` list.
     var filteredBooks: [BookSummary] {
-        Self.filtered(books: books, query: query)
+        Self.filtered(books: books, query: query, categories: selectedCategories)
     }
 
-    /// Pure search filter — case-insensitive substring match across title,
-    /// author, summary, and any tag. Whitespace-trimmed. Empty query → all books.
-    static func filtered(books: [BookSummary], query: String) -> [BookSummary] {
+    /// True if any filtering is currently narrowing the catalog. The view uses this
+    /// to choose between "*N* books" vs "*N* of *M* books" rendering.
+    var isFiltered: Bool {
+        !query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            || !selectedCategories.isEmpty
+    }
+
+    /// Number of books in `books` that carry the given category. Used by the chip
+    /// row to show a per-category count badge. `nil` argument returns the total.
+    func bookCount(in category: BookCategory?) -> Int {
+        guard let category else { return books.count }
+        return books.filter { $0.categories.contains(category) }.count
+    }
+
+    /// Pure filter — text query (case-insensitive substring across title, author,
+    /// summary, and tags) AND category filter (OR semantics across `categories`).
+    /// Whitespace-trimmed query; empty query means "no text filter". Empty
+    /// `categories` means "no category filter". Both empty = all books.
+    static func filtered(
+        books: [BookSummary],
+        query: String,
+        categories: Set<BookCategory> = []
+    ) -> [BookSummary] {
         let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        guard !trimmed.isEmpty else { return books }
         return books.filter { book in
-            book.title.lowercased().contains(trimmed)
+            let matchesQuery = trimmed.isEmpty
+                || book.title.lowercased().contains(trimmed)
                 || (book.author?.lowercased().contains(trimmed) ?? false)
                 || book.summary.lowercased().contains(trimmed)
                 || book.tags.contains(where: { $0.lowercased().contains(trimmed) })
+            let matchesCategory = categories.isEmpty
+                || book.categories.contains(where: { categories.contains($0) })
+            return matchesQuery && matchesCategory
         }
     }
 

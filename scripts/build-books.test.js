@@ -6,7 +6,14 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { parseMarkdown, parseInline, parseChapterFile, parseMetadataLines } = require('./build-books.js');
+const {
+  parseMarkdown,
+  parseInline,
+  parseChapterFile,
+  parseMetadataLines,
+  validateCategories,
+  BOOK_CATEGORIES
+} = require('./build-books.js');
 
 test('parseInline — plain text becomes a single run with no marks', () => {
   assert.deepEqual(parseInline('hello world'), [{ text: 'hello world' }]);
@@ -286,4 +293,57 @@ test('parseMarkdown — mixed document smoke test', () => {
   assert.equal(blocks[2].type, 'list');
   assert.equal(blocks[3].type, 'code');
   assert.equal(blocks[4].type, 'callout');
+});
+
+// ─────────────────────────────────────────────────────────────────
+// validateCategories — book.json must carry valid categories
+// ─────────────────────────────────────────────────────────────────
+
+test('validateCategories — accepts a valid single-category book', () => {
+  validateCategories({ id: 'b1', categories: ['code-craft'] });
+});
+
+test('validateCategories — accepts multi-category books', () => {
+  validateCategories({ id: 'b2', categories: ['code-craft', 'ai-ml'] });
+  validateCategories({ id: 'b3', categories: ['data', 'people'] });
+});
+
+test('validateCategories — taxonomy contains the 7 locked IDs', () => {
+  assert.deepEqual(
+    [...BOOK_CATEGORIES].sort(),
+    ['ai-ml', 'architecture', 'cloud', 'code-craft', 'data', 'people', 'testing']
+  );
+});
+
+test('validateCategories — missing categories field throws', () => {
+  assert.throws(() => validateCategories({ id: 'b4' }), /missing required field "categories"/);
+});
+
+test('validateCategories — empty array throws', () => {
+  assert.throws(() => validateCategories({ id: 'b5', categories: [] }), /missing required field "categories"/);
+});
+
+test('validateCategories — non-array value throws', () => {
+  assert.throws(() => validateCategories({ id: 'b6', categories: 'code-craft' }), /missing required field "categories"/);
+});
+
+test('validateCategories — unknown category id throws', () => {
+  assert.throws(
+    () => validateCategories({ id: 'b7', categories: ['code-craft', 'frontend'] }),
+    /unknown category "frontend"/
+  );
+});
+
+test('validateCategories — duplicate categories throws', () => {
+  assert.throws(
+    () => validateCategories({ id: 'b8', categories: ['code-craft', 'code-craft'] }),
+    /duplicate categories/
+  );
+});
+
+test('validateCategories — non-string entry throws', () => {
+  assert.throws(
+    () => validateCategories({ id: 'b9', categories: ['code-craft', 42] }),
+    /unknown category/
+  );
 });

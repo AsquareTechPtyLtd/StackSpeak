@@ -40,6 +40,7 @@ struct BundledBookSourceTests {
                     coverIcon: "book",
                     accentHex: nil,
                     tags: ["agents"],
+                    categories: [.aiML],
                     chapterCount: 1,
                     cardCount: 2,
                     manifestVersion: 1,
@@ -90,6 +91,7 @@ struct BundledBookSourceTests {
             title: "Free",
             author: "Author",
             summary: "summary",
+            categories: [.aiML],
             chapters: [
                 ChapterSummary(id: "ch01", order: 1, title: "Ch1", summary: "s",
                               icon: "book", cardCount: 2, cardIds: ["c1", "c2"],
@@ -113,6 +115,7 @@ struct BundledBookSourceTests {
             title: "X",
             author: nil,
             summary: "x",
+            categories: [.codeCraft],
             chapters: []
         )
         let dir = try makeFixtureDirectory { root in
