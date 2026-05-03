@@ -17,6 +17,7 @@ struct StackSelectionView: View {
     @State private var selectedOptionalStacks: Set<WordStack> = []
     @State private var saveError: Error?
     @State private var didApplyDefaults = false
+    @State private var showProSheet = false
 
     /// Smart defaults applied on first appearance. Three frequently-relevant
     /// stacks for software engineers; the user can deselect any of them.
@@ -54,6 +55,10 @@ struct StackSelectionView: View {
             }
         }
         .onAppear { applySmartDefaultsOnce() }
+        .sheet(isPresented: $showProSheet) {
+            ProGateSheet()
+                .presentationDetents([.medium])
+        }
         .alert("saveError.title", isPresented: .constant(saveError != nil), presenting: saveError) { _ in
             Button("common.ok") { saveError = nil }
         } message: { error in
@@ -77,14 +82,27 @@ struct StackSelectionView: View {
 
     private var coreSection: some View {
         VStack(alignment: .leading, spacing: theme.spacing.sm) {
-            Text("onboarding.stacks.coreSection")
-                .font(TypographyTokens.subheadline.weight(.medium))
-                .foregroundColor(theme.colors.inkMuted)
-                .padding(.horizontal, theme.spacing.sm)
+            HStack {
+                Text("onboarding.stacks.coreSection")
+                    .font(TypographyTokens.subheadline.weight(.medium))
+                    .foregroundColor(theme.colors.inkMuted)
+                Spacer()
+                Button { showProSheet = true } label: {
+                    Text("stacks.getPro")
+                        .font(TypographyTokens.caption.weight(.semibold))
+                        .foregroundColor(theme.colors.accent)
+                        .padding(.horizontal, theme.spacing.sm)
+                        .padding(.vertical, 4)
+                        .background(theme.colors.accentBg)
+                        .clipShape(Capsule())
+                }
+            }
+            .padding(.horizontal, theme.spacing.sm)
 
             VStack(spacing: theme.spacing.sm) {
                 ForEach(mandatoryStacks) { stack in
-                    StackCard(stack: stack, isSelected: true, isMandatory: true, onToggle: {})
+                    StackCard(stack: stack, isSelected: true, isMandatory: false,
+                              isLocked: true, onToggle: {})
                 }
             }
         }
@@ -158,20 +176,31 @@ struct StackSelectionView: View {
 }
 
 /// Shared stack-row component used by Stack Selection (onboarding), Stack
-/// Management (settings), and the Level-Up sheet's optional picker. SM2 —
-/// merges what was previously two near-identical implementations.
+/// Management (settings), and the Level-Up sheet's optional picker.
 struct StackCard: View {
     @Environment(\.theme) private var theme
 
     let stack: WordStack
     let isSelected: Bool
     let isMandatory: Bool
+    let isLocked: Bool
     let onToggle: () -> Void
+
+    init(stack: WordStack, isSelected: Bool, isMandatory: Bool,
+         isLocked: Bool = false, onToggle: @escaping () -> Void) {
+        self.stack = stack
+        self.isSelected = isSelected
+        self.isMandatory = isMandatory
+        self.isLocked = isLocked
+        self.onToggle = onToggle
+    }
 
     var body: some View {
         Group {
-            if isMandatory {
+            if isMandatory || isLocked {
                 cardContent
+                    .accessibilityLabel(stack.displayName)
+                    .accessibilityHint(isLocked ? String(localized: "stacks.locked.a11yHint") : "")
             } else {
                 Button(action: onToggle) { cardContent }
                     .buttonStyle(.plain)
@@ -186,16 +215,16 @@ struct StackCard: View {
         HStack(spacing: theme.spacing.md) {
             Image(systemName: stack.icon)
                 .font(.system(.title2))
-                .foregroundColor(isSelected ? theme.colors.accent : theme.colors.inkMuted)
+                .foregroundColor(isLocked ? theme.colors.inkFaint : (isSelected ? theme.colors.accent : theme.colors.inkMuted))
                 .frame(width: 36, height: 36)
-                .background(isSelected ? theme.colors.accentBg : theme.colors.surfaceAlt)
+                .background(isLocked ? theme.colors.surfaceAlt : (isSelected ? theme.colors.accentBg : theme.colors.surfaceAlt))
                 .clipShape(.rect(cornerRadius: RadiusTokens.inline))
 
             VStack(alignment: .leading, spacing: 2) {
                 HStack(spacing: theme.spacing.xs) {
                     Text(stack.displayName)
                         .font(TypographyTokens.headline)
-                        .foregroundColor(theme.colors.ink)
+                        .foregroundColor(isLocked ? theme.colors.inkMuted : theme.colors.ink)
                     if isMandatory {
                         Text("onboarding.stacks.required")
                             .font(TypographyTokens.caption)
@@ -212,18 +241,20 @@ struct StackCard: View {
             Spacer()
 
             if !isMandatory {
-                Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
+                Image(systemName: isLocked ? "circle" : (isSelected ? "checkmark.circle.fill" : "circle"))
                     .font(.system(.title2))
-                    .foregroundColor(isSelected ? theme.colors.accent : theme.colors.inkFaint)
+                    .foregroundColor(isLocked ? theme.colors.inkFaint : (isSelected ? theme.colors.accent : theme.colors.inkFaint))
             }
         }
         .padding(theme.spacing.cardPadding)
-        .background(isSelected ? theme.colors.accentBg : theme.colors.surface)
+        .background(isLocked ? theme.colors.surface : (isSelected ? theme.colors.accentBg : theme.colors.surface))
         .clipShape(.rect(cornerRadius: RadiusTokens.card))
         .overlay(
             RoundedRectangle(cornerRadius: RadiusTokens.card)
-                .stroke(isSelected ? theme.colors.accent : theme.colors.line,
-                        lineWidth: isSelected ? 1.5 : 0.5)
+                .stroke(
+                    (!isLocked && isSelected) ? theme.colors.accent : theme.colors.line,
+                    lineWidth: (!isLocked && isSelected) ? 1.5 : 0.5
+                )
         )
     }
 }

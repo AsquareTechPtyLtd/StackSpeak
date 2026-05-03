@@ -10,6 +10,7 @@ struct BooksTabView: View {
     @Environment(\.modelContext) private var modelContext
 
     @State private var viewModel = BooksTabViewModel()
+    @State private var paywallBook: BookSummary?
 
     var body: some View {
         NavigationStack {
@@ -18,6 +19,10 @@ struct BooksTabView: View {
                 .navigationBarTitleDisplayMode(.large)
                 .searchable(text: $viewModel.query, prompt: "books.search.prompt")
                 .task { await loadIfNeeded() }
+                .sheet(item: $paywallBook) { book in
+                    BookLockedSheet(book: book)
+                        .presentationDetents([.medium])
+                }
         }
     }
 
@@ -53,15 +58,30 @@ struct BooksTabView: View {
         List {
             Section {
                 ForEach(viewModel.filteredBooks) { book in
-                    NavigationLink {
-                        BookDetailView(book: book)
-                    } label: {
-                        BookListRow(
-                            book: book,
-                            lockState: lockState(for: book),
-                            currentStreak: viewModel.currentStreak(for: book.id),
-                            completionRatio: viewModel.completionRatio(for: book)
-                        )
+                    let state = lockState(for: book)
+                    if state == .locked {
+                        Button {
+                            paywallBook = book
+                        } label: {
+                            BookListRow(
+                                book: book,
+                                lockState: state,
+                                currentStreak: viewModel.currentStreak(for: book.id),
+                                completionRatio: viewModel.completionRatio(for: book)
+                            )
+                        }
+                        .buttonStyle(.plain)
+                    } else {
+                        NavigationLink {
+                            BookDetailView(book: book)
+                        } label: {
+                            BookListRow(
+                                book: book,
+                                lockState: state,
+                                currentStreak: viewModel.currentStreak(for: book.id),
+                                completionRatio: viewModel.completionRatio(for: book)
+                            )
+                        }
                     }
                 }
             }
@@ -81,6 +101,79 @@ struct BooksTabView: View {
     private func loadIfNeeded() async {
         guard let services else { return }
         await viewModel.load(catalogService: services.bookCatalog, modelContext: modelContext)
+    }
+}
+
+/// Minimal locked-book gate shown when a non-pro user taps a pro book.
+/// Replace with a full subscription flow when in-app purchase is wired up.
+private struct BookLockedSheet: View {
+    @Environment(\.theme) private var theme
+    @Environment(\.dismiss) private var dismiss
+    @Environment(\.userProgress) private var userProgress
+    @Environment(\.modelContext) private var modelContext
+
+    let book: BookSummary
+
+    var body: some View {
+        VStack(spacing: 0) {
+            Spacer()
+
+            VStack(spacing: theme.spacing.lg) {
+                Image(systemName: "lock.fill")
+                    .font(.system(size: 48, weight: .semibold))
+                    .foregroundColor(theme.colors.accent)
+
+                VStack(spacing: theme.spacing.sm) {
+                    Text("books.locked.title")
+                        .font(TypographyTokens.title2)
+                        .foregroundColor(theme.colors.ink)
+                        .multilineTextAlignment(.center)
+
+                    Text("books.locked.message")
+                        .font(TypographyTokens.body)
+                        .foregroundColor(theme.colors.inkMuted)
+                        .multilineTextAlignment(.center)
+                }
+
+                PrimaryCTAButton("books.locked.cta") { dismiss() }
+
+                devProToggle
+            }
+            .padding(theme.spacing.xl)
+
+            Spacer()
+        }
+        .background(theme.colors.bg.ignoresSafeArea())
+    }
+
+    private var devProToggle: some View {
+        HStack(spacing: theme.spacing.sm) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text("books.dev.proToggle")
+                    .font(TypographyTokens.footnote.weight(.medium))
+                    .foregroundColor(theme.colors.inkMuted)
+                Text("books.dev.proToggle.subtitle")
+                    .font(TypographyTokens.caption)
+                    .foregroundColor(theme.colors.inkFaint)
+            }
+            Spacer()
+            Toggle("", isOn: Binding(
+                get: { userProgress?.isProActive ?? false },
+                set: { on in
+                    guard let progress = userProgress else { return }
+                    progress.isPro = on
+                    progress.proExpiryDate = on
+                        ? Calendar.current.date(byAdding: .year, value: 1, to: Date())
+                        : nil
+                    try? modelContext.save()
+                    if on { dismiss() }
+                }
+            ))
+            .labelsHidden()
+        }
+        .padding(theme.spacing.md)
+        .background(theme.colors.surfaceAlt)
+        .clipShape(.rect(cornerRadius: RadiusTokens.inline))
     }
 }
 
