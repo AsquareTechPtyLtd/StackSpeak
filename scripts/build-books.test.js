@@ -12,7 +12,10 @@ const {
   parseChapterFile,
   parseMetadataLines,
   validateCategories,
-  BOOK_CATEGORIES
+  validateFreshnessFields,
+  BOOK_CATEGORIES,
+  REFRESH_CADENCES,
+  SOURCE_FORMATS
 } = require('./build-books.js');
 
 test('parseInline — plain text becomes a single run with no marks', () => {
@@ -345,5 +348,137 @@ test('validateCategories — non-string entry throws', () => {
   assert.throws(
     () => validateCategories({ id: 'b9', categories: ['code-craft', 42] }),
     /unknown category/
+  );
+});
+
+// ─────────────────────────────────────────────────────────────────
+// validateFreshnessFields — Phase 4 freshness signal validation
+// ─────────────────────────────────────────────────────────────────
+
+test('validateFreshnessFields — accepts a book with all fields absent (existing 15 books)', () => {
+  validateFreshnessFields({ id: 'b1' }, []);
+});
+
+test('validateFreshnessFields — accepts asOfDate + refreshCadence pair', () => {
+  validateFreshnessFields(
+    { id: 'b1', asOfDate: '2026-05', refreshCadence: '18mo' },
+    []
+  );
+});
+
+test('validateFreshnessFields — refresh cadence enum has the 5 locked values', () => {
+  assert.deepEqual([...REFRESH_CADENCES].sort(), ['12mo', '18mo', '24mo', '6mo', '9mo']);
+});
+
+test('validateFreshnessFields — source format enum has the 3 locked values', () => {
+  assert.deepEqual([...SOURCE_FORMATS].sort(), ['book', 'course', 'syllabus']);
+});
+
+test('validateFreshnessFields — invalid asOfDate format throws', () => {
+  for (const bad of ['2026/05', '26-05', '2026-13', '2026-1', 'May 2026']) {
+    assert.throws(
+      () => validateFreshnessFields({ id: 'b1', asOfDate: bad, refreshCadence: '9mo' }, []),
+      /invalid asOfDate/
+    );
+  }
+});
+
+test('validateFreshnessFields — asOfDate without refreshCadence throws', () => {
+  assert.throws(
+    () => validateFreshnessFields({ id: 'b1', asOfDate: '2026-05' }, []),
+    /asOfDate but no refreshCadence/
+  );
+});
+
+test('validateFreshnessFields — invalid refreshCadence enum throws', () => {
+  assert.throws(
+    () => validateFreshnessFields({ id: 'b1', refreshCadence: '3mo' }, []),
+    /invalid refreshCadence/
+  );
+});
+
+test('validateFreshnessFields — volatileChapters references real chapter IDs', () => {
+  validateFreshnessFields(
+    {
+      id: 'b1',
+      asOfDate: '2026-05',
+      refreshCadence: '18mo',
+      volatileChapters: [
+        { chapterId: 'ch13', asOfDate: '2026-05', refreshCadence: '9mo', reason: 'AI' }
+      ]
+    },
+    ['ch01', 'ch13']
+  );
+});
+
+test('validateFreshnessFields — volatileChapters with unknown chapterId throws', () => {
+  assert.throws(
+    () => validateFreshnessFields(
+      {
+        id: 'b1',
+        volatileChapters: [
+          { chapterId: 'ch99', asOfDate: '2026-05', refreshCadence: '9mo' }
+        ]
+      },
+      ['ch01']
+    ),
+    /unknown chapterId "ch99"/
+  );
+});
+
+test('validateFreshnessFields — volatileChapters without required asOfDate throws', () => {
+  assert.throws(
+    () => validateFreshnessFields(
+      {
+        id: 'b1',
+        volatileChapters: [{ chapterId: 'ch01', refreshCadence: '9mo' }]
+      },
+      ['ch01']
+    ),
+    /invalid asOfDate/
+  );
+});
+
+test('validateFreshnessFields — inspiredBy with valid book format passes', () => {
+  validateFreshnessFields(
+    { id: 'b1', inspiredBy: { title: 'Refactoring', format: 'book', year: 2018 } },
+    []
+  );
+});
+
+test('validateFreshnessFields — inspiredBy with course format passes', () => {
+  validateFreshnessFields(
+    { id: 'b1', inspiredBy: { title: 'GenAI for QA', format: 'course', year: 2025 } },
+    []
+  );
+});
+
+test('validateFreshnessFields — inspiredBy without title throws', () => {
+  assert.throws(
+    () => validateFreshnessFields(
+      { id: 'b1', inspiredBy: { title: '', format: 'book' } },
+      []
+    ),
+    /inspiredBy.title/
+  );
+});
+
+test('validateFreshnessFields — inspiredBy with unknown format throws', () => {
+  assert.throws(
+    () => validateFreshnessFields(
+      { id: 'b1', inspiredBy: { title: 'X', format: 'magazine' } },
+      []
+    ),
+    /inspiredBy.format/
+  );
+});
+
+test('validateFreshnessFields — inspiredBy.year non-number throws', () => {
+  assert.throws(
+    () => validateFreshnessFields(
+      { id: 'b1', inspiredBy: { title: 'X', format: 'book', year: '2018' } },
+      []
+    ),
+    /inspiredBy.year/
   );
 });

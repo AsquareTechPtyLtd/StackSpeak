@@ -68,6 +68,91 @@ function validateCategories(bookMeta) {
   }
 }
 
+// Freshness signals (Phase 4 onwards). Optional on the existing 15 books.
+// `asOfDate` + `refreshCadence` always travel together; `volatileChapters` lets
+// individual chapters age faster than the book; `inspiredBy` credits a non-self
+// source (book/course/syllabus). See Phase 4 plan → "Locked: Freshness Policy".
+const REFRESH_CADENCES = new Set(['6mo', '9mo', '12mo', '18mo', '24mo']);
+const SOURCE_FORMATS = new Set(['book', 'course', 'syllabus']);
+const AS_OF_DATE_PATTERN = /^\d{4}-(0[1-9]|1[0-2])$/;
+
+function validateFreshnessFields(bookMeta, chapterIds) {
+  const { asOfDate, refreshCadence, volatileChapters, inspiredBy } = bookMeta;
+  const id = bookMeta.id;
+
+  if (asOfDate !== undefined) {
+    if (typeof asOfDate !== 'string' || !AS_OF_DATE_PATTERN.test(asOfDate)) {
+      throw new Error(
+        `Book "${id}" has invalid asOfDate "${asOfDate}". Must be YYYY-MM format (e.g. "2026-05").`
+      );
+    }
+    if (refreshCadence === undefined) {
+      throw new Error(
+        `Book "${id}" has asOfDate but no refreshCadence. Both fields travel together.`
+      );
+    }
+  }
+
+  if (refreshCadence !== undefined) {
+    if (typeof refreshCadence !== 'string' || !REFRESH_CADENCES.has(refreshCadence)) {
+      throw new Error(
+        `Book "${id}" has invalid refreshCadence "${refreshCadence}". ` +
+        `Allowed: ${[...REFRESH_CADENCES].sort().join(', ')}.`
+      );
+    }
+  }
+
+  if (volatileChapters !== undefined) {
+    if (!Array.isArray(volatileChapters)) {
+      throw new Error(`Book "${id}" volatileChapters must be an array.`);
+    }
+    const chapterIdSet = new Set(chapterIds);
+    for (const vc of volatileChapters) {
+      if (typeof vc !== 'object' || vc === null) {
+        throw new Error(`Book "${id}" volatileChapters entry must be an object.`);
+      }
+      if (typeof vc.chapterId !== 'string' || !chapterIdSet.has(vc.chapterId)) {
+        throw new Error(
+          `Book "${id}" volatileChapters references unknown chapterId "${vc.chapterId}". ` +
+          `Known chapters: ${chapterIds.join(', ')}.`
+        );
+      }
+      if (typeof vc.asOfDate !== 'string' || !AS_OF_DATE_PATTERN.test(vc.asOfDate)) {
+        throw new Error(
+          `Book "${id}" volatileChapter "${vc.chapterId}" has invalid asOfDate "${vc.asOfDate}".`
+        );
+      }
+      if (typeof vc.refreshCadence !== 'string' || !REFRESH_CADENCES.has(vc.refreshCadence)) {
+        throw new Error(
+          `Book "${id}" volatileChapter "${vc.chapterId}" has invalid refreshCadence "${vc.refreshCadence}".`
+        );
+      }
+      if (vc.reason !== undefined && typeof vc.reason !== 'string') {
+        throw new Error(
+          `Book "${id}" volatileChapter "${vc.chapterId}" reason must be a string if present.`
+        );
+      }
+    }
+  }
+
+  if (inspiredBy !== undefined) {
+    if (typeof inspiredBy !== 'object' || inspiredBy === null) {
+      throw new Error(`Book "${id}" inspiredBy must be an object.`);
+    }
+    if (typeof inspiredBy.title !== 'string' || inspiredBy.title.length === 0) {
+      throw new Error(`Book "${id}" inspiredBy.title must be a non-empty string.`);
+    }
+    if (!SOURCE_FORMATS.has(inspiredBy.format)) {
+      throw new Error(
+        `Book "${id}" inspiredBy.format must be one of: ${[...SOURCE_FORMATS].sort().join(', ')}.`
+      );
+    }
+    if (inspiredBy.year !== undefined && typeof inspiredBy.year !== 'number') {
+      throw new Error(`Book "${id}" inspiredBy.year must be a number when present.`);
+    }
+  }
+}
+
 // ─────────────────────────────────────────────────────────────────
 // Markdown → ContentBlock parser (preserves the Phase 1 API)
 // ─────────────────────────────────────────────────────────────────
@@ -447,6 +532,9 @@ function buildBook(bookDir, sharedRoot, fs, path) {
 
   chapters.sort((a, b) => a.order - b.order);
 
+  // Freshness validation needs the resolved chapter IDs (volatileChapters refs).
+  validateFreshnessFields(bookMeta, chapters.map(c => c.id));
+
   const manifest = {
     id: bookMeta.id,
     version: bookMeta.manifestVersion ?? 1,
@@ -454,6 +542,10 @@ function buildBook(bookDir, sharedRoot, fs, path) {
     author: bookMeta.author ?? null,
     summary: bookMeta.summary,
     categories: [...bookMeta.categories],
+    ...(bookMeta.asOfDate !== undefined ? { asOfDate: bookMeta.asOfDate } : {}),
+    ...(bookMeta.refreshCadence !== undefined ? { refreshCadence: bookMeta.refreshCadence } : {}),
+    ...(bookMeta.volatileChapters !== undefined ? { volatileChapters: bookMeta.volatileChapters } : {}),
+    ...(bookMeta.inspiredBy !== undefined ? { inspiredBy: bookMeta.inspiredBy } : {}),
     chapters
   };
   const manifestJson = JSON.stringify(manifest, null, 2);
@@ -524,7 +616,10 @@ module.exports = {
   buildAllBooks,
   buildBook,
   validateCategories,
-  BOOK_CATEGORIES
+  validateFreshnessFields,
+  BOOK_CATEGORIES,
+  REFRESH_CADENCES,
+  SOURCE_FORMATS
 };
 
 // CLI:
