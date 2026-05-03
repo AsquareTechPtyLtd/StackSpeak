@@ -1,0 +1,321 @@
+@chapter
+id: plf-ch10-org-patterns
+order: 10
+title: Org Patterns
+summary: Platform engineering's org structure is as load-bearing as its tooling — Team Topologies provides the canonical vocabulary, but the choice of team type, sizing, interaction modes, and reporting line is what determines whether a platform team multiplies the org or bottlenecks it.
+
+@card
+id: plf-ch10-c001
+order: 1
+title: Org Structure Is Load-Bearing
+teaser: Conway's law means the software a platform team ships will mirror the communication structure of the org — and that cuts both ways: good org design produces good platform architecture, and bad org design bakes dysfunction into the product itself.
+
+@explanation
+
+In 1967, Mel Conway observed that "organizations which design systems are constrained to produce designs which are copies of the communication structures of those organizations." This was treated as a curiosity for decades. Platform engineering takes it seriously as an engineering constraint.
+
+A platform team that is buried inside an infrastructure department with no direct relationship to product engineers will build a platform optimized for infrastructure concerns — stability, cost, compliance — not developer productivity. A platform team that is organizationally adjacent to stream-aligned teams, with regular touchpoints, will build a platform that solves the friction its customers actually feel.
+
+The implications are concrete:
+
+- **Reporting structure shapes priorities.** A platform team reporting into a VP of Infrastructure is implicitly evaluated on uptime and cost. One reporting into a VP of Engineering is implicitly evaluated on developer velocity.
+- **Team boundaries become API boundaries.** If your platform team is internally split between a networking subteam and a compute subteam that rarely talk, your developers will encounter an API that reflects that split — and they'll have to care about a boundary that has nothing to do with their work.
+- **Autonomy requires intentional interface design.** Conway's law doesn't just describe dysfunction — it describes how to make good platforms deliberately. Teams that own clean domains with clear interfaces produce platforms with clean domains and clear interfaces.
+
+The "inverse Conway maneuver," coined by Thoughtworks, is the practice of deliberately designing team structure to produce the architecture you want, rather than allowing architecture to emerge from whatever structure you already have.
+
+> [!info] Conway's law is not a criticism of org structure — it's a predictive model. If you know the communication structure, you can predict the system architecture. If you want a different architecture, change the communication structure first.
+
+@feynman
+
+If two teams rarely talk to each other, the software they build together will have a seam exactly where their communication breaks down — that seam is a bug waiting to happen, and fixing it requires fixing the relationship first.
+
+@card
+id: plf-ch10-c002
+order: 2
+title: Team Topologies — The Four Team Types
+teaser: Matthew Skelton and Manuel Pais defined four fundamental team types in Team Topologies (2019) — stream-aligned, platform, enabling, and complicated-subsystem — and the entire model rests on limiting the cognitive load any one team carries.
+
+@explanation
+
+Team Topologies (Skelton and Pais, 2019) is the dominant framework for structuring software engineering organizations. It defines four team types, each with a distinct purpose:
+
+**Stream-aligned teams** are organized around a flow of work — a product, a customer journey, a business capability. They own delivery end-to-end for their domain. They are the most common team type and the primary customers of the platform.
+
+**Platform teams** provide internal services to stream-aligned teams, reducing the cognitive load those teams carry. A platform team wraps complex infrastructure or tooling into self-service interfaces so that stream-aligned teams don't need to understand the underlying systems.
+
+**Enabling teams** are temporary — they exist to accelerate a stream-aligned team's ability to adopt a new practice or technology, then exit. They don't own ongoing services. They teach, embed, and leave.
+
+**Complicated-subsystem teams** own components that require deep specialist expertise — a custom machine learning inference engine, a cryptographic key management system, a real-time media processing pipeline. They exist because the complexity of the subsystem is high enough that embedding that expertise inside a stream-aligned team would overwhelm it.
+
+The framework's key insight: every team has a cognitive load limit. When a team exceeds that limit, quality, velocity, and morale all degrade. Team type selection and team sizing are both tools for keeping cognitive load within sustainable bounds.
+
+> [!info] Team Topologies has become the standard vocabulary for platform engineering org design. When practitioners say "stream-aligned team" or "X-as-a-service," they're using Skelton and Pais's language, even when they don't cite the book.
+
+@feynman
+
+Team Topologies is a rulebook for how engineering teams should be shaped and how they should relate to each other — the goal is that every team is doing work that fits inside its head, without depending on too many other teams to get anything done.
+
+@card
+id: plf-ch10-c003
+order: 3
+title: The Platform Team's Role in Team Topologies
+teaser: In Team Topologies, the platform team's job is to provide everything stream-aligned teams need to deploy and operate software — as a service, not as a dependency that requires a ticket.
+
+@explanation
+
+The platform team in Team Topologies is not a service desk. It is not a gatekeeper. Its purpose is to reduce the cognitive load on stream-aligned teams by owning the complexity of the underlying infrastructure and exposing it through self-service interfaces.
+
+The key structural requirement is that the platform team interacts with stream-aligned teams primarily through X-as-a-service — not through collaboration (which creates coupling and dependency) and not through facilitation (which is the enabling team's mode). A stream-aligned team should be able to provision a database, configure a CI pipeline, or deploy a service without opening a ticket or waiting for a platform engineer to do it manually.
+
+This shapes what the platform team actually builds:
+
+- **Self-service provisioning interfaces** — golden path templates, Terraform modules, internal portals, CLIs. The interface is part of the product.
+- **Documentation and runbooks** — because X-as-a-service only works if teams can use the service without asking for help.
+- **Paved roads with guardrails** — the platform should make the right thing easy and the wrong thing hard, not just technically correct but also safe by default.
+
+The failure mode is a platform team that operates primarily through Jira tickets — "submit a request and we'll provision it for you." That's a platform team that has become a bottleneck disguised as a service. Stream-aligned teams wait, velocity suffers, and the platform team burns out on manual work.
+
+> [!warning] A platform team whose primary interaction mode with stream-aligned teams is ticket-based is providing a bureau service, not a platform. Bureau services scale linearly with demand; platforms should scale sub-linearly.
+
+@feynman
+
+The platform team's job is to turn hard infrastructure problems into simple, reliable self-service products — so that a stream-aligned team can do in an afternoon what used to require a platform engineer, two meetings, and a Jira ticket.
+
+@card
+id: plf-ch10-c004
+order: 4
+title: Team Sizing — Dunbar's Number and the Platform Team
+teaser: Dunbar's number puts the upper limit of a stable, high-trust team at around 15 people — and platform teams that grow beyond that start losing the shared context and cohesion that makes a team function as a unit.
+
+@explanation
+
+Robin Dunbar's anthropological research found that humans can maintain stable social relationships with roughly 150 people, with inner circles of approximately 5, 15, and 50. The 15-person layer — the "sympathy group" — maps closely to what works for engineering teams. Beyond 15, coordination overhead grows, ownership becomes ambiguous, and new members struggle to build the trust that makes teams effective.
+
+For platform teams specifically, the practical operating range is 5 to 15 engineers:
+
+- **Below 5:** The team is too small to own meaningful surface area, cover on-call sustainably, or handle both product development and operational work. A platform team of 2–3 engineers is perpetually in reactive mode.
+- **5 to 10:** The most common and often most productive size. Enough hands to divide ownership across domains, maintain coherent direction, and still fit in one room (or one video call).
+- **10 to 15:** Works well when the platform scope is broad — internal developer portal, CI/CD infrastructure, observability stack, cloud landing zone. Requires deliberate internal structure to avoid subteam fragmentation.
+- **Above 15:** The team should likely split into focused sub-teams, each owning a distinct domain with clear interfaces between them.
+
+The sizing question is also a scope question. A platform team that owns too much surface area with too few engineers will be underwater indefinitely. The right intervention is either more engineers, reduced scope, or splitting the team — not asking the existing team to work harder.
+
+> [!tip] When estimating platform team size, count the number of stream-aligned teams the platform serves. A ratio of roughly 1 platform engineer per 5 to 8 stream-aligned engineers is a useful starting heuristic, though the right ratio depends heavily on platform maturity and automation coverage.
+
+@feynman
+
+A good team size is one where everyone knows what everyone else is working on without needing a meeting to find out — and for most engineering teams, that means staying under about 15 people.
+
+@card
+id: plf-ch10-c005
+order: 5
+title: Interaction Modes — Collaboration, X-as-a-Service, Facilitating
+teaser: Team Topologies defines three interaction modes — collaboration, X-as-a-service, and facilitating — and the platform team's health depends on using the right mode at the right time, not defaulting to one mode for everything.
+
+@explanation
+
+The three interaction modes in Team Topologies are not interchangeable. Each has a specific purpose, a specific time horizon, and a specific cost:
+
+**Collaboration** means two teams working closely together, often co-designing a solution. Collaboration is high-bandwidth and produces strong shared understanding, but it creates tight coupling and is expensive to sustain. The right mode when requirements are unclear and discovery is needed — typically early in a project. A platform team in collaboration mode with a stream-aligned team is still figuring out what the product should be.
+
+**X-as-a-service** means one team consumes what another team provides through a well-defined, stable interface. This is the dominant mode for a mature platform team. The service is self-service. The interface is documented. The interaction is low-friction and asynchronous. This mode scales because it doesn't require humans on both sides to be available at the same time.
+
+**Facilitating** means one team helps another team build capability, then steps back. The enabling team uses this mode. A platform team uses it occasionally when a stream-aligned team is adopting a new platform capability and needs a period of close support before they can self-serve.
+
+Platform teams that stay in collaboration mode too long never ship a stable product — they're always building something custom. Platform teams that jump straight to X-as-a-service without enough collaboration build products that don't solve real problems. The arc from collaboration to X-as-a-service is how a platform capability matures.
+
+> [!info] The mode a team is in is not a fixed property — it's a choice that should change as a capability matures. New capabilities start in collaboration; stable capabilities should be in X-as-a-service. Treating collaboration as the permanent operating mode is a platform antipattern.
+
+@feynman
+
+Collaboration is two teams cooking together; X-as-a-service is one team running a restaurant that the other team orders from — collaboration is right when you're still figuring out the recipe, and X-as-a-service is right once the menu is set.
+
+@card
+id: plf-ch10-c006
+order: 6
+title: Stream-Aligned Teams — Your Platform's Customers
+teaser: Stream-aligned teams are the platform's primary customers, and everything the platform team builds should be evaluated by a single question: does this reduce the cognitive load on a stream-aligned team, or does it add to it?
+
+@explanation
+
+Stream-aligned teams are organized around a continuous flow of work — a product line, a customer journey, a revenue-generating service. They own delivery from idea to production for their domain. In Team Topologies, they are the most common team type and the nucleus around which all other teams are organized.
+
+For the platform team, stream-aligned teams are the customer. This framing has real consequences:
+
+- **Platform adoption is voluntary in spirit.** Even when platform use is mandated, a platform that makes stream-aligned teams' lives harder will be worked around. Teams will maintain their own Terraform, their own CI scripts, their own tooling. The platform that wins is the one that is genuinely easier to use than the alternative.
+- **Platform feedback comes from stream-aligned teams.** The signal for what the platform should build next lives in stream-aligned teams' pain points, workarounds, and requests. A platform team without close contact with its customers builds for imaginary problems.
+- **Cognitive load is the unit of measure.** A stream-aligned team is sized to fit the cognitive load of its domain. When the platform adds complexity — complicated APIs, undocumented behavior, unreliable services — it spills cognitive load onto stream-aligned teams and effectively shrinks the bandwidth they have for their actual work.
+
+Spotify's "tribes and squads" model (circa 2012, described by Henrik Kniberg and Anders Ivarsson) is an influential early implementation of stream-aligned team thinking. Squads own end-to-end delivery for a feature area; tribes group related squads. The model's wide adoption reflects how resonant the stream-aligned organizing principle is across different org sizes and industries.
+
+> [!info] Stream-aligned team sizing follows the same cognitive load constraint as all Team Topologies teams. A squad that owns more surface area than it can hold in its collective head will deliver slowly and inconsistently regardless of individual skill.
+
+@feynman
+
+The stream-aligned team is like a small restaurant kitchen — it owns everything from ingredient prep to the finished dish, and it needs its suppliers (the platform) to be reliable and easy to deal with so the kitchen staff can focus on cooking, not on sourcing problems.
+
+@card
+id: plf-ch10-c007
+order: 7
+title: Enabling Teams — Short-Lived, High-Impact
+teaser: An enabling team exists to teach a capability to a stream-aligned team and then exit — if the enabling team is still needed six months later, it has become a dependency, not a teacher.
+
+@explanation
+
+Enabling teams are the most misunderstood team type in Team Topologies. They are not a center of excellence. They are not a consulting arm that stream-aligned teams can call indefinitely. They are a temporary, focused intervention to build capability in a team that needs it, with a defined exit condition.
+
+The enabling team model works like this:
+
+1. A stream-aligned team needs to adopt a new practice — observability, security testing, chaos engineering, a new language or framework.
+2. The enabling team embeds with the stream-aligned team, teaches the practice, helps set it up, and works alongside the team until the team can sustain the capability independently.
+3. The enabling team exits. The stream-aligned team owns the capability going forward.
+
+This is fundamentally different from a platform team, which provides ongoing services, and from a complicated-subsystem team, which owns a component permanently. The enabling team's success is measured by its own obsolescence relative to each engagement.
+
+Platform teams sometimes need enabling team support when rolling out new platform capabilities. A new internal developer portal, a new observability stack, or a new deployment system may require a period of facilitation — working closely with early adopter stream-aligned teams to build confidence and gather feedback — before the platform team can shift to X-as-a-service mode.
+
+The failure mode for enabling teams is scope creep into permanent support. When stream-aligned teams know they can always call the enabling team, they have less incentive to build the capability themselves. The enabling team becomes overloaded, and the stream-aligned team never becomes self-sufficient.
+
+> [!warning] An enabling team that has been running for more than six months on the same engagement without a clear exit plan has drifted into a dependency relationship. The engagement needs explicit re-scoping or the team needs to be reclassified.
+
+@feynman
+
+An enabling team is like a personal trainer — their job is to build your strength until you don't need them anymore, not to be the person who lifts the weights for you indefinitely.
+
+@card
+id: plf-ch10-c008
+order: 8
+title: The "Platform Team of One" Antipattern
+teaser: A platform team of one or two engineers is too small to be sustainable — it concentrates critical knowledge in a single person, makes on-call unworkable, and turns one resignation into an organizational crisis.
+
+@explanation
+
+The "platform team of one" is a common early-stage org pattern: a single senior engineer, often a former SRE or infrastructure lead, who owns all shared infrastructure, CI/CD, cloud accounts, and internal tooling. It happens organically — one person knows the most, so more and more gets routed to them.
+
+The risks are serious and predictable:
+
+- **Bus factor of one.** If that person leaves, is ill, or is on vacation, the platform stops. Because the platform is load-bearing — every stream-aligned team depends on it — the blast radius of a single person's unavailability is enormous.
+- **On-call is unsustainable.** A team of one cannot rotate on-call. That engineer is always on-call, either formally or informally, for everything the platform owns.
+- **No peer review.** Architectural decisions, infrastructure changes, and security-relevant configurations go out without a second pair of eyes.
+- **No growth path.** The platform engineer cannot take on a more senior or strategic role because there is no one to hand off the operational work to.
+- **Bottleneck by design.** Because there is only one person, every stream-aligned team's platform request goes into a single queue, regardless of urgency or priority.
+
+The right intervention is not to ask more of the platform engineer — it is to hire a second and then a third. The move from one to two platform engineers is disproportionately high value: it enables rotation, peer review, and the beginning of structured ownership.
+
+> [!warning] The platform team of one is not a junior problem — it happens to excellent engineers who are too central to fail and too stretched to fix it. The solution is organizational, not individual.
+
+@feynman
+
+A platform team of one is like a single load-bearing wall in a building — everything depends on it, there is no redundancy, and the moment you need to make changes, you realize you have no room to maneuver.
+
+@card
+id: plf-ch10-c009
+order: 9
+title: Platform Team Scaling — When to Split
+teaser: A platform team that has grown beyond 15 engineers and owns multiple distinct domains is exhibiting the warning signs that it is time to split into focused sub-teams with clear interfaces between them.
+
+@explanation
+
+Platform teams are not immune to the cognitive load constraints that apply to all teams. As a platform grows — more services, more stream-aligned team customers, more infrastructure owned — the surface area the platform team must understand and operate grows with it. At some point, the team is too large and too broad to function cohesively.
+
+The natural split follows domain lines. Most mature platform organizations evolve into three or four distinct sub-teams:
+
+**Infrastructure platform** — cloud accounts, networking, compute, storage, IAM, landing zone. This team's customers are internal developers; its output is the foundational layer on which everything else runs.
+
+**Developer platform (or dev-ex platform)** — CI/CD pipelines, internal developer portals, golden path templates, developer tooling, local development environments. This team's product is the developer experience on top of the infrastructure platform.
+
+**Data platform** — data ingestion pipelines, data warehouses, stream processing infrastructure, data catalog, access control for data assets. In data-heavy organizations, this team serves both engineers and analysts.
+
+**Security platform** — identity, secrets management, policy enforcement, compliance automation. Sometimes embedded within the infrastructure platform; sometimes a standalone team in regulated industries.
+
+The split should happen when:
+
+- The team regularly has more than 12–15 engineers.
+- Engineers on the team have stopped knowing what the rest of the team is doing.
+- Stream-aligned teams are confused about who owns what.
+- Sub-domains within the platform have different customers, different release cadences, and different quality bars.
+
+Each sub-team should be treated as a platform team in its own right — with its own product backlog, its own user research, and its own X-as-a-service interaction mode with its customers.
+
+> [!tip] Split along customer-facing domain lines, not along internal technology lines. A split that makes sense to platform engineers but confuses stream-aligned teams about where to go for what is still a bad split.
+
+@feynman
+
+Splitting a platform team is like separating a general store into a hardware shop, a grocery, and a pharmacy — each shop now has staff who know their inventory deeply, and customers know exactly which door to walk through.
+
+@card
+id: plf-ch10-c010
+order: 10
+title: The Reporting Line Question
+teaser: Who the platform team reports to is not a bureaucratic detail — it determines what the platform is optimized for, what gets prioritized, and whether the platform team is evaluated as infrastructure cost or as a developer productivity investment.
+
+@explanation
+
+Platform teams exist at the intersection of infrastructure and developer experience, which means they never fit cleanly into a single organizational home. The reporting line choices and their tradeoffs:
+
+**Reports to CTO:** Gives the platform team visibility and authority. Platform decisions get escalated quickly. The risk is that the CTO is too removed from day-to-day developer friction to set good priorities, and the platform team may be pulled toward high-visibility technical projects rather than reliability and usability work.
+
+**Reports to Head of Infrastructure / VP of Infrastructure:** The most common arrangement in infrastructure-centric organizations. The platform team is evaluated primarily on uptime, cost, and compliance — not on developer velocity. Developer experience tends to get deprioritized because it's harder to measure and doesn't show up in SLA dashboards.
+
+**Reports to Head of Engineering / VP of Engineering:** Puts the platform team organizationally close to its customers. Developer productivity becomes the primary success metric. The risk is that the platform team may lack the operational discipline and infrastructure depth that comes from being embedded in a pure infrastructure organization.
+
+**Reports to its own director (Head of Platform / VP of Platform):** The pattern in larger organizations. Creates clear ownership and a dedicated leadership voice for the platform. Requires the director to navigate between the infrastructure and product sides of the organization effectively.
+
+There is no universally correct answer. The right choice depends on the organization's current maturity, where the biggest problems are, and what the platform team is primarily being asked to solve. What matters most is that the reporting line and the evaluation criteria are aligned — a platform team reporting into infrastructure but measured on developer satisfaction is set up for internal conflict.
+
+> [!info] The reporting line should be revisited as the platform matures. Early-stage platform teams often need the infrastructure credibility that comes from reporting into infrastructure. Mature platform teams often benefit from the customer proximity that comes from reporting into engineering.
+
+@feynman
+
+Who the platform team reports to is the organization's way of saying what it cares about most — infrastructure efficiency or developer velocity — and the platform team will, consciously or not, optimize for whichever answer the org chart gives.
+
+@card
+id: plf-ch10-c011
+order: 11
+title: Cross-Functional Platform Staffing
+teaser: A platform team staffed only with engineers will build technically correct products that developers do not adopt — because without a PM, a designer, and a technical writer, the platform has no one whose job is to make it understandable and usable.
+
+@explanation
+
+The most common staffing mistake on platform teams is treating them as purely engineering organizations. Platform teams build internal products, and internal products require the same cross-functional thinking as external products:
+
+**Product manager:** Owns the platform roadmap, prioritizes the backlog, defines what success looks like, and maintains the relationship between the platform team's work and the needs of stream-aligned teams. Without a PM, the backlog is driven by whatever engineers find interesting or whatever was most recently requested loudly.
+
+**Designer (UX):** Internal developer portals, self-service UIs, CLI experiences, and onboarding flows all benefit from design thinking. A self-service provisioning UI built without a designer will work technically and be abandoned in practice because it's too hard to understand.
+
+**Technical writer:** Documentation is a first-class platform deliverable. A self-service model requires that developers can help themselves, which requires documentation that is accurate, discoverable, and maintained. Without a dedicated technical writer, documentation is perpetually out of date and written by engineers who would rather be coding.
+
+**Developer advocate or DX engineer:** In larger platform organizations, a dedicated role for gathering developer feedback, running internal office hours, onboarding stream-aligned teams, and acting as the voice of the developer inside the platform team.
+
+The staffing model for a platform team of 8–10 engineers might include 1 PM, 1 designer (shared or fractional), and 1 technical writer. That ratio produces a team that can ship products developers actually use, not just infrastructure that technically works.
+
+> [!info] The PM role is often the highest-leverage addition to an engineering-heavy platform team. A PM who is close to stream-aligned teams surfaces real problems early, prevents the team from building solutions to imaginary problems, and gives the team a prioritization mechanism that is not "loudest request wins."
+
+@feynman
+
+A platform team without a product manager is like a kitchen without a menu — the chefs might be excellent, but without someone deciding what to cook and for whom, you end up with a lot of technically impressive dishes that no one ordered.
+
+@card
+id: plf-ch10-c012
+order: 12
+title: The Platform Team's Funding Model
+teaser: How a platform team is funded — central cost center, cross-charge, or internal market — shapes what the platform optimizes for, which customers it listens to, and whether it feels pressure to justify its existence.
+
+@explanation
+
+The funding model for a platform team is not just a finance question — it is an incentive design question. The three primary models each produce different behaviors:
+
+**Central cost center:** The platform team's budget comes from a central engineering or infrastructure budget, not from the stream-aligned teams it serves. This is the simplest model to operate. The platform team is not dependent on adoption for its budget, which reduces pressure to compromise on architectural quality to satisfy short-term requests. The risk is that the platform team lacks a strong feedback signal from its customers — if stream-aligned teams don't use the platform, nothing happens to the platform team's budget.
+
+**Cross-charge (internal billing):** Stream-aligned teams are charged for their platform consumption — compute, storage, CI minutes, support hours. The platform team generates "revenue" from these charges and is evaluated on it. This creates market-like signals: if the platform is not worth what it costs, teams will find alternatives. The risk is that it creates perverse incentives — the platform team may optimize for revenue-generating features over foundational work, and stream-aligned teams may underinvest in platform adoption because every dollar spent is visible.
+
+**Internal market / VC model:** Less common, but used in some large technology organizations. Platform teams compete for internal investment and must demonstrate adoption and impact to receive continued funding. Creates strong pressure for platform teams to be genuinely useful, but requires sophisticated internal governance to avoid platform proliferation and duplication.
+
+Most organizations use a hybrid: a base central budget that covers the core team and foundational work, with optional cross-charge for consumption-based resources like compute or storage. This gives the platform team financial stability while creating some usage-based accountability.
+
+> [!info] The cross-charge model is most effective when the charges are transparent and predictable. Surprise platform bills at the end of a quarter damage trust between the platform team and its customers more than almost any other failure mode.
+
+@feynman
+
+How a platform team is funded determines what it pays attention to — a team on a central budget listens to its leadership, while a team on cross-charge listens to its customers, and the trick is to design the model so those two audiences are saying the same thing.

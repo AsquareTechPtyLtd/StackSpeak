@@ -1,0 +1,319 @@
+@chapter
+id: plf-ch02-platform-as-a-product
+order: 2
+title: Platform as a Product
+summary: A platform succeeds when it treats application teams as customers — running user research, picking adoption metrics, prioritizing roadmap, and earning usage rather than mandating it.
+
+@card
+id: plf-ch02-c001
+order: 1
+title: Developers Are Users
+teaser: The "product thinking" lens applies to internal platforms even though there's no revenue — the currency is developer time and trust, and you can lose both without a single refund request.
+
+@explanation
+
+When an infrastructure team builds a deployment pipeline or a Kubernetes abstraction layer, application developers don't have a choice to not use it — or so it seems. The mandate model says: we built it, use it. The product model says: we built it, and we need to earn your continued use of it.
+
+The reason product thinking matters even without a market:
+
+- **Adoption can be nominal.** Teams can technically use the platform while working around it in every meaningful way — maintaining their own scripts, building side-channel pipelines, ignoring the paved road at every decision point. Mandate without quality creates shadow infrastructure.
+- **Feedback disappears without a customer relationship.** If developers don't feel like customers, they don't file tickets — they just give up and work around the problem. You lose the signal you need to improve.
+- **Attrition is invisible.** Revenue churn is measured quarterly. Developer trust churn is measured by how many teams quietly stop using your tooling until you audit usage six months later and find adoption at 40% of what you reported.
+
+The mental shift: a platform team's output is not servers or pipelines — it is a reduction in cognitive load and time-to-production for the application teams it serves. That framing makes user research, roadmap communication, and support SLAs feel natural rather than bureaucratic overhead.
+
+> [!info] "No revenue" does not mean no market. The platform team competes with developers building their own tooling, with cloud consoles, and with the option of doing nothing. Treating developers as customers is how you stay competitive in that market.
+
+@feynman
+
+A developer platform without product thinking is like a cafeteria that posts a mandatory lunch policy but never asks whether anyone likes the food.
+
+@card
+id: plf-ch02-c002
+order: 2
+title: User Research with Developers
+teaser: You cannot prioritize the right platform features from inside the platform team — structured research with application developers is what separates a roadmap from a wishlist.
+
+@explanation
+
+Developer user research uses the same toolkit as consumer product research, with adjustments for the audience.
+
+**Jobs-to-be-done (JTBD) interviews** are the most productive starting point. The question is not "what features do you want?" — it is "walk me through the last time you tried to deploy something new. What slowed you down?" JTBD interviews surface the actual friction points, not the features developers think they want in the abstract. A 30-minute interview with five application team members will surface more actionable insight than a 100-response survey.
+
+**Surveys** are useful for quantifying what interviews surface. Once you hear "setting up monitoring is painful" in three interviews, a survey can tell you whether that's felt by 30% or 80% of teams. Keep surveys short — five to eight questions. Likert scales for satisfaction, open text for specifics.
+
+**Telemetry and usage analytics** are the third leg. Feature adoption rates, error rates in onboarding flows, time-to-first-successful-deploy — these tell you what's happening at scale without relying on developers to self-report. Telemetry doesn't tell you why; interviews tell you why. You need both.
+
+**The most common mistake** is running one research sprint at launch and treating the findings as permanent. Developer workflows change. Org structures change. What was painful six months ago may be solved; what is painful today may be invisible to the platform team. A lightweight ongoing cadence — a quarterly survey, monthly usage review, occasional JTBD interview — is more valuable than a one-time discovery exercise.
+
+> [!tip] Talk to developers who have stopped using a platform feature. Churned users have more diagnostic information than satisfied ones — and they're often willing to tell you exactly what drove them away if you ask directly.
+
+@feynman
+
+Skipping developer user research is like building a road without knowing where people are actually trying to go.
+
+@card
+id: plf-ch02-c003
+order: 3
+title: The Platform PM Role
+teaser: A dedicated platform product manager is the person who holds the customer relationship so engineers don't have to — and the absence of that role is usually felt before it's recognized.
+
+@explanation
+
+In early-stage platform teams, a senior engineer often acts as informal PM: they have the deepest understanding of what's technically possible and enough context to prioritize. This works up to a certain size. It breaks down when:
+
+- The team has more than three or four application teams as customers
+- Roadmap decisions require tradeoffs across more work than a single engineer can hold in context
+- Developer requests are coming in faster than the team can triage without a structured intake process
+- The platform team's work needs to be communicated to stakeholders outside the engineering organization
+
+**What the platform PM owns:**
+
+- Synthesizing user research into prioritized problem statements
+- Owning the public roadmap — committing to it and explaining changes
+- Running the intake process for developer requests
+- Setting the team's success metrics and tracking them
+- Being the voice of the developer in roadmap discussions
+
+**How it differs from infrastructure leadership:** A platform engineering manager owns execution, team health, and technical direction. A platform PM owns the external customer relationship and the "what and why" of the roadmap — not the "how." In practice, a single person sometimes holds both roles in smaller orgs; the key is that neither responsibility gets dropped.
+
+The failure mode of not having this role: roadmap decisions get made based on whoever advocates most loudly in a given sprint, developer feedback accumulates in a backlog that no one owns, and the platform team loses the signal it needs to stay aligned with application team needs.
+
+> [!info] The platform PM role often emerges reactively — teams recognize they need it after a major misalignment or adoption crisis. Adding it proactively, before that moment, is significantly less expensive.
+
+@feynman
+
+A platform without a PM is an engineering team that is very good at building things and guessing at what to build next.
+
+@card
+id: plf-ch02-c004
+order: 4
+title: Developer Personas
+teaser: Not all application team members have the same relationship with the platform — understanding distinct personas prevents you from designing for the loudest voice and ignoring everyone else.
+
+@explanation
+
+A platform serves multiple personas simultaneously, and optimizing for one without acknowledging the others creates friction for the rest.
+
+**Common platform personas:**
+
+- **The frontend developer** primarily needs a deployment path, environment management, and a way to inspect logs when something breaks. They are often least interested in the underlying infrastructure and most sensitive to cognitive overhead. They will tolerate a slightly worse tool if it requires zero infrastructure knowledge to operate.
+- **The ML engineer** has unusual infrastructure requirements: GPU access, long-running jobs, large artifact storage, experiment tracking, and model serving pipelines. Standard application deployment workflows often don't translate. If the platform doesn't account for this, ML teams build their own infrastructure and stop engaging with platform teams entirely.
+- **The mobile developer** rarely needs deployment infrastructure in the same way but has strong opinions about CI/CD pipeline speed and build artifact management. Their onboarding pain is usually around secrets management and certificate handling.
+- **The SRE responding to an incident** needs observability tooling, runbooks surfaced near alerts, and a clear escalation path to platform on-call when a failure is infrastructure-related. Under incident pressure, documentation gaps become outages.
+
+The point of personas is not to build separate platforms — it is to make sure that when the team makes a UX decision about the developer portal or the deployment interface, they are asking "which persona does this serve?" and consciously accepting the tradeoffs for the others.
+
+> [!warning] Building exclusively for the most technically sophisticated persona — the platform-aware SRE or backend engineer — is the most common persona mistake. It creates a platform that requires deep infrastructure knowledge to use, which is the opposite of what a platform is supposed to do.
+
+@feynman
+
+Different developers approach the platform the way different travelers approach an airport — the frequent business traveler and the first-time international visitor are both using the same building, but they need completely different signage.
+
+@card
+id: plf-ch02-c005
+order: 5
+title: Roadmap as a Public Artifact
+teaser: A platform roadmap that only exists inside the platform team is not a roadmap — it is a plan, and the difference matters when application teams are making architecture decisions based on what they think you will build.
+
+@explanation
+
+Application teams make long-horizon decisions — they choose frameworks, design integration patterns, and decide whether to invest in learning a tool — based in part on what they believe the platform will look like in six months. If the platform team's roadmap is not visible, those decisions get made on rumors and assumptions.
+
+**What a public platform roadmap does:**
+
+- Gives application teams a basis for planning that isn't speculation
+- Forces the platform team to make explicit tradeoffs rather than keeping "maybe someday" items alive indefinitely
+- Creates accountability — public commitments are taken more seriously than internal ones
+- Opens roadmap to feedback before the work is done, not after
+
+**What it does not have to be:** a Gantt chart or a quarterly OKR grid. A simple three-horizon format — "now," "next," "later" — communicated through a shared page or document that is updated regularly is sufficient. The key requirement is that it is public within the organization and that changes to it are communicated rather than silently applied.
+
+**The prioritization criteria** a platform team typically uses: impact on developer experience (breadth of use case), alignment with organizational engineering strategy, technical feasibility given current team capacity, and cost of delay (what breaks or becomes more expensive if this slips).
+
+The SPACE framework (Forsgren et al.) offers a useful lens here: when prioritizing platform investments, consider how each item affects Satisfaction, Performance, Activity, Communication/collaboration, and Efficiency for application teams — not just what the platform team finds technically interesting.
+
+> [!tip] Share the roadmap in whatever communication channel application teams already use — the team Slack, the internal wiki, the engineering all-hands. Requiring people to seek out the roadmap is equivalent to not publishing it.
+
+@feynman
+
+A private roadmap is like a restaurant that changes its menu without telling regulars — the food might be better, but customers feel disrespected because they ordered based on last week's menu.
+
+@card
+id: plf-ch02-c006
+order: 6
+title: Mandatory vs Opt-In Adoption
+teaser: Mandating platform adoption resolves the short-term adoption metric and creates a long-term quality debt — developers who are forced to use something they don't trust will route around it in every way they can.
+
+@explanation
+
+The temptation to mandate adoption is understandable: the platform team has invested heavily in tooling, leadership wants to see adoption numbers, and getting developers to voluntarily migrate from existing workflows is slow. A mandate resolves all three problems in one memo.
+
+The failure modes:
+
+- **Shadow infrastructure proliferates.** Teams comply with the mandate on paper — they use the platform's CI system, for instance — while maintaining custom scripts, manual overrides, and workarounds that undermine the value the platform was supposed to provide. Compliance metrics look good; actual productivity does not.
+- **Feedback stops.** Developers who feel forced to use something they dislike do not file constructive tickets. They complain to each other, they find workarounds, and they wait for the mandate to quietly go away. The platform team loses the signal it needs to improve.
+- **Trust becomes adversarial.** The relationship between platform team and application team shifts from collaborative to compliance-based. Recovering that relationship once it becomes adversarial is significantly harder than building it right the first time.
+
+Mandates can be appropriate in narrow cases: security requirements, regulatory compliance, or a one-time migration with a clear end date and strong organizational commitment to supporting developers through it. They are not appropriate as a substitute for building something worth using.
+
+The honest tradeoff: opt-in adoption is slower and requires continuous investment in quality and developer experience. Mandated adoption is faster and creates a ceiling on quality that is difficult to break through afterward.
+
+> [!warning] Measuring platform adoption without measuring developer satisfaction alongside it is how mandate-driven adoption gets miscounted as success. High adoption with low satisfaction is a leading indicator of either churn or shadow infrastructure.
+
+@feynman
+
+Mandating platform adoption is like installing locks on your cafeteria and calling it a popular restaurant.
+
+@card
+id: plf-ch02-c007
+order: 7
+title: Earned Adoption
+teaser: The goal of the paved-road model is to make the platform path so much better than the alternative that adoption is the obvious choice — not the forced one.
+
+@explanation
+
+"Paved road" is the metaphor from Netflix's platform engineering practice: you build a path that is well-maintained, well-lit, and fast to travel. You don't remove the dirt path. You make the paved road so good that no one who is trying to move quickly would choose the dirt path voluntarily.
+
+What earned adoption requires in practice:
+
+- **Time-to-value must be short.** A developer who can deploy their first service end-to-end in under an hour has a fundamentally different relationship with the platform than one who needs a week of onboarding. Fast time-to-first-success is the highest-leverage investment a platform team can make in adoption.
+- **Failure modes must be obvious.** When something goes wrong using the platform, the error message, the documentation, and the support channel all have to point toward a path forward. Platforms that fail opaquely train developers to distrust them.
+- **The platform must stay better than the alternative.** Developer tooling outside the organization is improving constantly. The DIY option gets cheaper every year as cloud providers add more managed services. Earned adoption is not a one-time achievement — it requires ongoing investment to maintain the quality gap.
+
+The measurement of earned adoption is different from the measurement of mandated adoption. You want to track not just whether teams use the platform, but whether they choose it when they have alternatives, whether new teams onboard without being required to, and whether developers recommend it to colleagues. DORA metrics (deployment frequency, lead time for changes, change failure rate, time to restore service) applied at the platform level are a useful proxy for whether the paved road is actually accelerating delivery.
+
+> [!info] The paved-road model accepts that some teams will always take the dirt path. That is acceptable — the goal is not 100% adoption, it is making the 80% who do use the platform as fast and productive as possible.
+
+@feynman
+
+Earned adoption means you built a platform so useful that developers would notice if it disappeared — not one they only use because they have to.
+
+@card
+id: plf-ch02-c008
+order: 8
+title: Marketing the Platform Internally
+teaser: Internal marketing feels awkward for engineering teams, but it is the mechanism by which developers learn that the platform can solve a problem they have right now.
+
+@explanation
+
+Platform teams often resist describing their communication work as "marketing" — it feels out of place in an engineering context. The discomfort is worth overcoming, because the alternative is a platform that solves real problems that developers don't know it solves.
+
+**Effective internal marketing mechanisms:**
+
+- **Newsletter or digest.** A short monthly summary of what shipped, what is coming, and one case study of a team that used the platform successfully. Sent to engineering leadership and team tech leads. Two paragraphs is sufficient — the goal is visibility, not documentation.
+- **Demo days.** A monthly or quarterly slot in an engineering all-hands or internal meetup where the platform team shows something new. Live demos with real use cases are more persuasive than slide decks. Invite an application team member to show how they used the feature.
+- **Lunch-and-learns.** A low-formality session where the platform team walks through a specific capability — secrets management, ephemeral environments, observability tooling. Attendance is self-selected, which means attendees are already interested. Follow up with written documentation.
+- **Case studies.** When an application team reduces their deployment time by 40% after adopting a platform capability, write it up (briefly) and share it. Peer credibility is more persuasive than platform team self-promotion.
+
+None of this requires a marketing budget or a communications specialist. It requires committing time to it consistently and treating the communication work as a legitimate engineering investment, not a distraction from "real" work.
+
+> [!tip] The most common failure of internal marketing is inconsistency — one announcement at launch, silence for six months, another announcement when something breaks. Consistent low-effort communication beats infrequent high-effort communication.
+
+@feynman
+
+Internal marketing for a platform is just making sure developers know help exists before they give up and build it themselves.
+
+@card
+id: plf-ch02-c009
+order: 9
+title: Listening Posts
+teaser: A platform team that only receives feedback through formal channels will always be six months behind the actual pain developers are experiencing today.
+
+@explanation
+
+"Listening posts" are the informal and semi-formal mechanisms through which a platform team stays connected to developer experience on a continuous basis, rather than relying on quarterly research cycles.
+
+**Common listening post formats:**
+
+- **Dedicated Slack channel** (e.g., `#platform-feedback` or `#help-platform`). Publicly visible, low friction to post in, and monitored by the platform team on a defined cadence. The channel serves two functions: support requests and ambient signal about what is frustrating developers. Mine it regularly — patterns in complaints are roadmap intelligence.
+- **Intake form.** A lightweight form (five questions or fewer) for teams to submit feature requests, bug reports, or questions. The form forces a minimum structure that makes triage easier. It should not replace the Slack channel — it is for requests that benefit from a structured format.
+- **Regular open office hours.** A standing block — weekly or biweekly — where any developer can drop in and talk to a platform team member without scheduling a meeting. Office hours surface the problems developers think are "too small to file a ticket about," which are often the most diagnostic signal available.
+
+The combination matters: Slack gives you volume and urgency, the intake form gives you structure, and office hours give you depth. Any single channel alone is insufficient.
+
+**What to do with the signal:** Review Slack weekly, triage the intake form on a defined cadence, and maintain a running document of emerging themes from office hours. Themes that appear across multiple channels are almost always roadmap-worthy.
+
+> [!info] Office hours attendance is not the primary metric for their value. Even a week with zero attendees has value — it signals that nothing is currently urgent enough to require synchronous help, which is itself useful information.
+
+@feynman
+
+Listening posts are the platform team's way of making sure developers don't have to shout to be heard.
+
+@card
+id: plf-ch02-c010
+order: 10
+title: Customer Support for the Platform
+teaser: A platform without a support model is a platform that developers quietly stop trusting after the second unresolved issue.
+
+@explanation
+
+Application teams depend on the platform for deployment, observability, and often secret management. When something breaks or a developer is blocked, the absence of a clear support path creates both a productivity problem and a trust problem. Defining the support model is part of the platform product, not an operational afterthought.
+
+**Core components of platform support:**
+
+- **SLA on developer issues.** A response SLA (not resolution SLA — resolution time depends on severity) tells developers that filing a ticket will produce a human response within a defined window. Even a 24-hour response SLA is better than "we'll get to it when we can." Communicate the SLA; track compliance with it.
+- **Platform on-call.** For production-critical platform components — deployment infrastructure, secret management, the service mesh — there should be a defined escalation path from application team on-call to platform on-call. When a platform failure is causing an application incident, "the platform team is not available on weekends" is not an acceptable answer.
+- **Incident communication.** When platform components degrade or go down, proactive communication to application teams — via a status page, Slack announcement, or both — is a trust-building act. Silence during a platform incident forces every application team on-call to independently diagnose whether the problem is theirs or the platform's.
+
+The tradeoff: robust support is expensive. Platform teams are small, and on-call rotations with small teams have high per-person load. The right answer is not to over-engineer support — it is to be explicit about what the SLA is, communicate it clearly, and hold to it consistently.
+
+> [!warning] A well-maintained platform with poor support is often experienced as a poorly-maintained platform. Reliability perception is shaped as much by how quickly issues are acknowledged as by actual uptime.
+
+@feynman
+
+Platform support is what separates a tool developers trust from a tool developers use only when they have no other choice.
+
+@card
+id: plf-ch02-c011
+order: 11
+title: Documentation as Product
+teaser: Documentation is not a nice-to-have that gets written after the feature ships — it is part of the feature, and a platform that cannot be understood from its docs has not shipped a complete feature.
+
+@explanation
+
+Platform documentation is the first experience most developers have with a new capability. The quality of that documentation determines whether a developer gets to a first successful result in twenty minutes or abandons the tool after forty-five minutes of confusion.
+
+**The documentation hierarchy:**
+
+- **Getting-started guide.** The entry point. It must take a developer from zero to a working first use case without requiring them to read anything else. It should be opinionated — show one path clearly, not five paths with caveats. Getting-started guides are the highest-leverage documentation investment for new platform capabilities.
+- **Concept documentation.** Explains the mental model: what the system is, how its parts relate, what problems it is designed for, and what problems it is explicitly not designed for. Concept docs reduce the support burden for questions that come from misunderstanding the model rather than misusing the API.
+- **API/CLI reference.** Machine-readable if possible, always complete, always versioned. The reference is not where developers learn the platform — it is where they look up a specific parameter or flag after they already understand the model.
+- **Runbooks and troubleshooting guides.** Operational documentation for when something is wrong. These need to be discoverable under pressure — an SRE responding to an incident should be able to find the relevant runbook in under a minute.
+
+**Documentation debt compounds.** A docs site that is six months out of date teaches developers the wrong mental model, generates support tickets that wouldn't exist if the docs were current, and signals to developers that the platform team does not take their time seriously.
+
+> [!tip] Treat documentation as a definition-of-done criterion. A platform feature is not shipped until the getting-started guide, concept doc, and reference are written and reviewed by someone who did not build the feature.
+
+@feynman
+
+A platform without documentation is an expert telling you how something works — useful if the expert is available, useless the moment they are not.
+
+@card
+id: plf-ch02-c012
+order: 12
+title: Usage Analytics
+teaser: The platform metrics you choose to track shape the platform you build — optimizing for the wrong numbers produces a platform that looks healthy and isn't.
+
+@explanation
+
+Platform teams need a small set of metrics that directly reflect developer experience and platform health, plus explicit decisions about what not to measure.
+
+**Metrics worth tracking:**
+
+- **Active teams.** The number of distinct application teams deploying through the platform in a given period. This is the primary adoption signal — more meaningful than "registered users" or "accounts created."
+- **Deployments per day.** A proxy for developer velocity. If platform teams use this over time, a declining trend is an early warning signal even before developers file complaints.
+- **Time-to-onboard.** How long it takes a new team to go from zero to first production deployment using the platform. This is the most direct measure of the getting-started experience, and it tends to be longer than platform teams believe it is.
+- **NPS from application teams.** A quarterly single-question Net Promoter Score ("How likely are you to recommend the platform to a colleague?") provides a leading indicator of adoption and trust. It is imperfect and can be gamed, but directional trends are valuable.
+- **DORA metrics at the platform level.** Deployment frequency, lead time for changes, change failure rate, and time to restore service applied to platform components themselves — not just to the applications using the platform. DORA at the platform level measures whether the platform team is practicing what it preaches.
+
+**What to skip:**
+
+- **Ticket volume.** High ticket volume might mean the platform is heavily used or that it is hard to use — the metric alone cannot distinguish between them.
+- **Features shipped.** Output metrics for the platform team create incentives to ship features rather than outcomes. Prefer impact metrics (active teams, time-to-onboard) over throughput metrics.
+
+> [!info] NPS used in isolation is a lagging indicator — by the time it drops, the damage is already done. Pair it with time-to-onboard and active teams to get early warning before satisfaction falls.
+
+@feynman
+
+The wrong platform metrics are like measuring a hospital's success by how many patients it admits — the number goes up when things are going badly, not when they are going well.
