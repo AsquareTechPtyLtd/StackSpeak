@@ -1,0 +1,505 @@
+{
+  "stack": "data-engineering-intermediate",
+  "words": [
+    {
+      "id": "de-int-0010-0000-0000-0000-000000000001",
+      "word": "Change Data Capture",
+      "pronunciation": "CHAYNJ DAY-tuh KAP-chur",
+      "partOfSpeech": "noun",
+      "shortDefinition": "A technique that reads a database's replication log to stream every row-level insert, update, and delete as a structured event.",
+      "simpleDefinition": "Instead of querying a database repeatedly to find what changed, Change Data Capture tails the database's internal write log and emits each committed change as an event — capturing hard deletes and intermediate states that a watermark query would miss.",
+      "longDefinition": "Change Data Capture tools such as Debezium read directly from the database replication log — the Postgres WAL, MySQL binlog, or Oracle redo log — and publish each committed change as a structured event with `before` and `after` payloads and an operation code (`c` for create, `u` for update, `d` for delete). This gives pipelines near-real-time latency (often sub-second from transaction commit to downstream event), captures hard deletes that a watermark-based incremental extract would miss, and places minimal load on the source database since log reading does not compete with application queries. Debezium on Kafka Connect is the dominant open-source implementation; managed alternatives include AWS DMS, Google Datastream, and Fivetran log-based CDC.",
+      "techContext": "In production, CDC requires the source database to have replication enabled and a replication slot (Postgres) or binlog position held open. Slot lag — the replication slot falling far behind the current WAL position — can consume significant source disk and must be monitored. CDC events typically land in Kafka topics partitioned by table, then consumed by a stream processor or batch loader.",
+      "exampleSentence": "The team replaced their nightly full extract with a Debezium CDC pipeline, reducing data latency from 24 hours to under 10 seconds while also capturing every soft-delete.",
+      "etymology": "From 'capture' — the technique captures each data change at the moment it is committed, rather than inferring changes later by comparison.",
+      "connector": "Like following a bank's transaction ledger instead of checking your balance every hour — you see every deposit and withdrawal as it happens.",
+      "codeExample": {
+        "language": "json",
+        "code": "{\n  \"op\": \"u\",\n  \"before\": { \"id\": 42, \"status\": \"pending\" },\n  \"after\":  { \"id\": 42, \"status\": \"shipped\" },\n  \"ts_ms\": 1714982400000,\n  \"source\": { \"db\": \"orders\", \"table\": \"shipments\" }\n}"
+      },
+      "unlockLevel": 3,
+      "tags": ["data-engineering", "intermediate", "ingestion", "streaming"],
+      "category": "processes"
+    },
+    {
+      "id": "de-int-0020-0000-0000-0000-000000000002",
+      "word": "Apache Kafka",
+      "pronunciation": "uh-PAY-chee KAFF-kuh",
+      "partOfSpeech": "noun",
+      "shortDefinition": "A distributed, log-based message streaming platform designed for high-throughput, durable, replayable event delivery.",
+      "simpleDefinition": "Kafka organizes data into topics divided into ordered, append-only partitions. Producers write records; consumers track their position via offsets. Because records are written to disk and retained for a configurable period, consumers can re-read data and pipelines can replay historical events without a separate archive.",
+      "longDefinition": "Each Kafka topic is split into partitions — ordered, append-only sequences where each record carries an immutable offset. A producer write is acknowledged only after all in-sync replicas have confirmed receipt, giving Kafka durability guarantees. Consumer groups allow horizontal scaling: Kafka assigns each partition to exactly one consumer in the group, so 12 partitions with 4 consumers gives each consumer 3 partitions of ordered, parallel work. Retention is configurable (7 days by default) but independent of consumer progress — a consumer can replay the entire topic history by resetting its offset. This log-based design makes Kafka the backbone of CDC pipelines, event-driven architectures, and stream-processing topologies.",
+      "techContext": "In 2026, Kafka Streams and ksqlDB handle lightweight stream processing without a separate cluster. For larger stateful workloads, Apache Flink reads from Kafka topics. KRaft mode (replacing ZooKeeper) is now the standard deployment, reducing operational complexity. Consumer lag — the gap between the latest offset and the consumer's committed offset — is the primary health metric to monitor.",
+      "exampleSentence": "The order-placed events flow through a Kafka topic with 12 partitions, allowing the downstream fulfillment consumer group to process 12 streams in parallel.",
+      "etymology": "Named after the Czech novelist Franz Kafka by its creator Jay Kreps, reportedly because the system is 'optimized for writing' — a fitting tribute to a prolific author.",
+      "connector": "Like a conveyor belt with numbered slots — producers place items on the belt, consumers pick them up at their own pace, and items stay on the belt long enough for anyone who fell behind to catch up.",
+      "codeExample": {
+        "language": "python",
+        "code": "from confluent_kafka import Consumer\n\nconsumer = Consumer({\n    'bootstrap.servers': 'kafka:9092',\n    'group.id': 'order-processor',\n    'auto.offset.reset': 'earliest'\n})\nconsumer.subscribe(['orders.placed'])\n\nwhile True:\n    msg = consumer.poll(timeout=1.0)\n    if msg and not msg.error():\n        print(f'offset={msg.offset()} value={msg.value()}')"
+      },
+      "unlockLevel": 3,
+      "tags": ["data-engineering", "intermediate", "streaming", "messaging"],
+      "category": "components"
+    },
+    {
+      "id": "de-int-0030-0000-0000-0000-000000000003",
+      "word": "Apache Airflow",
+      "pronunciation": "uh-PAY-chee AIR-floh",
+      "partOfSpeech": "noun",
+      "shortDefinition": "An open-source workflow orchestrator that defines, schedules, and monitors data pipelines as Directed Acyclic Graphs in Python.",
+      "simpleDefinition": "Airflow models pipelines as DAGs — Python files where each node is a task and each edge is a dependency. The scheduler determines which tasks are ready to run based on schedule and dependency state, handles automatic retries, and provides a web UI showing the status of every task instance across every run.",
+      "longDefinition": "The Airflow architecture has four components: the scheduler (which parses DAG files and submits ready tasks to the executor), the executor (which runs tasks on workers), the metadata database (which tracks task state), and the web server (which displays it). DAGs are parameterized by logical date, not wall-clock time — using `{{ ds }}` instead of `datetime.now()` — so a daily DAG triggered on 2026-05-03 always processes May 3rd's data whether it ran on time or was backfilled a week later. Sensors wait for external conditions (a file landing in S3, another DAG completing) before releasing downstream tasks. ExternalTaskSensor links DAGs across teams without forcing a single monolithic DAG.",
+      "techContext": "Airflow's native scheduler is single-threaded and can become a bottleneck on large installations. The CeleryExecutor distributes tasks across worker nodes; the KubernetesExecutor spawns a pod per task for full isolation. In 2026, managed offerings (Amazon MWAA, Google Cloud Composer, Astronomer) remove the operational burden of running Airflow infrastructure.",
+      "exampleSentence": "The team used an S3KeySensor in Airflow to gate the dbt run on the upstream vendor file arriving, replacing the fragile time-based schedule that assumed delivery by 5 AM.",
+      "etymology": "From 'air' (lightweight, invisible coordination) and 'flow' (the direction of data and dependency through the pipeline graph).",
+      "connector": "Like a traffic control system for your pipeline — it doesn't move the data itself, but it decides when each vehicle (task) can proceed and what to do when one breaks down.",
+      "codeExample": {
+        "language": "python",
+        "code": "from airflow.decorators import dag, task\nfrom airflow.sensors.s3_key_sensor import S3KeySensor\nfrom datetime import datetime\n\n@dag(schedule='@daily', start_date=datetime(2026, 1, 1), catchup=False)\ndef daily_pipeline():\n    wait_for_file = S3KeySensor(\n        task_id='wait_for_vendor_file',\n        bucket_name='my-bucket',\n        bucket_key='vendor/{{ ds }}/export.parquet'\n    )\n\n    @task(retries=3, retry_delay=300)\n    def transform(ds=None):\n        run_dbt(date=ds)\n\n    wait_for_file >> transform()\n\ndaily_pipeline()"
+      },
+      "unlockLevel": 3,
+      "tags": ["data-engineering", "intermediate", "orchestration"],
+      "category": "components"
+    },
+    {
+      "id": "de-int-0040-0000-0000-0000-000000000004",
+      "word": "dbt",
+      "pronunciation": "DEE-bee-TEE",
+      "partOfSpeech": "noun",
+      "shortDefinition": "A SQL-based transformation framework that compiles SELECT statements into warehouse tables, manages model dependencies, and runs data quality tests.",
+      "simpleDefinition": "In dbt, each model is a `.sql` file containing a single SELECT statement. The `ref()` function creates a dependency graph so dbt resolves execution order automatically. Running `dbt run` compiles every model into a CREATE TABLE or CREATE VIEW statement and executes it against the connected warehouse.",
+      "longDefinition": "dbt (data build tool) caught on because it applies software engineering practices to SQL transformations: models are files in a git repo, changes go through pull requests, and every model can be tested with built-in assertions (`not_null`, `unique`, `accepted_values`, `relationships`). The `ref()` function — `FROM {{ ref('stg_orders') }}` instead of `FROM raw.orders` — lets dbt build the full dependency DAG and run models in the correct order. Incremental models filter to only new or changed rows, so a billion-row event table can be refreshed in seconds instead of minutes. dbt Cloud, dbt Core (open source), and the dbt Semantic Layer together cover scheduling, lineage, and metric centralization.",
+      "techContext": "Analytics engineers run `dbt run --select +mart_orders+` to execute a model and all its ancestors and dependents. `dbt test` runs all quality assertions. `dbt docs generate` produces an interactive lineage graph. In 2026, dbt-duckdb enables local development against a DuckDB file, eliminating the need for warehouse credentials in every developer's environment.",
+      "exampleSentence": "After the analytics team migrated their transformation layer to dbt, every metric definition lived in a single versioned SQL file and regressions were caught by CI before they reached production.",
+      "etymology": "Originally stood for 'data build tool' — the team at Fishtown Analytics (now dbt Labs) eventually embraced the acronym as the product name itself.",
+      "connector": "Like a Makefile for your SQL — it knows which models depend on which, only rebuilds what's needed, and runs tests to verify the output.",
+      "codeExample": {
+        "language": "sql",
+        "code": "-- models/mart/mart_orders.sql\n{{ config(materialized='incremental', unique_key='order_id') }}\n\nSELECT\n    o.order_id,\n    c.customer_tier,\n    o.amount_usd,\n    o.created_at\nFROM {{ ref('stg_orders') }} o\nJOIN {{ ref('dim_customer') }} c USING (customer_id)\n\n{% if is_incremental() %}\n  WHERE o.created_at > (SELECT MAX(created_at) FROM {{ this }})\n{% endif %}"
+      },
+      "unlockLevel": 3,
+      "tags": ["data-engineering", "intermediate", "transformation", "analytics-engineering"],
+      "category": "components"
+    },
+    {
+      "id": "de-int-0050-0000-0000-0000-000000000005",
+      "word": "Star Schema",
+      "pronunciation": "STAR SKEE-muh",
+      "partOfSpeech": "noun",
+      "shortDefinition": "A dimensional modeling pattern with a central fact table surrounded by denormalized dimension tables, optimized for analytical query performance.",
+      "simpleDefinition": "In a star schema, the fact table holds the things that happened — orders, clicks, transactions — as rows of numeric measures and foreign keys. Dimension tables hold the context: by customer, by product, by date. Analysts join the fact table outward to dimensions, producing the shape of a star.",
+      "longDefinition": "Ralph Kimball formalized the star schema in the 1990s around three ideas: fact tables record measurements or events (each row is one order, one click, one transaction), dimension tables supply the descriptive context ('by what?' — by customer, by product, by date, by location), and the join between them is always from fact to dimension. Because dimension tables are denormalized (customer name, tier, and region all live in `dim_customer`), queries need at most one join hop from fact to any attribute. Columnar warehouses — Snowflake, BigQuery, Redshift, Databricks SQL — are purpose-built for star schema join patterns, and every major BI tool autogenerates the joins given a star schema.",
+      "techContext": "Star schemas are the dominant pattern in Kimball-style data warehouses and remain the preferred shape for BI tooling consumption. The grain of the fact table — what each row represents — must be defined precisely before any columns are chosen. A `fact_orders` at order-line grain and `fact_orders` at order grain are two different schemas and cannot be mixed without producing incorrect aggregations.",
+      "exampleSentence": "The team modeled their e-commerce data as a star schema with `fact_orders` at the order-line grain, joined to `dim_customer`, `dim_product`, and `dim_date`, enabling any BI tool to produce correct revenue breakdowns without custom SQL.",
+      "etymology": "Named for its visual shape — a central fact table with dimension tables radiating outward like the points of a star.",
+      "connector": "Like a hub-and-spoke airport — the fact table is the hub where all flights (transactions) land, and each dimension is a spoke giving context about who, what, when, and where.",
+      "codeExample": {
+        "language": "sql",
+        "code": "SELECT\n    d.year,\n    d.quarter,\n    c.customer_tier,\n    p.category,\n    SUM(f.revenue_usd)  AS revenue,\n    COUNT(*)            AS order_count\nFROM fact_orders f\nJOIN dim_date     d ON f.date_key     = d.date_key\nJOIN dim_customer c ON f.customer_key = c.customer_key\nJOIN dim_product  p ON f.product_key  = p.product_key\nGROUP BY 1, 2, 3, 4\nORDER BY 1, 2;"
+      },
+      "unlockLevel": 3,
+      "tags": ["data-engineering", "intermediate", "modeling", "dimensional"],
+      "category": "patterns"
+    },
+    {
+      "id": "de-int-0060-0000-0000-0000-000000000006",
+      "word": "Slowly Changing Dimensions",
+      "pronunciation": "SLOH-lee CHAYN-jing dih-MEN-shunz",
+      "partOfSpeech": "noun",
+      "shortDefinition": "A family of patterns for handling dimension attributes that change over time, each type making a different trade-off between simplicity and historical accuracy.",
+      "simpleDefinition": "When a customer moves from Texas to California, you have a choice: overwrite the old value and lose history (Type 1), add a new row with validity dates so historical queries use the correct state (Type 2), or store both current and original values in separate columns (Type 3). The type determines how historical reports behave.",
+      "longDefinition": "SCDs address one of the most common modeling decisions in a warehouse: a dimension entity's attributes change slowly over time, and the question is whether to preserve that history. Type 1 overwrites in place — simple, but historical reports show today's attribute values for past events. Type 2 is the most common analytical pattern: a new row is inserted for each change, with `valid_from`, `valid_to`, and `is_current` columns; fact rows joined to the dimension at their event timestamp automatically resolve to the correct historical state. Type 3 adds a `previous_value` column alongside `current_value` — useful for a single tracked change but unworkable for many. Higher types (4–7) combine these strategies for specialized needs. Implementing Type 2 in SQL requires identifying changed rows via hash comparison or CDC events and inserting new rows while closing out previous ones.",
+      "techContext": "In dbt, SCD Type 2 is typically implemented as a snapshot model using the `{{ snapshot }}` macro, which compares each run's source data against the existing snapshot and inserts new rows for changed records. The snapshot strategy (`check` or `timestamp`) determines how changes are detected. Most production warehouses use Type 2 for customer and product dimensions, Type 1 for internal correction fixes.",
+      "exampleSentence": "After implementing SCD Type 2 on `dim_customer`, the team could run a cohort analysis showing exactly which pricing tier each customer was in at the time of each order, rather than using their current tier.",
+      "etymology": "From the observation that dimension attributes like customer address or product category change infrequently — 'slowly' relative to the fact table's transaction rate.",
+      "connector": "Like a passport with old visa stamps — the current passport page shows where you live now, but every historical stamp records where you were at the time of each trip.",
+      "codeExample": {
+        "language": "sql",
+        "code": "-- dbt snapshot for SCD Type 2\n{% snapshot dim_customer_snapshot %}\n{{ config(\n    target_schema='snapshots',\n    unique_key='customer_id',\n    strategy='check',\n    check_cols=['tier', 'region', 'email']\n) }}\n\nSELECT customer_id, tier, region, email, updated_at\nFROM {{ source('crm', 'customers') }}\n\n{% endsnapshot %}"
+      },
+      "unlockLevel": 3,
+      "tags": ["data-engineering", "intermediate", "modeling", "dimensional"],
+      "category": "patterns"
+    },
+    {
+      "id": "de-int-0070-0000-0000-0000-000000000007",
+      "word": "Medallion Architecture",
+      "pronunciation": "meh-DAL-yun ar-kih-TEK-chur",
+      "partOfSpeech": "noun",
+      "shortDefinition": "A lakehouse data organization pattern with three named quality layers — Bronze, Silver, and Gold — where data quality increases with each layer.",
+      "simpleDefinition": "Bronze holds raw source data exactly as it arrived — an immutable audit log. Silver applies cleaning, deduplication, and schema enforcement. Gold contains aggregated, business-ready models optimized for analytical consumption. Data flows forward through the layers; no layer modifies the one before it.",
+      "longDefinition": "The medallion architecture, popularized by Databricks, solves the lake's notorious quality problem by giving each layer a distinct contract. Bronze is write-once-never-update: the only additions are ingestion metadata such as arrival timestamp and source system identifier. If a downstream transformation introduces a bug, Bronze is the replay buffer — you can reprocess from scratch. Silver is where quality enforcement happens: incorrect rows are quarantined rather than dropped, schema is enforced, business entities are joinable. Gold is shaped for consumers — aggregated, modeled, denormalized for BI tools. The architecture pairs naturally with open table formats (Delta Lake, Iceberg) because ACID transactions keep each layer consistent as new data arrives.",
+      "techContext": "In practice, teams often subdivide layers (e.g., Bronze-raw, Bronze-parsed) and use different compute engines per layer — a lightweight ingestion job for Bronze, dbt or Spark for Silver-to-Gold. Unity Catalog and similar governance tools apply access controls at the layer level: Bronze is engineering-only, Silver is read-only for analysts, Gold is fully self-serve.",
+      "exampleSentence": "When a schema change in the source CRM broke the Silver cleaning logic, the team was able to reprocess the affected week from the unchanged Bronze layer without contacting the upstream engineering team.",
+      "etymology": "Named for the three tiers of Olympic medals — Bronze, Silver, Gold — where each level represents increasing quality and value, with Gold being the most refined.",
+      "connector": "Like ore processing — you mine raw rock (Bronze), refine it into ore concentrate (Silver), and smelt it into finished metal ready for use (Gold).",
+      "codeExample": {
+        "language": "python",
+        "code": "# Bronze: land raw CDC events unchanged\nbronze_df = spark.readStream.format('kafka') \\\n    .option('kafka.bootstrap.servers', 'kafka:9092') \\\n    .option('subscribe', 'orders.cdc') \\\n    .load() \\\n    .withColumn('_ingested_at', current_timestamp())\nbronze_df.writeStream.format('delta').outputMode('append') \\\n    .option('checkpointLocation', 's3://lake/bronze/_chk/orders') \\\n    .start('s3://lake/bronze/orders')\n\n# Silver: deduplicate and enforce schema\nsilver_df = spark.read.format('delta').load('s3://lake/bronze/orders') \\\n    .dropDuplicates(['order_id']) \\\n    .filter('order_id IS NOT NULL')\nsilver_df.write.format('delta').mode('append').save('s3://lake/silver/orders')"
+      },
+      "unlockLevel": 3,
+      "tags": ["data-engineering", "intermediate", "architecture", "lakehouse"],
+      "category": "patterns"
+    },
+    {
+      "id": "de-int-0080-0000-0000-0000-000000000008",
+      "word": "Partitioning",
+      "pronunciation": "par-TISH-uh-ning",
+      "partOfSpeech": "noun",
+      "shortDefinition": "Dividing a large table or file set into smaller segments stored separately so queries can skip irrelevant segments entirely.",
+      "simpleDefinition": "When a table is partitioned by date, queries that filter on `event_date = '2026-05-01'` read only that one directory of files rather than the entire table. This 'partition pruning' is often the single largest performance and cost lever available for large analytical tables.",
+      "longDefinition": "Partitioning stores each partition as a separate directory or file group — `s3://data/events/year=2026/month=05/day=01/` — so the query engine can list only relevant directories before reading any data. Date/time partitioning is the right default for time-series data because most analytical queries filter by time. High-cardinality columns like `user_id` are poor partition choices: millions of tiny partitions cause excessive object-store LIST operations and Spark task overhead. The ideal partition size is 128 MB–1 GB per file. Open table formats (Iceberg, Delta Lake) add hidden partitioning: Iceberg tracks partition metadata in its catalog rather than in directory names, allowing partition strategy changes without rewriting existing data.",
+      "techContext": "In Snowflake, micro-partitioning is automatic and transparent — Snowflake stores data in 50–500 MB immutable micro-partitioned files and uses column-level min/max statistics to prune partitions at query time without requiring the user to define partition keys. In BigQuery, table partitioning and clustering are explicit options. In Spark and open table formats, partition strategy is the engineer's responsibility.",
+      "exampleSentence": "After repartitioning the events table from a single date column to `year/month/day`, a query for the last 7 days dropped from scanning 3 TB to scanning 21 GB.",
+      "etymology": "From the Latin 'partitio' (division) — the practice of dividing a whole into parts for more efficient access.",
+      "connector": "Like filing cabinets with labeled drawers — instead of searching every folder for May documents, you open only the May drawer.",
+      "codeExample": {
+        "language": "python",
+        "code": "# Write a partitioned Parquet table with Spark\ndf.write \\\n  .partitionBy('year', 'month', 'day') \\\n  .mode('overwrite') \\\n  .parquet('s3://datalake/events/')\n\n# Query only reads the relevant partition directory\nspark.read.parquet('s3://datalake/events/') \\\n  .filter(\"year = '2026' AND month = '05' AND day = '01'\") \\\n  .groupBy('event_type') \\\n  .count() \\\n  .show()"
+      },
+      "unlockLevel": 3,
+      "tags": ["data-engineering", "intermediate", "storage", "performance"],
+      "category": "processes"
+    },
+    {
+      "id": "de-int-0090-0000-0000-0000-000000000009",
+      "word": "Apache Iceberg",
+      "pronunciation": "uh-PAY-chee EYE-suh-burg",
+      "partOfSpeech": "noun",
+      "shortDefinition": "An open table format that adds ACID transactions, time travel, schema evolution, and hidden partitioning to data lake files on object storage.",
+      "simpleDefinition": "Iceberg manages a metadata layer on top of Parquet files in S3 or GCS. This metadata tracks which files belong to the current table version, what their partition contents are, and the full history of snapshots — enabling atomic writes, safe concurrent reads and writes, and queries against any past snapshot.",
+      "longDefinition": "Raw Parquet files on object storage lack transactional guarantees: two concurrent writers can corrupt a table, there is no atomic commit, and schema changes require manual coordination. Iceberg solves this with a three-layer metadata architecture: data files (Parquet), manifest files (lists of data files with column-level statistics), and a manifest list (the current snapshot). Each write produces a new snapshot; the metadata catalog atomically swaps the current pointer. Hidden partitioning means Iceberg tracks partition transforms (e.g., `days(event_time)`) in its metadata rather than directory names, so the query engine can prune partitions without the user writing `WHERE year=2026 AND month=05`. In 2026, Iceberg is integrated natively with Snowflake, BigQuery, Spark, Flink, Trino, and Athena.",
+      "techContext": "Iceberg maintenance operations are essential in production: `rewrite_data_files` (compaction), `expire_snapshots` (remove old snapshot metadata), and `remove_orphan_files` (clean up files not referenced by any snapshot). The Iceberg REST catalog — now the standard catalog API — allows multiple engines to read and write the same tables without engine-specific catalog connectors.",
+      "exampleSentence": "Switching the data lake from raw Parquet to Iceberg tables gave the team ACID upserts, time-travel queries for debugging, and the ability to evolve schemas without coordinating a table rebuild.",
+      "etymology": "Named for the metaphor of an iceberg — the visible Parquet files are just the tip; the metadata layer beneath the surface is what makes the format powerful.",
+      "connector": "Like a version-control system for your data files — each commit is a snapshot, you can check out any past version, and concurrent writes go through a merge process.",
+      "codeExample": {
+        "language": "sql",
+        "code": "-- Create an Iceberg table with hidden partitioning\nCREATE TABLE catalog.db.orders (\n    order_id   BIGINT,\n    customer_id BIGINT,\n    amount_usd  DOUBLE,\n    created_at  TIMESTAMP\n) USING ICEBERG\nPARTITIONED BY (days(created_at));\n\n-- Time travel: query as of yesterday's snapshot\nSELECT COUNT(*) FROM catalog.db.orders\nFOR SYSTEM_TIME AS OF TIMESTAMP '2026-05-02 00:00:00';"
+      },
+      "unlockLevel": 3,
+      "tags": ["data-engineering", "intermediate", "storage", "lakehouse"],
+      "category": "components"
+    },
+    {
+      "id": "de-int-0100-0000-0000-0000-000000000010",
+      "word": "Delta Lake",
+      "pronunciation": "DEL-tuh LAYK",
+      "partOfSpeech": "noun",
+      "shortDefinition": "An open-source table format built by Databricks that adds ACID transactions, scalable metadata, and DML operations to data lake storage.",
+      "simpleDefinition": "Delta Lake layers a transaction log (the `_delta_log` directory) on top of Parquet files stored in object storage. Every write appends a JSON commit entry to the log, making all writes atomic and enabling concurrent readers and writers to see consistent snapshots.",
+      "longDefinition": "Delta Lake's transaction log stores every operation — INSERT, UPDATE, DELETE, MERGE, OPTIMIZE — as an ordered JSON file. This log is the source of truth for the current table state; readers construct the list of valid data files by replaying log entries. MERGE INTO (`MERGE INTO target USING source ON ...`) is Delta's primary upsert primitive, used for CDC sinks and SCD Type 2 implementation. OPTIMIZE compacts small files into larger ones; VACUUM removes files no longer referenced by active snapshots. Delta was originally Databricks-exclusive, but is now fully open source under the Linux Foundation. In 2026, the Delta-Iceberg convergence means Databricks reads Iceberg tables natively via UniForm, and the formats share most operational characteristics.",
+      "techContext": "Delta Lake is the default table format in Databricks. Its Photon engine — a C++ vectorized query engine — dramatically accelerates MERGE and OPTIMIZE operations. Auto Optimize and Auto Compact (Databricks features) reduce the need to schedule explicit OPTIMIZE jobs. Liquid Clustering, introduced in late 2023, replaces traditional partitioning with a more flexible, Z-order-aware clustering strategy.",
+      "exampleSentence": "The CDC sink job used Delta's MERGE INTO to upsert Debezium events into the Silver orders table, handling inserts, updates, and deletes in a single SQL statement.",
+      "etymology": "Named for the Greek letter delta (Δ), universally used in mathematics and science to denote 'change' — each log entry records a change to the table.",
+      "connector": "Like a bank account ledger — rather than showing you the current balance directly, it records every deposit and withdrawal in order, and the current balance is always derivable from the full history.",
+      "codeExample": {
+        "language": "sql",
+        "code": "-- Upsert CDC events into a Delta table\nMERGE INTO silver.orders AS target\nUSING cdc_events          AS source\n  ON target.order_id = source.order_id\nWHEN MATCHED AND source.op = 'd' THEN\n  DELETE\nWHEN MATCHED THEN\n  UPDATE SET target.status     = source.after_status,\n             target.updated_at = source.ts\nWHEN NOT MATCHED THEN\n  INSERT (order_id, status, created_at, updated_at)\n  VALUES (source.order_id, source.after_status,\n          source.ts, source.ts);"
+      },
+      "unlockLevel": 3,
+      "tags": ["data-engineering", "intermediate", "storage", "lakehouse"],
+      "category": "components"
+    },
+    {
+      "id": "de-int-0110-0000-0000-0000-000000000011",
+      "word": "Avro",
+      "pronunciation": "AV-roh",
+      "partOfSpeech": "noun",
+      "shortDefinition": "A row-oriented binary serialization format with an embedded schema, designed for compact streaming payloads and strong schema evolution.",
+      "simpleDefinition": "Avro encodes records in a compact binary format and embeds the writer's schema alongside the data. Consumers fetch the corresponding schema from a schema registry by ID, allowing producers and consumers to evolve independently as long as their schemas remain compatible.",
+      "longDefinition": "Avro is a row-oriented binary format — all fields of one record are stored contiguously — making it optimal for workloads that process one record at a time, as in Kafka consumers. The schema is defined in JSON and describes field names, types, and defaults. When writing to Kafka, a common pattern embeds only the schema ID (4 bytes) in each message; the consumer fetches the full schema from a Confluent Schema Registry. Avro's compatibility modes (BACKWARD, FORWARD, FULL) determine what schema changes are allowed: adding a field with a default value is backward-compatible (new readers can read old data); removing a field with a default is forward-compatible (old readers can read new data). This makes Avro the default choice for Kafka-connected pipelines where producers and consumers are maintained by different teams.",
+      "techContext": "Avro schemas are stored in `.avsc` files or registered in a schema registry. When using `confluent-kafka-python` with the Avro serializer, the library transparently handles schema registration and ID embedding. For analytical workloads that scan large datasets column-by-column, Avro is slower than Parquet — so Avro is typically used at the Kafka streaming layer and converted to Parquet when landing in the lake.",
+      "exampleSentence": "The payments team registered their Avro schema in Confluent Schema Registry so that downstream consumers could deserialize events correctly even as the team added new optional fields over time.",
+      "etymology": "Named after Avro, a British aircraft manufacturer — chosen by the Apache Hadoop team as a new open-source project name with a distinctive, memorable identity.",
+      "connector": "Like a shipping label attached to every package — the schema travels with each record so the receiver always knows exactly how to unpack it.",
+      "codeExample": {
+        "language": "python",
+        "code": "from confluent_kafka.avro import AvroProducer\nfrom confluent_kafka import avro\n\nVALUE_SCHEMA = avro.load('payment.avsc')\n\nproducer = AvroProducer(\n    {\n        'bootstrap.servers': 'kafka:9092',\n        'schema.registry.url': 'http://schema-registry:8081'\n    },\n    default_value_schema=VALUE_SCHEMA\n)\n\nproducer.produce(\n    topic='payments',\n    value={'payment_id': 'p-001', 'amount_cents': 4999, 'currency': 'USD'}\n)\nproducer.flush()"
+      },
+      "unlockLevel": 3,
+      "tags": ["data-engineering", "intermediate", "formats", "streaming"],
+      "category": "concepts"
+    },
+    {
+      "id": "de-int-0120-0000-0000-0000-000000000012",
+      "word": "ORC",
+      "pronunciation": "ORK",
+      "partOfSpeech": "noun",
+      "shortDefinition": "A columnar binary file format optimized for Hive and Hadoop ecosystems, offering lightweight indexes and predicate pushdown for fast analytical scans.",
+      "simpleDefinition": "ORC (Optimized Row Columnar) stores data column-by-column within files and includes lightweight indexes — column-level min/max statistics and bloom filters — that allow query engines to skip row groups that cannot satisfy the query filter without reading the actual data.",
+      "longDefinition": "ORC originated in the Hortonworks/Hive ecosystem as a replacement for the older RCFile format, designed to improve both storage efficiency and query performance. Like Parquet, ORC stores data in a columnar layout with aggressive encoding (dictionary encoding for low-cardinality columns, run-length encoding for repeated values) and compression (Zlib, Snappy, LZ4, Zstd). ORC adds built-in lightweight indexes: each 'stripe' (a row group of typically 250,000 rows) stores column-level min/max statistics and optional Bloom filter indexes, allowing the ORC reader to skip stripes that cannot contain qualifying rows. Hive, Spark, Presto, and Trino all support ORC natively. In 2026, ORC is less common in cloud-native greenfield pipelines — Parquet dominates — but remains widespread in Hadoop-heritage stacks and at organizations running Hive-based workloads.",
+      "techContext": "ORC ACID tables in Hive support row-level inserts, updates, and deletes via a base file plus delta files model, similar conceptually to Delta Lake's approach. However, ORC ACID is tightly coupled to HiveMetaStore and is not supported by most cloud-native engines. For new pipelines outside the Hive ecosystem, Parquet or an open table format is typically preferred.",
+      "exampleSentence": "The Hive-based data warehouse stored its fact tables in ORC with Snappy compression, reducing storage by 8× compared to the original CSV files and enabling predicate pushdown on the `event_date` column.",
+      "etymology": "Stands for Optimized Row Columnar — despite the 'Row' in the name, ORC is a columnar format; the name reflects its origin as an improvement over RCFile (Record Columnar File).",
+      "connector": "Like a library with both chapter summaries (column statistics) and a full-text index (Bloom filters) — you can skip entire sections before opening a single page.",
+      "codeExample": {
+        "language": "python",
+        "code": "# Write ORC with Spark\ndf.write \\\n  .format('orc') \\\n  .option('compression', 'snappy') \\\n  .option('orc.bloom.filter.columns', 'user_id,event_type') \\\n  .partitionBy('event_date') \\\n  .mode('overwrite') \\\n  .save('s3://datalake/events_orc/')\n\n# Read ORC — Spark applies predicate pushdown automatically\nspark.read.orc('s3://datalake/events_orc/') \\\n  .filter(\"event_date = '2026-05-01' AND event_type = 'purchase'\") \\\n  .count()"
+      },
+      "unlockLevel": 3,
+      "tags": ["data-engineering", "intermediate", "formats", "storage"],
+      "category": "concepts"
+    },
+    {
+      "id": "de-int-0130-0000-0000-0000-000000000013",
+      "word": "DuckDB",
+      "pronunciation": "DUCK-dee-bee",
+      "partOfSpeech": "noun",
+      "shortDefinition": "An embeddable, in-process analytical database that runs columnar SQL queries with zero infrastructure setup, directly against Parquet and CSV files.",
+      "simpleDefinition": "DuckDB runs as a library inside your Python script, Jupyter notebook, or application — no server to provision, no port to open. It reads Parquet, CSV, and JSON files directly from disk or S3, executes vectorized columnar SQL, and handles datasets from a few megabytes up to several hundred gigabytes on a single machine.",
+      "longDefinition": "DuckDB was created at the Centrum Wiskunde & Informatica (CWI) in Amsterdam by Mark Raasveldt and Hannes Mühleisen, published at SIGMOD 2019. Its research origins deliver a query optimizer based on academic state-of-the-art — dynamic programming join ordering — and a vectorized execution engine that processes data in SIMD-friendly batches. DuckDB 1.0 (June 2024) stabilized the storage format and extension API. In production 2026 patterns, DuckDB serves as a transform layer for datasets under ~500 GB on a single node (replacing Spark for many batch jobs), a local development target for dbt via `dbt-duckdb`, a CI testing engine querying committed Parquet fixtures, and an embedded analytics engine inside applications. MotherDuck extends DuckDB with managed cloud persistence and hybrid local-and-cloud query execution.",
+      "techContext": "DuckDB's single-writer constraint is its most important production limitation: only one process can open a database file in write mode at a time. For read-heavy workloads with multiple consumers, use `duckdb.connect('file.duckdb', read_only=True)`. For concurrent writes from multiple pipeline workers, fan results through a queue or serialize writes. DuckDB-Wasm runs the full engine in the browser as WebAssembly, enabling client-side analytics without a server.",
+      "exampleSentence": "The team replaced a Spark cluster job that processed 80 GB of daily Parquet files with a DuckDB Python script that ran in 4 minutes on a single EC2 instance — at one-tenth the cost.",
+      "etymology": "Named after the duck — an animal equally at home on land, in water, and in the air — reflecting DuckDB's versatility across file systems, in-memory data, and remote object storage.",
+      "connector": "Like a Swiss Army knife for data — all the cutting power of a warehouse SQL engine, but small enough to fit in your pocket (or your pip install).",
+      "codeExample": {
+        "language": "python",
+        "code": "import duckdb\n\ncon = duckdb.connect()\n\n# Query Parquet files directly from S3\nresult = con.execute(\"\"\"\n    SELECT\n        strftime(event_time, '%Y-%m') AS month,\n        event_type,\n        COUNT(*)                      AS events,\n        SUM(revenue_cents) / 100.0    AS revenue_usd\n    FROM read_parquet('s3://datalake/events/year=2026/**/*.parquet')\n    WHERE event_time >= '2026-01-01'\n    GROUP BY 1, 2\n    ORDER BY 1, 2\n\"\"\").df()\nprint(result)"
+      },
+      "unlockLevel": 3,
+      "tags": ["data-engineering", "intermediate", "query-engine", "analytics"],
+      "category": "components"
+    },
+    {
+      "id": "de-int-0140-0000-0000-0000-000000000014",
+      "word": "Materialized View",
+      "pronunciation": "muh-TEER-ee-uh-lized VYOO",
+      "partOfSpeech": "noun",
+      "shortDefinition": "A database object that stores the precomputed result of a query on disk, refreshed on a schedule or on demand, so future queries read the cached result instead of re-executing the underlying SQL.",
+      "simpleDefinition": "Unlike a regular view which re-executes its SQL on every query, a materialized view stores the query result physically. Reads are fast because they hit a precomputed table; the trade-off is that results are only as fresh as the last refresh, and the refresh itself consumes compute.",
+      "longDefinition": "Materialized views trade query-time compute for storage and refresh compute. When a query like `SELECT region, SUM(revenue) FROM fact_orders GROUP BY region` is expensive to run repeatedly, materializing it creates a physical table that stores the aggregated result. Subsequent queries read that table in milliseconds regardless of how many rows `fact_orders` contains. The refresh strategy determines freshness: a full refresh rewrites the entire materialized view; an incremental refresh appends or merges only the changed rows since the last run. Snowflake, BigQuery, and Redshift all support automatic incremental materialized views that the warehouse maintains without manual scheduling. In dbt, every model is effectively a materialized view when configured with `materialized='table'` or `materialized='incremental'`.",
+      "techContext": "In production, materialized views are most valuable at the serving layer — pre-aggregating fact-table queries that power dashboards or APIs with response time requirements. In Snowflake, a materialized view on a table with dynamic data tables can be set to refresh automatically. In BigQuery, materialized views support incremental refresh and can serve queries even while a refresh is in progress, providing always-consistent results.",
+      "exampleSentence": "The dashboard that once queried 2 TB of raw events on every page load was replaced with a materialized view refreshed every 15 minutes, cutting P95 query time from 45 seconds to under 200 ms.",
+      "etymology": "From 'materialize' — to make something that was abstract (a view definition, a SQL query) into something concrete and physically stored.",
+      "connector": "Like pre-baking a pie — instead of making the pie from scratch each time a guest asks for a slice, you bake it once and serve slices from the finished product, refreshing only when the recipe changes.",
+      "codeExample": {
+        "language": "sql",
+        "code": "-- Snowflake automatic materialized view\nCREATE MATERIALIZED VIEW mv_daily_revenue AS\nSELECT\n    DATE_TRUNC('day', created_at) AS order_date,\n    region,\n    SUM(amount_usd)               AS total_revenue,\n    COUNT(*)                      AS order_count\nFROM fact_orders\nGROUP BY 1, 2;\n\n-- Subsequent queries hit the precomputed result\nSELECT * FROM mv_daily_revenue WHERE order_date >= '2026-05-01';"
+      },
+      "unlockLevel": 3,
+      "tags": ["data-engineering", "intermediate", "performance", "serving"],
+      "category": "patterns"
+    },
+    {
+      "id": "de-int-0150-0000-0000-0000-000000000015",
+      "word": "Snowflake",
+      "pronunciation": "SNOH-flayk",
+      "partOfSpeech": "noun",
+      "shortDefinition": "A cloud-native data warehouse that separates storage and compute, allowing independent scaling of each and enabling multiple workloads to run simultaneously without contention.",
+      "simpleDefinition": "Snowflake stores data in its own compressed, micro-partitioned columnar format in cloud object storage. Compute is provided by virtual warehouses — independently scalable clusters that can be spun up, resized, and suspended in seconds — so storage costs and compute costs are billed separately.",
+      "longDefinition": "Snowflake's micro-partitioned storage divides tables into immutable 50–500 MB files, each containing column-level min/max statistics. The query engine uses those statistics to prune irrelevant micro-partitions before scanning — this is Snowflake's equivalent of partition pruning without requiring the user to define partition keys. Multiple virtual warehouses can query the same data simultaneously without resource contention because storage is shared and compute is isolated. Snowflake's separation of compute and storage made it the dominant cloud warehouse in the early 2020s. In 2026, Snowflake's Iceberg table support allows external engines (Spark, Flink, Trino) to read and write the same data, beginning to close the gap with open lakehouse architectures. Data Sharing allows providers to grant consumers in other Snowflake accounts live read access without copying data.",
+      "techContext": "Cost in Snowflake is driven by virtual warehouse run time: an XL warehouse (16 nodes) costs roughly 16 credits per hour at $3–4 per credit — $48–64/hour. The primary lever is `AUTO_SUSPEND`: a warehouse that processes a query in 10 minutes and suspends costs one-sixth as much as one left running for an hour. Query result caching (24-hour TTL on identical queries against unchanged data) can further reduce warehouse usage.",
+      "exampleSentence": "The analytics team used three independent Snowflake virtual warehouses — one for ETL, one for BI tool queries, and one for data scientists — so a heavy training job no longer slowed down dashboard queries.",
+      "etymology": "No single official origin story, but the name evokes the uniqueness and crystalline structure of a snowflake — each customer's data environment is isolated and distinct.",
+      "connector": "Like a pay-per-use power grid — you tap as much electricity (compute) as you need for as long as you need it, and the power lines (storage) are always there regardless of whether any appliances are running.",
+      "codeExample": {
+        "language": "sql",
+        "code": "-- Create a small virtual warehouse and run a query\nCREATE WAREHOUSE IF NOT EXISTS analytics_wh\n    WAREHOUSE_SIZE = 'X-SMALL'\n    AUTO_SUSPEND   = 60\n    AUTO_RESUME    = TRUE;\n\nUSE WAREHOUSE analytics_wh;\n\nSELECT\n    DATE_TRUNC('month', o.created_at) AS month,\n    c.tier,\n    SUM(o.amount_usd) AS revenue\nFROM orders o\nJOIN customers c USING (customer_id)\nGROUP BY 1, 2\nORDER BY 1, 2;"
+      },
+      "unlockLevel": 3,
+      "tags": ["data-engineering", "intermediate", "warehouse", "cloud"],
+      "category": "components"
+    },
+    {
+      "id": "de-int-0160-0000-0000-0000-000000000016",
+      "word": "BigQuery",
+      "pronunciation": "BIG-kweer-ee",
+      "partOfSpeech": "noun",
+      "shortDefinition": "Google Cloud's serverless analytical data warehouse that charges per byte scanned, with automatic scaling and no cluster management.",
+      "simpleDefinition": "BigQuery stores data in Google's proprietary Capacitor columnar format on Colossus, Google's distributed file system. There is no warehouse or cluster to manage — you submit SQL and BigQuery allocates compute slots automatically, billing on-demand users per terabyte scanned.",
+      "longDefinition": "BigQuery's on-demand pricing model — $5 per TB scanned — makes partition pruning and column selection the primary cost levers: a query that scans 500 GB instead of 5 TB saves $22.50 per run. The alternative is slot reservations (flat-rate billing), which works better for predictable, high-volume workloads. BigQuery's compute unit is a 'slot' (CPU + memory + I/O); on-demand queries can use thousands of slots temporarily. BigQuery ML supports training models with SQL directly inside BigQuery. BigLake bridges BigQuery with open formats — you can create BigLake tables over Parquet or Iceberg files in GCS and query them with the same SQL. In 2026, BigQuery's integration with Vertex AI and Gemini models enables in-database embedding generation and vector search.",
+      "techContext": "BigQuery's INFORMATION_SCHEMA views expose query metadata (bytes processed, slot milliseconds, job ID) that drive cost monitoring. The EXPLAIN statement or Query Execution Details panel shows operator-level time and bytes processed per stage, the starting point for query optimization. Partitioning by date and clustering by high-cardinality filter columns together can reduce scan volume by 99%+ for time-series tables.",
+      "exampleSentence": "By adding a partition filter on `event_date` and clustering on `user_id`, the team reduced the cost of their daily active user query from $18 per run to under $0.50.",
+      "etymology": "A compound of 'big' (reflecting Google's emphasis on large-scale data processing) and 'query' — a direct, descriptive name for a service designed for querying big data.",
+      "connector": "Like a serverless taxi — you get in, say where you're going, pay for the miles driven (bytes scanned), and never think about maintaining the car.",
+      "codeExample": {
+        "language": "sql",
+        "code": "-- Partitioned + clustered table for cost-efficient queries\nCREATE TABLE `project.dataset.events`\nPARTITION BY DATE(event_date)\nCLUSTER BY user_id, event_type\nAS\nSELECT * FROM `project.dataset.events_raw`;\n\n-- Query scans only the relevant partition and cluster files\nSELECT\n    user_id,\n    COUNT(*) AS purchase_count\nFROM `project.dataset.events`\nWHERE event_date BETWEEN '2026-05-01' AND '2026-05-07'\n  AND event_type = 'purchase'\nGROUP BY user_id;"
+      },
+      "unlockLevel": 3,
+      "tags": ["data-engineering", "intermediate", "warehouse", "cloud"],
+      "category": "components"
+    },
+    {
+      "id": "de-int-0170-0000-0000-0000-000000000017",
+      "word": "Redshift",
+      "pronunciation": "RED-shift",
+      "partOfSpeech": "noun",
+      "shortDefinition": "Amazon's massively parallel processing cloud data warehouse, where distribution key choices directly determine query performance and data movement between nodes.",
+      "simpleDefinition": "Redshift uses a leader node to coordinate query execution across multiple compute nodes. Each table's distribution style — KEY, ALL, or EVEN — controls how rows are spread across nodes, and matching distribution keys between joined tables eliminates expensive cross-node data shuffles.",
+      "longDefinition": "Redshift is a massively parallel processing (MPP) database. The leader node parses queries and distributes work across compute nodes that each store a slice of the data and execute query fragments in parallel. Distribution choices have direct performance implications: KEY distribution places rows with the same key on the same node, enabling co-located joins without network transfer; ALL distribution copies an entire (typically small) table to every node, so joins against it are always local; EVEN distributes rows round-robin, maximizing parallelism at the cost of all joins requiring shuffles. SORT keys determine the on-disk order of data within each node — queries that filter or join on the sort key benefit from range-scan skip. In 2026, Redshift Serverless eliminates the need to choose and manage node types, offering auto-scaling with per-second billing.",
+      "techContext": "The EXPLAIN output (or SVL_QUERY_REPORT post-execution) reveals 'DS_BCAST_INNER' and 'DS_DIST_BOTH' nodes in the plan — these indicate expensive data movement. The goal when tuning is to eliminate redistribution steps by aligning distribution keys between fact and dimension tables. `ANALYZE` updates table statistics; `VACUUM` reclaims space from deleted rows and re-sorts data after bulk inserts.",
+      "exampleSentence": "After changing the `fact_orders` distribution key from EVEN to `customer_id` to match `dim_customer`, the EXPLAIN plan for the cohort analysis dropped its DS_BCAST_INNER node and query time fell from 90 seconds to 8.",
+      "etymology": "Named for the astronomical phenomenon where light from objects moving away from an observer shifts toward the red end of the spectrum — evoking the idea of distributed, high-speed data movement.",
+      "connector": "Like a factory floor with specialized workstations — the foreman (leader node) assigns tasks, each station (compute node) works on its own slice of the job, and the design of how materials flow between stations determines throughput.",
+      "codeExample": {
+        "language": "sql",
+        "code": "-- Create a fact table distributed on customer_id\nCREATE TABLE fact_orders (\n    order_id     BIGINT,\n    customer_id  BIGINT,\n    amount_usd   DECIMAL(10,2),\n    created_at   TIMESTAMP\n)\nDISTSTYLE KEY\nDISTKEY (customer_id)\nSORTKEY (created_at);\n\n-- Check for redistribution in query plan\nEXPLAIN\nSELECT c.tier, SUM(f.amount_usd)\nFROM fact_orders f\nJOIN dim_customer c ON f.customer_id = c.customer_id\nGROUP BY 1;"
+      },
+      "unlockLevel": 3,
+      "tags": ["data-engineering", "intermediate", "warehouse", "cloud"],
+      "category": "components"
+    },
+    {
+      "id": "de-int-0180-0000-0000-0000-000000000018",
+      "word": "Databricks",
+      "pronunciation": "DAY-tuh-briks",
+      "partOfSpeech": "noun",
+      "shortDefinition": "A unified analytics platform built on Apache Spark and Delta Lake that combines data engineering, data science, and SQL analytics in a managed lakehouse environment.",
+      "simpleDefinition": "Databricks provides managed Apache Spark clusters, Delta Lake as its default table format, MLflow for ML experiment tracking, and Databricks SQL as a warehouse-quality SQL endpoint — all governed by Unity Catalog for access control and lineage across all data assets.",
+      "longDefinition": "Databricks was founded by the creators of Apache Spark, Delta Lake, and MLflow. The commercial platform wraps these open-source projects with a managed runtime: auto-scaling clusters, a web notebook IDE, a job scheduler, and the Photon engine — a C++ vectorized query engine that accelerates both SQL workloads and Delta Lake operations (MERGE, OPTIMIZE) by 2–8× compared to the standard Spark JVM engine. Unity Catalog is Databricks' governance layer, providing fine-grained access control (table, column, row level), data lineage from ingestion to ML model, and a centralized metastore shared across workspaces. Databricks SQL Serverless scales warehouse capacity automatically and uses Photon for SQL workloads. In 2026, Databricks' acquisition of MosaicML and its deep integration with Mosaic AI make it a common platform for teams running both data engineering and LLM fine-tuning workloads.",
+      "techContext": "In production, Databricks jobs are the primary production execution unit. A job is a non-interactive cluster run, isolated from notebooks. Delta Live Tables (DLT) is Databricks' declarative pipeline framework — you define Bronze, Silver, and Gold datasets as Python or SQL transformations; DLT handles dependency resolution, auto-scaling, error recovery, and data quality enforcement with expectations.",
+      "exampleSentence": "The team standardized on Databricks for their entire data stack — ingestion via Auto Loader, transformation via Delta Live Tables, serving via Databricks SQL, and ML training on the same Unity Catalog-governed Delta Lake tables.",
+      "etymology": "A portmanteau of 'data' and 'bricks' — the idea that data is the foundational building material of modern organizations, and the platform provides the infrastructure to work with it.",
+      "connector": "Like a construction site that provides both the raw materials (Delta Lake, Spark) and all the power tools (Photon, MLflow, Unity Catalog) in one managed yard, so you build rather than set up equipment.",
+      "codeExample": {
+        "language": "python",
+        "code": "# Delta Live Tables pipeline (Bronze → Silver)\nimport dlt\nfrom pyspark.sql.functions import col, current_timestamp\n\n@dlt.table(comment='Raw CDC events from Kafka')\ndef bronze_orders():\n    return (\n        spark.readStream.format('kafka')\n             .option('kafka.bootstrap.servers', 'kafka:9092')\n             .option('subscribe', 'orders.cdc')\n             .load()\n             .withColumn('_ingested_at', current_timestamp())\n    )\n\n@dlt.table\n@dlt.expect_or_drop('valid_order_id', 'order_id IS NOT NULL')\ndef silver_orders():\n    return dlt.read_stream('bronze_orders') \\\n               .select('order_id', 'status', 'amount_usd', '_ingested_at')"
+      },
+      "unlockLevel": 3,
+      "tags": ["data-engineering", "intermediate", "platform", "lakehouse"],
+      "category": "components"
+    },
+    {
+      "id": "de-int-0190-0000-0000-0000-000000000019",
+      "word": "Watermark",
+      "pronunciation": "WAH-ter-mark",
+      "partOfSpeech": "noun",
+      "shortDefinition": "In stream processing, a marker that asserts all events with an event time earlier than the watermark have been received, allowing windowed aggregations to close and emit results.",
+      "simpleDefinition": "A watermark is the stream processor's estimate of 'how far behind can events arrive?'. When the watermark advances past a window's end time, the processor treats that window as complete and produces its aggregated result — accepting that any events arriving after the watermark for that window will be treated as late.",
+      "longDefinition": "Stream processors like Apache Flink and Spark Structured Streaming operate on event time (when an event actually occurred) rather than processing time (when it arrived at the processor). Events arrive out of order — mobile clients buffer events offline, network delays vary, upstream systems have backlogs. A watermark is typically defined as `max_seen_event_time - allowed_lateness`: if the latest event seen has timestamp 14:30 and the allowed lateness is 2 minutes, the watermark is 14:28. Any window that ends before 14:28 is considered complete and its aggregate result is emitted. Events arriving after the watermark for a closed window are 'late' and handled according to the configured late data policy (drop, recompute, route to a side output). Setting the watermark too tight produces early, incomplete results; too loose delays all results.",
+      "techContext": "In Flink, watermarks are generated by a `WatermarkStrategy` assigned to a source. The simplest is `WatermarkStrategy.forBoundedOutOfOrderness(Duration.ofMinutes(2))`. In Spark Structured Streaming, the watermark is set with `.withWatermark('event_time', '2 minutes')` before a windowed aggregation. Both systems emit window results when the watermark passes the window's end timestamp.",
+      "exampleSentence": "Setting the Flink watermark to allow 5 minutes of out-of-orderness reduced the late-data drop rate from 3% to under 0.1%, at the cost of delaying all window results by 5 minutes.",
+      "etymology": "Borrowed from the physical watermark — a line on paper or vessel marking a water level — used here metaphorically to mark 'how far the clock of event time has advanced.'",
+      "connector": "Like a newspaper's printing deadline — the editor waits a reasonable amount of time for late stories, but once the watermark (deadline) passes, the edition goes to print with whatever arrived.",
+      "codeExample": {
+        "language": "python",
+        "code": "# Spark Structured Streaming with watermark and tumbling window\nfrom pyspark.sql.functions import window, col\n\nevents = (\n    spark.readStream.format('kafka')\n         .option('subscribe', 'user_events')\n         .load()\n         .withColumn('event_time', col('timestamp').cast('timestamp'))\n)\n\nwindowed = (\n    events\n    .withWatermark('event_time', '5 minutes')\n    .groupBy(window('event_time', '1 hour'), 'event_type')\n    .count()\n)\n\nwindowed.writeStream.outputMode('append').format('delta') \\\n    .start('s3://lake/silver/event_counts/')"
+      },
+      "unlockLevel": 3,
+      "tags": ["data-engineering", "intermediate", "streaming", "time"],
+      "category": "concepts"
+    },
+    {
+      "id": "de-int-0200-0000-0000-0000-000000000020",
+      "word": "Late-Arriving Data",
+      "pronunciation": "LAYT uh-RYE-ving DAY-tuh",
+      "partOfSpeech": "noun",
+      "shortDefinition": "Data whose event timestamp is earlier than the pipeline's current processing point, typically caused by offline clients, network delays, or CDC consumer lag.",
+      "simpleDefinition": "Late-arriving data occurs when an event happened at, say, 14:00 but didn't reach the pipeline until 16:30. If the pipeline already closed and emitted results for the 14:00–15:00 window, the late event either gets dropped, causes a recomputation, or is routed to a side output for separate handling.",
+      "longDefinition": "Late arrivals have several common causes: mobile clients buffer events while offline and flush in bulk when connectivity returns; third-party systems export data on irregular schedules; CDC consumers fall behind under load and catch up in bulk; manual data corrections are entered after the fact. Batch pipelines handle late data with a reprocessing window — keeping the last N days of Gold-layer outputs recomputable, so a late event within that window triggers a re-run of the affected day's partition. Setting N based on the empirical late-arrival distribution (e.g., N=7 days if 99% of events arrive within 7 days of their event time) bounds both the reprocessing cost and the data quality gap. Stream pipelines use watermarks and late data policies: accept with a side output, recompute the affected window, or drop with a metric increment.",
+      "techContext": "Detecting late data requires tracking the distribution of `processing_time - event_time` across your pipeline's sources. A simple monitoring query in DuckDB or your warehouse against a sample of recent records reveals the P50, P95, and P99 delay. Alert when the P99 delay increases — it signals either a new source of late data or a CDC consumer lag spike.",
+      "exampleSentence": "The mobile app's event pipeline showed a P99 latency of 48 hours because users sometimes opened the app after two days offline, so the team set their batch reprocessing window to 3 days to capture 99.9% of late events.",
+      "etymology": "A straightforward compound: 'late' (after the expected time) and 'arriving' (reaching the destination) — data that shows up after the pipeline expected it.",
+      "connector": "Like a postcard that takes two weeks to arrive after its postmark date — the event happened when the stamp was applied, not when you finally read it.",
+      "codeExample": {
+        "language": "python",
+        "code": "# Reprocess the last 3 days of partitions to absorb late arrivals\nfrom datetime import date, timedelta\nimport duckdb\n\ncon = duckdb.connect('/data/pipeline.duckdb')\ntoday = date.today()\n\nfor offset in range(3):  # reprocess D-0, D-1, D-2\n    target_date = today - timedelta(days=offset)\n    con.execute(\"\"\"\n        DELETE FROM gold_daily_revenue WHERE event_date = ?\n    \"\"\", [target_date])\n    con.execute(\"\"\"\n        INSERT INTO gold_daily_revenue\n        SELECT DATE_TRUNC('day', event_time) AS event_date,\n               SUM(revenue_cents) / 100.0    AS revenue_usd\n        FROM silver_events\n        WHERE DATE_TRUNC('day', event_time) = ?\n        GROUP BY 1\n    \"\"\", [target_date])\n    print(f'Reprocessed {target_date}')"
+      },
+      "unlockLevel": 3,
+      "tags": ["data-engineering", "intermediate", "streaming", "data-quality"],
+      "category": "concepts"
+    },
+    {
+      "id": "de-int-0210-0000-0000-0000-000000000021",
+      "word": "Data Contract",
+      "pronunciation": "DAY-tuh KON-trakt",
+      "partOfSpeech": "noun",
+      "shortDefinition": "An explicit, versioned specification defining what a data producer commits to deliver and what consumers can rely on, covering schema, freshness, volume, and semantics.",
+      "simpleDefinition": "A data contract is the data equivalent of an API contract. The producer commits to a specific schema, freshness SLA, volume range, and field semantics. Consumers rely on these guarantees. Breaking changes require a versioned migration path and advance notice — just like breaking API changes.",
+      "longDefinition": "Without data contracts, schema changes in source tables silently break downstream pipelines, and the only discovery mechanism is a failed dashboard or an angry Slack message. A data contract explicitly defines: the schema (columns, types, nullability, constraints), the freshness SLA ('this table will have data no older than 2 hours by 9 AM UTC'), the volume guarantee ('between 50K and 500K rows after each daily load'), field semantics ('`order_status = shipped` means the shipping carrier has scanned the package'), and the versioning policy ('breaking changes require 30 days notice'). Contracts can be enforced at the producer side (schema registry, contract testing in CI), at the consumer side (validation jobs that alert when the contract is violated), or both. In 2026, tools like Soda, Great Expectations, and Monte Carlo integrate contract validation into orchestration pipelines.",
+      "techContext": "Data contracts are increasingly defined as YAML or JSON documents co-located with the producer's pipeline code, version-controlled in git. A pre-commit hook or CI step validates that any schema change either is backward-compatible or has incremented the major version. The contract document becomes the source of truth for onboarding new consumers — they read the contract rather than interrogating the source schema directly.",
+      "exampleSentence": "After the analytics team spent two days debugging a broken dashboard caused by an undocumented column rename in the upstream CRM pipeline, the organization adopted data contracts enforced by schema registry compatibility checks in the producer's CI pipeline.",
+      "etymology": "Borrowed directly from software engineering's 'API contract' — the principle that a producer and consumer agree on an interface specification that both parties are bound to honor.",
+      "connector": "Like a lease agreement between a landlord and tenant — both parties sign off on what's provided (schema, freshness), what's expected (stable delivery), and what happens when terms change (versioning).",
+      "codeExample": {
+        "language": "yaml",
+        "code": "# data-contract.yaml\napiVersion: v1\nkind: DataContract\nname: orders_daily\nowner: data-engineering@company.com\nversion: '2.1.0'\nschema:\n  - name: order_id\n    type: BIGINT\n    nullable: false\n  - name: customer_id\n    type: BIGINT\n    nullable: false\n  - name: amount_usd\n    type: DOUBLE\n    nullable: false\n  - name: created_at\n    type: TIMESTAMP\n    nullable: false\nsla:\n  freshness: '2 hours'\n  availability: '99.5%'\n  row_count:\n    min: 50000\n    max: 500000"
+      },
+      "unlockLevel": 3,
+      "tags": ["data-engineering", "intermediate", "data-quality", "governance"],
+      "category": "concepts"
+    },
+    {
+      "id": "de-int-0220-0000-0000-0000-000000000022",
+      "word": "Sensor (Orchestration)",
+      "pronunciation": "SEN-sor",
+      "partOfSpeech": "noun",
+      "shortDefinition": "An orchestration task that polls for an external condition — a file's existence, a query returning rows, another DAG completing — and blocks downstream tasks until the condition is satisfied.",
+      "simpleDefinition": "A sensor replaces a fragile fixed-time schedule ('run 30 minutes after the upstream job usually finishes') with a data-driven trigger ('run when the upstream file actually exists'). It polls periodically and blocks downstream tasks until the condition is met or a timeout expires.",
+      "longDefinition": "The naive approach to cross-pipeline dependencies is scheduling: if the upstream pipeline finishes by 5 AM, schedule the downstream pipeline for 5:30 AM. This breaks whenever the upstream runs late — the downstream either fails on missing data or processes stale data silently. A sensor solves this by making the dependency explicit: the downstream pipeline starts when the upstream data actually exists, not when the clock says it should. Airflow provides built-in sensors: `S3KeySensor` (file exists in S3), `ExternalTaskSensor` (a task in another DAG completed successfully), `SqlSensor` (a query returns at least one row), and `HttpSensor` (an endpoint returns a 2xx response). Sensors poll on a configurable `poke_interval` (default 60 seconds) and can operate in 'poke' mode (occupy a worker slot continuously) or 'reschedule' mode (release the worker slot between polls, freeing capacity for other tasks).",
+      "techContext": "In production, `reschedule` mode is strongly preferred for sensors with long expected wait times — a sensor poking every 60 seconds for 3 hours in poke mode holds a Celery worker slot for 3 hours, reducing pipeline concurrency. `ExternalTaskSensor` creates a compile-time coupling between DAGs: if the upstream DAG is renamed, the sensor never fires. An alternative is to write a sentinel record to a database table and use `SqlSensor` to check for it — decoupling the DAGs.",
+      "exampleSentence": "Replacing the 5:30 AM fixed schedule with an S3KeySensor removed three recurring SLA breaches per month caused by the upstream vendor delivering files between 5:45 and 6:15 AM.",
+      "etymology": "From the Latin 'sensus' (feeling, perception) — a sensor perceives whether an external condition has been met before allowing the pipeline to proceed.",
+      "connector": "Like a traffic light triggered by a sensor in the road rather than a fixed timer — it turns green when a car is actually there, not just when the clock says traffic is expected.",
+      "codeExample": {
+        "language": "python",
+        "code": "from airflow import DAG\nfrom airflow.sensors.s3_key_sensor import S3KeySensor\nfrom airflow.operators.python import PythonOperator\nfrom datetime import datetime\n\nwith DAG('downstream_pipeline', schedule=None,\n         start_date=datetime(2026, 1, 1)) as dag:\n\n    wait_for_file = S3KeySensor(\n        task_id='wait_for_vendor_export',\n        bucket_name='vendor-delivery',\n        bucket_key='exports/{{ ds }}/orders.parquet',\n        poke_interval=120,   # poll every 2 minutes\n        timeout=7200,        # fail after 2 hours\n        mode='reschedule'    # release worker slot between polls\n    )\n\n    process = PythonOperator(\n        task_id='process_orders',\n        python_callable=run_transform\n    )\n\n    wait_for_file >> process"
+      },
+      "unlockLevel": 3,
+      "tags": ["data-engineering", "intermediate", "orchestration", "airflow"],
+      "category": "components"
+    },
+    {
+      "id": "de-int-0230-0000-0000-0000-000000000023",
+      "word": "Window Function",
+      "pronunciation": "WIN-doh FUNK-shun",
+      "partOfSpeech": "noun",
+      "shortDefinition": "A SQL function that computes a value across a set of rows related to the current row — its 'window' — without collapsing the result set into a single aggregate.",
+      "simpleDefinition": "Unlike GROUP BY which reduces many rows to one, a window function computes a value for each row while still keeping every row in the result. The `OVER()` clause defines the window: which rows to include, how to partition them, and in what order to process them.",
+      "longDefinition": "Window functions solve problems that GROUP BY cannot: running totals, row-level rankings, moving averages, comparing each row to its neighbors, and accessing values from preceding or following rows. The `OVER()` clause has three parts: `PARTITION BY` (reset the computation for each partition, like GROUP BY but without collapsing rows), `ORDER BY` (define the order for ordered functions like RANK, LAG, LEAD, and running SUM), and the frame specification (`ROWS BETWEEN` or `RANGE BETWEEN`, defining the sliding window relative to the current row). Common window functions: `ROW_NUMBER()` (unique sequential rank), `RANK()` and `DENSE_RANK()` (ranking with or without gaps), `LAG()` and `LEAD()` (access preceding/following row values), `SUM() OVER (...)` and `AVG() OVER (...)` (running or moving aggregates), `FIRST_VALUE()` and `LAST_VALUE()` (first and last value in the frame).",
+      "techContext": "Window functions are supported by all major SQL engines — Snowflake, BigQuery, Redshift, DuckDB, Spark SQL, Postgres. They are the idiomatic way to implement SCD Type 2 row-closing logic (using `LEAD()` to populate `valid_to`), sessionization (using `LAG()` to detect session boundaries), and cohort analysis (using `ROW_NUMBER()` to tag each user's first event). In Spark SQL and DuckDB, window functions are fully pushdown-optimized.",
+      "exampleSentence": "The analyst used a window function to compute each customer's 7-day rolling revenue alongside their individual order amounts, without losing row-level detail that a GROUP BY would have eliminated.",
+      "etymology": "Named for the 'window' of rows that each function peers into — a bounded, ordered view of neighboring rows used to compute the current row's value.",
+      "connector": "Like a moving spotlight on a stage — it illuminates a specific set of surrounding actors (rows) for each position it occupies, without changing who is on the stage.",
+      "codeExample": {
+        "language": "sql",
+        "code": "SELECT\n    order_id,\n    customer_id,\n    order_date,\n    amount_usd,\n    -- Running total per customer, ordered by date\n    SUM(amount_usd)  OVER (PARTITION BY customer_id\n                           ORDER BY order_date\n                           ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW\n                          ) AS lifetime_revenue,\n    -- Rank each order within the customer's history\n    ROW_NUMBER()     OVER (PARTITION BY customer_id\n                           ORDER BY order_date) AS order_sequence,\n    -- Days since customer's previous order\n    order_date - LAG(order_date) OVER (PARTITION BY customer_id\n                                       ORDER BY order_date) AS days_since_last\nFROM orders\nORDER BY customer_id, order_date;"
+      },
+      "unlockLevel": 3,
+      "tags": ["data-engineering", "intermediate", "sql", "analytics"],
+      "category": "concepts"
+    },
+    {
+      "id": "de-int-0240-0000-0000-0000-000000000024",
+      "word": "Schema Registry",
+      "pronunciation": "SKEE-muh REJ-ih-stree",
+      "partOfSpeech": "noun",
+      "shortDefinition": "A centralized repository that stores and enforces message schemas for streaming systems, ensuring producers and consumers agree on data shape across independent deployments.",
+      "simpleDefinition": "In streaming systems, producers and consumers are deployed independently and never talk directly. A schema registry sits between them: producers register their schema and serialize against it; each message carries the schema ID; consumers fetch the schema by ID and deserialize correctly — even if producer and consumer versions differ.",
+      "longDefinition": "Without a schema registry, a Kafka producer can change the shape of its messages and downstream consumers break silently — null fields, deserialization errors, or misinterpreted types appearing hours later in dashboards. The registry solves this by making schema changes explicit and enforced. The Confluent Schema Registry (the reference implementation) supports Avro, Protobuf, and JSON Schema. Each topic has a registered schema; each message is serialized with a 4-byte schema ID prefix. The registry enforces compatibility rules at registration time: BACKWARD (new schema can read data written with old schema), FORWARD (old schema can read data written with new schema), and FULL (both directions). AWS Glue Schema Registry and Apicurio are common alternatives. Schema evolution that violates the compatibility mode — renaming a field without a default, changing a type — is rejected at the producer side before any consumer is affected.",
+      "techContext": "In production, the schema registry's availability becomes a dependency for every Kafka producer and consumer. If the registry is unreachable, producers can be configured to fail-open (use cached schemas) or fail-closed (block all writes). Schema IDs are monotonically increasing integers; schema caching on the client side means only the first call per schema ID hits the registry network. Most teams configure BACKWARD compatibility as their default, allowing new optional fields to be added freely.",
+      "exampleSentence": "After the payments team added a new `currency` field to their Avro schema without marking it optional, the schema registry's BACKWARD compatibility check rejected the registration, preventing a production outage in the downstream reconciliation service.",
+      "etymology": "A compound of 'schema' (the Greek word for 'shape' or 'plan') and 'registry' (a formal record-keeping system) — a central record of data shapes agreed upon between producers and consumers.",
+      "connector": "Like a building code office — before a contractor (producer) changes the blueprint (schema), the office verifies the change won't break the buildings downstream consumers have already built on the old foundation.",
+      "codeExample": {
+        "language": "python",
+        "code": "# Register a schema and check compatibility\nimport requests\n\nREGISTRY = 'http://schema-registry:8081'\n\n# Register the new version\nschema = {\n    'type': 'record',\n    'name': 'Payment',\n    'fields': [\n        {'name': 'payment_id', 'type': 'string'},\n        {'name': 'amount_cents', 'type': 'long'},\n        # New optional field — backward compatible\n        {'name': 'currency', 'type': ['null', 'string'],\n         'default': None}\n    ]\n}\nresp = requests.post(\n    f'{REGISTRY}/subjects/payments-value/versions',\n    json={'schema': str(schema)},\n    headers={'Content-Type': 'application/vnd.schemaregistry.v1+json'}\n)\nprint(resp.json())  # {'id': 5}"
+      },
+      "unlockLevel": 3,
+      "tags": ["data-engineering", "intermediate", "streaming", "governance"],
+      "category": "components"
+    },
+    {
+      "id": "de-int-0250-0000-0000-0000-000000000025",
+      "word": "Data Quarantine",
+      "pronunciation": "DAY-tuh KWOR-un-teen",
+      "partOfSpeech": "noun",
+      "shortDefinition": "A dedicated storage area for records that failed validation, holding them for investigation and reprocessing rather than dropping them or halting the pipeline.",
+      "simpleDefinition": "When an ingestion or transformation job encounters invalid records, quarantine routes the bad records to a separate storage location instead of dropping them silently or stopping the entire pipeline. Good records continue flowing; quarantined records wait for a fix and controlled reprocessing.",
+      "longDefinition": "Data quarantine addresses a fundamental quality trade-off: dropping invalid records causes silent data loss, while halting the pipeline on any bad record blocks all good records and is too fragile for production use. Quarantine takes the middle path — isolate the bad, pass the good. A quarantine zone typically stores: the original record payload, the validation rule that failed, the timestamp of the failure, and the pipeline step where the failure occurred. This metadata enables root cause analysis without having to re-run the pipeline. Quarantined records should be counted and alerted on — a spike in the quarantine rate signals a schema change or data quality regression upstream. Once the root cause is fixed (a bad source record corrected, a validation rule adjusted), quarantined records can be reprocessed into the clean layer. In the medallion architecture, quarantine is part of the Silver layer's contract: incorrect rows go to the quarantine zone rather than being promoted to Silver.",
+      "techContext": "A simple quarantine implementation writes rejected rows to a `quarantine/` prefix alongside the clean layer, tagged with the validation failure reason. Orchestrators can alert when the quarantine row count for a given run exceeds a threshold. A separate 'quarantine review' DAG runs periodically to report on unresolved quarantined records, ensuring they don't accumulate silently. In dbt, failed test rows can be captured using the `store_failures = true` config, which materializes them in a `_dbt_test__audit` schema.",
+      "exampleSentence": "When the upstream CRM started sending null `customer_id` values for a subset of records, the Silver cleaning job quarantined 847 affected rows with the tag 'null_primary_key' instead of dropping them — allowing the data team to trace and replay them after the source bug was fixed.",
+      "etymology": "From the Italian 'quarantina' (a period of forty days) — historically the time ships were isolated in port before passengers could come ashore to prevent disease spread; here applied to data suspected of carrying quality problems.",
+      "connector": "Like a hospital triage area — patients (records) who don't meet the criteria for immediate treatment (passing validation) are held for assessment and treatment rather than turned away at the door.",
+      "codeExample": {
+        "language": "python",
+        "code": "import duckdb\nfrom datetime import datetime\n\ncon = duckdb.connect('/data/pipeline.duckdb')\n\n# Separate valid from invalid records\ncon.execute(\"\"\"\n    CREATE OR REPLACE TABLE silver_orders AS\n    SELECT * FROM bronze_orders\n    WHERE order_id IS NOT NULL\n      AND amount_usd > 0;\n\"\"\")\n\n# Route failures to quarantine with reason tag\ncon.execute(\"\"\"\n    INSERT INTO quarantine_zone\n    SELECT\n        *,\n        CASE\n            WHEN order_id   IS NULL THEN 'null_order_id'\n            WHEN amount_usd <= 0    THEN 'non_positive_amount'\n        END AS failure_reason,\n        CURRENT_TIMESTAMP AS quarantined_at\n    FROM bronze_orders\n    WHERE order_id IS NULL OR amount_usd <= 0;\n\"\"\")\n\ncount = con.execute('SELECT COUNT(*) FROM quarantine_zone WHERE quarantined_at::DATE = TODAY()').fetchone()[0]\nprint(f'{count} records quarantined today')"
+      },
+      "unlockLevel": 3,
+      "tags": ["data-engineering", "intermediate", "data-quality", "patterns"],
+      "category": "patterns"
+    }
+  ]
+}
