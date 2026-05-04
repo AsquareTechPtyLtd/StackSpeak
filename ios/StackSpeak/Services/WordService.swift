@@ -57,13 +57,24 @@ final class WordService: WordRepository {
             }
         }
 
-        // Insert new words into the database
+        // Insert new words into the database, saving in chunks. SwiftData's
+        // DefaultStore hits a "fatal logic error: temporary identifier remapped
+        // during save" assertion when a single save resolves more than a few
+        // hundred newly-inserted models at once. Saving every `batchSize` inserts
+        // forces SwiftData to commit temp-IDs before the next batch begins.
         let existingIds = try fetchExistingWordIdSet()
+        let batchSize = 200
+        var insertedInBatch = 0
         for (dto, stack) in allWords {
             let wordId = UUID(uuidString: dto.id) ?? deterministicUUID(from: dto.id)
             guard !existingIds.contains(wordId) else { continue }
             let word = Word(from: dto, stack: stack)
             modelContext.insert(word)
+            insertedInBatch += 1
+            if insertedInBatch >= batchSize {
+                try modelContext.save()
+                insertedInBatch = 0
+            }
         }
 
         if modelContext.hasChanges {
