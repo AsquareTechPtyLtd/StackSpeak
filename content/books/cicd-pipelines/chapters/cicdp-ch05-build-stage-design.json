@@ -1,0 +1,1399 @@
+{
+  "chapterId": "cicdp-ch05-build-stage-design",
+  "shardIndex": 5,
+  "cards": [
+    {
+      "id": "cicdp-ch05-c001",
+      "order": 1,
+      "title": "What \"Build\" Really Means",
+      "teaser": "\"Build\" in CI/CD is not a synonym for \"compile\" — it is a broad boundary that transforms source code into a versioned, verifiable artifact ready for the rest of the pipeline to act on.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "In casual usage, \"the build\" refers vaguely to whatever a CI server does with your code. In pipeline design, it has a precise meaning: the build stage is the single boundary at which source transforms into artifact. Everything upstream of this boundary is code; everything downstream is artifact."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "This boundary carries several responsibilities:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Transformation.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Source code in its raw form cannot be deployed. The build stage converts it into a form that can: a compiled binary, a JAR, a container image, a Lambda zip, a Helm chart."
+              }
+            ],
+            [
+              {
+                "text": "Verification.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " The act of building is itself a test: if the build fails, the source is demonstrably broken. Compilation errors, missing dependencies, and broken asset pipelines surface here."
+              }
+            ],
+            [
+              {
+                "text": "Versioning.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Every artifact produced by the build must carry a unique, immutable identifier — a semantic version, a Git SHA, or a content-addressed hash — so the rest of the pipeline can reason about what, exactly, it is acting on."
+              }
+            ],
+            [
+              {
+                "text": "Provenance capture.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " The build stage is where you record what went in (source commit, dependency versions, build toolchain version) so that you can reconstruct, audit, or challenge the artifact later."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The SLSA (Supply chain Levels for Software Artifacts) framework formalizes this: a build platform must produce artifacts with a signed provenance attestation that records the build inputs, the build environment, and the outputs. Without that provenance, the artifact is an untraceable black box."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The practical implication: any action taken after the build stage — testing, scanning, deploying — operates on the "
+            },
+            {
+              "text": "artifact",
+              "marks": ["italic"]
+            },
+            {
+              "text": ", never on source again. A pipeline that re-compiles during the deploy stage has broken this contract and introduced the possibility that what was tested is not what was deployed."
+            }
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "info",
+          "runs": [
+            {
+              "text": "The build stage is not just a step — it is an architectural boundary. Every property of the artifact (its identity, its reproducibility, its security posture) is decided here. Treating it as a black box is how organizations lose traceability."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "\"Build\" means: take source code and produce a versioned, verifiable package that the rest of the pipeline can hand around without ever touching source again."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "cicdp-ch05-c002",
+      "order": 2,
+      "title": "Compile vs Package vs Containerize",
+      "teaser": "Compiling, packaging, and containerizing are three distinct build operations that are often conflated — understanding which one you are doing, and in what order, is prerequisite to designing a build stage that is fast, reproducible, and auditable.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Most non-trivial build stages perform all three operations, but they operate at different layers of abstraction and have different reproducibility and caching properties."
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Compile.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Translates source code into executable machine code or an intermediate representation (JVM bytecode, WASM, LLVM IR). The inputs are source files and compiler flags; the outputs are object files, class files, or a native binary. For interpreted languages, this step is absent or trivially thin (e.g., syntax checking, type checking with mypy or tsc)."
+              }
+            ],
+            [
+              {
+                "text": "Package.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Collects compiled outputs, static assets, configuration templates, and runtime dependencies into a distributable unit. A JAR assembles class files and a manifest. A Python wheel bundles modules and metadata. An npm tarball captures transpiled JS and package.json. The package is the deployable artifact for non-containerized runtimes."
+              }
+            ],
+            [
+              {
+                "text": "Containerize.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Wraps a package — along with its OS-level runtime dependencies — in an OCI-compliant image. The Dockerfile (or equivalent Buildpacks config) layers a base image, installs system packages, copies the application package, and defines the entrypoint. The result is a self-contained, portable unit of deployment."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The ordering matters: compile first, package second, containerize last. Inverting these (e.g., running compilation inside the final container image layer) tends to produce large, cache-unfriendly images that include build toolchains in the production artifact."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Docker multi-stage builds address this by separating the build environment from the runtime environment. A "
+            },
+            {
+              "text": "builder stage",
+              "marks": ["italic"]
+            },
+            {
+              "text": " installs the compiler and dependencies and runs the compilation. A "
+            },
+            {
+              "text": "runtime stage",
+              "marks": ["italic"]
+            },
+            {
+              "text": " starts from a minimal base image and copies only the compiled output. The final image contains no compiler, no source, no build cache — only the binary and its runtime dependencies."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Bazel and Buck treat all three operations as declared graph nodes. A "
+            },
+            {
+              "text": "cc_binary",
+              "marks": ["code"]
+            },
+            {
+              "text": " rule compiles; a "
+            },
+            {
+              "text": "pkg_tar",
+              "marks": ["code"]
+            },
+            {
+              "text": " rule packages; an "
+            },
+            {
+              "text": "oci_image",
+              "marks": ["code"]
+            },
+            {
+              "text": " rule (via rules_oci) containerizes. Each step is independently cacheable and auditable."
+            }
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "warning",
+          "runs": [
+            {
+              "text": "Including build tools (compilers, bundlers, test runners) in the production container image is a common misconfiguration. It bloats the image, expands the attack surface, and means the production artifact differs structurally from what should be deployed."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Compile turns source into machine-readable code; package bundles it for distribution; containerize wraps it with its runtime environment. These are separate steps, not one monolithic \"build.\""
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "cicdp-ch05-c003",
+      "order": 3,
+      "title": "Build Artifacts as the Pipeline Currency",
+      "teaser": "The artifact is the unit of exchange across every stage of the pipeline — it is what gets tested, scanned, promoted, and deployed. Treating it as fungible or optional destroys traceability.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "A CI/CD pipeline is best understood as a series of quality gates, each of which takes an artifact as input and either approves it for the next gate or rejects it. The artifact is the only thing that passes between stages. Source code does not flow past the build boundary."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "This has concrete design implications:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "One build, many deployments.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " An artifact built from a given commit should be deployed identically to staging, pre-production, and production. Rebuilding from source for each environment introduces the possibility that the builds differ — a class of bug that is extremely difficult to diagnose."
+              }
+            ],
+            [
+              {
+                "text": "Identity through the pipeline.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " The artifact's identifier (SHA256 digest for container images, content hash for Bazel outputs) must be verifiable at every stage. A test stage that cannot confirm it is testing the exact artifact that will be deployed is performing expensive theater."
+              }
+            ],
+            [
+              {
+                "text": "Artifacts carry metadata.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " OCI image labels, JAR manifest attributes, and Bazel build metadata attach structured data to the artifact: the commit SHA, the build timestamp, the CI job ID, the author. This metadata is the audit trail for production incidents."
+              }
+            ],
+            [
+              {
+                "text": "Artifacts enable rollback.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " If the artifact from the previous release is available in an artifact repository, rollback is an artifact promotion — not a rebuild. This is substantially faster and eliminates the risk that the rollback build differs from the original."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The in-toto framework (adopted by SLSA) makes this explicit by requiring a signed attestation for each step in the supply chain. Each stage that receives an artifact verifies the attestation from the previous stage before proceeding. An artifact without a verifiable attestation chain is treated as untrusted."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The practical failure mode: pipelines that re-run "
+            },
+            {
+              "text": "docker build",
+              "marks": ["code"]
+            },
+            {
+              "text": " in the deploy stage because they did not store the artifact from the build stage. The second build will differ from the first if any dependency has changed — including the base image."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The artifact is what passes through every pipeline gate. If you rebuild it at each stage, you can no longer prove that what you tested is what you deployed."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "cicdp-ch05-c004",
+      "order": 4,
+      "title": "The Artifact Repository",
+      "teaser": "An artifact repository is the single source of truth for versioned, immutable build outputs — it is the mechanism by which artifacts travel through pipeline stages, environments, and time.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "An artifact repository (also called an artifact registry) is a content-addressed, versioned store for build outputs. It is distinct from source control (which stores code) and from a container runtime (which runs images). It is the transit system for artifacts."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The major categories and their canonical tools:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Container registries.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " OCI-compliant registries store and serve container images and OCI artifacts. Options: Docker Hub, AWS ECR, Google Artifact Registry, GitHub Container Registry (ghcr.io), Harbor (self-hosted). Images are addressed by digest (SHA256) and tagged with human-readable labels."
+              }
+            ],
+            [
+              {
+                "text": "Language-ecosystem repositories.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Maven Central and Sonatype Nexus for JVM artifacts; PyPI and devpi for Python wheels; npm registry for JavaScript packages; crates.io for Rust. These often host both public dependencies and internal private packages."
+              }
+            ],
+            [
+              {
+                "text": "Generic binary stores.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " JFrog Artifactory and Sonatype Nexus support arbitrary binary artifacts — Helm charts, Terraform modules, Lambda ZIPs, and anything that doesn't fit a language-specific format."
+              }
+            ],
+            [
+              {
+                "text": "Bazel remote cache and CAS.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Bazel's content-addressable storage (CAS) stores intermediate build outputs keyed by content hash, enabling fine-grained artifact reuse across builds and machines."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The critical property of an artifact repository is "
+            },
+            {
+              "text": "immutability",
+              "marks": ["bold"]
+            },
+            {
+              "text": ". Once an artifact is published at a given version or digest, it must not be modified. Mutable artifacts break the premise that a given identifier always refers to the same content — which breaks reproducibility, rollback, and audit trails simultaneously."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Artifact repositories also serve as the gating mechanism for promotion. An artifact that has not been published to the repository has not passed the build stage. An artifact that has been moved to a \"production-approved\" repository has passed all quality gates. Promotion is an administrative action on the repository, not a rebuild."
+            }
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "tip",
+          "runs": [
+            {
+              "text": "Enable immutable tags in your container registry (ECR's \"image tag immutability,\" for example) to prevent overwriting. A mutable \"latest\" tag in production is a known incident waiting to happen."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "An artifact repository is the warehouse where every build result is stored with a permanent address — the pipeline picks artifacts up from there, rather than rebuilding them each time."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "cicdp-ch05-c005",
+      "order": 5,
+      "title": "Build Caches and Their Limits",
+      "teaser": "A build cache stores intermediate outputs so that unchanged inputs can be skipped — but a cache that is shared incorrectly, invalidated poorly, or trusted blindly can silently corrupt builds or create false security.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Build caches exist to make incremental builds fast. Instead of recompiling every file from scratch on every push, a cache stores the output of each compilation unit. If the input to that unit — the source file, its dependencies, the compiler version, the flags — has not changed, the cached output is used directly."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The three common cache mechanisms in CI:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Dependency caches.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " npm's node_modules, pip's .pip cache, Maven's .m2 repository. These are typically stored by the CI platform between runs, keyed on lockfile hash. They eliminate re-downloading packages, not re-compiling code."
+              }
+            ],
+            [
+              {
+                "text": "Layer caches.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Docker's layer cache reuses intermediate image layers if the Dockerfile instruction and its inputs haven't changed. BuildKit (Docker's modern build backend) adds parallel layer execution and mount-based caches. The cache is invalidated sequentially: any changed layer invalidates all layers above it."
+              }
+            ],
+            [
+              {
+                "text": "Build tool caches.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Gradle's build cache, Bazel's local cache, Cargo's incremental compilation. These operate at finer granularity than layer caches — individual compilation units — and produce more reliable cache hits on partial code changes."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The limits of build caches are significant:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Staleness.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " A cache that is not invalidated when the build environment changes (new compiler version, new base image) will serve outputs that were produced by a different toolchain than the one nominally in use."
+              }
+            ],
+            [
+              {
+                "text": "Poisoning.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " A shared build cache that does not verify the integrity of cached entries can serve a maliciously or accidentally modified output. This is a supply chain risk, not a correctness risk."
+              }
+            ],
+            [
+              {
+                "text": "Non-determinism leakage.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " A build that embeds timestamps, random seeds, or hostname information in its outputs will produce cache misses that defeat the purpose of caching — and cache hits that serve subtly wrong outputs."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "warning",
+          "runs": [
+            {
+              "text": "Caches do not substitute for artifact repositories. A cache miss falls through to rebuilding; a missing artifact from the repository is a pipeline failure. Design your pipeline so it works correctly with a cold cache — the cache is a performance optimization, not a correctness dependency."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "A build cache is an optimization: skip work whose inputs haven't changed. It is not a storage system for artifacts and not a substitute for deterministic builds."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "cicdp-ch05-c006",
+      "order": 6,
+      "title": "Remote Build Caches at Scale",
+      "teaser": "Remote build caches let every developer and every CI machine share a single pool of cached build outputs — eliminating redundant compilation across an engineering organization and making monorepo-scale builds tractable.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Local build caches are scoped to a single machine or a single CI runner. If two developers each change a different file in a large monorepo, they each rebuild the entire project from scratch on their next run — even though most of the compiled outputs from yesterday's shared CI run are identical."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Remote build caches solve this by externalizing the cache to a network-accessible content-addressable store. Every build — local or CI — looks up cache entries by input hash. A hit is a download; a miss triggers compilation and an upload, making the result available to all future builds with the same inputs."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The major implementations:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Bazel Remote Cache.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Bazel's Remote Execution API (REAPI) defines a standard protocol for content-addressable storage and optional remote execution. Compatible backends include Google Cloud Storage (with bazel-remote as a proxy), BuildBuddy, EngFlow, and Buildkite's Remote Cache service. Cache keys are derived from the action graph hash — inputs, command, and environment variables."
+              }
+            ],
+            [
+              {
+                "text": "Gradle Build Cache.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Gradle supports a remote build cache backed by a Gradle Enterprise server (now Develocity) or any HTTP endpoint. Task outputs are stored by input hash and shared across CI agents."
+              }
+            ],
+            [
+              {
+                "text": "Turborepo and Nx.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " JavaScript monorepo tools that implement remote caching as a first-class feature. Turborepo's remote cache (hosted by Vercel or self-hosted) distributes task outputs across machines. Nx Cloud provides the same with detailed build analytics."
+              }
+            ],
+            [
+              {
+                "text": "Buck2 remote cache.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Meta's Buck2 uses the same REAPI protocol as Bazel, enabling compatibility with the same cache backend infrastructure."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Security considerations for remote caches are non-trivial. The cache backend must:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Verify TLS for all cache reads and writes — an unauthenticated cache is a cache poisoning vector."
+              }
+            ],
+            [
+              {
+                "text": "Enforce write authentication so only trusted CI systems can populate the cache."
+              }
+            ],
+            [
+              {
+                "text": "Optionally enforce content digest verification on reads (Bazel does this by default when "
+              },
+              {
+                "text": "--remote_verify_downloads",
+                "marks": ["code"]
+              },
+              {
+                "text": " is set)."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "info",
+          "runs": [
+            {
+              "text": "A well-configured Bazel remote cache can reduce monorepo CI times from 30+ minutes to under 5 minutes by sharing compiled outputs across the entire team. The prerequisite is build determinism — a non-deterministic build defeats remote caching entirely."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "A remote build cache is a shared pool of previously computed build outputs — when your inputs match what someone else already built, you download the result instead of recomputing it."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "cicdp-ch05-c007",
+      "order": 7,
+      "title": "Build Determinism",
+      "teaser": "A deterministic build produces byte-for-byte identical outputs every time it is run with the same inputs — this property is the foundation of caching, reproducibility, and supply chain security.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Determinism is a weaker property than reproducibility (which we will cover in the next card) but a prerequisite for it. A build is deterministic if running it twice with identical inputs — same source, same toolchain, same flags — produces identical outputs."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Determinism breaks down in several common ways:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Timestamps.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Many build tools embed the build timestamp in generated outputs: Java JAR manifests, Go binaries, webpack bundle comments. The same source at two different times produces different bytes."
+              }
+            ],
+            [
+              {
+                "text": "File system ordering.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Tools that iterate over directory contents may process files in different orders depending on the OS and filesystem. This produces different link ordering, different archive entry ordering, or different initialization sequences."
+              }
+            ],
+            [
+              {
+                "text": "Non-stable map and set iteration.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Go deliberately randomizes map iteration order across runs. Code generators or build plugins that serialize map contents without sorting will produce different outputs on each run."
+              }
+            ],
+            [
+              {
+                "text": "Absolute paths.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Debug symbols and DWARF data embed the absolute path of source files. A build from /home/alice/project and a build from /home/bob/project produce different binaries even with identical source."
+              }
+            ],
+            [
+              {
+                "text": "Random seeds.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Some optimizers (Closure Compiler, ProGuard) use randomization in name mangling or layout. Without a fixed seed, outputs vary."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Bazel enforces determinism by design. Every action runs in a sandbox with no access to the ambient environment (no timestamps, no hostname, no environment variables outside an explicit allowlist). Outputs that violate this — for example, a genrule that calls "
+            },
+            {
+              "text": "date",
+              "marks": ["code"]
+            },
+            {
+              "text": " — will produce non-deterministic results that bypass caching."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The Go toolchain achieved deterministic builds in 1.13 by normalizing build identifiers and stripping absolute paths by default. Docker BuildKit introduced "
+            },
+            {
+              "text": "SOURCE_DATE_EPOCH",
+              "marks": ["code"]
+            },
+            {
+              "text": " support, allowing layer timestamps to be fixed to the commit date rather than the build time."
+            }
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "tip",
+          "runs": [
+            {
+              "text": "To test for determinism, run your build twice in a row with identical inputs and diff the outputs with sha256sum. Any difference indicates a non-determinism source. The diffoscope tool can pinpoint where two binary artifacts diverge."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "A deterministic build gives you the same output bytes every time you provide the same inputs. Without this, caches break and you cannot verify that two builds of the same commit are equivalent."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "cicdp-ch05-c008",
+      "order": 8,
+      "title": "Hermetic Builds",
+      "teaser": "A hermetic build is one that cannot read from or write to anything outside its explicitly declared inputs and outputs — hermiticity is what makes determinism achievable at scale and what closes the most common supply chain attack vectors.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Hermiticity is a stricter property than determinism. A build can be deterministic by coincidence — if its implicit environmental dependencies happen to be stable. A hermetic build is deterministic "
+            },
+            {
+              "text": "by construction",
+              "marks": ["italic"]
+            },
+            {
+              "text": ": it structurally cannot access anything it has not declared."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Bazel implements hermiticity through action sandboxing. Every build action (compilation, code generation, linking) runs in a sandbox with:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "A read-only view of only the declared input files."
+              }
+            ],
+            [
+              {
+                "text": "A writable scratch directory for output files."
+              }
+            ],
+            [
+              {
+                "text": "No network access (by default) — dependencies must be pre-fetched and declared."
+              }
+            ],
+            [
+              {
+                "text": "A filtered environment with only the variables declared in the action definition."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Actions that attempt to read undeclared files or access the network fail immediately. This forces every dependency to be explicit — which is annoying to set up and invaluable at scale."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Nix takes hermiticity further into the system level. A Nix derivation specifies its build inputs as cryptographic hashes of packages in the Nix store. The build environment is constructed from exactly those packages — no system-installed compiler, no ambient library, no PATH inheritance. Two machines with the same Nix expression will build from identical toolchains even if they are running different Linux distributions."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The supply chain security benefit is concrete. A non-hermetic build that reaches out to the network during build time can fetch a dependency that has been modified since the lockfile was generated — a category of attack executed against the Python ecosystem multiple times (the "
+            },
+            {
+              "text": "event-stream",
+              "marks": ["italic"]
+            },
+            {
+              "text": " npm compromise being a canonical example). A hermetic build cannot make that network call at all."
+            }
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "info",
+          "runs": [
+            {
+              "text": "SLSA level 3 requires that the build platform prevent builds from accessing the network and injecting arbitrary environment variables. Hermetic builds are the implementation mechanism for meeting that requirement."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "A hermetic build is one that can only see what it declared it would need — no ambient system files, no network calls, no inherited environment variables. Everything that goes in is listed; everything that comes out is verified."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "cicdp-ch05-c009",
+      "order": 9,
+      "title": "Reproducible Builds",
+      "teaser": "A reproducible build is one that can be independently re-executed by a third party — starting from the same source — and produce bit-for-bit identical outputs, enabling independent verification of the artifact without trusting the original build system.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The Reproducible Builds project (reproducible-builds.org), founded in collaboration with Debian, Tor, and Bitcoin Core, defines reproducibility as the ability of independent parties to verify that a published binary corresponds to the claimed source code. This is a stronger guarantee than determinism: it means anyone, anywhere, with access to the source and the build specification can reproduce the artifact."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Why this matters:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Trust without access.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " A user downloading a binary from a package registry cannot inspect the build system that produced it. If the build is reproducible, they can verify the binary against the source themselves, without trusting the distributor's CI infrastructure."
+              }
+            ],
+            [
+              {
+                "text": "Detecting build-time compromise.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " A compromised CI system (XcodeGhost, SolarWinds, 3CX) injects malicious code into artifacts at build time. If independent builders reproduce the binary and get a different hash, the compromise is detectable."
+              }
+            ],
+            [
+              {
+                "text": "Verifying the supply chain.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " SLSA level 4 requires that the build be reproducible: two independent builds from the same source must match. This makes supply chain attestations independently verifiable."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The prerequisites for reproducibility extend beyond determinism: the build environment itself must be reproducible. This means:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Pinned toolchain versions (not \"latest gcc\" or \"latest node\")."
+              }
+            ],
+            [
+              {
+                "text": "Pinned base images with content-addressed digests, not mutable tags."
+              }
+            ],
+            [
+              {
+                "text": "SOURCE_DATE_EPOCH set to a deterministic value (typically the commit timestamp)."
+              }
+            ],
+            [
+              {
+                "text": "Archived build dependencies (no live network fetches from package registries)."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Nix is the toolchain most closely associated with reproducible builds in practice. A Nix flake pins the entire build graph — including the compiler — to cryptographic hashes. Building a Nix flake on two different machines with two different OSes produces identical outputs (modulo OS-level differences in the kernel ABI, which Nix's "
+            },
+            {
+              "text": "impure",
+              "marks": ["italic"]
+            },
+            {
+              "text": " inputs explicitly model)."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "A reproducible build lets anyone independently verify that a binary matches its source — you don't have to trust the build system; you can rerun it yourself and check."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "cicdp-ch05-c010",
+      "order": 10,
+      "title": "SBOM Generation at Build Time",
+      "teaser": "A Software Bill of Materials (SBOM) is a machine-readable inventory of every component in an artifact — libraries, transitive dependencies, license identifiers — and the build stage is the only moment in the pipeline where it can be generated accurately.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "An SBOM (Software Bill of Materials) is a structured document that declares what an artifact is made of. In the way a manufactured product has a bill of materials listing every component and subcomponent, a software artifact has an SBOM listing every library, framework, and transitive dependency — along with their versions and known vulnerability identifiers."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The two dominant SBOM formats are:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "SPDX (Software Package Data Exchange)",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — an ISO standard (ISO/IEC 5962:2021) originally developed by the Linux Foundation. Supports JSON, YAML, RDF, and tag-value formats."
+              }
+            ],
+            [
+              {
+                "text": "CycloneDX",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — developed by OWASP. JSON and XML formats. More widely adopted in commercial tooling and better integrated with vulnerability databases."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Build time is the correct moment to generate the SBOM because it is the only moment when the full dependency graph is resolved and verifiable:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "The lockfile has been consulted; transitive dependencies are known."
+              }
+            ],
+            [
+              {
+                "text": "The compiler has run; unused dependencies may have been excluded."
+              }
+            ],
+            [
+              {
+                "text": "The container image layers are being assembled; system packages are enumerable."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Common SBOM generation tools by ecosystem:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Syft (Anchore)",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — scans container images and filesystems to produce CycloneDX or SPDX SBOMs. Runs as a post-build step against the final image."
+              }
+            ],
+            [
+              {
+                "text": "Trivy",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — vulnerability scanner that also produces SBOMs. Can scan images, filesystems, and git repositories."
+              }
+            ],
+            [
+              {
+                "text": "cdxgen",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — generates CycloneDX SBOMs from language manifest files (package.json, pom.xml, Cargo.toml) with deep dependency resolution."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Once generated, the SBOM should be attached to the artifact as an OCI attestation using Cosign ("
+            },
+            {
+              "text": "cosign attest --type cyclonedx",
+              "marks": ["code"]
+            },
+            {
+              "text": "). This links the SBOM to the image digest cryptographically and allows downstream tools to verify and consume it without a separate out-of-band lookup."
+            }
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "info",
+          "runs": [
+            {
+              "text": "US Executive Order 14028 (2021) mandates SBOMs for software sold to the US federal government. SBOM generation is no longer optional for enterprise vendors — building it into the CI pipeline is the only operationally sustainable approach."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "An SBOM is an ingredient list for your software artifact. You generate it at build time because that's the moment you know exactly what went in."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "cicdp-ch05-c011",
+      "order": 11,
+      "title": "Immutable Infrastructure as a Build Output",
+      "teaser": "When infrastructure configuration is compiled into an artifact at build time — rather than configured at deploy time — the infrastructure itself becomes reproducible, auditable, and promotable through environments.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Immutable infrastructure is the practice of never modifying a running system in place. Instead, when a change is required, a new artifact is built from a new definition, deployed to replace the old one, and the old one is terminated. The key insight is that the artifact — not the running instance — is the source of truth."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "This principle extends the build stage's responsibility beyond application code:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "VM images (AMIs, Azure managed images).",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Packer builds machine images from a declarative template. The image captures the OS, installed packages, configuration files, and application binaries at a specific commit. Deploying means launching a new instance from the new image, not ssh-ing into an existing one to upgrade it."
+              }
+            ],
+            [
+              {
+                "text": "Container images.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " The OCI image format is the dominant immutable infrastructure artifact. A container image is a layered, content-addressed bundle. Once built, it is never patched in place — it is replaced by a new image."
+              }
+            ],
+            [
+              {
+                "text": "Helm charts and Kubernetes manifests.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Rendered Helm charts and kustomize outputs can be treated as build artifacts: render once at build time (with pinned values), store in the artifact repository, deploy the rendered manifest. Avoids environment-specific rendering at deploy time."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The pipeline implication is significant: if the artifact is truly immutable, promotion is the pipeline's core mechanism. The same container image digest that passed integration tests in staging is the exact artifact deployed to production. No rebuild, no re-render, no reconfiguration — just a new pointer in the artifact repository."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Immutability also simplifies rollback. Since the previous artifact is stored in the registry with its original digest, reverting a production deploy is an artifact promotion in reverse — pulling the last known-good digest back into service."
+            }
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "warning",
+          "runs": [
+            {
+              "text": "Mutable infrastructure artifacts defeat the purpose of artifact promotion. If a Helm chart is rendered differently for production than it was for staging (different values files, different templating), you are not promoting the artifact — you are building a new, untested one."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Immutable infrastructure means your infrastructure is baked into an artifact at build time and never changed in production — when something needs updating, you build a new artifact and replace the old one."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "cicdp-ch05-c012",
+      "order": 12,
+      "title": "Artifact Promotion Through Environments",
+      "teaser": "Artifact promotion is the practice of advancing the same, unchanged artifact through a sequence of environments by changing its registry location or metadata — not by rebuilding it — maintaining the integrity of everything tested upstream.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Artifact promotion is the mechanism by which a build output moves through the pipeline without being rebuilt. The artifact produced in the build stage is the artifact that reaches production — every stage between build and production examines and approves it, but none of them modify it."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "In practice, promotion is implemented through one of three mechanisms:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Registry re-tagging.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " An OCI image is initially pushed to a staging repository (e.g., myregistry/app:sha-abc123). After passing all quality gates, it is tagged or copied to a production repository (e.g., myregistry-prod/app:sha-abc123). The image digest is unchanged; only its location changes. Tools: "
+              },
+              {
+                "text": "crane copy",
+                "marks": ["code"]
+              },
+              {
+                "text": ", "
+              },
+              {
+                "text": "skopeo copy",
+                "marks": ["code"]
+              },
+              {
+                "text": ", AWS ECR replication."
+              }
+            ],
+            [
+              {
+                "text": "Promotion policies in artifact repositories.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " JFrog Artifactory and Sonatype Nexus support repository promotion policies: an artifact in a \"ci\" repository is promoted to a \"release\" repository when manually or automatically triggered. The binary is identical; the repository context changes."
+              }
+            ],
+            [
+              {
+                "text": "Metadata-driven promotion.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Cosign and Sigstore attestations can record the passage through each quality gate as a signed attestation on the artifact. A deploy tool that requires a \"security-scan-passed\" attestation and a \"integration-test-passed\" attestation before deploying is implementing metadata-driven promotion."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The critical principle: promotion is an administrative act, not a technical one. The digest of the artifact does not change. Any system that changes the artifact as part of promotion has broken the chain of custody."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "In a SLSA-compliant pipeline, each promotion step is itself attested: a signed statement recording that this artifact, identified by this digest, passed this quality gate at this timestamp, authorized by this identity. The chain of attestations constitutes an auditable record of the artifact's journey from source to production."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The practical benefit: when an incident occurs in production, the audit trail answers \"what is running, when did it get there, who authorized it, and what tests did it pass?\" without requiring anyone to reconstruct that information manually."
+            }
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "tip",
+          "runs": [
+            {
+              "text": "Use image digests, not tags, for deployments. A tag like \"v1.2.3\" can be overwritten; a digest like \"sha256:abc123...\" is immutable. Kubernetes deployments specified by digest are immune to tag mutation bugs."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Artifact promotion means the same binary that passed your tests in staging is the exact binary deployed to production — you change where it lives in the registry, not what it is."
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
