@@ -1,0 +1,1522 @@
+{
+  "chapterId": "k8s-ch08-workload-patterns",
+  "shardIndex": 8,
+  "cards": [
+    {
+      "id": "k8s-ch08-c001",
+      "order": 1,
+      "title": "Sidecar Pattern",
+      "teaser": "The sidecar pattern adds a companion container to a pod that handles cross-cutting concerns — logging, metrics collection, mTLS proxying — without touching the main container's code. It is the primary extension mechanism in Kubernetes workload design.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "A pod is a co-located group of containers that share a network namespace and can share volumes. The sidecar pattern exploits this co-location: you add a second container whose job is to augment or support the main container without modifying it."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Classic sidecar use cases:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Log shipping",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — a Fluentd or Fluent Bit sidecar tails log files from a shared volume and forwards them to Elasticsearch or Loki, freeing the main container from knowing about the logging infrastructure."
+              }
+            ],
+            [
+              {
+                "text": "Metrics collection",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — a Prometheus exporter sidecar scrapes or transforms metrics from the main container's local endpoint and exposes them on a standard port."
+              }
+            ],
+            [
+              {
+                "text": "mTLS proxy",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — Envoy (used by Istio and Linkerd's proxy) runs as a sidecar intercepting all inbound and outbound network traffic, handling certificate rotation and policy enforcement transparently."
+              }
+            ],
+            [
+              {
+                "text": "Config sync",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — a git-sync sidecar periodically pulls a Git repository into a shared volume that the main container reads, enabling live config updates without redeployment."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "A minimal sidecar pod spec looks like this:"
+            }
+          ]
+        },
+        {
+          "type": "code",
+          "lang": "yaml",
+          "text": "apiVersion: v1\nkind: Pod\nmetadata:\n  name: app-with-log-sidecar\nspec:\n  containers:\n  - name: app\n    image: my-app:1.0\n    volumeMounts:\n    - name: logs\n      mountPath: /var/log/app\n  - name: log-shipper\n    image: fluent/fluent-bit:2.2\n    volumeMounts:\n    - name: logs\n      mountPath: /var/log/app\n      readOnly: true\n  volumes:\n  - name: logs\n    emptyDir: {}"
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "When the sidecar is correct: when you want to add a concern (logging, security, observability) to many pods without changing application code, and when tight coupling (shared localhost, shared volumes) is acceptable and desirable."
+            }
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "warning",
+          "runs": [
+            {
+              "text": "Misuse: running a second business-logic service as a sidecar to avoid creating a separate deployment. If two containers have independent scaling requirements or separate release cycles, they belong in separate pods, not co-located. Co-location is a performance and coupling tool, not a deployment shortcut."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "A sidecar is a helper container that runs next to your main container in the same pod — they share the same network address and can share files. Use it to bolt on logging, metrics, or proxying without touching your app's code."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "k8s-ch08-c002",
+      "order": 2,
+      "title": "Ambassador Pattern",
+      "teaser": "The ambassador pattern is a specialised sidecar that acts as an outbound proxy to external services — it translates, enriches, or routes requests on behalf of the main container, hiding topology and protocol complexity from the application.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "While the sidecar pattern is broad, the ambassador pattern is directional: it faces "
+            },
+            {
+              "text": "outward",
+              "marks": ["italic"]
+            },
+            {
+              "text": ". The main container speaks to localhost; the ambassador forwards requests to the appropriate external endpoint, handling service discovery, retries, circuit breaking, and authentication."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Representative scenarios:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Database proxy",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — an app connects to ",
+                "marks": []
+              },
+              {
+                "text": "localhost:5432",
+                "marks": ["code"]
+              },
+              {
+                "text": "; the ambassador (e.g., PgBouncer or cloud-sql-proxy) forwards the connection to the actual RDS or Cloud SQL endpoint, handling IAM auth, connection pooling, and TLS."
+              }
+            ],
+            [
+              {
+                "text": "Environment-dependent routing",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — in development the ambassador routes to a local stub; in staging, to a shared integration endpoint; in production, to the real service. The app is environment-agnostic."
+              }
+            ],
+            [
+              {
+                "text": "Legacy protocol bridging",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — the app speaks HTTP/1.1; the downstream service requires gRPC. The ambassador translates."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The key architectural property: the main container never needs to know the real address or authentication mechanism of the external service. The ambassador is the single place where that complexity lives."
+            }
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "info",
+          "runs": [
+            {
+              "text": "The ambassador differs from the service mesh sidecar (Envoy/Istio) in intent. Istio's Envoy proxy is injected transparently by the control plane and handles all traffic regardless of direction. An ambassador container is an explicit application-level design choice for a specific outbound dependency."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "An ambassador sidecar acts as a local stand-in for an external service. Your app talks to localhost; the ambassador handles the real routing, authentication, and protocol translation. The app stays simple and portable."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "k8s-ch08-c003",
+      "order": 3,
+      "title": "Adapter Pattern",
+      "teaser": "The adapter pattern is a sidecar that normalises the pod's output to match a format expected by an external system — transforming heterogeneous application output into a uniform, system-compatible interface.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Where the ambassador faces outward (what the app sends), the adapter faces inward (what the app emits). The adapter's job is to consume the application's native output format and re-present it in the form that a monitoring, logging, or observability system expects."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Classic adapter use cases:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Metrics normalisation",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — an app exposes metrics in a proprietary text format; the adapter sidecar reads them, converts to Prometheus exposition format, and exposes a standard ",
+                "marks": []
+              },
+              {
+                "text": "/metrics",
+                "marks": ["code"]
+              },
+              {
+                "text": " endpoint."
+              }
+            ],
+            [
+              {
+                "text": "Log format transformation",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — a legacy app writes structured logs in XML; the adapter sidecar converts them to JSON so a downstream log aggregator can parse them."
+              }
+            ],
+            [
+              {
+                "text": "Health check bridging",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — the app exposes a TCP port as its health signal; the adapter provides an HTTP ",
+                "marks": []
+              },
+              {
+                "text": "/healthz",
+                "marks": ["code"]
+              },
+              {
+                "text": " endpoint that translates the TCP check into an HTTP response Kubernetes can probe."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The three sidecar-derived patterns — sidecar, ambassador, adapter — form a complete vocabulary:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Sidecar",
+                "marks": ["bold"]
+              },
+              {
+                "text": ": general augmentation, co-processing"
+              }
+            ],
+            [
+              {
+                "text": "Ambassador",
+                "marks": ["bold"]
+              },
+              {
+                "text": ": outbound proxy, external service abstraction"
+              }
+            ],
+            [
+              {
+                "text": "Adapter",
+                "marks": ["bold"]
+              },
+              {
+                "text": ": inbound normalisation, output transformation"
+              }
+            ]
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "info",
+          "runs": [
+            {
+              "text": "These three patterns were formalised by Brendan Burns and David Oppenheimer in their 2016 paper \"Design Patterns for Container-Based Distributed Systems,\" which remains the foundational reference for multi-container pod design."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "An adapter sidecar translates what your app produces into what the outside world expects. The app writes in its own format; the adapter converts it so the monitoring or logging system can understand it."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "k8s-ch08-c004",
+      "order": 4,
+      "title": "Init Container Patterns",
+      "teaser": "Init containers run to completion before any app container starts. They are the canonical mechanism for pod-level setup — waiting for dependencies, fetching secrets, preparing volumes — separating bootstrap concerns from runtime concerns.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Init containers differ from regular containers in three ways: they run sequentially (each must exit 0 before the next starts), they complete before the app containers start, and their images can be entirely different from the app containers."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The three canonical init container patterns:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Wait-for-dependency",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — the init container polls until a required service (database, message broker, upstream API) is ready. This prevents the app from starting in a broken state and avoids CrashLoopBackOff storms during cluster-wide restarts."
+              }
+            ],
+            [
+              {
+                "text": "Fetch-secrets",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — an init container uses a privileged identity (Workload Identity, IRSA, cert-manager CSI) to retrieve secrets from Vault or a cloud secret manager, writing them to a shared ",
+                "marks": []
+              },
+              {
+                "text": "emptyDir",
+                "marks": ["code"]
+              },
+              {
+                "text": " volume. The app container reads files, never speaks to Vault directly."
+              }
+            ],
+            [
+              {
+                "text": "Setup-volumes",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — the init container populates a shared volume with configuration, migrates a database schema, or decompresses data needed at app startup. The app starts with the volume already in the correct state."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "code",
+          "lang": "yaml",
+          "text": "spec:\n  initContainers:\n  - name: wait-for-db\n    image: busybox:1.36\n    command: ['sh', '-c',\n      'until nc -z postgres-svc 5432; do echo waiting; sleep 2; done']\n  - name: run-migrations\n    image: my-app:1.0\n    command: ['./manage.py', 'migrate']\n    envFrom:\n    - secretRef:\n        name: db-credentials\n  containers:\n  - name: app\n    image: my-app:1.0"
+        },
+        {
+          "type": "callout",
+          "variant": "warning",
+          "runs": [
+            {
+              "text": "Misuse: running long-lived processes in init containers. If the process should run alongside the app (log tailing, metrics scraping), use a sidecar. Init containers are for one-shot, sequential setup tasks only. A hanging init container blocks the entire pod indefinitely."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Init containers run before your app and must finish successfully before the app starts. Use them for one-time setup: check that the database is up, pull a secret, prepare a volume. They run in order, not in parallel."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "k8s-ch08-c005",
+      "order": 5,
+      "title": "Job — Run-to-Completion Workloads",
+      "teaser": "A Job runs one or more pods to completion and tracks success — unlike a Deployment, which tries to keep pods perpetually running. Jobs are the correct primitive for batch processing, database migrations, report generation, and any work that has a defined end.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The key Job parameters govern how the work is split and how failures are handled:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "completions",
+                "marks": ["code"]
+              },
+              {
+                "text": " — total number of successful pod completions required. Default 1. Set higher for indexed jobs where each run processes a distinct slice of work."
+              }
+            ],
+            [
+              {
+                "text": "parallelism",
+                "marks": ["code"]
+              },
+              {
+                "text": " — maximum pods running simultaneously. Set equal to ",
+                "marks": []
+              },
+              {
+                "text": "completions",
+                "marks": ["code"]
+              },
+              {
+                "text": " to process all slices in parallel; set to 1 for sequential processing."
+              }
+            ],
+            [
+              {
+                "text": "backoffLimit",
+                "marks": ["code"]
+              },
+              {
+                "text": " — how many times a failing pod is retried before the Job is marked Failed. Default 6. Set to 0 for idempotent jobs where a second attempt may corrupt state."
+              }
+            ],
+            [
+              {
+                "text": "completionMode",
+                "marks": ["code"]
+              },
+              {
+                "text": " — ",
+                "marks": []
+              },
+              {
+                "text": "Indexed",
+                "marks": ["code"]
+              },
+              {
+                "text": " (GA in 1.24) gives each pod a stable index via ",
+                "marks": []
+              },
+              {
+                "text": "JOB_COMPLETION_INDEX",
+                "marks": ["code"]
+              },
+              {
+                "text": " env var, enabling sharded processing without an external queue."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "code",
+          "lang": "yaml",
+          "text": "apiVersion: batch/v1\nkind: Job\nmetadata:\n  name: report-generator\nspec:\n  completions: 5\n  parallelism: 2\n  backoffLimit: 3\n  template:\n    spec:\n      restartPolicy: OnFailure\n      containers:\n      - name: worker\n        image: my-report-worker:1.0\n        env:\n        - name: SHARD_INDEX\n          valueFrom:\n            fieldRef:\n              fieldPath: metadata.annotations['batch.kubernetes.io/job-completion-index']"
+        },
+        {
+          "type": "callout",
+          "variant": "warning",
+          "runs": [
+            {
+              "text": "The pod template in a Job must set restartPolicy to OnFailure or Never. Never use Always (the default for Deployments) — a Job pod that restarts indefinitely on success will loop forever. Never is safer for idempotent batch work; OnFailure is appropriate when the container handles retry logic internally."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "A Job runs pods until a certain number of them complete successfully, then stops. Use it for anything that has an end — data processing, migrations, report generation. Set completions for how many successes you need, parallelism for how many can run at once, and backoffLimit for how many failures are tolerable."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "k8s-ch08-c006",
+      "order": 6,
+      "title": "CronJob — Scheduled Workloads",
+      "teaser": "A CronJob creates Jobs on a schedule defined in standard cron syntax. Concurrency policy — Allow, Forbid, or Replace — controls what happens when a new schedule fires while the previous Job is still running.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "CronJobs are Kubernetes-native cron. The schedule field uses standard five-field POSIX cron syntax (minute, hour, day-of-month, month, day-of-week). Example: ",
+              "marks": []
+            },
+            {
+              "text": "\"0 2 * * *\"",
+              "marks": ["code"]
+            },
+            {
+              "text": " fires daily at 02:00 UTC."
+            }
+          ]
+        },
+        {
+          "type": "code",
+          "lang": "yaml",
+          "text": "apiVersion: batch/v1\nkind: CronJob\nmetadata:\n  name: nightly-cleanup\nspec:\n  schedule: \"0 2 * * *\"\n  concurrencyPolicy: Forbid\n  successfulJobsHistoryLimit: 3\n  failedJobsHistoryLimit: 1\n  jobTemplate:\n    spec:\n      backoffLimit: 2\n      template:\n        spec:\n          restartPolicy: OnFailure\n          containers:\n          - name: cleanup\n            image: my-cleanup:1.0"
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The three concurrency policies and when to choose each:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Allow",
+                "marks": ["code"]
+              },
+              {
+                "text": " (default) — new Job runs even if the previous is still running. Use when jobs are truly independent and overlap is acceptable (e.g., a metrics aggregation that is idempotent per time window)."
+              }
+            ],
+            [
+              {
+                "text": "Forbid",
+                "marks": ["code"]
+              },
+              {
+                "text": " — skip the new run if the previous is still running. Use for exclusive operations: database maintenance, file system compaction. Prevents double-processing at the cost of potentially missing a window."
+              }
+            ],
+            [
+              {
+                "text": "Replace",
+                "marks": ["code"]
+              },
+              {
+                "text": " — terminate the running Job and start a fresh one. Use when a stuck previous run is worse than losing its progress, e.g., a job that holds a lock."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "info",
+          "runs": [
+            {
+              "text": "CronJob schedule times are interpreted in the timezone of the kube-controller-manager, which defaults to UTC. Kubernetes 1.27 introduced the timeZone field to specify an IANA timezone explicitly (e.g., timeZone: \"America/New_York\"), eliminating the need for manual UTC offset calculations."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "A CronJob is a cron timer that creates a Kubernetes Job on a schedule. The concurrency policy decides what to do if the previous job hasn't finished when the next one is due: let both run (Allow), skip (Forbid), or cancel the old one (Replace)."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "k8s-ch08-c007",
+      "order": 7,
+      "title": "DaemonSet — One Pod Per Node",
+      "teaser": "A DaemonSet guarantees that exactly one pod runs on every eligible node in the cluster. It is the correct primitive for node-level agents: log collectors, CNI plugins, GPU plugins, monitoring daemons, and security scanners.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "DaemonSets are fundamentally different from Deployments and StatefulSets: you do not specify a replica count. Kubernetes manages the count implicitly — one pod per matching node. When a node joins the cluster, the DaemonSet pod is scheduled on it automatically. When a node is removed, its pod is garbage collected."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Real-world DaemonSet use cases running in nearly every production cluster:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Log collection",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — Fluent Bit or Filebeat, reading node-level log files from ",
+                "marks": []
+              },
+              {
+                "text": "/var/log/",
+                "marks": ["code"]
+              },
+              {
+                "text": " and forwarding to a central aggregator."
+              }
+            ],
+            [
+              {
+                "text": "CNI plugins",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — Calico, Cilium, and Weave Net all run as DaemonSets to configure node networking on every node."
+              }
+            ],
+            [
+              {
+                "text": "GPU device plugin",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — the NVIDIA GPU device plugin runs as a DaemonSet on GPU nodes, exposing GPU resources to the scheduler."
+              }
+            ],
+            [
+              {
+                "text": "Node monitoring",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — Prometheus node-exporter DaemonSet exposes hardware and OS metrics from every node."
+              }
+            ],
+            [
+              {
+                "text": "Service mesh data plane",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — some service meshes use a DaemonSet-based proxy model (per-node) instead of a per-pod sidecar model."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "code",
+          "lang": "yaml",
+          "text": "apiVersion: apps/v1\nkind: DaemonSet\nmetadata:\n  name: node-exporter\n  namespace: monitoring\nspec:\n  selector:\n    matchLabels:\n      app: node-exporter\n  template:\n    metadata:\n      labels:\n        app: node-exporter\n    spec:\n      tolerations:\n      - key: node-role.kubernetes.io/control-plane\n        effect: NoSchedule\n      hostPID: true\n      hostNetwork: true\n      containers:\n      - name: node-exporter\n        image: prom/node-exporter:v1.7.0\n        ports:\n        - containerPort: 9100\n          hostPort: 9100"
+        },
+        {
+          "type": "callout",
+          "variant": "info",
+          "runs": [
+            {
+              "text": "By default, DaemonSet pods are not scheduled on control-plane nodes (which carry a NoSchedule taint). Add a toleration for node-role.kubernetes.io/control-plane if the daemon must run there — common for cluster-wide log collection and CNI plugins."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "A DaemonSet puts exactly one copy of a pod on every node. No replica count to manage — the cluster's node count determines the pod count. Use it whenever you need a per-node agent: log shipper, network plugin, monitoring daemon."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "k8s-ch08-c008",
+      "order": 8,
+      "title": "Leader Election — Coordinated Singleton",
+      "teaser": "Leader election allows you to run multiple replicas of a controller for high availability while ensuring only one replica actively reconciles at a time. Kubernetes uses lease objects in the coordination.k8s.io API as the distributed lock.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Running a single replica of a controller is a reliability anti-pattern: one crash means downtime. But running multiple replicas that all act simultaneously risks conflicting updates, duplicate side effects, and split-brain. Leader election solves this by letting replicas compete for a lease — only the holder acts; others stand by."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The Kubernetes lease mechanism:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "A ",
+                "marks": []
+              },
+              {
+                "text": "Lease",
+                "marks": ["code"]
+              },
+              {
+                "text": " object in the ",
+                "marks": []
+              },
+              {
+                "text": "coordination.k8s.io/v1",
+                "marks": ["code"]
+              },
+              {
+                "text": " API group acts as the distributed lock. It stores the current leader's identity and the time the lease was last renewed."
+              }
+            ],
+            [
+              {
+                "text": "Each candidate periodically tries to acquire or renew the lease by updating the ",
+                "marks": []
+              },
+              {
+                "text": "holderIdentity",
+                "marks": ["code"]
+              },
+              {
+                "text": " and ",
+                "marks": []
+              },
+              {
+                "text": "renewTime",
+                "marks": ["code"]
+              },
+              {
+                "text": " fields."
+              }
+            ],
+            [
+              {
+                "text": "If the lease is not renewed within ",
+                "marks": []
+              },
+              {
+                "text": "leaseDurationSeconds",
+                "marks": ["code"]
+              },
+              {
+                "text": " (default 15 seconds), other candidates may take over. This is the failover window."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "code",
+          "lang": "yaml",
+          "text": "apiVersion: coordination.k8s.io/v1\nkind: Lease\nmetadata:\n  name: my-controller-leader\n  namespace: kube-system\nspec:\n  holderIdentity: controller-pod-abc123\n  leaseDurationSeconds: 15\n  renewTime: \"2025-01-01T00:00:00.000000Z\"\n  acquireTime: \"2025-01-01T00:00:00.000000Z\"\n  leaseTransitions: 2"
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Real operators using this pattern:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "cert-manager",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — the cert-manager controller manager runs multiple replicas; the leader election lease is named ",
+                "marks": []
+              },
+              {
+                "text": "cert-manager-controller",
+                "marks": ["code"]
+              },
+              {
+                "text": " in the ",
+                "marks": []
+              },
+              {
+                "text": "cert-manager",
+                "marks": ["code"]
+              },
+              {
+                "text": " namespace."
+              }
+            ],
+            [
+              {
+                "text": "ingress-nginx-controller",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — when deployed with multiple replicas, the ingress-nginx controller uses a lease in the ",
+                "marks": []
+              },
+              {
+                "text": "ingress-nginx",
+                "marks": ["code"]
+              },
+              {
+                "text": " namespace to elect which replica syncs nginx configuration."
+              }
+            ],
+            [
+              {
+                "text": "kube-controller-manager and kube-scheduler",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — both core components use the same lease-based leader election, with leases in ",
+                "marks": []
+              },
+              {
+                "text": "kube-system",
+                "marks": ["code"]
+              },
+              {
+                "text": "."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "info",
+          "runs": [
+            {
+              "text": "The controller-runtime library (used by Kubebuilder, Operator SDK, and most Go operators) provides leader election out of the box via the --leader-elect flag. You get lease-based HA without writing election logic yourself."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Leader election lets you run multiple replicas of a controller for redundancy while ensuring only one does actual work. They fight over a Lease object in Kubernetes; the holder is the leader and everyone else watches. If the leader crashes, whoever renews the lease first takes over."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "k8s-ch08-c009",
+      "order": 9,
+      "title": "Work Queue Pattern",
+      "teaser": "The work queue pattern decouples producers from consumers using a shared queue — multiple Job workers pull tasks independently, enabling horizontal scaling of batch processing without coordination logic in the workers themselves.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "In a work queue setup, one or more producers write task items to a queue (Redis, RabbitMQ, SQS, or a Kubernetes-native store). A Job with ",
+              "marks": []
+            },
+            {
+              "text": "parallelism > 1",
+              "marks": ["code"]
+            },
+            {
+              "text": " spawns multiple worker pods; each worker claims and processes tasks independently until the queue is drained."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "There are two approaches to knowing when work is done:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Fixed completions",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — set ",
+                "marks": []
+              },
+              {
+                "text": "completions",
+                "marks": ["code"]
+              },
+              {
+                "text": " equal to the number of items in the queue; each completion corresponds to one item. Works well when the queue length is known before the Job starts."
+              }
+            ],
+            [
+              {
+                "text": "Queue-drain termination",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — workers exit with code 0 when the queue is empty. Set ",
+                "marks": []
+              },
+              {
+                "text": "completions: 1",
+                "marks": ["code"]
+              },
+              {
+                "text": " and ",
+                "marks": []
+              },
+              {
+                "text": "parallelism: N",
+                "marks": ["code"]
+              },
+              {
+                "text": "; the Job completes when the first worker exits 0 after observing an empty queue."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "code",
+          "lang": "yaml",
+          "text": "apiVersion: batch/v1\nkind: Job\nmetadata:\n  name: image-processor\nspec:\n  parallelism: 8\n  completions: 8\n  completionMode: Indexed\n  backoffLimit: 4\n  template:\n    spec:\n      restartPolicy: OnFailure\n      containers:\n      - name: worker\n        image: my-image-processor:1.0\n        env:\n        - name: REDIS_HOST\n          value: redis-svc.default.svc.cluster.local\n        - name: WORKER_INDEX\n          valueFrom:\n            fieldRef:\n              fieldPath: metadata.annotations['batch.kubernetes.io/job-completion-index']"
+        },
+        {
+          "type": "callout",
+          "variant": "warning",
+          "runs": [
+            {
+              "text": "Workers must be idempotent: if a worker pod is interrupted mid-task (node preemption, OOM kill), the task must be re-processed without side effects. Design tasks to be atomic: claim from queue, process, acknowledge. Never acknowledge before processing is complete."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The work queue pattern is a Job with multiple parallel workers all pulling from the same queue. Producers push tasks; workers pull and process them. The Job is done when the queue is drained. Workers don't need to know about each other — the queue is the coordination point."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "k8s-ch08-c010",
+      "order": 10,
+      "title": "Static Pods",
+      "teaser": "Static pods are managed directly by the kubelet on a node — they are not created through the API server, do not appear as pod objects in the usual sense, and survive API server downtime. They are the bootstrap mechanism for control-plane components.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The kubelet watches a directory on the node's filesystem (typically ",
+              "marks": []
+            },
+            {
+              "text": "/etc/kubernetes/manifests/",
+              "marks": ["code"]
+            },
+            {
+              "text": ") for pod manifest files. Any manifest placed there is started and kept running by the kubelet directly, without any interaction with the API server or the scheduler."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Why this matters for control-plane bootstrap: the API server itself must run somewhere. kubeadm solves this chicken-and-egg problem by writing static pod manifests to ",
+              "marks": []
+            },
+            {
+              "text": "/etc/kubernetes/manifests/",
+              "marks": ["code"]
+            },
+            {
+              "text": " for the four core components:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "kube-apiserver.yaml"
+              }
+            ],
+            [
+              {
+                "text": "kube-controller-manager.yaml"
+              }
+            ],
+            [
+              {
+                "text": "kube-scheduler.yaml"
+              }
+            ],
+            [
+              {
+                "text": "etcd.yaml"
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The kubelet starts these pods before any API server is available. Once the API server is running, the kubelet creates mirror pods — read-only API representations of the static pods that are visible in ",
+              "marks": []
+            },
+            {
+              "text": "kubectl get pods -n kube-system",
+              "marks": ["code"]
+            },
+            {
+              "text": " but cannot be deleted via the API. To change or remove a static pod, you must edit or remove the file in the manifests directory."
+            }
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "warning",
+          "runs": [
+            {
+              "text": "Static pods are not a general-purpose pattern. Outside of control-plane bootstrap, use Deployments or DaemonSets. Static pods bypass Kubernetes scheduling, admission control, and pod lifecycle management. They are invisible to the controller manager and cannot be managed by standard operators."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "A static pod is started by the kubelet reading a file on the local disk — no API server needed. kubeadm uses this trick to boot the control plane: drop YAML files in /etc/kubernetes/manifests, and the kubelet starts the API server, etcd, and the scheduler before any Kubernetes API exists."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "k8s-ch08-c011",
+      "order": 11,
+      "title": "Priority and Preemption",
+      "teaser": "PriorityClasses let you rank pods so the scheduler can evict low-priority pods to make room for high-priority ones when cluster resources are scarce. Without priority, all pods compete equally and critical workloads can be starved.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "A ",
+              "marks": []
+            },
+            {
+              "text": "PriorityClass",
+              "marks": ["code"]
+            },
+            {
+              "text": " is a cluster-scoped object mapping a name to an integer value. Higher integers win. Kubernetes ships two built-in classes:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "system-cluster-critical",
+                "marks": ["code"]
+              },
+              {
+                "text": " (value 2000000000) — for cluster-level critical components (CoreDNS, kube-proxy, CNI pods)."
+              }
+            ],
+            [
+              {
+                "text": "system-node-critical",
+                "marks": ["code"]
+              },
+              {
+                "text": " (value 2000001000) — for node-level critical components (kubelet companion pods)."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "code",
+          "lang": "yaml",
+          "text": "apiVersion: scheduling.k8s.io/v1\nkind: PriorityClass\nmetadata:\n  name: high-priority-prod\nvalue: 1000000\nglobalDefault: false\ndescription: \"Production services that must not be preempted\"\npreemptionPolicy: PreemptLowerPriority\n---\napiVersion: v1\nkind: Pod\nmetadata:\n  name: critical-service\nspec:\n  priorityClassName: high-priority-prod\n  containers:\n  - name: app\n    image: my-app:1.0\n    resources:\n      requests:\n        cpu: \"500m\"\n        memory: \"256Mi\""
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "When a high-priority pod cannot be scheduled because nodes are full, the preemption algorithm:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Identifies nodes where evicting low-priority pods would free enough resources."
+              }
+            ],
+            [
+              {
+                "text": "Evicts the minimum set of pods needed, preferring to evict from the lowest-priority pods first."
+              }
+            ],
+            [
+              {
+                "text": "Respects PodDisruptionBudgets — eviction is blocked if it would violate a PDB."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "warning",
+          "runs": [
+            {
+              "text": "Setting preemptionPolicy: Never prevents a pod from preempting others even though it has a high priority value. This is appropriate for batch jobs that should queue ahead of other batch work but must not evict production traffic."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Priority classes give pods a rank. When the cluster is full and a high-priority pod needs to be scheduled, Kubernetes evicts lower-priority pods to make room. Without priority, all pods are equal and critical workloads can be stuck behind batch jobs."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "k8s-ch08-c012",
+      "order": 12,
+      "title": "Pod Overhead",
+      "teaser": "Pod overhead accounts for the CPU and memory consumed by the sandbox or runtime infrastructure around a pod's containers — not by the containers themselves. It is critical for accurate scheduling when using secure runtimes like Kata Containers.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Standard container runtimes (containerd with runc) have negligible per-pod overhead. Secure VM-based runtimes like Kata Containers run each pod inside a lightweight virtual machine — there is a measurable per-pod cost for the VM kernel, the hypervisor, and the guest OS that must be accounted for in scheduling."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The ",
+              "marks": []
+            },
+            {
+              "text": "overhead",
+              "marks": ["code"]
+            },
+            {
+              "text": " field in a RuntimeClass object declares this extra resource cost. When a pod uses a RuntimeClass with overhead defined, the scheduler adds the overhead to the pod's resource requests for bin-packing calculations."
+            }
+          ]
+        },
+        {
+          "type": "code",
+          "lang": "yaml",
+          "text": "apiVersion: node.k8s.io/v1\nkind: RuntimeClass\nmetadata:\n  name: kata-containers\nhandler: kata\noverhead:\n  podFixed:\n    memory: \"160Mi\"\n    cpu: \"250m\"\nscheduling:\n  nodeClassification:\n    tolerations:\n    - key: runtime.kata-containers.io\n      operator: Exists\n      effect: NoSchedule"
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "With overhead configured, a pod requesting 100m CPU and 64Mi memory but using the kata-containers RuntimeClass will be scheduled as if it requests 350m CPU and 224Mi memory. Nodes that would accept the pod without overhead accounting might be oversubscribed with overhead taken into account."
+            }
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "info",
+          "runs": [
+            {
+              "text": "Pod overhead also affects resource quota accounting and limit range calculations. A namespace with a ResourceQuota will consume quota for both container requests and the RuntimeClass overhead. Teams migrating from runc to Kata Containers often need to revise their namespace quotas."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Pod overhead is the extra CPU and memory used by the runtime infrastructure around the containers — invisible to the containers themselves. With VM-based runtimes like Kata Containers, this overhead is significant enough that the scheduler needs to account for it to avoid oversubscribing nodes."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "k8s-ch08-c013",
+      "order": 13,
+      "title": "Native Sidecars (Kubernetes 1.29+)",
+      "teaser": "Native sidecars, introduced as alpha in 1.28 and beta in 1.29, solve the core lifecycle problem of traditional sidecars: they start before the main container, remain running while the main container runs, and terminate after the main container exits — eliminating race conditions in init and shutdown.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The problem with classic sidecar containers: they are regular containers in the pod spec, which means:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Startup ordering is not guaranteed",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — the sidecar (e.g., an Envoy proxy) may start after the main container, causing early traffic to fail."
+              }
+            ],
+            [
+              {
+                "text": "Jobs never complete",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — a Job's pod is considered complete only when all containers exit. A long-running sidecar (Envoy, Fluentd) never exits, so Jobs with sidecars hang forever."
+              }
+            ],
+            [
+              {
+                "text": "Shutdown ordering is undefined",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — the sidecar may exit before the main container flushes its final logs."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Native sidecars are declared in ",
+              "marks": []
+            },
+            {
+              "text": "initContainers",
+              "marks": ["code"]
+            },
+            {
+              "text": " with ",
+              "marks": []
+            },
+            {
+              "text": "restartPolicy: Always",
+              "marks": ["code"]
+            },
+            {
+              "text": ". This single field changes everything:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "They start before regular init containers complete, before the main container starts."
+              }
+            ],
+            [
+              {
+                "text": "They run alongside the main container for the pod's entire lifetime."
+              }
+            ],
+            [
+              {
+                "text": "They are terminated after the main container exits."
+              }
+            ],
+            [
+              {
+                "text": "For Jobs, the pod completes when the main containers exit — the sidecar no longer blocks completion."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "code",
+          "lang": "yaml",
+          "text": "spec:\n  initContainers:\n  - name: envoy-proxy\n    image: envoyproxy/envoy:v1.28.0\n    restartPolicy: Always      # This is what makes it a native sidecar\n    ports:\n    - containerPort: 9901\n  containers:\n  - name: app\n    image: my-app:1.0"
+        },
+        {
+          "type": "callout",
+          "variant": "info",
+          "runs": [
+            {
+              "text": "Migration path from classic sidecars: move the sidecar container definition from spec.containers to spec.initContainers and add restartPolicy: Always. No other changes required. The ordering, Job-completion, and shutdown semantics are all fixed automatically. As of Kubernetes 1.29 (beta), this is stable enough for production use in clusters with feature gates enabled."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Native sidecars fix the timing bugs that plagued regular sidecars: they're guaranteed to start before the main container and keep running until after it exits. The trick is declaring them in initContainers with restartPolicy: Always — that one field changes how Kubernetes manages their lifecycle."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "k8s-ch08-c014",
+      "order": 14,
+      "title": "Multi-Container Patterns — One Pod vs Many Pods",
+      "teaser": "The central design question for multi-container workloads is whether components belong in the same pod or in separate pods. The rule is simple: co-locate only what must be tightly coupled. Everything else belongs in separate pods.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Co-locating containers in a pod carries costs: they share a fate (one crash kills the pod), they scale together (you cannot scale one without the other), and they must run on the same node (losing cross-node affinity options). These costs are acceptable only when tight coupling is genuinely required."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Correct reasons to put two containers in one pod:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "They share a localhost network",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — the sidecar proxy or ambassador must intercept loopback traffic."
+              }
+            ],
+            [
+              {
+                "text": "They share a volume",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — the sidecar reads files the main container writes, or vice versa."
+              }
+            ],
+            [
+              {
+                "text": "They have identical scaling requirements",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — exactly one sidecar per main container replica, always."
+              }
+            ],
+            [
+              {
+                "text": "Their lifecycles are truly intertwined",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — starting, stopping, or crashing one without the other makes no sense."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The monolith-as-pod anti-pattern:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Running a web server, a background worker, and a scheduler as three containers in the same pod to avoid the overhead of multiple Kubernetes objects. This sacrifices independent scaling, independent deployment, independent failure domains, and independent resource allocation. The \"reduced complexity\" argument collapses under any realistic operational scenario."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Decision heuristic: ask \"does container B need to be on the same machine as container A, or does it just need to communicate with container A?\" If the answer is just communicate, use a Service. Only co-locate when physical proximity is a hard requirement."
+            }
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "warning",
+          "runs": [
+            {
+              "text": "Treat multi-container pods as an exception that requires justification, not as the default. The default in Kubernetes is: one container per pod. Every additional container in a pod is a coupling decision that should be deliberate and documented."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Put two containers in one pod only when they genuinely need to be on the same machine — sharing localhost or a volume. If they just need to talk to each other, they should be separate pods connected by a Service. The monolith-as-pod anti-pattern jams unrelated services together and loses all the scaling and resilience benefits Kubernetes provides."
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
