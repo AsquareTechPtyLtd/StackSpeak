@@ -1,0 +1,1533 @@
+{
+  "chapterId": "k8s-ch09-operators-and-custom-resources",
+  "shardIndex": 9,
+  "cards": [
+    {
+      "id": "k8s-ch09-c001",
+      "order": 1,
+      "title": "Custom Resource Definitions — Extending the Kubernetes API",
+      "teaser": "Kubernetes ships with a fixed vocabulary: Pods, Deployments, Services. A CustomResourceDefinition lets you add your own words to that vocabulary — so the cluster can speak \"PostgresCluster\" or \"Certificate\" as natively as it speaks \"Deployment\".",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The Kubernetes API is not a closed list of types. It is an extensible registry. A "
+            },
+            {
+              "text": "CustomResourceDefinition (CRD)",
+              "marks": ["bold"]
+            },
+            {
+              "text": " is itself a Kubernetes object (kind: CustomResourceDefinition) that registers a new API type with the API server. Once applied, the new type is addressable by name in every kubectl command, API call, and RBAC rule, exactly like a built-in type."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "A minimal CRD that registers a "
+            },
+            {
+              "text": "Foo",
+              "marks": ["code"]
+            },
+            {
+              "text": " resource in the group "
+            },
+            {
+              "text": "example.com",
+              "marks": ["code"]
+            },
+            {
+              "text": ":"
+            }
+          ]
+        },
+        {
+          "type": "code",
+          "language": "yaml",
+          "text": "apiVersion: apiextensions.k8s.io/v1\nkind: CustomResourceDefinition\nmetadata:\n  name: foos.example.com          # must be <plural>.<group>\nspec:\n  group: example.com\n  names:\n    kind: Foo\n    plural: foos\n    singular: foo\n    shortNames: [fo]\n  scope: Namespaced               # or Cluster\n  versions:\n    - name: v1alpha1\n      served: true\n      storage: true               # exactly one version is the storage version\n      schema:\n        openAPIV3Schema:\n          type: object\n          properties:\n            spec:\n              type: object\n              properties:\n                replicas:\n                  type: integer\n                  minimum: 1"
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "After "
+            },
+            {
+              "text": "kubectl apply -f foo-crd.yaml",
+              "marks": ["code"]
+            },
+            {
+              "text": ", the API server accepts objects of kind "
+            },
+            {
+              "text": "Foo",
+              "marks": ["code"]
+            },
+            {
+              "text": " under the path "
+            },
+            {
+              "text": "/apis/example.com/v1alpha1/namespaces/{ns}/foos",
+              "marks": ["code"]
+            },
+            {
+              "text": ". The "
+            },
+            {
+              "text": "openAPIV3Schema",
+              "marks": ["code"]
+            },
+            {
+              "text": " block drives server-side validation: malformed objects are rejected at admission time, not silently stored."
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "scope: Namespaced",
+                "marks": ["code"]
+              },
+              {
+                "text": " — instances are isolated per namespace, like Pods."
+              }
+            ],
+            [
+              {
+                "text": "scope: Cluster",
+                "marks": ["code"]
+              },
+              {
+                "text": " — instances are cluster-wide, like Nodes or PersistentVolumes."
+              }
+            ],
+            [
+              {
+                "text": "served: true / false",
+                "marks": []
+              },
+              {
+                "text": " — controls whether a version is accessible via the API; allows deprecating old versions without removing stored data."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "info",
+          "runs": [
+            {
+              "text": "CRDs replaced the older Aggregated API Server (AA) mechanism for most use cases. AAs still exist for scenarios needing custom admission logic beyond what webhooks support, or for very high-throughput types where etcd storage is a bottleneck. For the vast majority of operators, CRDs plus webhooks cover everything."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "A CRD is a form you file with Kubernetes that says: \"from now on, treat objects of kind Foo as first-class citizens.\" Once applied, you can create, list, watch, and delete Foos the same way you do Deployments — because Kubernetes registers the new type in its own API."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "k8s-ch09-c002",
+      "order": 2,
+      "title": "Custom Resources — Instances of a CRD",
+      "teaser": "A CRD defines the schema; a Custom Resource is the live instance. It carries user-intent in its spec and reflects cluster state in its status — a split that mirrors every built-in Kubernetes object.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Once a CRD is registered, you create "
+            },
+            {
+              "text": "Custom Resources (CRs)",
+              "marks": ["bold"]
+            },
+            {
+              "text": " by writing YAML with the new kind and submitting it to the API server. The API server validates the object against the CRD's "
+            },
+            {
+              "text": "openAPIV3Schema",
+              "marks": ["code"]
+            },
+            {
+              "text": " and persists it to etcd."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "A CR for the "
+            },
+            {
+              "text": "PostgresCluster",
+              "marks": ["code"]
+            },
+            {
+              "text": " kind (as used by the Crunchy Data postgres-operator):"
+            }
+          ]
+        },
+        {
+          "type": "code",
+          "language": "yaml",
+          "text": "apiVersion: postgres-operator.crunchydata.com/v1beta1\nkind: PostgresCluster\nmetadata:\n  name: hippo\n  namespace: production\nspec:\n  postgresVersion: 15\n  instances:\n    - name: instance1\n      replicas: 3\n      dataVolumeClaimSpec:\n        accessModes: [ReadWriteOnce]\n        resources:\n          requests:\n            storage: 10Gi\n  backups:\n    pgbackrest:\n      repos:\n        - name: repo1\n          volume:\n            volumeClaimSpec:\n              accessModes: [ReadWriteOnce]\n              resources:\n                requests:\n                  storage: 5Gi\nstatus:\n  instances:\n    - name: instance1\n      readyReplicas: 3\n  postgresVersion: 15\n  conditions:\n    - type: ProxyAvailable\n      status: \"True\""
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The "
+            },
+            {
+              "text": "spec",
+              "marks": ["code"]
+            },
+            {
+              "text": " is the user's declaration of desired state — what they want. The "
+            },
+            {
+              "text": "status",
+              "marks": ["code"]
+            },
+            {
+              "text": " is written by the operator to reflect observed state — what actually exists. Controllers never write to "
+            },
+            {
+              "text": "spec",
+              "marks": ["code"]
+            },
+            {
+              "text": "; only users and other controllers with explicit authority do. This spec/status split is a hard convention in the Kubernetes API."
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "status.conditions",
+                "marks": ["code"]
+              },
+              {
+                "text": " — structured boolean conditions (type/status/reason/message) are the idiomatic way to expose health; avoid free-form string fields in status."
+              }
+            ],
+            [
+              {
+                "text": "Printer columns",
+                "marks": []
+              },
+              {
+                "text": " — the CRD can specify "
+              },
+              {
+                "text": "additionalPrinterColumns",
+                "marks": ["code"]
+              },
+              {
+                "text": " to control what "
+              },
+              {
+                "text": "kubectl get",
+                "marks": ["code"]
+              },
+              {
+                "text": " shows, making CRs as legible as built-in types."
+              }
+            ]
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "A CR is a YAML object you write — \"I want a Postgres cluster with 3 replicas\" — stored in etcd like any other Kubernetes object. Its spec says what you want; its status reports what the operator has actually built. The CR is the human-facing interface; the operator reacts to it."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "k8s-ch09-c003",
+      "order": 3,
+      "title": "The Controller Pattern — Continuous Reconciliation",
+      "teaser": "A controller is a loop that watches one or more resource types and acts to make actual state match desired state. It does not run a command once and exit — it runs forever, reacting to every change.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Every component in Kubernetes that keeps resources in their desired state is a controller: kube-controller-manager bundles dozens of them (Deployment controller, ReplicaSet controller, Node controller, Endpoint controller). The Kubernetes extension model invites you to write your own."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The controller pattern has four properties that distinguish it from a conventional \"run once\" operator script:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Level-triggered, not edge-triggered.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " A controller reacts to the current state of the world, not just to a change event. If a reconcile loop misses an event (process restart, network blip), the next full sync still converges correctly."
+              }
+            ],
+            [
+              {
+                "text": "Idempotent.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Running reconcile ten times when only one run was needed must leave the system in the same state as running it once. Kubernetes controllers achieve this by using declarative API calls (apply, not create-or-fail)."
+              }
+            ],
+            [
+              {
+                "text": "Error-tolerant with back-off.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " On failure the controller re-queues the object with exponential back-off rather than crashing. A transient dependency failure (database not yet ready) should not wedge the controller permanently."
+              }
+            ],
+            [
+              {
+                "text": "Actuates through the Kubernetes API.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Controllers create, update, and delete Kubernetes resources — they do not run shell commands or SSH into nodes. Everything is driven through the API, which makes changes auditable and reversible."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The built-in ReplicaSet controller is the canonical example. Its goal: ensure the number of running Pods matches "
+            },
+            {
+              "text": "spec.replicas",
+              "marks": ["code"]
+            },
+            {
+              "text": ". On every reconcile it counts live Pods matching the selector, computes the delta, and either creates or deletes Pods to close the gap. It does not care how the gap arose — manual deletion, node failure, a previous controller crash — it just fixes it."
+            }
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "info",
+          "runs": [
+            {
+              "text": "The level-triggered model is sometimes called \"the Hollywood Principle for infrastructure\": don't call us, we'll poll you. The controller does not wait for a notification that something changed; it periodically re-examines the world. Events are an optimization (they trigger immediate reconciles) but correctness does not depend on them."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "A controller is a process that keeps asking: \"does what I see match what the spec says should exist?\" If yes, do nothing. If no, act to close the gap. It loops forever, so even if it misses an event or crashes and restarts, it will eventually converge to the right state."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "k8s-ch09-c004",
+      "order": 4,
+      "title": "The Operator Pattern — Domain Knowledge in Code",
+      "teaser": "An operator is a controller paired with a CRD that encodes the operational expertise of a human expert: how to deploy, scale, back up, upgrade, and recover a specific piece of software. cert-manager, prometheus-operator, and postgres-operator are the canonical examples.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The term "
+            },
+            {
+              "text": "operator",
+              "marks": ["bold"]
+            },
+            {
+              "text": " was coined by CoreOS engineers Brandon Philips and Josh Wood in 2016. The insight: stateful distributed systems need ongoing operational expertise — scaling decisions, backup scheduling, version upgrades, failover handling. That expertise traditionally lives in runbooks and human SREs. An operator puts it in code."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Real-world examples and what they encode:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "cert-manager",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — watches "
+              },
+              {
+                "text": "Certificate",
+                "marks": ["code"]
+              },
+              {
+                "text": " CRs and automates the full ACME/Let's Encrypt lifecycle: CSR generation, DNS-01 or HTTP-01 challenge, certificate issuance, storage in a Secret, and renewal before expiry. The operational knowledge: \"a certificate should be renewed at 2/3 of its lifetime, and renewal failures should trigger an alert.\""
+              }
+            ],
+            [
+              {
+                "text": "prometheus-operator",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — introduces "
+              },
+              {
+                "text": "Prometheus",
+                "marks": ["code"]
+              },
+              {
+                "text": ", "
+              },
+              {
+                "text": "ServiceMonitor",
+                "marks": ["code"]
+              },
+              {
+                "text": ", and "
+              },
+              {
+                "text": "PrometheusRule",
+                "marks": ["code"]
+              },
+              {
+                "text": " CRDs. It translates these into Prometheus configuration, reloads on change, and manages StatefulSet upgrades without losing metrics data."
+              }
+            ],
+            [
+              {
+                "text": "Crunchy postgres-operator",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — manages primary/replica topology, pgBackRest backups, connection pooling via pgBouncer, and rolling minor version upgrades. Writing this correctly as a runbook would take hundreds of pages; the operator enforces it on every cluster, every time."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The operator pattern is the answer to: \"how do I deploy stateful infrastructure on Kubernetes without losing the operational knowledge that keeps it running correctly?\" A StatefulSet can run Postgres pods; an operator can run a Postgres "
+            },
+            {
+              "text": "service",
+              "marks": ["italic"]
+            },
+            {
+              "text": " — with the Day-2 operations (backup, failover, upgrade) built in."
+            }
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "info",
+          "runs": [
+            {
+              "text": "OperatorHub.io (operated by Red Hat) catalogs over 300 community and certified operators. CNCF maintains an operator special interest group (SIG). The pattern has become the standard delivery mechanism for complex stateful workloads on Kubernetes."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "An operator is a controller that knows how to run a specific application — not just deploy it, but operate it: scale it, back it up, upgrade it, heal it. It captures what a senior database administrator would do on-call, and runs that logic automatically in response to a custom resource."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "k8s-ch09-c005",
+      "order": 5,
+      "title": "The Reconciliation Loop — Observe, Diff, Act",
+      "teaser": "Every controller implements the same three-step loop: observe current state, compute the diff against desired state, act to close the gap. The loop runs until the diff is zero — or until an error triggers a retry.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The reconciliation loop is the logical heart of every controller. Pseudocode for a generic operator reconcile function:"
+            }
+          ]
+        },
+        {
+          "type": "code",
+          "language": "text",
+          "text": "func Reconcile(ctx context.Context, req Request) (Result, error) {\n    // 1. OBSERVE — read desired state from the API\n    desired := apiClient.Get(req.NamespacedName)  // the CR\n    if notFound(desired) {\n        return OK  // object was deleted; nothing to do\n    }\n\n    // 2. OBSERVE — read actual state from the cluster\n    actual := apiClient.Get(childResourceName(desired))\n\n    // 3. DIFF — compare desired vs actual\n    if actual == nil {\n        // resource does not exist yet\n        child := buildChildResource(desired.Spec)\n        err := apiClient.Create(child)\n        return requeueOnError(err)\n    }\n\n    if needsUpdate(desired.Spec, actual.Spec) {\n        patch := computePatch(desired.Spec, actual.Spec)\n        err := apiClient.Patch(actual, patch)\n        return requeueOnError(err)\n    }\n\n    // 4. UPDATE STATUS to reflect observed state\n    desired.Status.Ready = actual.Status.Ready\n    apiClient.Status().Update(desired)\n\n    return OK  // diff is zero; nothing more to do\n}"
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Several implementation rules make this pattern safe:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Return OK for missing objects.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " If the CR is gone, the reconcile loop should return success. Deletion semantics are handled separately via finalizers (see card 7), not by returning errors."
+              }
+            ],
+            [
+              {
+                "text": "Use server-side apply or strategic merge patch.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Plain "
+              },
+              {
+                "text": "Update",
+                "marks": ["code"]
+              },
+              {
+                "text": " overwrites fields set by other controllers. "
+              },
+              {
+                "text": "Patch",
+                "marks": ["code"]
+              },
+              {
+                "text": " with field ownership prevents accidental clobbering."
+              }
+            ],
+            [
+              {
+                "text": "Read from the informer cache, not the live API.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " All reads inside reconcile should use the local cache; only writes go directly to the API server. This keeps the controller off the API server's hot path."
+              }
+            ],
+            [
+              {
+                "text": "Emit events for human visibility.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " "
+              },
+              {
+                "text": "recorder.Event(obj, v1.EventTypeNormal, \"Created\", \"Pod created\")",
+                "marks": ["code"]
+              },
+              {
+                "text": " creates an Event object visible via "
+              },
+              {
+                "text": "kubectl describe",
+                "marks": ["code"]
+              },
+              {
+                "text": "."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "warning",
+          "runs": [
+            {
+              "text": "A common bug: returning an error on every reconcile of an object that has already converged. This floods the work queue with retries, generates log noise, and burns CPU. Always check whether the actual state already matches desired before issuing a write — and return OK when no diff exists."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The reconcile loop is basically: look at what the spec says, look at what actually exists, figure out the difference, and do the minimum work to close that gap. If the gap is already zero, do nothing. If there is an error, re-queue and try again later with exponential back-off."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "k8s-ch09-c006",
+      "order": 6,
+      "title": "Watch and Informers — Efficient Change Subscriptions",
+      "teaser": "Controllers do not poll the API server on a timer. They use the watch API to receive a stream of change events, buffered and cached by a local informer. Informers are the efficiency backbone that makes hundreds of controllers coexist without crushing etcd.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The Kubernetes API server exposes a "
+            },
+            {
+              "text": "watch",
+              "marks": ["code"]
+            },
+            {
+              "text": " endpoint for every resource type. A client opening "
+            },
+            {
+              "text": "GET /apis/apps/v1/deployments?watch=true",
+              "marks": ["code"]
+            },
+            {
+              "text": " receives a long-lived HTTP response that streams "
+            },
+            {
+              "text": "WatchEvent",
+              "marks": ["code"]
+            },
+            {
+              "text": " objects (type: ADDED / MODIFIED / DELETED, object: the full resource) as changes occur in etcd."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "An "
+            },
+            {
+              "text": "Informer",
+              "marks": ["bold"]
+            },
+            {
+              "text": " wraps this raw watch stream with two additional layers:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "In-memory cache (Store / Indexer).",
+                "marks": ["bold"]
+              },
+              {
+                "text": " All objects of the watched type are kept locally. Reconcile reads from this cache — no extra round trip to the API server per reconcile invocation. The cache is consistent with etcd (via the watch stream) and supports indexed lookups (e.g., \"all Pods on node X\")."
+              }
+            ],
+            [
+              {
+                "text": "Event handlers and work queue.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " When the informer sees an ADDED/MODIFIED/DELETED event, it calls registered "
+              },
+              {
+                "text": "ResourceEventHandler",
+                "marks": ["code"]
+              },
+              {
+                "text": " callbacks. In controller-runtime, these handlers push the changed object's "
+              },
+              {
+                "text": "NamespacedName",
+                "marks": ["code"]
+              },
+              {
+                "text": " key into a rate-limited work queue; the reconcile worker drains that queue."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Informers also implement "
+            },
+            {
+              "text": "resync",
+              "marks": ["bold"]
+            },
+            {
+              "text": ": periodically, they re-enqueue every cached object to trigger a full reconcile. Resync catches drifts that produce no watch event (e.g., out-of-band manual changes to a child resource that the controller did not detect)."
+            }
+          ]
+        },
+        {
+          "type": "code",
+          "language": "text",
+          "text": "Informer architecture (simplified):\n\n  etcd → API server → Watch stream\n                          |\n                     [Reflector]      ← reconnects on disconnect\n                          |\n                     [DeltaFIFO]     ← ordered change queue\n                          |\n              ┌──────────┴──────────┐\n          [Store/Indexer]    [Event handlers]\n          (local cache)       ↓\n                         [Work Queue]  ← rate-limited, deduplicated\n                              |\n                        [Reconcile worker goroutines]"
+        },
+        {
+          "type": "callout",
+          "variant": "info",
+          "runs": [
+            {
+              "text": "A SharedInformerFactory ensures multiple controllers watching the same resource type share a single watch connection and cache — not N separate connections. In kube-controller-manager, all 30+ controllers share informers this way. Without sharing, each additional controller would double-tax the API server."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Instead of asking the API server \"what changed?\" every second, an informer opens a persistent connection and receives a stream of changes as they happen. It keeps a local copy of every object it cares about. When a controller needs to read a resource, it reads from that local copy — the API server only sees writes, not reads."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "k8s-ch09-c007",
+      "order": 7,
+      "title": "Operator SDK and Kubebuilder — Scaffolding Tools",
+      "teaser": "Writing a controller from scratch means plumbing informers, work queues, leader election, and webhook scaffolding. Kubebuilder and Operator SDK generate that boilerplate so you can focus on reconcile logic.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Both tools wrap the same underlying library — "
+            },
+            {
+              "text": "controller-runtime",
+              "marks": ["code"]
+            },
+            {
+              "text": " — and generate a project skeleton with Go modules, a Makefile, Dockerfile, and RBAC manifests pre-wired."
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Kubebuilder",
+                "marks": ["bold"]
+              },
+              {
+                "text": " (kubernetes-sigs) — the reference implementation, closely aligned with upstream controller-runtime. Commands: "
+              },
+              {
+                "text": "kubebuilder init --domain example.com",
+                "marks": ["code"]
+              },
+              {
+                "text": ", "
+              },
+              {
+                "text": "kubebuilder create api --group apps --version v1alpha1 --kind Foo",
+                "marks": ["code"]
+              },
+              {
+                "text": ". Generates CRD YAML from Go struct annotations, RBAC markers, and a reconciler stub."
+              }
+            ],
+            [
+              {
+                "text": "Operator SDK",
+                "marks": ["bold"]
+              },
+              {
+                "text": " (Red Hat / OperatorHub) — extends Kubebuilder with Ansible and Helm operator flavors. "
+              },
+              {
+                "text": "operator-sdk init",
+                "marks": ["code"]
+              },
+              {
+                "text": " for Go operators is nearly identical to Kubebuilder. The SDK adds integration with the Operator Lifecycle Manager (OLM) and OperatorHub packaging format (ClusterServiceVersion)."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "A typical generated reconciler stub:"
+            }
+          ]
+        },
+        {
+          "type": "code",
+          "language": "text",
+          "text": "// FooReconciler reconciles a Foo object\n//+kubebuilder:rbac:groups=example.com,resources=foos,verbs=get;list;watch;create;update;patch;delete\n//+kubebuilder:rbac:groups=example.com,resources=foos/status,verbs=get;update;patch\ntype FooReconciler struct {\n    client.Client\n    Scheme *runtime.Scheme\n}\n\nfunc (r *FooReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {\n    log := log.FromContext(ctx)\n    // fetch the Foo instance\n    foo := &examplev1alpha1.Foo{}\n    if err := r.Get(ctx, req.NamespacedName, foo); err != nil {\n        return ctrl.Result{}, client.IgnoreNotFound(err)\n    }\n    // TODO: your reconcile logic here\n    return ctrl.Result{}, nil\n}"
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The "
+            },
+            {
+              "text": "//+kubebuilder:rbac",
+              "marks": ["code"]
+            },
+            {
+              "text": " marker comments are processed by "
+            },
+            {
+              "text": "controller-gen",
+              "marks": ["code"]
+            },
+            {
+              "text": " to produce "
+            },
+            {
+              "text": "ClusterRole",
+              "marks": ["code"]
+            },
+            {
+              "text": " YAML — no hand-maintaining RBAC manifests. Similarly, "
+            },
+            {
+              "text": "//+kubebuilder:validation:Minimum=1",
+              "marks": ["code"]
+            },
+            {
+              "text": " on a struct field emits the corresponding "
+            },
+            {
+              "text": "openAPIV3Schema",
+              "marks": ["code"]
+            },
+            {
+              "text": " validation rule into the generated CRD."
+            }
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "info",
+          "runs": [
+            {
+              "text": "controller-runtime provides the Manager abstraction: a single process hosting multiple controllers, a shared informer cache, leader election via a Lease object, and webhook server. Starting a new controller is ctrl.NewControllerManagedBy(mgr).For(&Foo{}).Complete(reconciler) — three lines to wire an informer, work queue, and leader election."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Kubebuilder and Operator SDK are project generators. You run a command, they produce a Go project with all the boring infrastructure already written: the informers, the queue, the leader election, the webhook wiring. You fill in the reconcile function with your actual logic."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "k8s-ch09-c008",
+      "order": 8,
+      "title": "Finalizers — Pre-Deletion Cleanup Hooks",
+      "teaser": "When you delete a Kubernetes object, finalizers let a controller intercept the deletion, run cleanup, and then permit the object to disappear. Without finalizers, deleting a CR can leave orphaned cloud resources, credentials, or external state behind.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Finalizers are strings stored in "
+            },
+            {
+              "text": "metadata.finalizers",
+              "marks": ["code"]
+            },
+            {
+              "text": " on any Kubernetes object. The API server enforces one rule: "
+            },
+            {
+              "text": "an object with a non-empty finalizers list cannot be permanently deleted",
+              "marks": ["bold"]
+            },
+            {
+              "text": ". A DELETE request sets "
+            },
+            {
+              "text": "metadata.deletionTimestamp",
+              "marks": ["code"]
+            },
+            {
+              "text": " instead of removing the object — it enters a \"terminating\" state."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The controller watches for a non-nil "
+            },
+            {
+              "text": "deletionTimestamp",
+              "marks": ["code"]
+            },
+            {
+              "text": ", runs its cleanup logic, and then removes its finalizer string. When the finalizers list is empty, the API server permanently deletes the object."
+            }
+          ]
+        },
+        {
+          "type": "code",
+          "language": "text",
+          "text": "func (r *FooReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {\n    foo := &Foo{}\n    r.Get(ctx, req.NamespacedName, foo)\n\n    if foo.DeletionTimestamp.IsZero() {\n        // Object is not being deleted. Ensure our finalizer is present.\n        if !containsString(foo.Finalizers, myFinalizer) {\n            foo.Finalizers = append(foo.Finalizers, myFinalizer)\n            r.Update(ctx, foo)\n        }\n    } else {\n        // Object is being deleted.\n        if containsString(foo.Finalizers, myFinalizer) {\n            // Run cleanup: delete S3 bucket, revoke IAM role, etc.\n            if err := r.deleteExternalResources(foo); err != nil {\n                return ctrl.Result{}, err  // retry until cleanup succeeds\n            }\n            // Remove our finalizer to unblock deletion.\n            foo.Finalizers = removeString(foo.Finalizers, myFinalizer)\n            r.Update(ctx, foo)\n        }\n    }\n    // ... normal reconcile ...\n}"
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Multiple finalizers are independent.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Each controller manages its own finalizer string. The object is blocked until all are removed — even if a second controller owns another finalizer."
+              }
+            ],
+            [
+              {
+                "text": "foregroundDeletion",
+                "marks": ["code"]
+              },
+              {
+                "text": " — Kubernetes's built-in finalizer that blocks parent deletion until all dependent objects are gone (garbage collection synchronization)."
+              }
+            ],
+            [
+              {
+                "text": "Hung finalizers",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — if a controller crashes during cleanup, the object stays in Terminating indefinitely. Operators should make cleanup idempotent and use exponential back-off, not infinite loops."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "warning",
+          "runs": [
+            {
+              "text": "A finalizer that never clears is one of the most common reasons namespaces get stuck in Terminating state. If you kubectl delete namespace foo and it hangs, check for objects with non-empty finalizers whose controller is no longer running: kubectl api-resources --verbs=list --namespaced -o name | xargs -I{} kubectl get {} -n foo -o json | jq '.items[] | select(.metadata.finalizers != null)'."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "A finalizer is a sticky note on a Kubernetes object that says: \"do not delete this yet.\" When you issue a delete command, Kubernetes sets a deletion timestamp but keeps the object around. Your controller sees that timestamp, runs its cleanup (deletes the S3 bucket, revokes credentials, etc.), removes the sticky note, and only then does the object actually disappear."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "k8s-ch09-c009",
+      "order": 9,
+      "title": "OwnerReferences and Garbage Collection",
+      "teaser": "OwnerReferences tie a child object's lifetime to its parent. When the parent is deleted, Kubernetes automatically garbage-collects all objects that list it as an owner — no custom cleanup logic required for the happy path.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Every Kubernetes object supports an "
+            },
+            {
+              "text": "ownerReferences",
+              "marks": ["code"]
+            },
+            {
+              "text": " list in its metadata. Each entry names a parent object. The Kubernetes garbage collector (part of kube-controller-manager) watches for objects whose owner no longer exists and deletes them."
+            }
+          ]
+        },
+        {
+          "type": "code",
+          "language": "yaml",
+          "text": "# A Pod automatically created by a ReplicaSet carries this:\napiVersion: v1\nkind: Pod\nmetadata:\n  name: frontend-abc12\n  ownerReferences:\n    - apiVersion: apps/v1\n      kind: ReplicaSet\n      name: frontend\n      uid: d9607e19-f88f-11e6-a518-42010a800195\n      controller: true      # this owner controls the object\n      blockOwnerDeletion: true  # blocks foreground deletion of owner until child is gone"
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "In an operator, you set ownerReferences on every child resource your controller creates. Kubebuilder provides a helper:"
+            }
+          ]
+        },
+        {
+          "type": "code",
+          "language": "text",
+          "text": "// Make the ConfigMap owned by the Foo CR\ncm := buildConfigMap(foo)\nif err := ctrl.SetControllerReference(foo, cm, r.Scheme); err != nil {\n    return ctrl.Result{}, err\n}\nr.Create(ctx, cm)"
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Two deletion propagation policies:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Background (default).",
+                "marks": ["bold"]
+              },
+              {
+                "text": " The parent is deleted immediately; the garbage collector deletes orphaned children asynchronously. Fastest but children exist briefly after parent is gone."
+              }
+            ],
+            [
+              {
+                "text": "Foreground.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Parent enters Terminating; garbage collector deletes children with "
+              },
+              {
+                "text": "blockOwnerDeletion: true",
+                "marks": ["code"]
+              },
+              {
+                "text": " first; parent is deleted only after all blocking children are gone."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Cross-namespace ownerReferences are not allowed — an owner must be in the same namespace as its dependents (or both must be cluster-scoped). For cross-namespace cleanup, finalizers are the correct mechanism."
+            }
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "info",
+          "runs": [
+            {
+              "text": "OwnerReferences and finalizers are complementary, not exclusive. Use ownerReferences for in-cluster child objects (Pods, ConfigMaps, Services) that should die with the parent. Use finalizers for external resources (cloud LBs, DNS records, external secrets) that require active cleanup calls before the parent can go."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "OwnerReferences are like a death-pact between parent and child objects. When the parent dies, Kubernetes automatically kills all the children that listed it as owner. Your operator sets this link when it creates child resources, and cleanup becomes free — no finalizer code needed for in-cluster children."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "k8s-ch09-c010",
+      "order": 10,
+      "title": "Admission Controllers — Validating and Mutating Webhooks",
+      "teaser": "Admission controllers intercept every create/update/delete request to the API server before it is persisted. Mutating webhooks can modify the object in flight; validating webhooks can reject it. This is how sidecars get injected, resource limits get enforced, and policy violations get blocked.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "When a client submits an API request, the API server runs it through an admission chain before writing to etcd:"
+            }
+          ]
+        },
+        {
+          "type": "code",
+          "language": "text",
+          "text": "API request\n    ↓\n[Authentication]  →  who is this?\n    ↓\n[Authorization]   →  are they allowed?\n    ↓\n[Mutating Admission Webhooks]   ← can modify the object\n    ↓\n[Object schema validation]\n    ↓\n[Validating Admission Webhooks] ← can only allow or deny\n    ↓\netcd (persisted)"
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Both webhook types are configured via cluster resources:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "MutatingWebhookConfiguration",
+                "marks": ["code"]
+              },
+              {
+                "text": " — registers a HTTPS endpoint that receives an "
+              },
+              {
+                "text": "AdmissionReview",
+                "marks": ["code"]
+              },
+              {
+                "text": " request and returns a JSON patch to apply. Istio uses this to inject Envoy sidecar containers into every new Pod; cert-manager uses it to inject CA bundles."
+              }
+            ],
+            [
+              {
+                "text": "ValidatingWebhookConfiguration",
+                "marks": ["code"]
+              },
+              {
+                "text": " — registers an endpoint that returns allow/deny with an optional human-readable reason. OPA/Gatekeeper uses this to enforce policy (e.g., \"all Pods must have resource limits set\")."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "code",
+          "language": "yaml",
+          "text": "apiVersion: admissionregistration.k8s.io/v1\nkind: ValidatingWebhookConfiguration\nmetadata:\n  name: validate-resource-limits\nwebhooks:\n  - name: validate-limits.example.com\n    admissionReviewVersions: [v1]\n    clientConfig:\n      service:\n        name: policy-webhook\n        namespace: policy-system\n        path: /validate-pods\n      caBundle: <base64-encoded-ca-cert>\n    rules:\n      - operations: [CREATE, UPDATE]\n        apiGroups: [\"\"]\n        apiVersions: [v1]\n        resources: [pods]\n    failurePolicy: Fail    # Fail or Ignore if webhook is unreachable\n    sideEffects: None"
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "failurePolicy: Fail",
+                "marks": ["code"]
+              },
+              {
+                "text": " — if the webhook server is unreachable, the admission request is rejected. High safety guarantee; webhook availability becomes critical."
+              }
+            ],
+            [
+              {
+                "text": "failurePolicy: Ignore",
+                "marks": ["code"]
+              },
+              {
+                "text": " — if the webhook server is down, the request proceeds without validation. Lower safety; useful for non-critical policy during rollouts."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "warning",
+          "runs": [
+            {
+              "text": "Webhooks introduce latency on every admission request and create an availability dependency: if your webhook server is down and failurePolicy is Fail, no Pods can be created cluster-wide. Always run webhook servers in a highly available configuration (multiple replicas) and set appropriate timeoutSeconds (default 10s) to avoid hanging the API server under load."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Admission webhooks are traffic cops inside the API server. Every create or update request passes through them before being saved. A mutating webhook can change the request on the fly (add a sidecar, inject a label). A validating webhook can just say yes or no (reject Pods without resource limits). The API server calls your HTTPS endpoint; you respond with a JSON decision."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "k8s-ch09-c011",
+      "order": 11,
+      "title": "ValidatingAdmissionPolicy — CEL-Based Policies Without Webhooks",
+      "teaser": "Kubernetes 1.28 made ValidatingAdmissionPolicy GA: policy rules written in the Common Expression Language (CEL) enforced natively in the API server — no webhook server to run, no network hop, no availability dependency.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "ValidatingAdmissionPolicy (VAP) moves policy evaluation from external webhook processes into the API server itself using the "
+            },
+            {
+              "text": "Common Expression Language (CEL)",
+              "marks": ["bold"]
+            },
+            {
+              "text": " — the same language used in Kubernetes admission, CRD validation rules, and audit logging. CEL expressions are sandboxed (no external calls, bounded execution time)."
+            }
+          ]
+        },
+        {
+          "type": "code",
+          "language": "yaml",
+          "text": "apiVersion: admissionregistration.k8s.io/v1\nkind: ValidatingAdmissionPolicy\nmetadata:\n  name: require-resource-limits\nspec:\n  failurePolicy: Fail\n  matchConstraints:\n    resourceRules:\n      - apiGroups:   [\"\"]\n        apiVersions: [v1]\n        operations:  [CREATE, UPDATE]\n        resources:   [pods]\n  validations:\n    - expression: >\n        object.spec.containers.all(c,\n          has(c.resources) &&\n          has(c.resources.limits) &&\n          has(c.resources.limits.memory))\n      message: \"All containers must have memory limits set.\"\n---\napiVersion: admissionregistration.k8s.io/v1\nkind: ValidatingAdmissionPolicyBinding\nmetadata:\n  name: require-resource-limits-binding\nspec:\n  policyName: require-resource-limits\n  validationActions: [Deny]          # or Warn, Audit\n  matchResources:\n    namespaceSelector:\n      matchLabels:\n        enforce-limits: \"true\""
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The binding separates the policy definition from its scope, allowing reuse of a single policy across multiple namespace selectors with different enforcement modes:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "validationActions: [Deny]",
+                "marks": ["code"]
+              },
+              {
+                "text": " — requests failing the policy are rejected."
+              }
+            ],
+            [
+              {
+                "text": "validationActions: [Warn]",
+                "marks": ["code"]
+              },
+              {
+                "text": " — requests proceed but a warning is added to the API response, visible in kubectl output."
+              }
+            ],
+            [
+              {
+                "text": "validationActions: [Audit]",
+                "marks": ["code"]
+              },
+              {
+                "text": " — policy violations are logged in the audit log but requests are not blocked. Useful for policy dry-run."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "info",
+          "runs": [
+            {
+              "text": "VAP does not replace mutating webhooks (CEL cannot modify objects) or complex validating webhooks that require external calls (database lookups, API calls). For straightforward structural validation — required fields, value constraints, cross-field rules — VAP is now the preferred approach: cheaper operationally and natively HA."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "ValidatingAdmissionPolicy lets you write policy rules directly in the API server config using an expression language — no webhook server required. Instead of maintaining a running HTTPS service that the API server calls, you deploy a YAML file with CEL expressions, and the API server evaluates them inline. Simpler, faster, and always available."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "k8s-ch09-c012",
+      "order": 12,
+      "title": "Conversion Webhooks — Multi-Version CRD Support",
+      "teaser": "As CRDs evolve, they accumulate API versions (v1alpha1, v1beta1, v1). A conversion webhook translates objects between versions on the fly, letting the API server store a single authoritative version while serving clients that speak any supported version.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "A CRD can declare multiple versions, each with a different schema. Clients may use different versions — an old tool speaks v1alpha1, a new one speaks v1. The API server needs to bridge them. The conversion strategy is declared in the CRD:"
+            }
+          ]
+        },
+        {
+          "type": "code",
+          "language": "yaml",
+          "text": "spec:\n  conversion:\n    strategy: Webhook           # or None (for trivially compatible schemas)\n    webhook:\n      conversionReviewVersions: [v1]\n      clientConfig:\n        service:\n          name: foo-conversion-webhook\n          namespace: foo-system\n          path: /convert"
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "When the API server needs to serve a resource at a version that differs from the stored version, it calls the conversion webhook with a "
+            },
+            {
+              "text": "ConversionReview",
+              "marks": ["code"]
+            },
+            {
+              "text": " request containing the object and the desired target version. The webhook returns the converted object."
+            }
+          ]
+        },
+        {
+          "type": "code",
+          "language": "text",
+          "text": "Conversion flow:\n\nClient requests GET /apis/example.com/v1/foos/myfoo\n                                  ↑\n                         \"v1\" is requested\n\nAPI server fetches from etcd: stored as v1alpha1 (storage version)\n                                  ↓\nCalls conversion webhook: v1alpha1 → v1\n                                  ↓\nReturns v1 object to client"
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Storage version",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — only one version has "
+              },
+              {
+                "text": "storage: true",
+                "marks": ["code"]
+              },
+              {
+                "text": " in the CRD. All objects are physically stored in etcd in this version. When migrating, run "
+              },
+              {
+                "text": "kubectl get foos --all-namespaces -o json | kubectl apply -f -",
+                "marks": ["code"]
+              },
+              {
+                "text": " after updating the storage version to rewrite existing objects."
+              }
+            ],
+            [
+              {
+                "text": "Round-trip safety",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — conversion must be lossless in both directions. Converting v1alpha1→v1→v1alpha1 must produce the original object. Fields that exist only in v1 should be preserved in an annotation or via round-trip-safe encoding when stored at v1alpha1."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "info",
+          "runs": [
+            {
+              "text": "The Kubernetes API machinery project (apimachinery) includes a Hub-and-Spoke conversion pattern: define one hub version (typically the latest stable) and write conversions only to/from hub, not every pair. Kubebuilder's conversion scaffolding generates this pattern automatically, reducing the N^2 conversion code problem to 2(N-1) functions."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "When a CRD has multiple versions (like a v1alpha1 and a v1), Kubernetes stores objects in one authoritative version but serves them in whichever version the client asks for. A conversion webhook is the translator: the API server calls it with \"here is a v1alpha1 object, please give me v1\" and the webhook returns the translated version."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "k8s-ch09-c013",
+      "order": 13,
+      "title": "Operator Capability Levels",
+      "teaser": "The Operator Framework defines five capability levels — from basic install to full autopilot — as a maturity model. Level tells you what operational knowledge the operator encodes: a level 1 operator deploys software; a level 5 operator replaces an on-call DBA.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Red Hat and the OperatorHub community formalized five capability levels to describe how much operational expertise an operator encodes. The levels are cumulative — each level builds on all previous ones."
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Level 1 — Basic Install.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " The operator automates installation and configuration. A user applies a CR; the operator deploys the application with the correct Deployments, Services, and ConfigMaps. Most \"Hello World\" operators stop here."
+              }
+            ],
+            [
+              {
+                "text": "Level 2 — Seamless Upgrades.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " The operator can upgrade from one application version to another without data loss or extended downtime. It knows the safe upgrade path: \"drain connections, take a backup, apply new image, verify health before shifting traffic.\""
+              }
+            ],
+            [
+              {
+                "text": "Level 3 — Full Lifecycle.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " The operator manages backup and recovery, failure detection, and self-healing. It notices a crashed replica, triggers a failover, and restores from backup if needed — without human intervention. The Crunchy postgres-operator and the Strimzi Kafka operator reach level 3."
+              }
+            ],
+            [
+              {
+                "text": "Level 4 — Deep Insights.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " The operator exposes rich metrics (via Prometheus scrape annotations or ServiceMonitors), structured events, and status conditions that make the cluster's health visible to observability tooling. Alerts are pre-wired and actionable."
+              }
+            ],
+            [
+              {
+                "text": "Level 5 — Autopilot.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " The operator monitors its own metrics, detects performance problems, and scales or reconfigures automatically. It tunes memory, adjusts replica counts based on query load, rebalances shards — without a human deciding each action. Very few production operators reach this level today."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Real-world level assessments:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "prometheus-operator",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — level 2–3 (upgrade support, failure detection for StatefulSets)."
+              }
+            ],
+            [
+              {
+                "text": "cert-manager",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — level 3 (full certificate lifecycle including automatic renewal and failure recovery)."
+              }
+            ],
+            [
+              {
+                "text": "Crunchy postgres-operator",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — level 3–4 (lifecycle management, pgBackRest, Prometheus metrics export)."
+              }
+            ],
+            [
+              {
+                "text": "Google Cloud SQL Operator / AWS ACK",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — levels 1–2 (provision and configure managed services via CRDs; actual reliability is delegated to the cloud provider)."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "info",
+          "runs": [
+            {
+              "text": "The capability levels are a useful communication tool when evaluating or publishing an operator, but they are not a certification — there is no test. A more practical question is: which Day-2 operations does this operator handle, and which still require a human? Listing those explicitly is more useful than a level number."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Operator capability levels are a maturity ladder. Level 1: it can install the software. Level 2: it can upgrade it safely. Level 3: it can back up, restore, and heal failures on its own. Level 4: it tells you what is wrong before you have to ask. Level 5: it fixes performance problems without you telling it to. Most production operators live at level 3."
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

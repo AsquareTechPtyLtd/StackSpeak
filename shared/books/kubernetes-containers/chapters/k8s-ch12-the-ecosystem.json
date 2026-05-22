@@ -1,0 +1,1710 @@
+{
+  "chapterId": "k8s-ch12-the-ecosystem",
+  "shardIndex": 12,
+  "cards": [
+    {
+      "id": "k8s-ch12-c001",
+      "order": 1,
+      "title": "The Cloud-Native Ecosystem Evaluation Lens",
+      "teaser": "The CNCF landscape lists hundreds of projects. Most teams need a handful. The skill is not knowing every tool — it is knowing which category of problem each tool category solves, and applying that to your actual constraints before any adoption conversation begins.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The cloud-native ecosystem grows faster than any individual or team can track. A productive way to navigate it is to group tooling by the operational gap it fills and ask whether that gap is actually a gap in your context — not whether the tool is popular or CNCF-graduated."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The major categories this chapter covers:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Service meshes.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Fill the gap when built-in Kubernetes networking lacks L7 traffic control, mutual TLS between services, or fine-grained observability at the connection level."
+              }
+            ],
+            [
+              {
+                "text": "Observability stack.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Fill the gap when cluster-native metrics, logs, and traces are either absent or siloed across tools that do not compose."
+              }
+            ],
+            [
+              {
+                "text": "Advanced autoscaling.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Fill the gap when HPA (CPU/memory only) and the built-in cluster-autoscaler do not respond to the actual load signals your workloads produce."
+              }
+            ],
+            [
+              {
+                "text": "Runtime security.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Fill the gap when RBAC and Pod Security Standards are insufficient — you need to detect behavioral anomalies after a workload is already running."
+              }
+            ],
+            [
+              {
+                "text": "Certificate lifecycle management.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Fill the gap when TLS certificates are managed manually — a significant operational and security liability in a cluster with dozens of services."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "warning",
+          "runs": [
+            {
+              "text": "This chapter frames what to evaluate, not what to deploy permanently. The service mesh and observability landscapes in particular shift quarterly. Tool capability parity changes; the underlying problems do not. Evaluate against your current constraints and revisit at the cadence this chapter's refresh label indicates."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Before adopting any ecosystem tool, identify the specific operational gap you have — traffic control, observability, autoscaling, runtime security, cert management — and confirm it actually exists in your setup. Popularity is not a gap."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "k8s-ch12-c002",
+      "order": 2,
+      "title": "Service Meshes: The Problem They Solve",
+      "teaser": "A service mesh is not a networking upgrade — it is an operational answer to a specific set of problems: mutual TLS between services, per-connection observability, traffic shaping without code changes, and resilience patterns (retries, circuit breaking) enforced consistently across a fleet of services.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Kubernetes networking gives every pod an IP and DNS, and Services route traffic. That is sufficient for simple applications. It is not sufficient when you need to answer the following questions reliably:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Is traffic between Service A and Service B encrypted, and is each side authenticated as who they claim to be?"
+              }
+            ],
+            [
+              {
+                "text": "What is the latency profile of every service-to-service call, and which specific connection is responsible for a timeout?"
+              }
+            ],
+            [
+              {
+                "text": "Can I shift 5% of production traffic to a canary version of a service without modifying the application code or the Kubernetes Deployment?"
+              }
+            ],
+            [
+              {
+                "text": "If Service B starts returning 500s, will Service A retry intelligently and eventually circuit-break — without each team implementing that logic themselves?"
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Service meshes solve these problems by inserting a proxy — either as a sidecar alongside each pod or at the node/namespace level — that intercepts all in-cluster traffic. Because the proxy is infrastructure, not application code, the capabilities apply uniformly across every service in the mesh without per-team implementation work."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The sidecar proxy pattern (Istio's original model, Linkerd) injects a proxy container into every pod. All traffic flows through the proxy, which handles mTLS, observability, and traffic policy. The sidecar is transparent to the application — the application connects to ",
+              "marks": []
+            },
+            {
+              "text": "localhost",
+              "marks": ["code"]
+            },
+            {
+              "text": " as normal; the proxy handles the rest."
+            }
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "info",
+          "runs": [
+            {
+              "text": "A service mesh is significant operational investment. Before adopting one, verify you actually need its capabilities. A cluster of three services managed by one team rarely needs a full service mesh. A cluster of fifty services owned by ten teams, with a security requirement for mTLS between all of them, almost certainly does."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "A service mesh intercepts all service-to-service traffic via a proxy and uses that position to enforce mTLS, emit connection-level metrics and traces, and apply traffic policies — without touching application code. The cost is operational complexity; the benefit is uniform guarantees across every service."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "k8s-ch12-c003",
+      "order": 3,
+      "title": "Istio: Full-Featured, Envoy-Based",
+      "teaser": "Istio is the most capable service mesh available and also the most operationally demanding. It is built on Envoy proxy, supports virtually every traffic management scenario, and has a mature security model — but its control plane complexity and resource overhead are real costs that must be weighed honestly.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Istio (CNCF graduated) uses Envoy as its data plane proxy and Istiod as its control plane. Istiod distributes traffic configuration, certificates, and service discovery to every Envoy sidecar in the mesh. The architecture is flexible and extensible — Envoy's filter chain allows custom plugins — but also complex to reason about when debugging."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Capabilities that make Istio worth evaluating:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Traffic management depth.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " VirtualService and DestinationRule resources give fine-grained control over routing — header-based routing, weight-based canary splits, fault injection for testing, retry/timeout policies. No other mesh matches this depth."
+              }
+            ],
+            [
+              {
+                "text": "Authorization policies.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Istio's AuthorizationPolicy allows namespace, workload, and method-level access control enforced at the proxy — independent of application code. This is powerful for zero-trust architectures."
+              }
+            ],
+            [
+              {
+                "text": "Multi-cluster support.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Istio has first-class multi-cluster and multi-network topology support. For organizations managing fleets of clusters, this is a significant differentiator."
+              }
+            ],
+            [
+              {
+                "text": "Ecosystem integration.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Istio integrates with Prometheus, Jaeger, Zipkin, Kiali, and most observability backends. The integration surface is large because the adopter base is large."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Costs to evaluate honestly:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Sidecar resource overhead.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Each Envoy sidecar consumes memory and CPU — typically 50-100 MB RAM per pod at idle. In clusters with hundreds of pods, the aggregate overhead is non-trivial."
+              }
+            ],
+            [
+              {
+                "text": "Control plane complexity.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Istio's CRD surface (VirtualService, DestinationRule, Gateway, AuthorizationPolicy, PeerAuthentication, and more) is large. Debugging traffic issues requires understanding how these objects compose, which is not intuitive."
+              }
+            ],
+            [
+              {
+                "text": "Configuration surface area.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " The breadth of Istio's capabilities means many ways to express the same intent, and misconfiguration is easy. Teams without dedicated platform engineering resources frequently struggle to operate Istio reliably."
+              }
+            ]
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Istio is the most capable service mesh — Envoy-based, with deep traffic management, strong security policies, and multi-cluster support. Its cost is real: sidecar resource overhead and a large CRD surface that requires platform engineering expertise to operate well."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "k8s-ch12-c004",
+      "order": 4,
+      "title": "Linkerd: Lightweight and Rust-Based",
+      "teaser": "Linkerd took a deliberate stance against Istio's complexity: a smaller feature set, a purpose-built Rust proxy (not Envoy), and an operational model designed to be approachable without a dedicated platform team. The tradeoff is that some capabilities Istio has, Linkerd does not — but for many teams that is acceptable.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Linkerd (CNCF graduated, maintained by Buoyant) uses its own proxy written in Rust called the microproxy. The choice to write a purpose-built proxy rather than use Envoy was deliberate: the microproxy has a narrower feature surface, which means a smaller attack surface, lower memory footprint, and less configuration complexity."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Where Linkerd differentiates:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Operational simplicity.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Linkerd's installation, upgrade path, and configuration model are significantly simpler than Istio's. The CLI is approachable, and the CRD surface is small. Teams without a platform engineering function can realistically operate it."
+              }
+            ],
+            [
+              {
+                "text": "Lower resource overhead.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " The Rust microproxy uses less memory and CPU than Envoy sidecars. In memory-constrained clusters or clusters with many small pods, the difference is meaningful."
+              }
+            ],
+            [
+              {
+                "text": "Default-on mTLS.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Linkerd automatically issues and rotates certificates for all meshed workloads and enables mTLS by default. There is no configuration ceremony — mTLS just works after mesh injection."
+              }
+            ],
+            [
+              {
+                "text": "SMI / Gateway API compliance.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Linkerd follows standard Kubernetes traffic policy APIs rather than introducing proprietary CRDs for core use cases, which reduces the lock-in surface."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Where Linkerd does not match Istio:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Traffic management depth.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Linkerd's traffic splitting and routing capabilities are more limited. Complex header-based routing, fault injection, and advanced canary scenarios require the Istio model."
+              }
+            ],
+            [
+              {
+                "text": "Multi-cluster maturity.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Multi-cluster federation in Linkerd works but is less feature-rich than Istio's multi-cluster model. Evaluate against your actual multi-cluster topology."
+              }
+            ]
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Linkerd is the operationally simpler service mesh — a purpose-built Rust proxy, lower overhead, default-on mTLS, and a small CRD surface. It trades some of Istio's advanced traffic management depth for approachability. For many teams, that is the right tradeoff."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "k8s-ch12-c005",
+      "order": 5,
+      "title": "Cilium Service Mesh: eBPF-Based",
+      "teaser": "Cilium started as a CNI (network plugin) and added service mesh capabilities — using eBPF rather than sidecar proxies as the data plane. This makes it architecturally distinct: it eliminates the per-pod proxy overhead entirely by enforcing policy in the kernel. The tradeoff is that you are adopting a CNI and a service mesh from the same project.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Cilium (CNCF graduated) is primarily a CNI plugin that implements Kubernetes networking using eBPF programs loaded into the Linux kernel. Its service mesh capabilities emerged as a natural extension of that data plane position: if Cilium already intercepts every packet at the kernel level for networking purposes, it can also enforce L7 policies, collect per-flow metrics, and implement service mesh functionality without a proxy sidecar."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "What the eBPF data plane enables:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "No sidecar tax.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Service mesh functionality without injecting a proxy into every pod. The operational overhead of sidecar lifecycle management — injection, upgrades, memory overhead — is eliminated."
+              }
+            ],
+            [
+              {
+                "text": "Combined CNI + mesh.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " If you choose Cilium as your CNI (an increasingly common choice, especially on EKS, GKE, and self-managed clusters), you get network policy, L7 observability, and service mesh capabilities from a single project rather than layering separate tools."
+              }
+            ],
+            [
+              {
+                "text": "Hubble observability.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Hubble is Cilium's built-in observability layer — per-flow metrics, DNS queries, HTTP transaction visibility — sourced from eBPF data without proxy overhead."
+              }
+            ],
+            [
+              {
+                "text": "Kernel-level performance.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " eBPF-based packet processing is faster than userspace proxy processing for network-intensive workloads. Cilium consistently outperforms sidecar-based meshes in throughput benchmarks."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Constraints to evaluate:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Kernel version requirements.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " eBPF features require a relatively modern Linux kernel (4.19+ for basics, 5.10+ for full feature parity). Clusters on older node images may not support all Cilium features."
+              }
+            ],
+            [
+              {
+                "text": "L7 traffic management depth.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " For advanced L7 use cases (complex header routing, fault injection), Cilium's mesh capabilities are still catching up to Istio. Evaluate the specific L7 features you need before assuming parity."
+              }
+            ]
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Cilium implements service mesh functionality in the Linux kernel via eBPF — no sidecar proxies, lower overhead, and unified CNI+mesh from one project. The right question is: are you already using Cilium as your CNI? If yes, its mesh features are a low-cost addition. If not, adopting it is a CNI change, not just a mesh addition."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "k8s-ch12-c006",
+      "order": 6,
+      "title": "Ambient Mesh: Istio Without Sidecars",
+      "teaser": "Ambient mesh is Istio's answer to the sidecar tax — a sidecar-less architecture that delivers mTLS and L4 policy via a per-node ztunnel, and L7 capabilities via per-namespace waypoint proxies only where needed. It is a significant architectural shift that changes the operational profile of Istio substantially.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The sidecar model that defined service meshes since 2017 has a persistent operational cost: every pod gets a proxy, every proxy must be injected, upgraded, and sized, and the aggregate memory overhead at scale is significant. Istio's ambient mesh mode (stable in Istio 1.22+) decouples mesh capabilities from the sidecar lifecycle."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The ambient architecture uses two components:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "ztunnel (zero-trust tunnel).",
+                "marks": ["bold"]
+              },
+              {
+                "text": " A per-node DaemonSet that handles L4 encryption (mTLS) and telemetry for all pods on the node. Every pod in the ambient mesh gets mTLS automatically without any sidecar injection — the ztunnel intercepts traffic at the node network layer."
+              }
+            ],
+            [
+              {
+                "text": "Waypoint proxies.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Per-namespace (or per-service) Envoy proxies that provide L7 capabilities — HTTP routing, header-based policies, advanced traffic management — deployed only for workloads that need L7 features. Workloads that only need mTLS never get a waypoint proxy."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The operational implications:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "No sidecar injection lifecycle.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Pods are added to the ambient mesh by labeling the namespace — no injection webhooks, no pod restarts for proxy upgrades, no per-pod resource requests for the proxy."
+              }
+            ],
+            [
+              {
+                "text": "Gradual L7 adoption.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Teams can start with mTLS everywhere (ztunnel only) and opt specific services into L7 features by deploying waypoint proxies. This allows incremental adoption rather than all-or-nothing."
+              }
+            ],
+            [
+              {
+                "text": "Still early-stage.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Ambient mesh reached stable status relatively recently. Evaluate production readiness against your cluster complexity, particularly multi-cluster topologies and advanced traffic management needs."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "info",
+          "runs": [
+            {
+              "text": "Ambient mesh represents the likely direction for Istio adoption going forward. For new Istio deployments, evaluating ambient mode rather than the sidecar mode is worth doing — the operational simplification is real even if some edge cases are still maturing."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Ambient mesh gives you Istio's mTLS via a per-node ztunnel DaemonSet, with optional per-namespace waypoint proxies only for services needing L7 features. No sidecars means no injection ceremony and no per-pod proxy overhead — at the cost of ambient mode being newer and less battle-tested than the sidecar model."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "k8s-ch12-c007",
+      "order": 7,
+      "title": "Service Mesh Comparison: Evaluating Your Options",
+      "teaser": "Istio, Linkerd, and Cilium mesh represent three genuinely different architectural and operational bets. Choosing between them is not primarily a capabilities question — most teams use a fraction of any mesh's feature set. It is an operational complexity, existing infrastructure, and team capacity question.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Rather than a feature checklist, the following table frames each option by its primary evaluation axis:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Istio (sidecar mode).",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Maximum feature depth. Envoy-based, deep traffic management, strong multi-cluster support, large ecosystem. Best fit: organizations with platform engineering capacity, complex traffic management requirements, or multi-cluster topologies. Avoid if: you lack the ops capacity to maintain a large CRD surface and debug sidecar interactions."
+              }
+            ],
+            [
+              {
+                "text": "Istio (ambient mode).",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Istio capabilities, reduced sidecar overhead. Same feature depth as sidecar mode for most use cases, without per-pod proxy injection. Best fit: new Istio deployments that want Istio's power without the sidecar lifecycle burden. Avoid if: you need features that ambient mode has not yet stabilized."
+              }
+            ],
+            [
+              {
+                "text": "Linkerd.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Operational simplicity, lower resource overhead. Purpose-built Rust proxy, default-on mTLS, approachable configuration model. Best fit: teams that need mTLS and basic observability without platform engineering overhead. Avoid if: you need advanced traffic management or deep multi-cluster federation."
+              }
+            ],
+            [
+              {
+                "text": "Cilium mesh.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " No sidecar overhead, eBPF performance, unified CNI+mesh. Best fit: clusters already running Cilium as CNI, teams optimizing for resource efficiency, or teams wanting Hubble observability. Avoid if: you are not willing to change your CNI, or need Istio-level L7 traffic management today."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Questions that drive the decision more reliably than feature comparison:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "What is your current CNI? If it is Cilium, the mesh extension is low-cost. If it is anything else, Cilium mesh requires a CNI migration."
+              }
+            ],
+            [
+              {
+                "text": "Do you have a platform engineering team that can own mesh operations? If not, Linkerd or Cilium mesh are more realistic than Istio sidecar mode."
+              }
+            ],
+            [
+              {
+                "text": "Do you actually need L7 traffic management (header routing, canary), or only mTLS and connection observability? The latter is achievable with any option."
+              }
+            ],
+            [
+              {
+                "text": "Are you migrating an existing mesh or starting fresh? Migration cost from sidecar Istio to ambient Istio is lower than migration to a different mesh entirely."
+              }
+            ]
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Pick Istio when you need the most feature depth and have the ops capacity for it. Pick Linkerd when you want simplicity and mTLS without the complexity tax. Pick Cilium mesh when you are already on Cilium CNI and want to eliminate sidecar overhead entirely. The wrong choice is picking based on popularity rather than your actual constraints."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "k8s-ch12-c008",
+      "order": 8,
+      "title": "Prometheus: The Metrics Default",
+      "teaser": "Prometheus is the de facto standard for metrics collection in Kubernetes environments. Understanding why it won — pull model, dimensional data model, PromQL — and where its limitations lie (long-term storage, high-cardinality metrics) is more useful than treating it as a given.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Prometheus (CNCF graduated) uses a pull model: it scrapes HTTP endpoints that expose metrics in its text format. This is architecturally opposite to push-based systems (StatsD, Graphite) and has practical implications: metrics collection is predictable, endpoints are discoverable via Kubernetes service discovery, and a metrics endpoint is independently testable."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "What made Prometheus the default in Kubernetes:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Dimensional data model.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Metrics are labeled time series — ",
+                "marks": []
+              },
+              {
+                "text": "http_requests_total{method=\"GET\", status=\"200\", service=\"api\"}",
+                "marks": ["code"]
+              },
+              {
+                "text": ". Labels enable slicing metrics by any dimension without pre-defining aggregation hierarchies. This is significantly more flexible than hierarchical naming schemes."
+              }
+            ],
+            [
+              {
+                "text": "PromQL.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " A purpose-built query language for time series. Functions like ",
+                "marks": []
+              },
+              {
+                "text": "rate()",
+                "marks": ["code"]
+              },
+              {
+                "text": ", ",
+                "marks": []
+              },
+              {
+                "text": "histogram_quantile()",
+                "marks": ["code"]
+              },
+              {
+                "text": ", and ",
+                "marks": []
+              },
+              {
+                "text": "topk()",
+                "marks": ["code"]
+              },
+              {
+                "text": " enable complex queries that alert rules and dashboards depend on. PromQL fluency is a real skill with real leverage."
+              }
+            ],
+            [
+              {
+                "text": "Native Kubernetes integration.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Prometheus discovers scrape targets via Kubernetes service discovery — every Service, Pod, and node in the cluster is a potential target. kube-state-metrics and node-exporter provide cluster and node metrics out of the box."
+              }
+            ],
+            [
+              {
+                "text": "Ecosystem.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Thousands of exporters exist for databases, message brokers, hardware, and cloud services. The instrument-once-and-scrape model means any system with a Prometheus exporter integrates into the same query and alerting layer."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Where Prometheus has known limits:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Local storage only.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Prometheus stores data on local disk with a configurable retention window (default 15 days). Long-term storage requires a remote write backend — Thanos, Cortex, Mimir, or a managed service."
+              }
+            ],
+            [
+              {
+                "text": "High-cardinality metrics.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Label combinations explode time series count. A label with unbounded values (user IDs, request IDs) causes cardinality explosions that degrade Prometheus performance. This is a design constraint, not a bug — metrics labels must be low-cardinality."
+              }
+            ]
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Prometheus scrapes HTTP metric endpoints, stores labeled time series, and lets you query them with PromQL. It became the Kubernetes metrics default because its pull model and dimensional data model compose well with Kubernetes service discovery. Its limits — local storage only, high-cardinality sensitivity — are architectural, not bugs."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "k8s-ch12-c009",
+      "order": 9,
+      "title": "OpenTelemetry: Vendor-Neutral Instrumentation",
+      "teaser": "OpenTelemetry (OTel) is the answer to a painful question: why should application instrumentation be rewritten every time you change your observability backend? OTel defines vendor-neutral APIs and SDKs for traces, metrics, and logs — instrument once, route to any backend.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Before OpenTelemetry, instrumenting an application for observability meant choosing a vendor (Datadog, Jaeger, Zipkin, New Relic) and importing their SDK. Switching backends required rewriting instrumentation. OpenTelemetry (CNCF graduated, formed by merging OpenCensus and OpenTracing) solves this by separating the instrumentation API from the backend."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The OTel model has three layers:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "API and SDK.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Language-native libraries (Go, Java, Python, Node, .NET, and more) that instrument applications to emit spans, metrics, and logs using the OTel data model. Instrumentation written against the OTel API is portable."
+              }
+            ],
+            [
+              {
+                "text": "Collector.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " A standalone agent or sidecar that receives telemetry from applications, processes it (sampling, attribute enrichment, batching), and exports it to one or more backends. The Collector is the routing layer — it can simultaneously send traces to Jaeger and metrics to Prometheus."
+              }
+            ],
+            [
+              {
+                "text": "OTLP protocol.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " OpenTelemetry Protocol is the wire format for telemetry data between SDKs, Collectors, and backends. All major observability vendors now accept OTLP. This is the key that makes portability real."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Why OTel represents the trajectory of observability instrumentation:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Vendor convergence.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Datadog, Honeycomb, Grafana Cloud, New Relic, Dynatrace, and AWS all accept OTLP. Historically, each required its own SDK or agent. OTel eliminated this divergence."
+              }
+            ],
+            [
+              {
+                "text": "Auto-instrumentation.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Many OTel SDKs support automatic instrumentation of common frameworks (HTTP clients, database drivers, message brokers) without code changes — just agent attachment."
+              }
+            ],
+            [
+              {
+                "text": "Unified signals.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Traces, metrics, and logs share a correlation model — a log emitted within a span carries the trace ID automatically. Cross-signal correlation was previously possible only within a single vendor's platform."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "info",
+          "runs": [
+            {
+              "text": "If you are starting a new service or migrating observability instrumentation, defaulting to OTel SDKs and the OTel Collector is the most future-proof choice. Backend portability is real — organizations have migrated from Zipkin to Jaeger to Grafana Tempo by reconfiguring the Collector, not rewriting application code."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "OpenTelemetry gives you a single instrumentation API for traces, metrics, and logs that works with any backend. The Collector routes telemetry to wherever you want it — Prometheus, Jaeger, Datadog, all of the above simultaneously. Instrumenting once and routing flexibly is the value."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "k8s-ch12-c010",
+      "order": 10,
+      "title": "Grafana and Loki: Visualization and Log Aggregation",
+      "teaser": "Grafana is the dashboard layer that most Prometheus users end up with — it has become the visualization standard for the cloud-native observability stack. Loki is its log aggregation counterpart: cheaper to operate than Elasticsearch because it does not index log content, only metadata labels.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Grafana (maintained by Grafana Labs) is a query-and-visualization platform that speaks to multiple backends simultaneously. A single Grafana instance can query Prometheus for metrics, Loki for logs, Tempo for traces, and display all three in correlated dashboards. This composability is why it became the default visualization layer in the cloud-native stack."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "What to understand about Grafana:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Data source model.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Grafana does not store data — it queries configured data sources. Prometheus, Loki, InfluxDB, Elasticsearch, CloudWatch, and OTLP backends are all supported. Adding a new observability backend usually means adding a Grafana data source."
+              }
+            ],
+            [
+              {
+                "text": "Dashboard-as-code.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Grafana dashboards are JSON that can be version-controlled and deployed via ConfigMaps or the Grafana Operator. Teams that manage dashboards ad-hoc in the UI create a drift problem — dashboard-as-code is the production pattern."
+              }
+            ],
+            [
+              {
+                "text": "Alerting.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Grafana includes a unified alerting system that evaluates rules against any data source — not just Prometheus. This allows log-based alerts (Loki) and trace-based alerts alongside metric alerts in a single alerting configuration."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Loki and the case against indexing log content:"
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Elasticsearch indexes every word in every log line, enabling full-text search but at significant storage and compute cost. Loki indexes only log stream labels (namespace, pod, container, log level) — not log content. Log content is stored compressed. Queries use LogQL (a PromQL-inspired language) to filter by label first, then do a grep-style content search within the matched streams."
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Cost profile.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Loki's storage cost is typically an order of magnitude cheaper than Elasticsearch for the same log volume. The tradeoff is that arbitrary full-text search is slower — you must filter by labels first."
+              }
+            ],
+            [
+              {
+                "text": "Kubernetes-native labels.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Kubernetes pod labels, namespace, and container name are natural Loki stream labels. Querying \"all error logs from the payment-service namespace in the last hour\" is straightforward."
+              }
+            ],
+            [
+              {
+                "text": "PLG stack.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Prometheus + Loki + Grafana (PLG) is the common open-source cloud-native observability trio — a lower-cost, lower-operational-overhead alternative to the ELK stack for most Kubernetes use cases."
+              }
+            ]
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Grafana visualizes metrics, logs, and traces from multiple backends in a single UI — it does not store data. Loki stores logs cheaply by indexing only labels (not content) and querying via LogQL. Together they form the visualization+logs half of the PLG observability stack."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "k8s-ch12-c011",
+      "order": 11,
+      "title": "KEDA: Event-Driven Autoscaling",
+      "teaser": "Kubernetes HPA scales on CPU and memory. KEDA extends HPA to scale on anything — queue depth, Kafka consumer lag, HTTP request rate, cron schedules, database row counts. The result is autoscaling that responds to the signals your workload actually cares about, including scaling to zero when there is no work.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "KEDA (Kubernetes Event-Driven Autoscaling, CNCF graduated) is a Kubernetes operator that extends the HPA mechanism. It does not replace HPA — it acts as an external metrics provider that HPA uses. The ScaledObject CRD configures what to scale and based on what signal."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The problem KEDA solves:"
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "CPU and memory consumption are often poor proxies for whether a workload needs more replicas. A queue consumer may be processing one message per second (low CPU) but the queue depth is 50,000 messages (real signal). A batch processor may be completely idle (zero CPU) and should scale to zero. HPA alone cannot express either."
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Scalers.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " KEDA ships dozens of built-in scalers — Kafka consumer lag, RabbitMQ queue depth, AWS SQS message count, Azure Service Bus, Redis list length, Prometheus query result, HTTP request rate (via HTTP add-on), Cron schedules. The community adds more regularly."
+              }
+            ],
+            [
+              {
+                "text": "Scale to zero.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " KEDA can scale a Deployment to zero replicas when no work is present and scale it back up when work arrives. HPA cannot scale to zero (it has a floor of one). Scale-to-zero is significant for cost reduction in event-driven and batch workloads."
+              }
+            ],
+            [
+              {
+                "text": "ScaledJob for batch.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Beyond Deployments, KEDA can create Kubernetes Jobs on demand based on queue depth — one Job per message, or batched. This is the natural pattern for work queues with variable load."
+              }
+            ],
+            [
+              {
+                "text": "No HPA conflict.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " KEDA manages HPA objects on your behalf. You configure a ScaledObject; KEDA creates and manages the corresponding HPA. You do not have to disable standard HPA behavior — KEDA augments it."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "info",
+          "runs": [
+            {
+              "text": "KEDA is the right tool when your workload's load signal is not CPU or memory. For web servers and APIs where CPU is a reasonable proxy, standard HPA is often sufficient. For queue consumers, async processors, or any workload with bursty event-driven load, KEDA's scaler model is significantly more accurate."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "KEDA scales Kubernetes workloads based on external signals — queue depth, Kafka lag, HTTP rate, Prometheus queries — not just CPU. It also supports scale-to-zero, which standard HPA cannot do. Use it when CPU is a poor proxy for the load your workload actually needs to respond to."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "k8s-ch12-c012",
+      "order": 12,
+      "title": "Karpenter: Just-in-Time Node Provisioning",
+      "teaser": "The cluster-autoscaler provisions nodes reactively by adding to existing node groups. Karpenter watches unschedulable pods directly, computes the exact instance type needed, and provisions nodes just-in-time — typically 2-3x faster, with better bin-packing and automatic node consolidation.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Kubernetes cluster-autoscaler scales node groups based on pending pods. It works but has architectural constraints: it operates at the node group level (not the individual node level), it must evaluate which group to expand and wait for the cloud provider API, and it cannot change instance types without modifying the node group. Karpenter (CNCF incubating, initially open-sourced by AWS) takes a different approach."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "What Karpenter does differently:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Direct cloud provider API.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Karpenter provisions instances directly via the cloud provider API (EC2, Azure VMs) without the intermediate node group abstraction. This eliminates the node group sizing and configuration management overhead and enables any instance type selection per-workload."
+              }
+            ],
+            [
+              {
+                "text": "NodePool and NodeClass.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Rather than prescribing a specific instance type, a NodePool defines constraints — architecture (amd64/arm64), capacity type (on-demand/spot), instance family — and Karpenter selects the optimal available instance. This enables spot instance fallback and right-sizing automatically."
+              }
+            ],
+            [
+              {
+                "text": "Consolidation.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Karpenter actively identifies underutilized nodes and can drain and terminate them, rescheduling workloads onto a smaller set of better-packed nodes. Cluster-autoscaler removes empty nodes; Karpenter consolidates partially-utilized ones."
+              }
+            ],
+            [
+              {
+                "text": "Speed.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " By watching pending pods directly and provisioning immediately without node group scale-out delay, Karpenter typically provisions nodes in under 60 seconds — faster than cluster-autoscaler for most workloads."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "What to evaluate:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Cloud provider support.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Karpenter started as AWS-only. Azure support (AKS Karpenter provider) is available but less mature. GCP support is in development. Evaluate provider maturity against your cloud."
+              }
+            ],
+            [
+              {
+                "text": "Managed Kubernetes services.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " EKS has first-class Karpenter support and AWS actively recommends it over cluster-autoscaler for new EKS clusters. AKS and GKE have their own autoscaler implementations that may be competitive. Check what the managed service vendor recommends for your version."
+              }
+            ]
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Karpenter watches pending pods, selects the right instance type, and provisions nodes directly via the cloud API — faster and with better bin-packing than cluster-autoscaler's node-group model. Its consolidation feature also actively shrinks the cluster as load drops, which cluster-autoscaler does not do."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "k8s-ch12-c013",
+      "order": 13,
+      "title": "Falco: Runtime Security Monitoring",
+      "teaser": "Pod Security Standards and RBAC are admission-time controls — they constrain what gets scheduled. Falco is a runtime control — it monitors what workloads are actually doing after they start, using eBPF syscall observation to detect behavioral anomalies that admission controls cannot catch.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Falco (CNCF graduated, originally from Sysdig) attaches to the Linux kernel via eBPF and observes every syscall made by every container on a node. It matches syscall behavior against a rules engine and emits alerts when anomalous behavior is detected — a container spawning a shell, an unexpected binary executing, a sensitive file being read, a network connection to an unexpected address."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Why runtime detection matters:"
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "A compromised application that passed admission controls (correct image, correct RBAC, correct Pod Security Standard) is invisible to admission-time controls once it starts executing. An attacker who exploits a running application — a web server with an RCE vulnerability — will interact with the OS in ways the application was never intended to. Falco detects the behavioral signature, not the specific vulnerability."
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Default rulesets.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Falco ships default rules covering known attack patterns — reading /etc/shadow, writing to /bin, spawning shells from web servers, modifying iptables rules. These rules are maintained by the community and updated regularly."
+              }
+            ],
+            [
+              {
+                "text": "Custom rules.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Rules are expressed in a YAML-based DSL that matches syscall fields — process name, file path, network connection parameters. Teams can write workload-specific rules: \"this container should never open a network connection outside the cluster.\""
+              }
+            ],
+            [
+              {
+                "text": "Output integrations.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Falco alerts can be routed to stdout, syslog, webhook endpoints, Kafka, Slack, and security event management systems (SIEM). Falco Sidekick is the common routing sidecar."
+              }
+            ],
+            [
+              {
+                "text": "eBPF driver.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Falco moved from a kernel module to an eBPF driver, which is more portable (no kernel recompilation) and safer (eBPF programs are verified before loading). Modern Falco deployments use the eBPF driver as the default."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "info",
+          "runs": [
+            {
+              "text": "Falco complements, rather than replaces, admission-time controls. The layered security model is: image scanning (supply chain), RBAC and Pod Security Standards (admission), Falco (runtime). No single layer catches everything — each layer catches what the others cannot."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Falco uses eBPF to watch every syscall from every container and alerts when behavior matches known attack patterns. It catches what admission controls cannot — a legitimate container that gets compromised after it starts. It is the runtime layer in the security stack, not a replacement for admission-time controls."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "k8s-ch12-c014",
+      "order": 14,
+      "title": "cert-manager: Automated TLS Lifecycle",
+      "teaser": "Managing TLS certificates manually in a Kubernetes cluster — creating CSRs, tracking expiry, rotating certificates — is an operational liability that scales poorly with the number of services. cert-manager eliminates the manual lifecycle entirely: it provisions, renews, and rotates certificates automatically.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "cert-manager (CNCF incubating) is a Kubernetes operator that automates the full TLS certificate lifecycle. It introduces Certificate, Issuer, and ClusterIssuer CRDs. A Certificate resource declares the desired certificate (domain, duration, key algorithm); cert-manager handles obtaining it from the configured issuer and keeping it renewed."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Issuers cert-manager integrates with:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "ACME (Let's Encrypt).",
+                "marks": ["bold"]
+              },
+              {
+                "text": " cert-manager automates ACME HTTP-01 and DNS-01 challenges to obtain Let's Encrypt certificates for any domain. HTTP-01 requires inbound traffic; DNS-01 requires DNS provider API access and works for internal domains and wildcard certs."
+              }
+            ],
+            [
+              {
+                "text": "Internal PKI (Vault, AWS PCA, Venafi).",
+                "marks": ["bold"]
+              },
+              {
+                "text": " cert-manager integrates with Vault PKI Secrets Engine, AWS Private CA, and Venafi for enterprises that operate internal CAs. Certificates are issued from the organization's own CA and do not require public domain validation."
+              }
+            ],
+            [
+              {
+                "text": "Self-signed and CA issuers.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " cert-manager can create self-signed certificates or issue from an in-cluster CA (useful for service mesh bootstrapping or internal service certificates that do not need to be externally trusted)."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The operational value:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Automatic renewal.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " cert-manager renews certificates before expiry (configurable threshold, default 2/3 of the cert's lifetime). Certificate expiry incidents — a historically common production outage cause — are eliminated."
+              }
+            ],
+            [
+              {
+                "text": "Ingress integration.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Most Ingress controllers (nginx-ingress, Traefik, Contour) and Gateway API implementations integrate with cert-manager via annotations or Gateway references. Adding TLS to an Ingress is a matter of adding a ",
+                "marks": []
+              },
+              {
+                "text": "cert-manager.io/cluster-issuer",
+                "marks": ["code"]
+              },
+              {
+                "text": " annotation."
+              }
+            ],
+            [
+              {
+                "text": "Secret-based delivery.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " cert-manager writes issued certificates into Kubernetes Secrets as standard TLS secrets (tls.crt, tls.key). Any workload that mounts TLS from a Secret automatically gets renewed certificates without restart — if the application watches the mounted secret path."
+              }
+            ]
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "cert-manager watches Certificate resources, obtains certs from configured issuers (Let's Encrypt, Vault, AWS PCA), and stores them as Kubernetes Secrets. It auto-renews before expiry. You declare the cert you want; cert-manager handles the full lifecycle — including renewals — without manual intervention."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "k8s-ch12-c015",
+      "order": 15,
+      "title": "Observability Stack Decisions: PLG vs ELK vs Vendor",
+      "teaser": "Most teams face a recurring decision: self-hosted open-source observability (PLG stack, ELK), a managed open-source offering (Grafana Cloud, OpenSearch), or a commercial APM platform (Datadog, New Relic, Dynatrace). The right answer depends on team capacity, data volume, budget, and feature requirements — not on what is popular.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "No observability stack is free. Self-hosted stacks eliminate licensing costs but require significant operational investment. Vendor platforms eliminate operational overhead but introduce per-host or per-seat costs that scale with cluster size. OpenTelemetry has made backend switching more realistic than it was two years ago, which changes the risk calculus for backend decisions."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The main options and their honest tradeoffs:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "PLG (Prometheus + Loki + Grafana).",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Lowest cost at scale, excellent Kubernetes integration, strong community. Requires operational expertise to run reliably at high data volume. Long-term metric storage needs Thanos or Mimir. Logs are cheap in Loki but full-text search is slower than Elasticsearch. Best fit: teams with infrastructure engineering capacity who want operational control."
+              }
+            ],
+            [
+              {
+                "text": "ELK / OpenSearch.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Elasticsearch indexes everything, enabling rich full-text search queries. Operationally demanding and expensive at scale (storage + compute). OpenSearch (AWS fork of Elasticsearch) is a viable alternative with a more open license. Best fit: organizations with compliance requirements for log analysis or existing ELK operational investment."
+              }
+            ],
+            [
+              {
+                "text": "Grafana Cloud / managed PLG.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Grafana Labs-managed Prometheus, Loki, Tempo, and Grafana. Same PLG semantics without the operational burden. Priced by active series (metrics) and log volume. Best fit: teams that want PLG capabilities without running the infrastructure."
+              }
+            ],
+            [
+              {
+                "text": "Datadog, New Relic, Dynatrace.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Full-stack APM: metrics, logs, traces, RUM, profiling, synthetics. Rich correlations, strong UX. Per-host pricing becomes significant at cluster scale. Best fit: organizations that can absorb the cost and value breadth and UX over operational control. Note: all three now accept OTLP, reducing the lock-in risk for instrumentation."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The decision question that cuts across all options:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "What is your data volume, and what does it cost per option at that volume? Model it explicitly — observability cost surprises are common."
+              }
+            ],
+            [
+              {
+                "text": "Do you have the operational capacity to run self-hosted infrastructure reliably, including at 3am when it breaks?"
+              }
+            ],
+            [
+              {
+                "text": "Are you already instrumenting with OTel? If so, backend switching is significantly cheaper than it was with vendor-specific agents."
+              }
+            ]
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "PLG is cheapest at scale but requires ops expertise. ELK gives richer log search but is expensive to run. Managed offerings (Grafana Cloud) trade cost for operational simplicity. Vendor APM platforms (Datadog) trade cost for feature breadth and UX. OpenTelemetry instrumentation reduces the switching cost between any of these — instrument once, switch backends by reconfiguring the Collector."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "k8s-ch12-c016",
+      "order": 16,
+      "title": "Ecosystem Adoption Principles",
+      "teaser": "The cloud-native ecosystem solves real problems. It also creates real complexity. The teams that use it well are not the ones that adopt the most tools — they are the ones that adopt tools with clear problem statements, phased rollout plans, and honest evaluation of operational cost.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "A pattern seen repeatedly in cloud-native organizations: a platform team installs Istio, Prometheus, Loki, Grafana, Falco, cert-manager, KEDA, and Karpenter — and then spends the next six months troubleshooting interactions between them rather than delivering value to product teams. Ecosystem tooling compounds operational surface area."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Principles that survive ecosystem churn:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Adopt against a specific, observable problem.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Not \"we should have a service mesh\" but \"we have N services with mTLS requirements and no current way to enforce them consistently.\" The problem statement should be specific enough that you can verify whether the tool solved it."
+              }
+            ],
+            [
+              {
+                "text": "One new category at a time.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Introducing a service mesh and a new observability stack simultaneously makes it difficult to attribute operational issues and impossible to evaluate either tool's impact clearly."
+              }
+            ],
+            [
+              {
+                "text": "Start with CNCF graduated projects.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Graduated status (Prometheus, Falco, Cilium, Argo, Linkerd, Istio) indicates maturity, governance, and production adoption at scale. Incubating projects are worth evaluating for specific capabilities but carry more adoption risk."
+              }
+            ],
+            [
+              {
+                "text": "Design for replaceability.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Where portable standards exist (OTel for observability instrumentation, Gateway API for ingress/mesh configuration), prefer them over vendor-specific APIs. The ecosystem will keep changing; abstraction layers preserve optionality."
+              }
+            ],
+            [
+              {
+                "text": "Own the operational surface.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Every tool in the ecosystem adds configuration, upgrade paths, CRDs, and failure modes to your cluster. Before adopting, answer honestly: who will own this when it breaks, how will it be upgraded, and what happens to dependent workloads during that upgrade?"
+              }
+            ]
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "warning",
+          "runs": [
+            {
+              "text": "The CNCF landscape is impressive and also a trap. The goal is a production Kubernetes cluster that reliably runs your workloads — not a portfolio of CNCF projects. Adopt deliberately, operate sustainably, and revisit adoption decisions as the ecosystem evolves."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Every ecosystem tool adds operational surface area. Adopt against a specific problem, one category at a time. Prefer CNCF graduated projects and portable standards where they exist. The goal is not maximum tool adoption — it is a cluster that runs reliably with the least operational overhead that meets your requirements."
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
