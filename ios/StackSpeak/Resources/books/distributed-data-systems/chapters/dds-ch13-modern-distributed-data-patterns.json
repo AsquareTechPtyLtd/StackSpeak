@@ -1,0 +1,1358 @@
+{
+  "chapterId": "dds-ch13-modern-distributed-data-patterns",
+  "shardIndex": 13,
+  "cards": [
+    {
+      "id": "dds-ch13-c001",
+      "order": 1,
+      "title": "CRDTs: Coordination-Free Replication",
+      "teaser": "A CRDT is a data structure that can be replicated across nodes and merged without any coordination — no locks, no consensus rounds, no conflict resolution logic written by hand. The structure itself guarantees convergence.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Conflict-Free Replicated Data Types (CRDTs) were formalised by Marc Shapiro, Nuno Preguiça, Carlos Baquero, and Marek Zawirski in a 2011 INRIA technical report and a landmark SOSP paper. The core insight: if you design a data structure so that all concurrent updates commute — order doesn't matter — or so that merging any two states always produces a unique deterministic result, then you never need coordination. Every replica can accept local writes immediately and reconcile lazily. Strong Eventual Consistency (SEC) is guaranteed by construction."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Why did this matter? Before CRDTs, systems that needed high availability under network partitions (per CAP theorem) were forced to pick one of two unpleasant options: either refuse writes when a replica is unreachable (sacrificing availability) or accept writes and later run application-level conflict resolution that is notoriously hard to get right. CRDTs provide a third option: accept all writes on any replica, and merge them correctly by mathematical guarantee."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Production deployments as of 2024-2026:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Redis Enterprise CRDTs (Active-Active geo-distribution)",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — Redis's commercial tier ships CRDT-backed counter, set, and hash types that replicate across data centres with last-write-wins and counter semantics selectable per key."
+              }
+            ],
+            [
+              {
+                "text": "Riak KV",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — Basho's distributed key-value store (now maintained by Bet365 and TI Tokyo) exposed CRDTs as a first-class data model in Riak 2.0 (2014) and remains widely deployed in telco and financial services."
+              }
+            ],
+            [
+              {
+                "text": "Yjs and Automerge",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — two open-source CRDT frameworks for collaborative editing. Yjs powers Figma's multiplayer, Notion's real-time sync, and dozens of other products. Automerge 2.0 (2023, rewritten in Rust with WASM targets) runs both in-browser and on servers and is the foundation of the Local-first Software movement championed by Ink & Switch."
+              }
+            ],
+            [
+              {
+                "text": "Apple Notes / iCloud sync",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — Apple uses CRDT-like techniques internally for Notes sync, though the implementation details are not publicly documented."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "info",
+          "runs": [
+            {
+              "text": "The key constraint CRDTs impose on you as the designer: not every data structure can be a CRDT. You must either choose structures where updates naturally commute (counters, sets with only add), or design your domain model so that conflicting updates are semantically acceptable (\"last write wins\" or \"merge both\"). If your application genuinely needs only one of two conflicting edits to survive, CRDTs cannot help — you need consensus."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "A CRDT is a data structure that guarantees two replicas can always merge their states into the same result, no matter what order updates arrived. That guarantee eliminates the need to coordinate — every replica just writes locally and reconciles whenever it syncs."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "dds-ch13-c002",
+      "order": 2,
+      "title": "Operation-Based vs State-Based CRDTs",
+      "teaser": "CRDTs come in two families — CmRDTs broadcast operations, CvRDTs broadcast state. Each makes different demands on the network and the application, and choosing the wrong one wastes bandwidth or introduces ordering bugs.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The two CRDT families differ in what they replicate and what mathematical properties they require of the network."
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "State-Based CRDTs (CvRDTs — Convergent Replicated Data Types)",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — each replica periodically sends its entire state to peers. A merge function (defined as a join operation on a semilattice) merges any two states into a single result. The requirement: the merge must be commutative (A merge B = B merge A), associative ((A merge B) merge C = A merge (B merge C)), and idempotent (A merge A = A). Network requirement: at-least-once delivery. Duplicates and reordering are fine because merge is idempotent."
+              }
+            ],
+            [
+              {
+                "text": "Operation-Based CRDTs (CmRDTs — Commutative Replicated Data Types)",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — each replica broadcasts operations (\"increment counter by 1\", \"add element X to set\"). The requirement: all concurrent operations must commute. Once applied, the same operation must not be applied again. Network requirement: exactly-once, causal delivery. This is a stronger network requirement but produces smaller messages — you send a tiny operation instead of the full state."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The classic worked examples:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "G-Counter (Grow-only counter).",
+                "marks": ["bold"]
+              },
+              {
+                "text": " State-based. Each node maintains a vector of per-node counts. Merge: take element-wise maximum. Value: sum of vector. Two nodes independently incrementing converge to the correct total because max(A[i], B[i]) always selects the larger of the two counts, and no count can decrease."
+              }
+            ],
+            [
+              {
+                "text": "PN-Counter.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Two G-Counters — one for increments, one for decrements. Value: sum(increments) − sum(decrements). Supports both add and subtract without losing convergence."
+              }
+            ],
+            [
+              {
+                "text": "OR-Set (Observed-Remove Set).",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Solves the classic add/remove concurrency problem. Each add operation tags the element with a unique token. Remove only removes the specific tokens that were observed at remove time. A concurrent add (with a new token) survives a concurrent remove because the remove only targets previously observed tokens. Yjs uses a variant of this for collaborative text editing."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "When to choose which:"
+            }
+          ]
+        },
+        {
+          "type": "comparison",
+          "rows": [
+            {
+              "label": "Network requirement",
+              "left": "CvRDT: at-least-once delivery (easy to satisfy)",
+              "right": "CmRDT: exactly-once, causal delivery (harder)"
+            },
+            {
+              "label": "Message size",
+              "left": "CvRDT: full state (grows with data size)",
+              "right": "CmRDT: delta operations (tiny)"
+            },
+            {
+              "label": "Best fit",
+              "left": "CvRDT: small structures, unreliable networks (mobile, P2P)",
+              "right": "CmRDT: large structures, reliable message queues"
+            }
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "info",
+          "runs": [
+            {
+              "text": "Delta-state CRDTs (a 2016 extension) give you the best of both: broadcast only the delta — what changed since the last sync — rather than the full state. This is the dominant approach in modern implementations (Automerge 2.0, Yjs) because it combines CvRDT's simple network model with CmRDT's small message size."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "State-based CRDTs send their whole state and merge it. Operation-based CRDTs send tiny operations that must arrive exactly once. Both converge to the same result — the choice is about how much you trust the network versus how much data you want to ship on every sync."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "dds-ch13-c003",
+      "order": 3,
+      "title": "HTAP: One Database for Transactions and Analytics",
+      "teaser": "HTAP databases serve OLTP and OLAP workloads from a single system — eliminating the ETL pipeline that historically separated them. The catch is that the workloads have fundamentally different access patterns, and satisfying both requires clever storage architecture.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Gartner coined the term Hybrid Transactional/Analytical Processing (HTAP) in 2014. The idea predates the term: Oracle's in-memory option (2014) and SAP HANA (2010) both targeted the same problem. The pitch: operational databases traditionally store data in row format optimised for point reads and writes (OLTP). Data warehouses store data in columnar format optimised for aggregate scans (OLAP). The two formats live in separate systems connected by an ETL pipeline, introducing latency (data in the warehouse is hours or days stale) and operational complexity."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "HTAP eliminates that latency. Analytics can query freshly committed transactions — sometimes within seconds. The architectural approaches vary:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "SingleStore (formerly MemSQL)",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — maintains a row-oriented in-memory store for writes and a column-oriented store for reads. Rows are migrated asynchronously from the row store to the column store. Analytical queries hit the column store; transactional queries hit the row store. As of 2024, SingleStore is the dominant HTAP choice in financial services and ad-tech."
+              }
+            ],
+            [
+              {
+                "text": "TiDB (PingCAP)",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — separates TiKV (a row-oriented, Raft-replicated storage layer) from TiFlash (a columnar replica). TiFlash is a learner replica that asynchronously replicates from TiKV via Raft. OLTP hits TiKV; OLAP hits TiFlash. The optimizer routes queries automatically. TiDB is now used at Zhihu, Shopee, and dozens of other high-volume internet companies."
+              }
+            ],
+            [
+              {
+                "text": "Google Spanner with BigQuery federated queries",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — Spanner is not natively HTAP, but BigQuery can federate directly against Spanner tables via change stream materialization (launched 2022), providing near-real-time analytical access to operational data without a separate ETL step."
+              }
+            ],
+            [
+              {
+                "text": "CockroachDB's follower reads",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — not HTAP per se, but follower reads allow analytical queries to be served from a recent consistent snapshot without burdening the write replicas."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "warning",
+          "runs": [
+            {
+              "text": "HTAP does not mean your analytical queries are free. Heavy OLAP scans compete with OLTP latency for memory bandwidth, CPU cache, and I/O even in well-isolated designs. Size the system for both workloads, not just the one you care about today. Many teams adopt HTAP to eliminate ETL and then discover that their largest analytical queries degrade P99 write latency."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "HTAP means you run transactions and analytics on the same database. No ETL pipeline means analytics see fresh data. The tradeoff is that two very different workloads — small fast writes vs. massive slow scans — are fighting for the same hardware."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "dds-ch13-c004",
+      "order": 4,
+      "title": "The Lakehouse Architecture",
+      "teaser": "The lakehouse colocates data-lake storage flexibility with data-warehouse ACID guarantees — all on cheap object storage. Databricks coined the term in 2020; by 2024 it is the dominant pattern for large-scale analytics at Netflix, Apple, Uber, and most modern data platforms.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The lakehouse emerged to solve a problem that every large data platform hit: data lakes (S3/GCS/ADLS + Parquet files) are cheap, infinitely scalable, and schema-flexible — but lack ACID transactions, making concurrent writers and readers unreliable. Data warehouses (Snowflake, BigQuery, Redshift) provide ACID and strong query performance — but are expensive, vendor-locked, and require ETL to ingest from the lake. Organizations ended up running both, doubling storage costs and creating consistency problems as the lake and warehouse drifted out of sync."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The lakehouse answer: put an ACID transaction layer on top of the same object storage files that a data lake uses. No data movement. No duplication. The warehouse is now just a query engine reading from the same S3 bucket as the operational pipelines."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The three architectural properties that define a lakehouse:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Open format storage.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Data lives as open columnar files (Parquet, ORC) in object storage (S3, GCS, ADLS). No vendor-specific format means any query engine can read it — Spark, Trino, Flink, DuckDB, Redshift Spectrum, BigQuery Omni."
+              }
+            ],
+            [
+              {
+                "text": "ACID transaction layer.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " A metadata layer (the open table format) provides optimistic concurrency control, commit history, and rollback. Concurrent writers can safely upsert and delete without corrupting the Parquet files."
+              }
+            ],
+            [
+              {
+                "text": "Direct BI and ML access.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " BI tools (Tableau, Looker) connect directly to the lakehouse via SQL interfaces. ML workloads (PyTorch, TensorFlow, XGBoost) read training data directly from Parquet without an intermediate export step. One copy of data serves all consumers."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The foundation layer that makes this possible is the open table format — explored in the next card."
+            }
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "info",
+          "runs": [
+            {
+              "text": "Databricks' 2020 CIDR paper \"Lakehouse: A New Generation of Open Platforms that Unify Data Warehousing and Advanced Analytics\" is the canonical reference. By 2024, Microsoft Fabric, AWS Lake Formation, and Google BigLake all offer lakehouse architectures, validating the pattern at cloud-vendor scale."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "A lakehouse puts ACID transactions on top of cheap S3 files, so you get warehouse reliability without moving your data out of the lake. One copy of the data serves transactions, analytics, and ML — at object storage prices."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "dds-ch13-c005",
+      "order": 5,
+      "title": "Open Table Formats: Iceberg, Delta Lake, and Hudi",
+      "teaser": "Apache Iceberg, Delta Lake, and Apache Hudi are the three open table formats that underpin the lakehouse. All three add ACID, time-travel, and schema evolution to Parquet files on object storage — but they make different engineering tradeoffs that matter at scale.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "An open table format is a metadata specification layered on top of columnar data files in object storage. The format defines how files are organised, how concurrent writers coordinate, how historical snapshots are retained, and how schema changes are tracked. Without a table format, a directory of Parquet files is just a directory — there is no transaction isolation, no way to delete specific rows without rewriting files, and no history."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The three formats compared:"
+            }
+          ]
+        },
+        {
+          "type": "comparison",
+          "rows": [
+            {
+              "label": "Origin / steward",
+              "left": "Apache Iceberg: Netflix (2017), Apache Software Foundation",
+              "right": "Delta Lake: Databricks (2019), Linux Foundation / Delta.io  |  Apache Hudi: Uber (2016), Apache Software Foundation"
+            },
+            {
+              "label": "Metadata model",
+              "left": "Iceberg: immutable snapshot tree. Every commit writes a new snapshot file; manifest lists point to data files. Enables very fast snapshot isolation.",
+              "right": "Delta: transaction log (JSON/_delta_log). Sequential commit log with checkpoint files every N commits.  |  Hudi: timeline-based. Commit instants recorded on a timeline; supports both copy-on-write and merge-on-read storage layouts."
+            },
+            {
+              "label": "Row-level deletes/updates",
+              "left": "Iceberg: positional delete files and equality delete files (v2 spec, 2021). Efficient for most workloads.",
+              "right": "Delta: deletion vectors (2023) — bitmap-based, very fast for point deletes.  |  Hudi: native upsert with record-level index; the original design target was Uber's massive CDC pipeline."
+            },
+            {
+              "label": "Time travel",
+              "left": "Iceberg: query by snapshot ID or timestamp; snapshots retained per table policy.",
+              "right": "Delta: DESCRIBE HISTORY + VERSION AS OF / TIMESTAMP AS OF syntax.  |  Hudi: point-in-time queries using Hudi's timeline."
+            },
+            {
+              "label": "Ecosystem adoption (2024-2026)",
+              "left": "Iceberg: Apple (exabytes of Iceberg at Apple's data platform), Netflix, AirBnb, AWS Glue native, Snowflake Iceberg Tables, BigQuery managed Iceberg. Dominant in cloud-neutral contexts.",
+              "right": "Delta: dominant in Databricks-centric environments; now open via Delta Sharing and Delta Universal Format.  |  Hudi: dominant in Spark-heavy streaming / CDC pipelines; used at Uber, Amazon, ByteDance."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "How to choose:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Iceberg",
+                "marks": ["bold"]
+              },
+              {
+                "text": " if you need maximum query-engine portability (multiple engines, multi-cloud, vendor-neutral) and are building new from scratch. The v2 spec with deletion vectors is feature-complete for almost all workloads."
+              }
+            ],
+            [
+              {
+                "text": "Delta Lake",
+                "marks": ["bold"]
+              },
+              {
+                "text": " if your platform is Databricks-centric or if you need tight Unity Catalog integration. Delta's transaction log is conceptually simpler and easier to debug."
+              }
+            ],
+            [
+              {
+                "text": "Hudi",
+                "marks": ["bold"]
+              },
+              {
+                "text": " if your primary workload is high-throughput CDC ingestion with frequent row-level upserts. Hudi's merge-on-read layout minimises write amplification in this case."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "info",
+          "runs": [
+            {
+              "text": "The three formats are converging. Delta Universal Format (UniForm, 2023) allows a Delta table to also be read as Iceberg. Apache XTable (incubating, 2024) provides bidirectional translation between all three. The distinction may matter less in 2026 than it did in 2021 — but understanding the metadata model of each is still required to diagnose compaction performance, snapshot retention costs, and concurrent-writer behaviour."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Iceberg, Delta, and Hudi all add a transaction layer on top of Parquet files so you get ACID, time-travel, and schema evolution on cheap object storage. They are converging. Choose Iceberg for portability, Delta for Databricks, Hudi for heavy upsert workloads."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "dds-ch13-c006",
+      "order": 6,
+      "title": "Data Mesh",
+      "teaser": "Data mesh is Zhamak Dehghani's 2019 answer to a scaling problem that centralised data platforms cannot solve: as the organisation grows, the central data team becomes a bottleneck, data quality degrades, and the platform loses trust. The solution is organisational, not technical.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Dehghani's original Medium article (\"How to Move Beyond a Monolithic Data Lake to a Distributed Data Mesh,\" 2019) and her 2022 O'Reilly book articulate the problem clearly. At scale, centralised data platforms fail for the same reason monolithic applications fail: a single team cannot understand all domains deeply enough to model them correctly, cannot keep pace with all domain teams' requirements, and becomes an organisational bottleneck. The result: stale, incomplete, poorly documented data that nobody trusts."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Data mesh applies the microservices analogy to data: instead of extracting data from domain teams into a central platform, keep the data with the teams who understand it. The four principles:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Domain ownership.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " The team that creates the data owns it, maintains it, and is accountable for its quality. The Checkout team owns checkout data. The Identity team owns identity data. No central extraction."
+              }
+            ],
+            [
+              {
+                "text": "Data as a product.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Each domain team publishes their data as a first-class product with an SLA, a schema contract, documentation, and discoverability. Consumers can discover and subscribe to data products in a data catalog. Quality is a product metric, not a best-effort property."
+              }
+            ],
+            [
+              {
+                "text": "Self-serve infrastructure.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " A central platform team provides the tooling for domain teams to build, deploy, and monitor their data products — storage, cataloguing, access control, lineage — without needing to become infrastructure engineers. The platform is a product, not a service desk."
+              }
+            ],
+            [
+              {
+                "text": "Federated computational governance.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Global standards (PII tagging, encryption at rest, access control policies, SLA tiers) are defined centrally but enforced automatically by the platform. Domain teams cannot publish a data product that violates global governance constraints."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The microservices analogy is instructive but imperfect. Data products have a property that services do not: consumers read and derive from data across domain boundaries constantly. Schema changes in one domain ripple to all downstream consumers — a coordination problem that microservices can avoid with versioned APIs but data mesh cannot as easily."
+            }
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "warning",
+          "runs": [
+            {
+              "text": "Data mesh is primarily an organisational pattern, not a technology stack. You cannot implement data mesh by deploying a data catalog. The prerequisite is domain teams who are willing to own and operate data products — which requires engineering maturity, clear ownership boundaries, and organisational incentives that reward data quality. Many 'data mesh' projects stall here, not in the technology."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Data mesh means domain teams own and publish their data as a product, instead of dumping it into a central platform where a separate team tries to figure it out. It applies the same thinking as microservices — own your domain end to end — but to data instead of APIs."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "dds-ch13-c007",
+      "order": 7,
+      "title": "Vector Indexes: pgvector and ANN Search",
+      "teaser": "Vector indexes store high-dimensional embeddings and support approximate nearest-neighbour queries — the primitive that powers semantic search, RAG pipelines, and recommendation systems in the LLM era. By 2024, every major database has one.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Embedding models (OpenAI's text-embedding-ada-002, Google's textembedding-gecko, Cohere's embed-v3, Meta's Llama-based embeddings) encode text, images, or other data as dense vectors of 768 to 3072 floating-point numbers. Two semantically similar items have embeddings that are close in this high-dimensional space (as measured by cosine similarity or L2 distance). The database primitive needed is: given a query vector, find the K vectors in the table that are most similar. This is approximate nearest-neighbour (ANN) search."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Exact nearest-neighbour search over millions of vectors is prohibitively expensive — it requires comparing the query against every stored vector. ANN indexes trade a small amount of recall accuracy for orders-of-magnitude speedup. The two dominant index types:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "HNSW (Hierarchical Navigable Small World).",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Builds a multi-layer graph where nodes at the top layer are coarse entry points and each layer below is a denser graph. Query traversal starts at the top and navigates downward, following the most similar neighbours greedily. Build is slow (O(n log n)); query is fast (millisecond latency). Best recall-latency tradeoff for query-heavy workloads. Used by pgvector (HNSW added in v0.5.0, 2023), Qdrant, Weaviate, Redis Stack."
+              }
+            ],
+            [
+              {
+                "text": "IVFFlat (Inverted File Index).",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Clusters the vector space using k-means. A query first finds the nearest cluster centroids, then exhaustively searches within those clusters. Faster to build than HNSW; lower recall for the same query time. Better for workloads with frequent index rebuilds. pgvector's original index type."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Ecosystem by 2024-2026:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "pgvector",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — the PostgreSQL extension (open source, first released 2021) that made vectors a native PostgreSQL type. You can store embeddings in a VECTOR column alongside relational data and do filtered ANN search combining SQL predicates with the <-> (L2) or <=> (cosine) operators. Supports up to 16,000 dimensions (v0.7+). Used at scale at Supabase and by most teams who want to avoid a dedicated vector database."
+              }
+            ],
+            [
+              {
+                "text": "Purpose-built vector databases",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — Pinecone, Qdrant, Weaviate, Milvus. These offer capabilities pgvector lacks for very large indexes: disk-based ANN (vectors don't fit in RAM), distributed sharding, and multimodal indexing. At 100M+ vectors with strict latency budgets, purpose-built systems still win."
+              }
+            ],
+            [
+              {
+                "text": "Integrated vector support",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — Elasticsearch/OpenSearch (dense_vector type + HNSW), Redis Stack (RedisSearch HNSW), SingleStore, Cassandra 5.0 (SAI vector index), MongoDB Atlas Vector Search. By 2025, ANN search is table stakes for any database targeting operational workloads."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "info",
+          "runs": [
+            {
+              "text": "The 'which vector database should I use' question has largely been answered for typical RAG pipelines: pgvector on PostgreSQL (or Supabase) for datasets under ~10M vectors where you want one less operational component. Purpose-built vector databases for larger scales or when you need disk-based indexes, hybrid dense-sparse retrieval (SPLADE), or multi-tenant isolation. The most important variable is whether your vector queries need to be joined with relational filters — if yes, a postgres-native solution avoids a two-step query pattern."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Vector indexes store AI-generated embeddings and find the nearest ones to a query vector — the core operation behind semantic search and RAG pipelines. pgvector makes this a built-in PostgreSQL operation. HNSW is the graph index that makes the search fast."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "dds-ch13-c008",
+      "order": 8,
+      "title": "Serverless OLTP",
+      "teaser": "Serverless OLTP means paying for what you use — compute scales to zero when idle, scales up instantly under load, and billing is per-request rather than per-provisioned-instance. By 2024, four systems have made this credible for production transactional workloads.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The traditional relational database requires you to provision capacity upfront: choose an instance size, pay for it 24/7, and manage the cluster. For workloads with spiky or unpredictable traffic — a startup's new product, a hobby project that occasionally goes viral, a B2B SaaS app where most tenants are idle at night — this model wastes money and adds operational burden. Serverless OLTP removes the provisioning decision."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The four systems that established serverless OLTP as a credible production pattern:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Aurora Serverless v2 (AWS, 2022).",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Scales Aurora (MySQL- and PostgreSQL-compatible) capacity in Aurora Capacity Units (ACUs) with sub-second scaling granularity. Unlike v1 (which scaled in steps with cold-start pauses), v2 scales continuously and does not go to zero — minimum is 0.5 ACUs. Best for production workloads with predictable overnight troughs. Aurora's shared storage layer means scaling is purely compute, not storage."
+              }
+            ],
+            [
+              {
+                "text": "PlanetScale (MySQL-compatible, branching model).",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Built on Vitess (YouTube's MySQL sharding layer, now CNCF). Introduced database branching (create a schema branch, test migrations on branch, merge to production with no downtime) and a connection pooling proxy that handles serverless connection overhead. The hobby tier is free; production tiers scale by rows read/written per month. Known for zero-downtime schema changes using non-blocking DDL."
+              }
+            ],
+            [
+              {
+                "text": "Neon (PostgreSQL, 2022).",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Separates PostgreSQL storage from compute, storing pages in a custom object-storage-backed layer. Compute can scale to zero within seconds of inactivity (cold start is ~500ms). The storage layer provides branching similar to PlanetScale — branches are copy-on-write snapshots backed by the same pages. Neon's architecture is the cleanest cloud-native redesign of PostgreSQL in the serverless category."
+              }
+            ],
+            [
+              {
+                "text": "CockroachDB Serverless.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " CockroachDB's multi-tenant managed offering. Provides globally distributed ACID transactions with per-request billing. Unlike the others, it is inherently multi-region by design, making it the only serverless OLTP option with cross-region strong consistency out of the box."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "warning",
+          "runs": [
+            {
+              "text": "The serverless OLTP billing model (per request/row) can be significantly more expensive than provisioned instances at sustained high throughput. The crossover point is generally around 20-30% sustained CPU utilisation — below that, serverless wins; above that, provisioned wins. Run cost estimates against your actual query patterns before committing to serverless in production."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Serverless OLTP scales your database compute automatically and bills you per-request instead of per-provisioned-server. Great for irregular traffic. Four real systems do this credibly: Aurora Serverless v2, PlanetScale, Neon, and CockroachDB Serverless."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "dds-ch13-c009",
+      "order": 9,
+      "title": "Embedded Analytics: The DuckDB Pattern",
+      "teaser": "DuckDB is an in-process column-store analytical database that you link into your application as a library — like SQLite, but for OLAP. It runs large aggregate queries over local files without a cluster, a server, or a network hop, and it has become the fastest-growing database in data engineering since 2022.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Traditional analytics requires a separate server: a Redshift cluster, a BigQuery project, a Spark cluster. These are appropriate for petabyte-scale data and hundreds of concurrent users. But a huge class of analytical workloads does not need that scale: a data engineer transforming 100GB of Parquet files, a data scientist exploring a dataset locally, a backend service running analytics on its own data, an edge compute node summarising sensor data. For these, the overhead of a separate server is pure friction."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "DuckDB (developed by Mark Raasveldt and Hannes Mühleisen at CWI Amsterdam; v1.0 released 2024) solves this with a radically different deployment model: it is a shared library. No server process. No port. No network. You import duckdb in Python, or link the C++ library, and execute SQL that reads from Parquet files, CSV files, JSON, PostgreSQL, SQLite, or data frames in memory. Vectorised execution processes data in columnar chunks — the same technique that makes BigQuery fast — but on a laptop."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The deployment patterns that have emerged:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Local data transformation.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " dbt + DuckDB is a common combination for development: run your full dbt transformation pipeline locally against Parquet samples before promoting to BigQuery or Snowflake. Dramatically faster iteration than waiting for cloud execution."
+              }
+            ],
+            [
+              {
+                "text": "Embedded analytics in applications.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " A Go or Rust service that needs to compute aggregates over its own data can link DuckDB and query in-process — no separate analytics infrastructure needed. MotherDuck (DuckDB's managed cloud offering) extends this with serverless cloud execution."
+              }
+            ],
+            [
+              {
+                "text": "Lakehouse query layer.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " DuckDB's Iceberg and Delta Lake extensions (2024) allow it to query lakehouse tables directly from S3 using Iceberg or Delta metadata. A single DuckDB process can serve as a query layer for a small-to-medium lakehouse without a Spark cluster."
+              }
+            ],
+            [
+              {
+                "text": "WASM in the browser.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " DuckDB-WASM enables full analytical SQL in the browser. Observable notebooks and browser-based data tools can run joins and aggregations over local files client-side."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "info",
+          "runs": [
+            {
+              "text": "DuckDB's benchmark performance (TPC-H SF100 on a MacBook M2) is competitive with managed cloud warehouses for data that fits on a single machine. The architectural shift it represents is not raw performance — it is the elimination of the server as a required deployment unit for analytical workloads. SQLite did this for OLTP; DuckDB is doing it for OLAP."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "DuckDB is a column-store analytical database you import as a library — like SQLite for OLAP. It runs fast aggregate queries on Parquet files in your process, with no server to deploy. For anything that fits on one machine, it eliminates the need for a Spark cluster."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "dds-ch13-c010",
+      "order": 10,
+      "title": "Multi-Region Active-Active",
+      "teaser": "Multi-region active-active lets clients write to any region and have those writes replicated globally — delivering low-latency writes everywhere at the cost of the hardest consistency problem in distributed systems: how do you handle conflicting concurrent writes from opposite sides of the planet?",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "In a single-region database, strong consistency is achievable with moderate performance cost. In a multi-region deployment, the speed of light becomes the fundamental constraint: a round-trip between us-east-1 and eu-west-1 takes ~90ms. Requiring every write to be acknowledged by all regions before returning to the client means P50 write latency is measured in hundreds of milliseconds — unacceptable for interactive applications."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The systems that have made this tractable, and their approaches:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Google Spanner.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Uses TrueTime — GPS and atomic clock synchronisation that provides bounded clock uncertainty — to implement external consistency (linearisability) across regions. Spanner achieves this without prohibitive latency by writing to Paxos groups whose members are geographically distributed in the same region cluster. Reads are served from a local replica using a timestamp fence. Cross-region commits carry a cross-region latency penalty; local reads can be fast. Used by Google Ads, Google Fi, and hundreds of enterprise customers. F1's 2012 OSDI paper remains the definitive technical reference."
+              }
+            ],
+            [
+              {
+                "text": "CockroachDB.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Open-source multi-region ACID database modelled explicitly on Spanner. Introduced \"multi-region\" table settings (2021) that let you designate a home region per row so that regional writes resolve locally. Leaseholder pinning keeps the Raft leader in the home region for regional rows, providing local write latency. Cross-region writes still carry the latency penalty."
+              }
+            ],
+            [
+              {
+                "text": "Cassandra / ScyllaDB.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Leaderless, with tunable consistency. Writes at LOCAL_QUORUM are fast (resolve within one region); QUORUM resolves across regions. Conflict resolution is last-write-wins or application-defined. This is effectively an active-active setup with eventual consistency. Appropriate when write throughput matters more than strong consistency. Used at Netflix, Apple's iCloud (ScyllaDB), and Discord."
+              }
+            ],
+            [
+              {
+                "text": "DynamoDB Global Tables.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Active-active replication across AWS regions. Conflict resolution is last-write-wins using the DynamoDB item timestamp. Application-level conflict detection is possible via conditional writes. Fully managed; scales to any throughput."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The fundamental tradeoff that cannot be engineered away: for records that can be mutated in multiple regions simultaneously (not just replicated), you must choose a conflict resolution strategy. Options are: (1) last-write-wins (simple, but you lose one write), (2) application-level conflict resolution (correct, but complex), (3) CRDTs (correct for the operations CRDTs support), or (4) strongly consistent cross-region consensus (correct for everything, but expensive in latency)."
+            }
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "warning",
+          "runs": [
+            {
+              "text": "Most teams who say they need multi-region active-active actually need multi-region active-passive with fast failover. Active-active is the right choice only when users in different regions are generating conflicting writes to the same records. If your traffic is regionally isolated (EU users write EU records, US users write US records), active-passive with cross-region read replicas is dramatically simpler and cheaper."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Multi-region active-active means any region can accept writes and all regions replicate to each other. The hard problem is what happens when two regions write to the same record at the same time. Light-speed delay makes strong global consistency expensive; every system makes a tradeoff between latency and consistency."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "dds-ch13-c011",
+      "order": 11,
+      "title": "Feature Stores",
+      "teaser": "A feature store is the data system that bridges ML and production: it computes and serves the same features that trained a model so that online predictions use identical inputs. Without one, training-serving skew is the leading source of silent ML failures in production.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Training-serving skew is the problem: you train a model using features computed in a batch pipeline (e.g., 'user's average purchase value over the last 30 days'). In production, you compute the same feature differently — or use a slightly different time window, or hit a different data source — and the model sees inputs it was never trained on. The model's behaviour degrades silently, and without a feature store tracking exactly what was computed, the discrepancy is nearly impossible to debug."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "A feature store solves this with two integrated components:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Offline store.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " A columnar store (BigQuery, Redshift, S3 Parquet) that holds historical feature values. Used for training data generation: you retrieve features as they appeared at a historical point in time (point-in-time correct joins). Without point-in-time correctness, you inadvertently use future feature values in training — a form of data leakage that inflates offline model metrics and degrades online performance."
+              }
+            ],
+            [
+              {
+                "text": "Online store.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " A low-latency key-value store (Redis, DynamoDB, Cassandra) that holds the latest feature values for each entity (user_id, item_id). When a prediction is requested, the serving layer fetches features from the online store in single-digit milliseconds. The online store is populated by a materialisation pipeline that syncs from the offline store."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The leading systems:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Feast (open source, originally Gojek 2019, now Linux Foundation).",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Provides a feature registry, point-in-time correct retrieval, and pluggable online/offline backends. Widely adopted as a self-hosted feature store. Feast 0.40+ supports streaming feature computation via Kafka source and materialises to Redis or DynamoDB."
+              }
+            ],
+            [
+              {
+                "text": "Tecton.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " The managed feature platform built by the team behind Uber's Michelangelo ML platform. Provides managed infrastructure for batch, streaming, and real-time feature computation with automated backfilling, monitoring, and access control. Used at major fintech and e-commerce companies at scale."
+              }
+            ],
+            [
+              {
+                "text": "Databricks Feature Store / Unity Catalog.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Integrated with the Databricks Lakehouse. Features are stored as Delta tables. Point-in-time correct joins use the Delta time-travel mechanism. Tightly integrated with MLflow for tracking which features trained which model."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "info",
+          "runs": [
+            {
+              "text": "The online-offline parity problem is the defining technical challenge of feature stores. Batch features are easy — compute in Spark, materialise to Redis. Streaming features (e.g., 'number of failed logins in the last 5 minutes') require a streaming pipeline (Flink, Kafka Streams) that maintains a running aggregate in the online store. Real-time features (computed at request time from raw data) avoid materialisation but add latency. Choosing the right computation model per feature is the main architectural decision."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "A feature store guarantees that the features used to train a model are computed the same way as the features served in production. It has an offline store for training history and an online store for low-latency serving. Without one, subtle differences between training and serving silently break model performance."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "dds-ch13-c012",
+      "order": 12,
+      "title": "Time-Series Databases",
+      "teaser": "Time-series databases are optimised for a workload that doesn't fit OLTP or OLAP neatly: millions of metric writes per second, queries that scan recent history with time-bucketing and downsampling, and automatic retention policies. The access pattern is so distinct that general-purpose databases handle it poorly.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Time-series data — metrics, events, IoT sensor readings, application performance data — has a structural characteristic that makes it different from both OLTP and OLAP: it is almost exclusively append-only (new time points are always in the future), queries are almost always over a time range, and aggregate queries (rate, mean, percentile, downsampled) dominate point lookups. The cardinality problem is also distinct: a Kubernetes cluster with 1000 nodes and 200 metrics per node has 200,000 unique time series, each producing a data point every 15 seconds."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "General-purpose databases fail here because: B-tree indexes are poor for high-write-rate time-ordered data; no built-in concept of downsampling or retention; no time-aware compression (adjacent time-series values are highly correlated and compress extremely well with delta encoding, gorilla encoding, or XOR compression)."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The leading time-series databases and their distinctions:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "TimescaleDB (2017).",
+                "marks": ["bold"]
+              },
+              {
+                "text": " A PostgreSQL extension that automatically partitions time-series data into hypertable chunks. Retains full SQL compatibility — you get time-aware features (time_bucket(), continuous aggregates, retention policies) without abandoning the PostgreSQL ecosystem. Columnar compression of historical chunks delivers 10-20x storage reduction. The 'fits in PostgreSQL' design is its main advantage: no separate operational component."
+              }
+            ],
+            [
+              {
+                "text": "InfluxDB (2013, InfluxDB 3.0 in 2024).",
+                "marks": ["bold"]
+              },
+              {
+                "text": " The dominant standalone time-series database. InfluxDB 3.0 was a complete rewrite (in Rust, built on Apache Arrow and Apache Parquet with an object-storage backend) that abandoned the earlier TSM storage engine. InfluxDB 3.0 queries via SQL and InfluxQL; stores data in Parquet on object storage; is API-compatible with Prometheus and the InfluxDB line protocol. The rewrite sacrificed some write performance for better scalability and a cloud-native storage model."
+              }
+            ],
+            [
+              {
+                "text": "QuestDB (2021).",
+                "marks": ["bold"]
+              },
+              {
+                "text": " A column-oriented time-series database with a focus on extreme write throughput. QuestDB's columnar storage appends to memory-mapped files with zero-copy ingestion. Claims ~4 million rows per second on a single server. SQL-based (PostgreSQL wire protocol). Used heavily in financial tick data and high-frequency trading infrastructure."
+              }
+            ],
+            [
+              {
+                "text": "Prometheus + Thanos/Cortex/Mimir.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Prometheus's local TSDB is a purpose-built metric store optimised for scraping. For long-term storage and global aggregation, Thanos, Cortex, and Grafana Mimir extend Prometheus with object-storage backends. The Prometheus ecosystem is the de facto standard for Kubernetes monitoring."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "First-class time-series features that every TSDB provides and general-purpose databases do not:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Downsampling and rollups.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Automatically aggregate high-resolution data into coarser time buckets as it ages (1s → 1m → 1h). Storage cost shrinks; recent queries remain fast."
+              }
+            ],
+            [
+              {
+                "text": "Retention policies.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Automatically drop data older than N days. Crucial for high-cardinality metric streams where retaining full resolution forever is cost-prohibitive."
+              }
+            ],
+            [
+              {
+                "text": "Time-aware compression.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Gorilla-style delta-of-delta encoding (from Facebook's 2015 VLDB paper) achieves 12:1 compression ratios on floating-point metrics compared to raw storage."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "info",
+          "runs": [
+            {
+              "text": "For teams running Kubernetes-based applications, the default answer for metrics is Prometheus + Grafana + a long-term storage backend (Mimir or Thanos). For application-level event streams (user events, IoT, financial ticks) where query patterns require SQL joins with other tables, TimescaleDB on PostgreSQL avoids the operational cost of a separate TSDB cluster while delivering the key time-series primitives."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "A time-series database is optimised for writing millions of timestamped data points per second and querying them with time-range aggregations. It handles downsampling and retention automatically. General databases can't match this because their indexes and compression are not built for time-ordered append-only data."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "dds-ch13-c013",
+      "order": 13,
+      "title": "Zero-ETL and Change Feeds",
+      "teaser": "Zero-ETL is a marketing term for a real architectural shift: instead of running a separate ETL pipeline to move data from an operational database to an analytics store, you configure the database to stream its changes directly to the destination. The explicit ETL job disappears; CDC takes its place.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The classical data pipeline runs an ETL job on a schedule: extract records modified since the last run, transform them, load them into the warehouse. This introduces latency (data is stale by the job interval), operational complexity (the job is another system to maintain, monitor, and debug), and fragility (schema changes in the source break the job). Zero-ETL replaces this with a native Change Data Capture (CDC) feed from the source database directly to the destination."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The key products and integrations that have made this practical:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "DynamoDB Streams.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " DynamoDB's built-in change feed delivers a record of every insert, update, and delete within 24 hours. Consumers are Lambda functions or Kinesis streams. AWS EventBridge Pipes (2022) chains DynamoDB Streams to downstream services with filtering and transformation. DynamoDB Streams was one of the earliest and most widely used CDC implementations in the cloud-native ecosystem."
+              }
+            ],
+            [
+              {
+                "text": "Aurora to Redshift Zero-ETL (AWS, 2023).",
+                "marks": ["bold"]
+              },
+              {
+                "text": " AWS announced native Aurora MySQL → Redshift zero-ETL integration at re:Invent 2022; it reached GA in 2023. Changes committed in Aurora are replicated to Redshift within seconds using Aurora's binlog CDC, with no ETL pipeline to configure or maintain. Schema changes in Aurora propagate automatically. This was a landmark announcement because it eliminated the Firehose/Glue/DMS pipeline that was the standard pattern for Aurora-to-Redshift replication."
+              }
+            ],
+            [
+              {
+                "text": "Snowflake Streams and Tasks.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Snowflake's Stream object tracks DML changes (inserts, updates, deletes) in a Snowflake table. A Task schedules a SQL statement that processes the stream — effectively an event-driven ELT pipeline inside Snowflake. This allows incremental materialisation of derived tables without an external orchestrator. Snowflake Dynamic Tables (GA 2024) extend this: define a table as a SQL query and Snowflake incrementally refreshes it as upstream data changes, similar to a streaming view."
+              }
+            ],
+            [
+              {
+                "text": "Debezium (open source).",
+                "marks": ["bold"]
+              },
+              {
+                "text": " The canonical CDC connector for self-hosted databases. Reads from MySQL binlog, PostgreSQL logical replication slot, MongoDB oplog, SQL Server CDC, Oracle LogMiner. Publishes change events to Kafka. The Debezium → Kafka → Flink/Spark pipeline is the standard architecture for event-driven data integration at organisations not using managed CDC. Debezium 2.x (2022+) added incremental snapshots that can capture initial state without locking the source table."
+              }
+            ],
+            [
+              {
+                "text": "PostgreSQL logical replication.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " PostgreSQL's native logical replication (since PG 10, 2017) allows row-level change streaming to any subscriber. Services like Supabase Realtime and Neon's branching mechanism are built on PostgreSQL logical replication slots. PG 16 (2023) added bidirectional logical replication for active-active setups."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "What zero-ETL eliminates and what it does not:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Eliminates:",
+                "marks": ["bold"]
+              },
+              {
+                "text": " the scheduled extraction job, the polling interval latency, the job scheduling infrastructure, and the complexity of tracking 'last-modified' timestamps in source tables."
+              }
+            ],
+            [
+              {
+                "text": "Does not eliminate:",
+                "marks": ["bold"]
+              },
+              {
+                "text": " the need for schema evolution management (source schema changes still propagate to consumers), the need for idempotent consumers (CDC delivers at-least-once in most systems), or the need for data quality validation. Zero-ETL moves the complexity from orchestration to schema governance."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "info",
+          "runs": [
+            {
+              "text": "The 'zero' in zero-ETL is marketing: you still have extraction (from the binlog), transformation (the target schema is rarely identical to the source), and loading. What disappears is the explicit orchestrated batch job. The CDC feed is always-on, low-latency, and managed by the database — not by your data engineering team's pipeline code. That is the genuine improvement."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Zero-ETL replaces the scheduled ETL batch job with a native CDC feed from the database — changes stream to the destination continuously instead of arriving hours later via a pipeline job. DynamoDB Streams, Aurora → Redshift zero-ETL, Snowflake Streams, and Debezium are the four main implementations."
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,1253 @@
+{
+  "chapterId": "dds-ch05-replication",
+  "shardIndex": 5,
+  "cards": [
+    {
+      "id": "dds-ch05-c001",
+      "order": 1,
+      "title": "Why Replication",
+      "teaser": "Replication — keeping copies of data on multiple machines — solves three distinct problems: surviving hardware failure, scaling reads across nodes, and serving users from geographically closer machines.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "A single node that holds all your data is a single point of failure. Disk fails, power drops, kernel panics — and your data is unavailable or lost. Replication is the primary mechanism for escaping this fragility. But replication does more than survive hardware death; it enables two additional capabilities that matter at scale."
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Fault tolerance.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " If one replica fails, another can continue serving reads and writes. Three replicas can survive one failure with no user impact; five can survive two."
+              }
+            ],
+            [
+              {
+                "text": "Read scaling.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Every follower replica can serve reads independently. A single leader with five followers can handle roughly six times the read throughput of one node — assuming reads can tolerate slightly stale data."
+              }
+            ],
+            [
+              {
+                "text": "Geographic locality.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Place replicas close to the users who read them — a Europe replica for European users, US-East for US users. Network latency is a physics problem; replication is the engineering response to it."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The challenge with replication is not keeping data on multiple machines when it never changes — that's trivial. The challenge is handling changes. Every write to one replica must somehow be propagated to the others. How you propagate writes, how fast, and what guarantees you provide in the window between write and propagation is what distinguishes every replication scheme from every other."
+            }
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "info",
+          "runs": [
+            {
+              "text": "Kleppmann distinguishes replication from partitioning carefully: replication means the same data exists on multiple machines; partitioning (sharding) means different data exists on different machines. Most real systems use both. This chapter covers replication only."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Replication keeps multiple copies of your data on separate machines. The easy part is the copying; the hard part is keeping those copies consistent when the data changes."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "dds-ch05-c002",
+      "order": 2,
+      "title": "Single-Leader Replication",
+      "teaser": "Single-leader replication is the dominant production pattern: one node (the leader) accepts all writes; every other node (a follower) applies those writes from the leader's replication log. PostgreSQL, MySQL, MongoDB, and Kafka all default to this model.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The leader-follower model imposes a strict rule: clients send all writes to the leader, and only to the leader. The leader writes to local storage, then forwards the write to its followers via a replication log. Each follower processes that log in order, applying the same operations in the same sequence. The result is eventually identical state on all nodes."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Clients can read from any replica — leader or follower. This is where the scalability benefit comes from: reads are distributed across all followers, reducing load on the leader. But reading from a follower introduces a risk: the follower may be behind the leader by some number of writes. For workloads that can tolerate slightly stale reads, that's acceptable. For workloads that cannot, clients must read from the leader."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Single-leader replication is the overwhelmingly dominant model in production systems because it sidesteps the hardest problem in distributed systems: "
+            },
+            {
+              "text": "conflict resolution",
+              "marks": ["italic"]
+            },
+            {
+              "text": ". When writes can only enter the system through one gate, there is no possibility of two nodes accepting conflicting concurrent writes. The leader serializes everything."
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "PostgreSQL:",
+                "marks": ["bold"]
+              },
+              {
+                "text": " streaming replication with a primary and one or more standbys. Physical or logical replication slots."
+              }
+            ],
+            [
+              {
+                "text": "MySQL:",
+                "marks": ["bold"]
+              },
+              {
+                "text": " binary log (binlog) replication. The source writes a binlog; replicas apply it."
+              }
+            ],
+            [
+              {
+                "text": "MongoDB:",
+                "marks": ["bold"]
+              },
+              {
+                "text": " replica sets with a single primary that accepts writes; secondaries replicate the oplog."
+              }
+            ],
+            [
+              {
+                "text": "Kafka:",
+                "marks": ["bold"]
+              },
+              {
+                "text": " each partition has a leader broker; all produces and fetches of in-sync-replica data flow through the leader."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "warning",
+          "runs": [
+            {
+              "text": "The leader is a bottleneck and a single point of failure for writes. Systems that need to accept writes across multiple datacenters simultaneously must move to multi-leader replication — and accept the conflict resolution complexity that comes with it."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Single-leader replication means one node handles all writes and replicates them to the others. Reads can go to any replica. It's simple and conflict-free, which is why Postgres, MySQL, and MongoDB all use it as their default."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "dds-ch05-c003",
+      "order": 3,
+      "title": "Synchronous vs Asynchronous Replication",
+      "teaser": "In synchronous replication the leader waits for follower acknowledgment before confirming a write to the client — strong durability but slow. In asynchronous replication the leader confirms immediately — fast but data loss on leader failure is possible.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The choice between synchronous and asynchronous replication is a trade-off between durability and performance, and it is one of the most consequential configuration decisions you make when setting up a replicated database."
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Synchronous replication.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " The leader sends the write to the follower and waits for the follower to confirm before acknowledging the write to the client. Guarantee: if the leader fails immediately after the client receives acknowledgment, at least one follower has the data. Cost: the write latency includes the round-trip to the follower. If the follower is slow or unavailable, all writes block. Making every follower synchronous is impractical — one slow node grinds the whole system to a halt."
+              }
+            ],
+            [
+              {
+                "text": "Asynchronous replication.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " The leader confirms the write to the client without waiting for followers. Replication happens in the background. High write throughput and low write latency — but if the leader fails before replication completes, the acknowledged write is lost. The client thinks their data is safe; it isn't."
+              }
+            ],
+            [
+              {
+                "text": "Semi-synchronous (the practical middle ground).",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Keep exactly one synchronous follower; all others are asynchronous. The synchronous follower provides durability: if the leader fails, a fully up-to-date follower can be promoted without data loss. The asynchronous followers provide read scalability. This is the configuration PostgreSQL and MySQL recommend in production: one synchronous standby, zero or more asynchronous ones."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The durability guarantee from fully asynchronous replication is weaker than it sounds. Kleppmann's phrasing is precise and important: "
+            },
+            {
+              "text": "\"even if replication is configured to be asynchronous, the leader does not wait for the follower before confirming to the client — but that doesn't mean the write is lost. It means the write might be lost if the leader fails.\"",
+              "marks": ["italic"]
+            },
+            {
+              "text": " The probability of the leader failing in the window between write and replication is low but non-zero — and for critical data, non-zero is unacceptable."
+            }
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "info",
+          "runs": [
+            {
+              "text": "PostgreSQL's synchronous_standby_names parameter controls which standbys are synchronous. Setting it to FIRST 1 (standby1) makes the nearest standby synchronous. Writes wait for that one acknowledgment; the rest replicate asynchronously. This is the recommended production configuration for financial data."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Synchronous replication waits for a follower before confirming a write — safer but slower. Asynchronous confirms immediately — faster but risks data loss if the leader crashes. The sensible middle ground: one synchronous follower for durability, the rest asynchronous for scale."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "dds-ch05-c004",
+      "order": 4,
+      "title": "Replication Log Methods",
+      "teaser": "How the leader communicates changes to followers determines whether replication is brittle or robust. Three mechanisms are in wide use: statement-based (dangerous with non-determinism), WAL shipping (byte-perfect but coupled to storage internals), and logical (row-based) replication (the flexible modern default).",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The replication log is the medium of truth between leader and followers. Its design determines what operations can safely be replicated and how tightly followers are coupled to the leader's internal implementation."
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Statement-based replication.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " The leader logs every write SQL statement (INSERT, UPDATE, DELETE) and sends it to followers, which execute it. Simple and human-readable. Breaks on any statement containing non-determinism: "
+              },
+              {
+                "text": "NOW()",
+                "marks": ["code"]
+              },
+              {
+                "text": ", "
+              },
+              {
+                "text": "RAND()",
+                "marks": ["code"]
+              },
+              {
+                "text": ", auto-incrementing sequences, triggers that fire differently — all produce divergent state across replicas. MySQL used statement-based replication by default before 5.1; the non-determinism bugs were a constant source of replication drift."
+              }
+            ],
+            [
+              {
+                "text": "WAL shipping (Write-Ahead Log).",
+                "marks": ["bold"]
+              },
+              {
+                "text": " The database's internal write-ahead log — the same log used for crash recovery — is streamed to followers. PostgreSQL streaming replication works exactly this way. The WAL describes changes at the storage engine level: which bytes on which pages changed. This is byte-perfect — followers end up with identical disk state. The cost is tight coupling: followers must run the exact same storage engine version as the leader. A major-version upgrade requires careful coordination to avoid replication breaks."
+              }
+            ],
+            [
+              {
+                "text": "Logical (row-based) replication.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " The leader logs the effects of writes at the row level: which rows were inserted with what values, which rows were updated from what to what, which rows were deleted. Decoupled from storage internals — followers can run different storage engine versions, or even different databases entirely. MySQL's row-based binlog and PostgreSQL's logical replication slots both work this way. The logical replication stream is also what change-data-capture (CDC) tools like Debezium consume to stream database changes into Kafka."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "info",
+          "runs": [
+            {
+              "text": "PostgreSQL supports both physical (WAL-shipping) and logical replication. Physical replication is used for standby servers that need byte-identical state for failover. Logical replication is used for selective table replication, zero-downtime major-version upgrades, and CDC pipelines. They coexist in the same cluster."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Statement-based replication re-runs SQL statements — risky with non-determinism. WAL shipping copies the raw storage log — byte-perfect but version-coupled. Logical replication logs row-level changes — flexible and decoupled. Most modern databases default to logical or WAL shipping."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "dds-ch05-c005",
+      "order": 5,
+      "title": "Replication Lag and Eventual Consistency",
+      "teaser": "Asynchronous replication means followers are always behind the leader by some amount — the replication lag. \"Eventual consistency\" is the promise that, if you stop writing, followers will eventually catch up. It is a weak guarantee, and understanding its limits is critical.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Replication lag is the delay between when a write is acknowledged by the leader and when it appears on a given follower. Under normal load, lag might be milliseconds. Under heavy write load, network partition, or follower compaction pauses, it can grow to seconds or minutes."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "\"Eventual consistency\" is one of the most misunderstood terms in distributed systems. It does "
+            },
+            {
+              "text": "not",
+              "marks": ["bold"]
+            },
+            {
+              "text": " say:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "How long \"eventually\" takes. Lag could be milliseconds or hours."
+              }
+            ],
+            [
+              {
+                "text": "What happens to reads in the meantime. You can read stale data, contradictory data, or data that appears to go backwards in time."
+              }
+            ],
+            [
+              {
+                "text": "Whether any specific write will survive. If the leader fails before replication completes, the write may simply disappear."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "What eventual consistency ",
+              "marks": []
+            },
+            {
+              "text": "does",
+              "marks": ["bold"]
+            },
+            {
+              "text": " say: if no new writes arrive, all replicas will converge to the same value. That's all. Under continuous write load — the normal operating mode of any production system — the replicas may never fully converge."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The practical consequence is that applications built on eventually-consistent systems must be designed to tolerate stale reads, or they must use stronger consistency guarantees (read-your-writes, monotonic reads, consistent prefix reads) for the specific operations that require them. Kleppmann dedicates three named consistency guarantees to the most common anomalies — each is a separate card in this chapter."
+            }
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "warning",
+          "runs": [
+            {
+              "text": "Replication lag is invisible in development. Local machines have sub-millisecond replication. Production databases under load have tens or hundreds of milliseconds of lag. Bugs caused by replication lag are among the hardest to reproduce because they disappear in the dev/test environment."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Eventual consistency means all replicas will agree eventually — but not when, and not what you'll read in the meantime. In practice it means your follower might be seconds behind the leader, and reads from that follower will return stale data without warning."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "dds-ch05-c006",
+      "order": 6,
+      "title": "Read-Your-Writes Consistency",
+      "teaser": "Read-your-writes consistency guarantees that after you write something, any subsequent read from your own session will see that write. Without it, users submit a form, get redirected to a page that reads from a lagging replica, and their own submission has vanished.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Kleppmann's canonical example: you post a comment on a social media post. The write goes to the leader. You are immediately redirected to a page that reads the comment feed — from a follower that hasn't yet received your comment. Your comment is gone. You post again. Now there are two comments."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Read-your-writes consistency (also called read-your-own-writes or read-after-write consistency) is the guarantee that this never happens: if you write something, you will always see that write in your own subsequent reads. It says nothing about what "
+            },
+            {
+              "text": "other",
+              "marks": ["italic"]
+            },
+            {
+              "text": " users see — only about what you see."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Implementation strategies:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Always read your own profile from the leader.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " If a user can modify a resource, read it from the leader. If they cannot modify it (it's someone else's profile), read from a follower. Simple but requires the application to know which resources a given user may edit."
+              }
+            ],
+            [
+              {
+                "text": "Track the last write timestamp.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " After writing, record the timestamp of that write. For the next minute (or until a follower catches up), route all reads to the leader. After the window, followers are likely current."
+              }
+            ],
+            [
+              {
+                "text": "Remember the replication position.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " After a write, the client stores the log position (LSN in PostgreSQL). Only read from a replica that has advanced to at least that position. If no replica is current enough, read from the leader."
+              }
+            ],
+            [
+              {
+                "text": "Route the user to the same replica.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " If a user always reads from the same replica, they get a consistent view of their own writes (once that replica catches up). But if their replica fails, they must be rerouted — potentially to a replica that hasn't seen their writes."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "info",
+          "runs": [
+            {
+              "text": "Cross-device read-your-writes is harder: if a user posts from their phone, they must see that post when they switch to their laptop. This requires server-side metadata about the user's latest write position — not client-side cookies."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Read-your-writes means you always see your own changes immediately. The common implementation is to route reads to the leader for a short window after a write, or to track the replication position your write reached and only read from replicas that have caught up."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "dds-ch05-c007",
+      "order": 7,
+      "title": "Monotonic Reads",
+      "teaser": "Monotonic reads guarantee that a user never sees time go backwards — if they have read a value at time T, they will never subsequently read an older value. Without it, refreshing a page can make recently-posted content disappear.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Imagine two followers: Follower A is 1 second behind the leader; Follower B is 10 seconds behind. A user makes two reads in quick succession — the first request is load-balanced to Follower A, the second to Follower B. They see a comment in the first read; in the second read, that comment has disappeared, because Follower B is further behind."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Monotonic reads prevents this: it guarantees that if a user has read data at a certain level of recency, they will not subsequently read data that is less recent. It is a weaker guarantee than strong consistency — the user may still read stale data — but they will not read progressively staler data across successive reads."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The standard implementation: route each user to the same replica for all their reads. This can be done by hashing the user ID to select a replica. As long as that replica keeps advancing, the user's reads are monotonically non-decreasing in freshness. The failure case: if that replica dies, the user must be rerouted — and the application must decide whether to accept potential staleness at the reroute."
+            }
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "info",
+          "runs": [
+            {
+              "text": "Monotonic reads is a per-user guarantee. It does not say that User A and User B see the same data at the same time — only that each user's own reads are non-decreasing in time. Two users comparing notes may see very different states of the system."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Monotonic reads means once you've seen a value, you won't see an older value in any later read. The usual fix is sticky routing: always send a given user's reads to the same replica, so they see a consistently advancing view."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "dds-ch05-c008",
+      "order": 8,
+      "title": "Consistent Prefix Reads",
+      "teaser": "Consistent prefix reads guarantee that causally-related writes are seen in the order they were written. Without it, an observer can see an answer before the question — Mr Poons's reply before Mrs Cake's question.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Kleppmann's example from the book:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Mrs Cake writes: \"How far into the future can you see, Mr Poons?\""
+              }
+            ],
+            [
+              {
+                "text": "Mr Poons writes: \"About ten seconds usually, Mrs Cake.\""
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Mrs Cake's question and Mr Poons's answer go to different partitions. An observer reads from replicas that have received Mr Poons's answer but not yet Mrs Cake's question. They see the answer before the question, which makes no sense. The causal order has been violated."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Consistent prefix reads guarantees that if a sequence of writes happens in a certain order, any reader will see them in that order — not a permuted or partial view. It is particularly relevant for sharded (partitioned) databases where different partitions may have different replication lags. Writes to different partitions travel independently; there is no global ordering guarantee across partitions."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The implementation challenge: causally related writes must go to the same partition, or the database must track causal dependencies across partitions and enforce ordering at read time. Neither is free. Some databases (Google Spanner, CockroachDB) solve this with globally synchronized timestamps. Most do not."
+            }
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "warning",
+          "runs": [
+            {
+              "text": "This anomaly is particularly insidious in event-driven systems. If a user action produces two events that go to different Kafka partitions, a consumer of those partitions may process the response before the request. Building correct causal reasoning into consumers requires explicit causality tokens or keeping causally-related events on the same partition."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Consistent prefix reads means you always see writes in the order they happened — you never see an answer before the question that prompted it. This breaks in sharded systems because different shards have different replication lags and no shared ordering."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "dds-ch05-c009",
+      "order": 9,
+      "title": "Multi-Leader Replication",
+      "teaser": "Multi-leader replication allows writes to be accepted by more than one node simultaneously — enabling multi-datacenter writes and collaborative editing, but at the cost of introducing write conflicts that must be detected and resolved.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Single-leader replication has a fundamental limitation: all writes must route through one node. In a multi-datacenter deployment, this means every write from the Europe datacenter must cross the Atlantic to reach the US-based leader before it can be acknowledged. For write-latency-sensitive workloads, this is intolerable."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Multi-leader replication assigns a leader to each datacenter. Clients in Europe write to the Europe leader; clients in the US write to the US leader. The leaders replicate to each other asynchronously — over the wide-area network — and also replicate to their local followers. Write latency is now bounded by the local datacenter round-trip, not the cross-continental one."
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Multi-datacenter deployments.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " CockroachDB and Cassandra can be configured multi-leader per datacenter. MySQL Cluster (NDB), BDR (Bi-Directional Replication) for PostgreSQL, and Tungsten Replicator support multi-leader explicitly."
+              }
+            ],
+            [
+              {
+                "text": "Collaborative editing (Google Docs, CouchDB Sync).",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Each editing client is effectively a leader — they accept writes locally and sync with others when connected. This is the offline-capable, distributed editing model."
+              }
+            ],
+            [
+              {
+                "text": "Calendar and contact sync apps.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Multiple devices all write locally; they reconcile with a server when online. This is multi-leader with the phone and the server as competing leaders."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The price of multi-leader replication is "
+            },
+            {
+              "text": "write conflicts",
+              "marks": ["bold"]
+            },
+            {
+              "text": ": two leaders can accept different values for the same key simultaneously. In single-leader replication this cannot happen — the leader serializes all writes. In multi-leader replication it happens whenever two datacenters accept concurrent writes to the same record. Detecting and resolving these conflicts is the central problem of multi-leader systems."
+            }
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "warning",
+          "runs": [
+            {
+              "text": "Multi-leader replication is often described as easy to set up but hard to live with. The write-conflict problem is frequently underestimated at design time and causes production incidents and data corruption at scale. Consider very carefully whether the write-latency benefit is worth the conflict-resolution complexity."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Multi-leader replication lets multiple nodes accept writes simultaneously — great for multi-datacenter and offline-capable apps. The catch is conflicts: two leaders can accept different writes to the same data at the same time, and you must decide how to reconcile them."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "dds-ch05-c010",
+      "order": 10,
+      "title": "Conflict Resolution",
+      "teaser": "When two leaders accept concurrent writes to the same key, the conflict must be resolved. Last-write-wins is the default — and silently discards data. Application-level merge is correct but complex. CRDTs make certain data types conflict-free by construction.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Conflict resolution is where multi-leader systems separate from the theory into the messy reality of real data. Three approaches dominate:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Last-Write-Wins (LWW).",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Each write is tagged with a timestamp; on conflict, the write with the higher timestamp \"wins\" and the other is discarded. Simple to implement. Used by Cassandra by default. The problem: clocks in distributed systems are unreliable. Two nodes whose clocks differ by a few milliseconds can silently discard legitimate writes. LWW achieves \"convergence at the cost of durability\" — all replicas agree on a value, but that value may not be the one any client intended to write. Kleppmann is unambiguous: LWW is dangerous for any use case where data loss is unacceptable."
+              }
+            ],
+            [
+              {
+                "text": "Application-level merge.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " The database detects the conflict and surfaces both versions to the application, which must merge them. CouchDB works this way: conflicting versions are stored as document branches; the application reads all branches and writes a merged version. Git does the same thing — merge conflicts surface to the developer who must resolve them. This is the correct approach when semantic correctness matters more than simplicity. The cost is that every write path must handle the merge case."
+              }
+            ],
+            [
+              {
+                "text": "CRDTs (Conflict-free Replicated Data Types).",
+                "marks": ["bold"]
+              },
+              {
+                "text": " A data structure designed so that concurrent updates always merge deterministically with no conflicts. A counter CRDT (increment-only) always resolves: add all increments from all replicas. A set CRDT (grow-only) always resolves: union all elements. A multi-value register stores all concurrent values and returns a set. Riak, Redis Enterprise, and collaborative editing engines like Yjs and Automerge use CRDTs extensively. The constraint: CRDTs only work for data types whose semantics map cleanly to commutative, associative merge — not every data model does."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "comparison",
+          "caption": "Conflict resolution strategies compared",
+          "headers": ["Strategy", "Data safety", "Complexity", "Example systems"],
+          "rows": [
+            ["Last-Write-Wins", "Low — silently discards writes", "Low", "Cassandra (default)"],
+            ["Application merge", "High — no data loss", "High — merge logic in every write path", "CouchDB, Git"],
+            ["CRDT", "High — for supported types", "Medium — type constraints apply", "Riak, Yjs, Automerge"]
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "warning",
+          "runs": [
+            {
+              "text": "Conflict avoidance is usually better than conflict resolution. If causally-related writes can be routed to the same leader — for example, by ensuring all writes for a given user go to the same datacenter — most conflicts never arise. Design the routing policy before designing the conflict resolution policy."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Last-write-wins picks the value with the latest timestamp — easy, but silently throws away the other write. Application merge keeps both conflicting versions and asks your code to reconcile them — correct, but more work. CRDTs are data structures that can always be merged without conflicts — elegant, but only for certain data shapes."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "dds-ch05-c011",
+      "order": 11,
+      "title": "Leaderless Replication",
+      "teaser": "Leaderless replication abandons the concept of a designated write coordinator: any replica can accept a write, and the client writes to and reads from multiple replicas simultaneously, using quorums to determine correctness. Dynamo, Cassandra, Riak, and Voldemort all use this model.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Amazon's Dynamo paper (2007) popularized leaderless replication as a design for systems that must remain writable even when individual nodes fail. The insight: if you require a leader, the leader becomes a single point of failure for writes. Remove the leader; distribute write acceptance across all replicas."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The mechanics: a cluster has "
+            },
+            {
+              "text": "n",
+              "marks": ["italic"]
+            },
+            {
+              "text": " replica nodes. A write succeeds if it reaches "
+            },
+            {
+              "text": "w",
+              "marks": ["italic"]
+            },
+            {
+              "text": " nodes. A read succeeds if it receives responses from "
+            },
+            {
+              "text": "r",
+              "marks": ["italic"]
+            },
+            {
+              "text": " nodes. The quorum condition for strong consistency: "
+            },
+            {
+              "text": "w + r > n",
+              "marks": ["bold"]
+            },
+            {
+              "text": ". This ensures that the read set and write set overlap — at least one node in every read quorum has seen the latest write."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Typical configuration in a 5-node cluster: "
+            },
+            {
+              "text": "n = 5, w = 3, r = 3",
+              "marks": ["code"]
+            },
+            {
+              "text": ". Write quorum: 3 nodes must ack. Read quorum: 3 nodes must respond. Since 3 + 3 > 5, at least one reader has the latest write. The cluster can tolerate 2 node failures for writes and 2 for reads."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Cassandra and Riak let you tune consistency per-operation using named levels:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "ONE / TWO / THREE:",
+                "marks": ["bold"]
+              },
+              {
+                "text": " w or r = that number of replicas. Fast, low durability."
+              }
+            ],
+            [
+              {
+                "text": "QUORUM:",
+                "marks": ["bold"]
+              },
+              {
+                "text": " w or r = floor(n/2) + 1. The quorum condition holds when both read and write use QUORUM."
+              }
+            ],
+            [
+              {
+                "text": "ALL:",
+                "marks": ["bold"]
+              },
+              {
+                "text": " w or r = all n replicas. Maximum consistency; unavailable if any replica is down."
+              }
+            ],
+            [
+              {
+                "text": "LOCAL_QUORUM:",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Quorum within the local datacenter only — used for multi-datacenter Cassandra deployments where cross-DC latency is unacceptable."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "warning",
+          "runs": [
+            {
+              "text": "Quorum does not guarantee strong consistency in all scenarios. Edge cases — concurrent writes with clock skew, network partitions, sloppy quorums — can all result in a read quorum that does not include the most recent write even when w + r > n. Quorum is a probabilistic, not absolute, consistency tool."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Leaderless replication means any node can accept a write. You send a write to multiple nodes (w of them must respond), and you read from multiple nodes (r of them must respond). As long as w + r is greater than the total number of nodes n, your read set and write set overlap — guaranteeing at least one reader has the latest value."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "dds-ch05-c012",
+      "order": 12,
+      "title": "Sloppy Quorum and Hinted Handoff",
+      "teaser": "When enough designated replicas are unavailable to satisfy a normal quorum, sloppy quorum allows writes to land on other reachable nodes temporarily — preserving write availability at the cost of temporarily weaker consistency guarantees.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Consider a 5-node Cassandra cluster with "
+            },
+            {
+              "text": "w = 3",
+              "marks": ["code"]
+            },
+            {
+              "text": ". A network partition isolates 2 of the 3 designated replicas for a given key. A strict quorum would reject the write — only 1 of the designated 3 is reachable. The system becomes unavailable for writes to that key despite 4 nodes being alive."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Sloppy quorum relaxes this: write the data to any "
+            },
+            {
+              "text": "w",
+              "marks": ["italic"]
+            },
+            {
+              "text": " reachable nodes, even if they are not the designated home nodes for that key. The write succeeds. The non-home nodes store the data temporarily as a "
+            },
+            {
+              "text": "hint",
+              "marks": ["italic"]
+            },
+            {
+              "text": " — a record that says \"hold this value; when Node X comes back online, deliver it.\""
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "When the designated nodes recover, hinted handoff delivers the pending writes to them. The data is now where it belongs, and the temporary holders can discard their hints. The system has preserved write availability during the partition at the cost of a period during which reads from designated nodes would have returned stale data."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The implication for consistency: during the sloppy quorum window, a read from the designated "
+            },
+            {
+              "text": "r",
+              "marks": ["italic"]
+            },
+            {
+              "text": " nodes will "
+            },
+            {
+              "text": "not",
+              "marks": ["italic"]
+            },
+            {
+              "text": " include the latest write, because the latest write is on non-home nodes awaiting handoff. Sloppy quorum dramatically increases write availability but offers no consistency guarantee during the handoff window. It is firmly on the \"availability\" side of the CAP trade-off."
+            }
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "info",
+          "runs": [
+            {
+              "text": "Dynamo, Cassandra, and Riak all support sloppy quorum. It is often the default for Cassandra ONE writes. Systems that require strong durability should disable sloppy quorum and accept lower write availability during node failures."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Sloppy quorum: if the designated nodes for a key are unreachable, write to any available nodes instead. Those substitute nodes hold the data as a \"hint\" and forward it to the right nodes when they come back. More available, but temporarily inconsistent."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "dds-ch05-c013",
+      "order": 13,
+      "title": "Read Repair and Anti-Entropy",
+      "teaser": "Stale replicas accumulate silently — nodes that were offline, slow, or partitioned fall behind. Read repair catches staleness at query time; anti-entropy is a background process that reconciles replicas proactively. Both are necessary in leaderless systems.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "In leaderless replication, no single node is authoritative for a given key. Replicas can drift — a node that was down during a write has an old value; a node that handled a sloppy quorum write has a new value that hasn't reached the home node yet. Without active repair mechanisms, divergence accumulates over time."
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Read repair.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " When a client reads from multiple replicas (as in a quorum read), it may receive different values. The client (or the coordinator node) detects the discrepancy, determines the most recent version, and writes it back to the stale replica. Read repair is opportunistic — it fires on reads, not on a schedule. Nodes that are rarely read may go a long time without repair. In Cassandra, read repair probability is a configurable per-table parameter."
+              }
+            ],
+            [
+              {
+                "text": "Anti-entropy.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " A background process that continuously compares replicas and synchronizes divergent data. It does not operate on a per-read basis; it systematically scans all replicas looking for differences. Cassandra's anti-entropy uses Merkle trees to efficiently compare large data sets: each subtree of the Merkle tree represents a range of data, and trees can be compared top-down — only branches that differ are exchanged. This makes anti-entropy efficient even across hundreds of gigabytes of data."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The two mechanisms cover different failure modes. Read repair is fast but only fires when data is accessed — cold data (rarely read) accumulates staleness. Anti-entropy finds cold divergence but runs slowly and at high I/O cost. Production Cassandra clusters run anti-entropy repair on a schedule (weekly or biweekly per node) as a maintenance operation."
+            }
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "warning",
+          "runs": [
+            {
+              "text": "Neglecting anti-entropy repair in Cassandra leads to \"inconsistent data at rest\" — replicas that silently diverge over months and surface as data loss or corruption during node replacements. Running repair is not optional; it is a maintenance obligation."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Read repair fixes a stale replica the moment a client reads it and notices the discrepancy. Anti-entropy fixes stale replicas proactively in the background — it doesn't need a read to trigger it. You need both: read repair is fast but misses rarely-accessed data; anti-entropy is thorough but slow."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "dds-ch05-c014",
+      "order": 14,
+      "title": "Version Vectors",
+      "teaser": "When multiple replicas accept concurrent writes, you need a way to tell whether two values are causally related (one caused the other) or truly concurrent (neither knew about the other). Version vectors — one counter per replica — provide exactly this.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "A single version number is insufficient in a multi-replica system. If Replica A increments a counter to version 5 and Replica B increments a counter to version 5 independently, how do you know which is \"newer\"? You don't — they are concurrent."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "A version vector assigns each replica its own counter. A value written to Replica A carries a vector like "
+            },
+            {
+              "text": "{A: 3, B: 1}",
+              "marks": ["code"]
+            },
+            {
+              "text": " — meaning \"I have processed 3 events from A and 1 from B.\" When a value arrives from Replica B with vector "
+            },
+            {
+              "text": "{A: 1, B: 4}",
+              "marks": ["code"]
+            },
+            {
+              "text": ", comparison is straightforward:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "If one vector dominates the other component-wise (",
+                "marks": []
+              },
+              {
+                "text": "{A: 3, B: 2} > {A: 3, B: 1}",
+                "marks": ["code"]
+              },
+              {
+                "text": "), the higher one is causally later. The older value is superseded — safe to discard."
+              }
+            ],
+            [
+              {
+                "text": "If neither dominates (",
+                "marks": []
+              },
+              {
+                "text": "{A: 3, B: 1}",
+                "marks": ["code"]
+              },
+              {
+                "text": " vs "
+              },
+              {
+                "text": "{A: 1, B: 4}",
+                "marks": ["code"]
+              },
+              {
+                "text": "), the writes are concurrent — neither knew about the other when it occurred. Both values must be retained and merged."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Riak uses version vectors precisely this way: when a read returns concurrent versions (called \"siblings\" in Riak's terminology), the client must merge them. DynamoDB uses a similar scheme internally. The vector clock (a closely related concept, with slight semantic differences Kleppmann details) was invented by Leslie Lamport and is foundational to distributed systems reasoning."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Version vectors are distinct from timestamps. A timestamp tells you when a write occurred according to a clock — unreliable in distributed systems due to clock skew. A version vector tells you "
+            },
+            {
+              "text": "what events a node had observed",
+              "marks": ["italic"]
+            },
+            {
+              "text": " when it produced a value — a purely logical ordering that is immune to clock drift."
+            }
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "info",
+          "runs": [
+            {
+              "text": "The term \"vector clock\" is sometimes used loosely to mean version vector, but they differ in assignment semantics. Kleppmann's book distinguishes them carefully: version vectors track per-replica write counters; vector clocks track per-process event counters. In practice, \"dotted version vectors\" (used in Riak) are the most precise variant, avoiding false concurrency in certain network scenarios."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "A version vector gives each replica its own counter. When comparing two versions, if one vector is higher in every slot, it's causally later. If neither is higher in every slot, the writes were concurrent — both values must be kept and merged. This is how distributed systems distinguish \"I updated after you\" from \"we updated at the same time.\""
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

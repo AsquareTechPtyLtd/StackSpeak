@@ -1,0 +1,1760 @@
+{
+  "chapterId": "dds-ch09-consistency-and-consensus",
+  "shardIndex": 1,
+  "cards": [
+    {
+      "id": "dds-ch09-c001",
+      "order": 1,
+      "title": "Linearizability",
+      "teaser": "Linearizability is the strongest single-object consistency guarantee a distributed system can offer: every operation appears to take effect atomically at a single point in time, making the system indistinguishable from a single-threaded register.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Linearizability"
+            },
+            {
+              "text": " (also called ",
+              "marks": []
+            },
+            {
+              "text": "atomic consistency",
+              "marks": ["italic"]
+            },
+            {
+              "text": " or ",
+              "marks": []
+            },
+            {
+              "text": "strong consistency",
+              "marks": ["italic"]
+            },
+            {
+              "text": ") was formalized by Herlihy and Wing in 1990. Its definition is precise: a concurrent history of operations on a shared object is linearizable if there exists a legal sequential history that (a) contains the same operations and return values, and (b) respects the real-time ordering of non-overlapping operations. In plain terms: every read must return the value written by the most recent write that completed before the read started."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The canonical example is Kleppmann's register scenario. Suppose a distributed register starts at value 0. A writer sets it to 1; that write completes at wall-clock time T1. Any read that starts after T1 must return 1 — it cannot return 0. The point in time at which the write \"takes effect\" is called the "
+            },
+            {
+              "text": "linearization point",
+              "marks": ["bold"]
+            },
+            {
+              "text": ". For every operation in the history, there must exist exactly one linearization point, and the sequence of those points must produce a valid sequential execution."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The famous \"read your writes\" scenario: client A writes x=1, client B reads x and gets 0, then client A reads x and also gets 0. This is a linearizability violation — a real system using single-leader replication with asynchronous replication to a replica will exhibit exactly this anomaly if client A reads from the leader but client B (or even client A's subsequent read) is routed to a replica that hasn't yet applied the write."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Linearizability is used whenever the application depends on recency: leader election (only one node believes it holds the lock), unique username registration (no two users get the same name), bank account balance (a read after a deposit must see the deposit), and distributed counters. Google Spanner (Lamport clocks + GPS/TrueTime) and etcd (Raft consensus) provide linearizable reads. Most eventually-consistent datastores (DynamoDB in eventual mode, Cassandra, CouchDB) do not."
+            }
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "warning",
+          "runs": [
+            {
+              "text": "Linearizability has a steep performance cost. In a geographically distributed system, achieving it requires cross-datacenter coordination on every read, which is why systems like Amazon DynamoDB expose it as an opt-in (ConsistentRead=true) rather than a default. The latency penalty is fundamental, not an implementation artifact — it is bounded below by the speed of light."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Linearizability means the system behaves as if there's one copy of the data and one thread touching it. Once a write completes, every subsequent read anywhere in the system sees it. No stale reads, no time travel."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "dds-ch09-c002",
+      "order": 2,
+      "title": "Linearizability vs Serialisability",
+      "teaser": "Linearizability and serialisability both sound like \"strong consistency\" but they address orthogonal concerns: linearizability is about single-object recency across a distributed system; serialisability is about multi-object isolation across transactions.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Conflating linearizability and serialisability is one of the most common conceptual errors in distributed systems. They are related but distinct, and the distinction matters for system design."
+            }
+          ]
+        },
+        {
+          "type": "comparison",
+          "headers": ["Property", "Linearizability", "Serialisability"],
+          "rows": [
+            ["Scope", "Single object (one register, one key)", "Multiple objects (a full transaction)"],
+            ["Core guarantee", "Every read sees the most recent write (recency)", "Transactions appear to execute in some serial order (isolation)"],
+            ["Defined in terms of", "Real-time ordering of operations", "Some valid serial interleaving of transactions"],
+            ["Permits stale reads?", "No — never", "Yes — if the serial order allows it"],
+            ["Origin", "Herlihy & Wing, 1990", "Papadimitriou, 1979"],
+            ["Example systems", "etcd, Zookeeper, Spanner (per-row)", "PostgreSQL SSI, CockroachDB, Spanner (cross-row)"]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "A system can be serialisable without being linearizable. Consider two transactions T1 (write x=1) and T2 (read x). Serialisability says the result must be equivalent to T1-then-T2 or T2-then-T1. If T1 completes before T2 starts in real time, serialisability does not guarantee T2 sees x=1 — it could legally serialize as T2-then-T1, returning x=0. Linearizability would forbid this."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Conversely, a system can be linearizable without being serialisable. A linearizable key-value store processes single-key operations atomically and in real-time order, but it has no concept of multi-key transactions. Without transactions, there is no serialisability to speak of."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The combination — both linearizable and serialisable — is called "
+            },
+            {
+              "text": "strict serialisability",
+              "marks": ["bold"]
+            },
+            {
+              "text": " (or ",
+              "marks": []
+            },
+            {
+              "text": "one-copy serialisability",
+              "marks": ["italic"]
+            },
+            {
+              "text": "). It is the gold standard, offered by Google Spanner and CockroachDB. It is also the most expensive guarantee, because it requires both cross-shard consensus for isolation and real-time ordering for recency."
+            }
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "info",
+          "runs": [
+            {
+              "text": "Kyle Kingsbury's Jepsen analyses repeatedly expose systems that claim to provide serialisability but are actually providing snapshot isolation (which allows write skew), or claim linearizability but produce stale reads under network partition. The terminology is often misused in marketing copy — always look for the formal definition in the system's documentation or paper."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Linearizability asks: \"does each individual read see the latest write?\" — it's about one key at a time and recency. Serialisability asks: \"do these multi-step transactions conflict in harmful ways?\" — it's about groups of operations and isolation. A database can be good at one and terrible at the other."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "dds-ch09-c003",
+      "order": 3,
+      "title": "Ordering Guarantees",
+      "teaser": "A distributed system can promise different strengths of ordering: FIFO ordering (per sender), causal ordering (respecting cause-and-effect), or total ordering (a single global sequence). Choosing the right guarantee shapes every other design decision.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Ordering is the central problem of distributed systems. Without a shared clock or shared memory, nodes have no way to agree on the order events occurred. The field has identified a hierarchy of ordering guarantees, each stronger than the last, each requiring more coordination."
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "No ordering guarantee",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — messages may arrive in any order, from any sender. This is UDP. Applications using unordered messaging must handle arbitrarily reordered and duplicated events."
+              }
+            ],
+            [
+              {
+                "text": "FIFO (per-source) ordering",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — messages from a single sender are delivered in the order sent. Different senders' messages may be interleaved arbitrarily. TCP gives you FIFO between two endpoints. Many message queues (Kafka per-partition) provide this."
+              }
+            ],
+            [
+              {
+                "text": "Causal ordering",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — if event A causally influenced event B, all nodes deliver A before B. Causally unrelated events may be delivered in any order. This is the strongest ordering you can achieve without coordination. Vector clocks and version vectors implement it."
+              }
+            ],
+            [
+              {
+                "text": "Total order",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — every node delivers every message in the same globally agreed sequence. This requires coordination (consensus) and is strictly stronger than causal ordering. Implemented by Raft, ZAB (ZooKeeper), Paxos."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The ordering hierarchy is strictly nested: total order implies causal order, causal order implies FIFO. Each step up adds cost: FIFO is free (TCP), causal ordering requires tracking causal metadata (vector clocks, O(n) per node), and total ordering requires a consensus round per operation."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The choice of ordering guarantee defines what anomalies are possible. With only FIFO ordering, a client can read its own writes from one replica and see a stale value from another. With causal ordering, a client always sees a causally consistent view — a reply is never seen before the message it replies to. With total ordering, the system behaves like a single-machine state machine."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Ordering guarantees are a spectrum: from \"messages might arrive scrambled\" to \"everyone gets everything in exactly the same order.\" The stronger the guarantee, the more nodes have to coordinate, and the slower the system gets."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "dds-ch09-c004",
+      "order": 4,
+      "title": "Happens-Before Relation",
+      "teaser": "The happens-before relation, defined by Leslie Lamport in 1978, is the foundational formalism for reasoning about causality in distributed systems — it establishes a partial order over events without requiring synchronized clocks.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "In his landmark 1978 paper \"Time, Clocks, and the Ordering of Events in a Distributed System\" (Communications of the ACM), Leslie Lamport defined the "
+            },
+            {
+              "text": "happens-before",
+              "marks": ["bold"]
+            },
+            {
+              "text": " relation (written →) with three rules:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "numbered",
+          "items": [
+            [
+              {
+                "text": "If A and B are events in the same process and A occurs before B, then A → B."
+              }
+            ],
+            [
+              {
+                "text": "If A is the sending of a message and B is the receipt of that message, then A → B."
+              }
+            ],
+            [
+              {
+                "text": "If A → B and B → C, then A → C (transitivity)."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Two events are "
+            },
+            {
+              "text": "concurrent",
+              "marks": ["bold"]
+            },
+            {
+              "text": " if neither A → B nor B → A holds. Concurrent events have no causal relationship — neither could have influenced the other. The happens-before relation is a "
+            },
+            {
+              "text": "partial order",
+              "marks": ["italic"]
+            },
+            {
+              "text": ": it does not establish a relationship between every pair of events, only causally related ones."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The practical importance of happens-before is profound. In a distributed key-value store, if client A writes x=1 and then sends a message to client B, client B's subsequent write x=2 happens-after client A's write. Any system that respects causal ordering must ensure all replicas apply x=1 before x=2. Without tracking happens-before, a replica might apply x=2 first and then x=1, silently losing the later write."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "This is the conflict detection mechanism in systems like Amazon Dynamo and CouchDB: two writes are concurrent (neither happens-before the other) and must be reconciled by the application; a write that happens-after another simply overwrites it. Without the happens-before relation, you cannot distinguish a conflict from a legitimate sequence."
+            }
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "info",
+          "runs": [
+            {
+              "text": "Lamport's 1978 paper is the most cited paper in distributed systems. Its definition of happens-before underpins logical clocks, vector clocks, causal consistency, snapshot isolation, and the formal specification of consensus algorithms. If you read one distributed systems paper, make it this one."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Happens-before is a rule for deciding whether one event could have caused another, without needing a global clock. If A could have influenced B — because they're in the same process, or because A sent a message that B received — then A happens-before B. Otherwise, they're concurrent and neither \"won\"."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "dds-ch09-c005",
+      "order": 5,
+      "title": "Lamport Timestamps",
+      "teaser": "Lamport timestamps assign a (counter, node_id) pair to every event in a distributed system, creating a total order consistent with happens-before — a simple, powerful tool for reasoning about causality across machines.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "In the same 1978 paper that defined happens-before, Lamport proposed a concrete mechanism for assigning comparable timestamps to distributed events without synchronized clocks: the "
+            },
+            {
+              "text": "logical clock",
+              "marks": ["bold"]
+            },
+            {
+              "text": ", now universally known as a Lamport timestamp."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The algorithm is remarkably simple. Each node maintains a counter C, initially 0:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "numbered",
+          "items": [
+            [
+              {
+                "text": "Before any event, the node increments its counter: C := C + 1. The event's timestamp is (C, node_id)."
+              }
+            ],
+            [
+              {
+                "text": "When sending a message, the sender includes its current timestamp (C, node_id)."
+              }
+            ],
+            [
+              {
+                "text": "When receiving a message with timestamp (T, sender_id), the receiver sets C := max(C, T) + 1 before recording the receipt event."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The key property: if A → B (A happens-before B), then timestamp(A) < timestamp(B). The contrapositive: if timestamp(A) ≥ timestamp(B), then A does not happen-before B (they may be concurrent). Note the asymmetry — Lamport timestamps prove ordering in one direction but cannot prove concurrency. For that, you need vector clocks."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The (counter, node_id) pair breaks ties: if two events have the same counter value, the event on the node with the lower node_id is considered earlier. This produces a "
+            },
+            {
+              "text": "total order",
+              "marks": ["bold"]
+            },
+            {
+              "text": " over all events, which is consistent with — but strictly stronger than — the happens-before partial order. Two genuinely concurrent events are assigned an arbitrary but consistent ordering."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Lamport timestamps are used in distributed databases for conflict resolution (last-write-wins with Lamport timestamp as the tiebreaker), in distributed mutual exclusion algorithms, and as the foundation for the Paxos ballot number. Apache Cassandra's last-write-wins conflict resolution uses wall-clock timestamps, which is a Lamport timestamp degeneration — it breaks when clocks drift, which is why Cassandra recommends NTP and why Google Spanner uses TrueTime instead."
+            }
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "warning",
+          "runs": [
+            {
+              "text": "Lamport timestamps cannot detect concurrency — they only establish a consistent total order. If you need to know whether two events are causally related or truly concurrent (to detect conflicts in a distributed database), you need vector clocks: one counter per node, giving each event a vector timestamp. Vector clocks are O(n) in metadata size and more expensive to maintain, but they encode the full happens-before relation."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "A Lamport timestamp is a logical counter that every node advances as events happen. When nodes communicate, they sync their counters so that the receiver's counter is always higher than the sender's. Result: if event A happened before event B, A's timestamp is always lower than B's — no global clock needed."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "dds-ch09-c006",
+      "order": 6,
+      "title": "Causal Consistency",
+      "teaser": "Causal consistency is the strongest consistency model that does not require coordination: every node sees all writes in an order that respects happens-before, but causally unrelated writes may be seen in different orders by different nodes.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Causal consistency sits between eventual consistency and linearizability on the consistency spectrum. Its defining property: if A → B (A causally precedes B), then every node that sees B has already seen A. Causally unrelated (concurrent) writes may be seen in any order, and different nodes may disagree on the order of concurrent writes — this is explicitly permitted."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The classic example is the social media thread anomaly. Alice posts \"I got the job!\" (event A). Bob sees Alice's post and replies \"Congratulations!\" (event B; B → A because Bob read A before writing B). Eve should never see Bob's reply before Alice's post — that would be causally incoherent. Causal consistency guarantees this: if Eve has seen B, she has seen A. Eve might never see A or B at all (she's offline), or she might see A and B together, but never B alone."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Causal consistency is implemented using "
+            },
+            {
+              "text": "causal metadata",
+              "marks": ["bold"]
+            },
+            {
+              "text": " — typically a vector clock or a dependency set — that travels with every write. When a replica receives a write W with causal dependencies D, it does not apply W until all writes in D are locally applied. This can introduce buffering delay but avoids the cross-node coordination that linearizability demands."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The COPS system (Clusters of Order-Preserving Servers, Lloyd et al. 2011) demonstrated that causal consistency can be implemented across geographically distributed datacenters with near-local latency for reads and writes. MongoDB, Cassandra (with session consistency), and DynamoDB (with conditional writes) approximate causal consistency for single clients through \"read-your-writes\" guarantees, though true multi-client causal consistency is rare in commercial systems."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Mahajan et al. (2011) proved that causal consistency is the "
+            },
+            {
+              "text": "strongest model that is simultaneously available under partition, convergent, and achievable with low latency",
+              "marks": ["italic"]
+            },
+            {
+              "text": ". This makes it the highest useful point on the consistency spectrum for systems that must tolerate network partitions — stronger than eventual consistency without the coordination cost of linearizability."
+            }
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "info",
+          "runs": [
+            {
+              "text": "The \"CALM theorem\" (Consistency As Logical Monotonicity, Hellerstein & Alvaro 2020) gives a complementary view: programs that compute monotonically increasing results (sets that only grow, counters that only increment) can be made causally consistent without coordination. This is the theoretical foundation behind CRDTs."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Causal consistency means you never see a reply before the message it replies to — cause always precedes effect. But two unrelated events (Alice posting about cats, Bob posting about dogs) can arrive in different orders at different nodes. No coordination needed, so it's fast and available under partitions."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "dds-ch09-c007",
+      "order": 7,
+      "title": "Total Order Broadcast (Atomic Broadcast)",
+      "teaser": "Total order broadcast is the guarantee that every node delivers every message in the same sequence — it is the distributed primitive that underlies replicated state machines, and it is provably equivalent to consensus.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Total order broadcast (also called "
+            },
+            {
+              "text": "atomic broadcast",
+              "marks": ["italic"]
+            },
+            {
+              "text": ") defines two properties:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Reliable delivery",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — if a message is delivered to any non-faulty node, it is eventually delivered to all non-faulty nodes. No message is lost or delivered to only a subset."
+              }
+            ],
+            [
+              {
+                "text": "Total order",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — messages are delivered to all nodes in the same order. If node A delivers M1 before M2, then every node that delivers both messages delivers M1 before M2."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Total order broadcast is the primitive that enables the "
+            },
+            {
+              "text": "replicated state machine",
+              "marks": ["bold"]
+            },
+            {
+              "text": " pattern: if all replicas start in the same state and apply the same sequence of deterministic operations in the same order, they reach identical states. This is how Raft log replication works — the Raft log is a total order broadcast channel, and each log entry is a state machine command."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The equivalence with consensus is fundamental. Given a total order broadcast algorithm, you can implement consensus: broadcast a proposal, and the first message delivered by all nodes is the agreed value. Conversely, given a consensus algorithm, you can implement total order broadcast: use consensus to agree on each message's position in the sequence. ZooKeeper's ZAB (ZooKeeper Atomic Broadcast) and Raft are both total order broadcast protocols dressed in different clothes."
+            }
+          ]
+        },
+        {
+          "type": "code",
+          "language": "text",
+          "text": "Total Order Broadcast sequence (3 nodes):\n\nClient    Node 1 (leader)    Node 2       Node 3\n  |           |                 |             |\n  |--write--->|                 |             |\n  |           |--[seq=42, v=1]->|             |\n  |           |--[seq=42, v=1]---------------->|\n  |           |<-------ack------|\n  |           |<------------------ack----------|\n  |           | (majority acked, commit)\n  |           |--[commit seq=42]->|\n  |           |--[commit seq=42]-------------->|\n  |<---ok-----|                 |             |\n              All nodes deliver seq=42 in order"
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "etcd, ZooKeeper, and Consul all expose total order broadcast semantics. Kafka's per-partition log is total order broadcast within a partition (single leader per partition). Cross-partition total ordering in Kafka requires additional coordination and is not provided by default."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Total order broadcast is like a newspaper: everyone gets every edition, in order, with no editions skipped. If you and I both get the paper, we always agree on which edition came first. Building this in a distributed system is equivalent to solving consensus — they're two names for the same hard problem."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "dds-ch09-c008",
+      "order": 8,
+      "title": "Sequence-Number Ordering",
+      "teaser": "When total order broadcast is implemented via a single sequencer node, every message passes through one bottleneck that stamps it with a monotonically increasing sequence number — simple to understand, easy to implement, and the go-to approach when you can tolerate a single point of failure.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The simplest total order broadcast implementation uses a "
+            },
+            {
+              "text": "single sequencer",
+              "marks": ["bold"]
+            },
+            {
+              "text": ": a designated node that assigns a monotonically increasing sequence number to every message before forwarding it to all other nodes. Because all sequence numbers are issued by one source, the total order is trivially consistent — message 42 always comes before message 43."
+            }
+          ]
+        },
+        {
+          "type": "code",
+          "language": "text",
+          "text": "Single-sequencer total order broadcast:\n\nProducer A ---[msg a]---->  Sequencer ---[seq=1, msg a]---> All replicas\nProducer B ---[msg b]---->  (leader)  ---[seq=2, msg b]---> All replicas\nProducer C ---[msg c]---->            ---[seq=3, msg c]---> All replicas\n\nAll replicas deliver: msg_a, msg_b, msg_c (in that order, always)"
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Sequence-number ordering is used in single-leader replication systems: the leader's replication log is exactly a total order broadcast log. MySQL binlog replication, PostgreSQL WAL streaming, and Kafka (per-partition, leader-assigned offset) all use this pattern. The sequence number (or offset, or LSN — log sequence number) is the linearization point for each write."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The critical limitation is the single point of failure: if the sequencer crashes, no messages can be sequenced until a new leader is elected. This is why real systems combine the sequencer pattern with a leader election protocol (Raft, Paxos) — the sequencer role is not tied to a fixed node but moves to a new node after leader election. The leader's first action after election is to establish the next valid sequence number, ensuring monotonicity across leader transitions."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "A subtler problem: in a geographically distributed system, routing all messages through a single sequencer adds latency proportional to the round-trip time to that sequencer. Spanner solves this with Paxos leaders that are co-located with common write paths; CockroachDB distributes sequencing across range leaseholders (one per key range) so different key ranges have different sequencers."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "A sequencer is like a ticket machine: everyone who wants to broadcast a message must first get a numbered ticket from the machine. Because tickets are issued in order, everyone agrees on the order of messages. The obvious downside: if the machine breaks, nothing can proceed until it's replaced."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "dds-ch09-c009",
+      "order": 9,
+      "title": "CAP Theorem",
+      "teaser": "CAP states that during a network partition, a distributed system cannot simultaneously be both consistent (linearizable) and available (every request receives a response). But CAP is widely misunderstood — it is not a design knob you turn; it is a hard constraint you must design around.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Eric Brewer conjectured CAP in 2000 at his PODC keynote. Gilbert and Lynch formally proved it in 2002 (\"Brewer's Conjecture and the Feasibility of Consistent, Available, Partition-Tolerant Web Services\"). The theorem states: "
+            },
+            {
+              "text": "no distributed system can simultaneously guarantee all three of Consistency (linearizability), Availability (every request to a non-failing node gets a response), and Partition Tolerance (the system continues to operate despite message loss between nodes).",
+              "marks": ["italic"]
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The critical word is \"simultaneously\" — "
+            },
+            {
+              "text": "during a partition",
+              "marks": ["bold"]
+            },
+            {
+              "text": ". When no partition is occurring, a system can be both consistent and available. The theorem only bites during the partition event itself. This is the source of most CAP misinterpretations: designers say \"we chose AP over CP\" as if partitions are the normal case, when partitions are (in well-designed networks) rare exceptions."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The meaningful design choice is: "
+            },
+            {
+              "text": "when a partition does occur, what do you sacrifice?",
+              "marks": ["italic"]
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "CP systems (sacrifice availability)",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — during a partition, the minority partition refuses requests (returns error or times out) to preserve consistency. HBase, etcd, Zookeeper, Consul in leader mode. A client on the wrong side of a partition gets no response rather than a stale one."
+              }
+            ],
+            [
+              {
+                "text": "AP systems (sacrifice consistency)",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — during a partition, all nodes continue to serve requests but may return stale or conflicting data. CouchDB, Cassandra, Riak, DynamoDB in eventual mode. Clients always get a response, but the response might not reflect the latest write."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Brewer himself clarified in 2012 (\"CAP Twelve Years Later: How the 'Rules' Have Changed\") that the original framing was too binary. Real systems occupy a spectrum: you can sacrifice consistency for only some operations, only in some partitions, only for some key ranges. MongoDB, for instance, is CP by default (primary must be reachable for writes) but can be configured to serve stale reads from secondaries — trading consistency for availability on reads while maintaining it on writes."
+            }
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "warning",
+          "runs": [
+            {
+              "text": "The most common CAP misuse: treating it as a permanent tradeoff rather than a partition-time constraint. \"We're an AP database\" often means \"we sacrifice consistency all the time, not just during partitions.\" Eventual consistency is a choice about normal operation; CAP is a theorem about failure scenarios. Conflating them leads to designs that sacrifice consistency unnecessarily."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "CAP says: when the network splits and two halves of your cluster can't talk to each other, you must choose — do you serve requests and risk returning stale data, or do you refuse requests to stay consistent? You can't do both. When the network heals, you can have both again."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "dds-ch09-c010",
+      "order": 10,
+      "title": "PACELC",
+      "teaser": "PACELC extends CAP to normal operation: even when there is no partition (the \"else\" case), a distributed system must trade off latency against consistency. It is the more useful framework for real system design.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "CAP's flaw as a design tool is that it only speaks to the partition case, which is exceptional. Daniel Abadi proposed PACELC (2012) to capture what happens in the common case. The framework reads:"
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "If there is a ",
+              "marks": []
+            },
+            {
+              "text": "P",
+              "marks": ["bold"]
+            },
+            {
+              "text": "artition, the system trades off ",
+              "marks": []
+            },
+            {
+              "text": "A",
+              "marks": ["bold"]
+            },
+            {
+              "text": "vailability vs ",
+              "marks": []
+            },
+            {
+              "text": "C",
+              "marks": ["bold"]
+            },
+            {
+              "text": "onsistency (the CAP tradeoff). ",
+              "marks": []
+            },
+            {
+              "text": "E",
+              "marks": ["bold"]
+            },
+            {
+              "text": "lse (during normal operation), the system trades off ",
+              "marks": []
+            },
+            {
+              "text": "L",
+              "marks": ["bold"]
+            },
+            {
+              "text": "atency vs ",
+              "marks": []
+            },
+            {
+              "text": "C",
+              "marks": ["bold"]
+            },
+            {
+              "text": "onsistency."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The latency-consistency tradeoff in normal operation: to provide linearizable consistency, a write must be replicated to a quorum and acknowledged before returning to the client. This adds replication latency. If you are willing to return to the client before replication completes (acknowledging before the write is durable on multiple nodes), you get lower latency but risk data loss and stale reads."
+            }
+          ]
+        },
+        {
+          "type": "comparison",
+          "headers": ["System", "Partition (P→AC)", "Normal operation (E→LC)"],
+          "rows": [
+            ["DynamoDB (eventual)", "PA — serves requests despite partition", "EL — returns before full replication"],
+            ["DynamoDB (strong)", "PC — refuses on minority partition", "EC — waits for quorum ack"],
+            ["Cassandra (ONE CL)", "PA", "EL"],
+            ["Cassandra (QUORUM CL)", "PC", "EC"],
+            ["etcd / Zookeeper", "PC — refuses on minority", "EC — commits via Raft before ack"],
+            ["Spanner", "PC", "EC (with TrueTime commit wait)"],
+            ["MongoDB (w:1)", "PA", "EL"],
+            ["MongoDB (w:majority)", "PC", "EC"]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "PACELC reveals that the \"availability vs consistency\" tradeoff in CAP-speak is often really a \"latency vs consistency\" tradeoff in practice. Most DynamoDB and Cassandra \"AP\" use cases are not primarily about surviving partitions — they are about avoiding the latency of waiting for quorum acknowledgments during normal operation."
+            }
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "info",
+          "runs": [
+            {
+              "text": "Google Spanner achieves the EC corner — low added latency while maintaining consistency — by using TrueTime (GPS + atomic clocks) to bound clock uncertainty. Spanner's commit wait (of typically 1-7ms) is bounded by the TrueTime uncertainty interval, not by network round-trips to a consensus coordinator. This is why Spanner can offer global external consistency with competitive latency."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "PACELC asks the question CAP forgets: what happens when everything is working fine? Even then, you pay a price for strong consistency — you must wait for acknowledgments from multiple machines before returning a result. Choose fast (acknowledge early, risk stale reads) or consistent (wait for confirmation, pay latency). Most real database tuning is this tradeoff, not the extreme partition-failure scenario."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "dds-ch09-c011",
+      "order": 11,
+      "title": "Two-Phase Commit (2PC)",
+      "teaser": "Two-phase commit is the textbook protocol for achieving atomic commitment across multiple nodes — either all commit or all abort. Its fatal flaw: if the coordinator crashes after the prepare phase, participants are blocked indefinitely.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Two-phase commit (2PC) solves the "
+            },
+            {
+              "text": "atomic commitment problem",
+              "marks": ["italic"]
+            },
+            {
+              "text": ": a set of N participants must all either commit or all abort a transaction, with no partial commits. This is a harder problem than consensus — consensus asks nodes to agree on a value; atomic commitment requires agreement in the presence of nodes that might vote to abort."
+            }
+          ]
+        },
+        {
+          "type": "code",
+          "language": "text",
+          "text": "Two-Phase Commit sequence diagram:\n\nCoordinator        Participant A       Participant B\n    |                   |                   |\n    |-- PREPARE -------->|                   |\n    |-- PREPARE ---------------------->|     |\n    |                   |                   |\n    |<-- VOTE-YES -------|                   |\n    |<-- VOTE-YES --------------------|     |\n    |                   |                   |\n    |  (All votes YES; coordinator writes   |\n    |   COMMIT to its durable log)          |\n    |                   |                   |\n    |-- COMMIT --------->|                   |\n    |-- COMMIT ---------------------->|     |\n    |                   |                   |\n    |<-- ACK ------------|                   |\n    |<-- ACK -------------------------|     |\n    |                   |                   |\n    (Transaction complete)\n\n--- FAILURE SCENARIO ---\nCoordinator crashes after writing COMMIT but before sending COMMIT:\n    Participants are stuck in \"prepared\" state — they hold locks,\n    cannot commit or abort without hearing from coordinator."
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The two phases:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "numbered",
+          "items": [
+            [
+              {
+                "text": "Prepare phase",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — the coordinator sends PREPARE to all participants. Each participant durably logs its vote (VOTE-YES or VOTE-NO) and responds. A VOTE-YES is a promise to commit if asked; the participant may not unilaterally abort after sending VOTE-YES."
+              }
+            ],
+            [
+              {
+                "text": "Commit phase",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — if all participants voted YES, the coordinator logs COMMIT durably, then sends COMMIT to all. If any participant voted NO, the coordinator sends ABORT. Participants apply the decision and release locks."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The catastrophic failure mode: if the coordinator crashes "
+            },
+            {
+              "text": "after",
+              "marks": ["italic"]
+            },
+            {
+              "text": " writing COMMIT to its local log but "
+            },
+            {
+              "text": "before",
+              "marks": ["italic"]
+            },
+            {
+              "text": " sending COMMIT messages to participants, all participants are stuck in the \"prepared\" state. They hold locks on all resources touched by the transaction. They cannot commit (they might override a later coordinator decision) and cannot abort (the coordinator may have committed). This is the "
+            },
+            {
+              "text": "blocking problem",
+              "marks": ["bold"]
+            },
+            {
+              "text": " of 2PC: a coordinator failure can block participants indefinitely until the coordinator recovers."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "2PC is used in XA transactions (the X/Open standard for distributed transactions, implemented by PostgreSQL, MySQL, and Oracle), in Google Spanner's cross-shard transactions (with Paxos groups as participants), and in many message broker \"exactly-once\" semantics (Kafka transactions use a variant). The blocking problem is mitigated in practice by using a replicated coordinator (itself running Raft/Paxos) rather than a single machine."
+            }
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "warning",
+          "runs": [
+            {
+              "text": "2PC is frequently conflated with consensus but they are different problems. Consensus requires only a majority to proceed; 2PC requires unanimity — a single VOTE-NO aborts the transaction. This makes 2PC more prone to failure cascades: if any participant is slow or crashed, the entire transaction is blocked or aborted. This is the primary reason that large distributed systems avoid 2PC across services and use sagas or compensating transactions instead."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "2PC is a voting system for transactions: first, ask everyone \"can you commit?\" — if everyone says yes, tell everyone to commit. If the coordinator dies between asking and telling, everyone is stuck waiting with locks held. That's the blocking problem that makes 2PC dangerous at large scale."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "dds-ch09-c012",
+      "order": 12,
+      "title": "Three-Phase Commit (3PC)",
+      "teaser": "Three-phase commit adds a pre-commit phase to 2PC to make the protocol non-blocking — but it only works in a synchronous network with crash-stop failures, and fails under network partitions. In practice, 3PC is rarely used.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "3PC was designed by Dale Skeen (1983) specifically to address 2PC's blocking problem. It adds a "
+            },
+            {
+              "text": "pre-commit phase",
+              "marks": ["bold"]
+            },
+            {
+              "text": " between prepare and commit, creating three phases: CanCommit, PreCommit (or Prepare-to-Commit), and DoCommit."
+            }
+          ]
+        },
+        {
+          "type": "code",
+          "language": "text",
+          "text": "Three-Phase Commit sequence:\n\nCoordinator       Participant A      Participant B\n    |\n    |-- CanCommit? ---->|                  |\n    |-- CanCommit? ------------------->|   |\n    |                  |                  |\n    |<-- Yes -----------|                  |\n    |<-- Yes -------------------------|   |\n    |                                     |\n    |-- PreCommit ------>|                 |\n    |-- PreCommit ------------------->|   |\n    |                   |                 |\n    |<-- Ack ------------|                 |\n    |<-- Ack -------------------------|   |\n    |                                     |\n    |-- DoCommit ------>|                  |\n    |-- DoCommit ------------------->|    |\n    |                                     |\n-- If coordinator crashes after PreCommit: --\n  Participants know coordinator was ready to commit.\n  A new coordinator can safely commit (or abort\n  if no PreCommit was received by any participant)."
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The insight behind 3PC: after the PreCommit phase, participants know that all other participants voted YES. If the coordinator crashes, a new coordinator can poll participants and safely conclude: if any participant received PreCommit, it is safe to commit (all voted YES); if no participant received PreCommit, it is safe to abort. This breaks the blocking scenario."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The fatal limitation: this reasoning only holds in a synchronous network. If a partition separates participants after some received PreCommit and others did not, a new coordinator may decide to abort (because it can only reach participants that didn't receive PreCommit), while the other partition's recovery coordinator decides to commit. "
+            },
+            {
+              "text": "The result is a split-brain commit — the exact anomaly 2PC and 3PC are designed to prevent.",
+              "marks": ["bold"]
+            }
+          ]
+        },
+        {
+          "type": "comparison",
+          "headers": ["Property", "2PC", "3PC"],
+          "rows": [
+            ["Phases", "2 (Prepare, Commit)", "3 (CanCommit, PreCommit, DoCommit)"],
+            ["Blocking on coordinator failure?", "Yes — indefinitely", "No — participants can recover"],
+            ["Safe under network partition?", "Yes — blocks but never corrupts", "No — can produce split-brain"],
+            ["Practical usage", "Wide (XA, Spanner, Kafka)", "Rare — mostly academic"],
+            ["Coordinator roundtrips", "2 per transaction", "3 per transaction"],
+            ["Timeout handling", "Blocks until coordinator recovers", "Participants can unilaterally commit or abort after timeout"]
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "info",
+          "runs": [
+            {
+              "text": "Modern systems solve the 2PC blocking problem not with 3PC but by running the coordinator on a replicated consensus group (Raft or Paxos). If the coordinator process fails, the consensus group elects a new leader that has the coordinator's durable log and can resume the commit/abort protocol. Google Spanner uses this approach: each Paxos group has a leader that acts as coordinator, and Paxos ensures coordinator durability and fast recovery."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "3PC tries to fix 2PC's blocking problem by adding a warning phase so participants know whether the coordinator intended to commit. It works if crashes are the only failure, but breaks if the network partitions — two groups of participants can make different commit decisions. That's why the real fix is running the coordinator on a replicated log, not adding another phase."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "dds-ch09-c013",
+      "order": 13,
+      "title": "Consensus and FLP Impossibility",
+      "teaser": "FLP impossibility (Fischer, Lynch, Paterson, 1985) proved that no deterministic asynchronous consensus algorithm can guarantee termination even if a single process crashes. The practical escape is timeouts — which make the asynchronous model unrealistic.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The "
+            },
+            {
+              "text": "consensus problem",
+              "marks": ["bold"]
+            },
+            {
+              "text": " requires that a set of processes reach agreement on a single value, satisfying three properties:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Termination",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — every non-faulty process eventually decides a value."
+              }
+            ],
+            [
+              {
+                "text": "Agreement",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — all non-faulty processes decide the same value."
+              }
+            ],
+            [
+              {
+                "text": "Validity",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — the decided value was proposed by some process (no values are invented)."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Fischer, Lynch, and Paterson proved in 1985 (\"Impossibility of Distributed Consensus with One Faulty Process\") that in a fully asynchronous system — where message delivery may be arbitrarily delayed and there is no way to distinguish a crashed process from a slow one — "
+            },
+            {
+              "text": "no deterministic algorithm can guarantee all three properties simultaneously, even if only one process can crash.",
+              "marks": ["italic"]
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The proof structure: in an asynchronous system, for any consensus algorithm, there exists an adversarial execution where the algorithm runs forever without deciding. The adversary is not doing anything extraordinary — it is merely delaying messages within the asynchronous model's rules. The impossibility arises from the fact that the algorithm cannot distinguish \"node X is slow\" from \"node X has crashed\", and therefore cannot safely proceed."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The practical escape from FLP: "
+            },
+            {
+              "text": "timeouts",
+              "marks": ["bold"]
+            },
+            {
+              "text": ". Real systems use timeouts to treat \"no response within T milliseconds\" as \"crashed.\" This introduces a failure detector that may be wrong (a slow process is declared crashed). The system becomes partially synchronous — it can make progress during periods of synchrony, and may become stuck only when the synchrony assumptions are violated. Raft and Paxos operate in this partially synchronous model."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "FLP is often misread as \"consensus is impossible.\" This is wrong. FLP says consensus is impossible if you require termination "
+            },
+            {
+              "text": "in all executions",
+              "marks": ["italic"]
+            },
+            {
+              "text": " in a fully asynchronous model. Real systems accept that they may not terminate during extreme asynchrony (a network partition), and they sacrifice only termination (not safety) during those periods. Paxos and Raft are safe under all executions and terminate under typical network conditions."
+            }
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "info",
+          "runs": [
+            {
+              "text": "The FLP paper won the PODC Influential Paper Award (now the Dijkstra Prize) in 2001, recognized as one of the most important results in distributed computing. The impossibility result directly motivated the development of practical consensus algorithms (Paxos, Viewstamped Replication, later Raft) that sacrifice termination guarantees in adversarial asynchronous scenarios while providing strong safety guarantees at all times."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "FLP says: in a network where messages can take arbitrarily long to arrive, you can never write an algorithm that's guaranteed to reach agreement if even one machine might crash — because you can never tell whether a machine crashed or is just slow. Real systems escape this by using timeouts: \"if I haven't heard back in 150ms, I assume you crashed.\" That assumption can be wrong, but it's good enough to make progress."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "dds-ch09-c014",
+      "order": 14,
+      "title": "Paxos: The Basic Algorithm",
+      "teaser": "Paxos, Leslie Lamport's canonical consensus algorithm, achieves agreement through two phases: a prepare phase that establishes a ballot number's supremacy, and an accept phase where a value is chosen by a quorum. It is correct under arbitrary asynchrony but notoriously hard to understand.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Lamport invented Paxos in 1989 and described it in the paper \"The Part-Time Parliament\" (1998, Transactions on Computer Systems), famously framed as the voting system of an ancient Greek island. Its modern description appeared in \"Paxos Made Simple\" (2001). Paxos defines three roles: "
+            },
+            {
+              "text": "proposers",
+              "marks": ["bold"]
+            },
+            {
+              "text": " (initiate proposals), "
+            },
+            {
+              "text": "acceptors",
+              "marks": ["bold"]
+            },
+            {
+              "text": " (vote on proposals), and "
+            },
+            {
+              "text": "learners",
+              "marks": ["bold"]
+            },
+            {
+              "text": " (learn the chosen value). In practice, nodes typically play all three roles."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Basic Paxos (Single-Decree Paxos) chooses a single value in two phases:"
+            }
+          ]
+        },
+        {
+          "type": "code",
+          "language": "text",
+          "text": "Basic Paxos round:\n\nPhase 1a — Prepare:\n  Proposer P chooses ballot number n (higher than any seen)\n  P sends Prepare(n) to a majority of acceptors\n\nPhase 1b — Promise:\n  Acceptor A, upon receiving Prepare(n):\n    If n > highest_ballot_seen:\n      A records n as highest_ballot_seen\n      A responds Promise(n, highest_accepted_ballot, highest_accepted_value)\n      A promises NOT to accept any ballot < n\n    Else: A ignores the Prepare (or sends NACK)\n\nPhase 2a — Accept:\n  If P receives promises from a majority:\n    P picks a value v:\n      - If any promise included an accepted value, P MUST use the value\n        from the promise with the highest accepted ballot\n      - Otherwise, P may propose any value\n    P sends Accept(n, v) to a majority\n\nPhase 2b — Accepted:\n  Acceptor A, upon receiving Accept(n, v):\n    If n >= highest_ballot_seen:\n      A records (n, v) as accepted\n      A responds Accepted(n, v) to proposer and all learners\n\nValue is CHOSEN when a majority of acceptors have accepted it."
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The critical safety invariant: if a value v is chosen in ballot n, then any value chosen in any higher ballot n' must also be v. This is enforced by the Phase 1b / Phase 2a constraint: a proposer must use the previously accepted value with the highest ballot number, not its own preferred value. This \"value inheritance\" rule is what makes Paxos safe — it ensures that a chosen value cannot be overridden by a later proposal."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The liveness hazard: two proposers can indefinitely race each other, each interrupting the other's prepare phase with a higher ballot number before the other can reach accept (\"dueling proposers\" or \"Paxos livelock\"). Practical systems prevent this by designating a distinguished leader that is the only active proposer; other nodes only propose if they suspect the leader has failed."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Paxos works in two rounds: first, get a majority to promise to only listen to you (by claiming a higher ballot number than anyone else's); second, get that majority to accept your value. The twist: if someone already accepted a value in an earlier round, you must propose that same value — not your own. This is what makes Paxos safe."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "dds-ch09-c015",
+      "order": 15,
+      "title": "Multi-Paxos and Leader Election",
+      "teaser": "Single-decree Paxos agrees on one value; Multi-Paxos extends it to a log of values by amortizing Phase 1 across many rounds using a stable leader — this is the form used in real systems like Spanner, Chubby, and etcd's predecessor.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Basic Paxos requires two network round-trips per value (prepare + accept). For a replicated log where a new value must be agreed per entry, this is prohibitively expensive. "
+            },
+            {
+              "text": "Multi-Paxos",
+              "marks": ["bold"]
+            },
+            {
+              "text": " amortizes the prepare phase: once a leader wins a ballot number n and receives promises from a majority, it skips Phase 1 for all subsequent log positions — it sends Accept directly for each new value. Phase 1 is only re-run when the leader changes."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Leader election in Multi-Paxos is not formally part of the Paxos specification — Lamport's original paper assumes a distinguished proposer (leader) without specifying how it is chosen. Real implementations add:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Lease-based leadership",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — the leader holds a timed lease; followers grant the lease by promising not to participate in Phase 1 from any other proposer for the lease duration. This allows the leader to skip Phase 1 safely without a round-trip on every write."
+              }
+            ],
+            [
+              {
+                "text": "Failure detection",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — a follower initiates a new Phase 1 (with a higher ballot number) when it suspects the leader has failed. The ballot number serves as an implicit leader election: the node that wins a majority for ballot n is the new leader."
+              }
+            ],
+            [
+              {
+                "text": "Log gaps",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — after a leader change, some log positions may have been partially replicated. The new leader must run Phase 1 for each potentially uncommitted position to determine whether a value was chosen or can be re-proposed."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Google Chubby (Burrows 2006) was the first widely deployed Multi-Paxos system, providing a distributed lock service for Google's internal systems. Google Spanner uses Paxos groups (one per data shard), where each group runs Multi-Paxos and the elected leader acts as the sequencer for that shard. Apache Zookeeper uses ZAB (Zookeeper Atomic Broadcast), which is architecturally similar to Multi-Paxos (same safety properties, different recovery protocol during leader election)."
+            }
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "warning",
+          "runs": [
+            {
+              "text": "\"Paxos Made Simple\" (Lamport 2001) describes the algorithm cleanly, but implementing Multi-Paxos in production requires solving a dozen sub-problems that the paper leaves to \"straightforward\" implementation: leader election, log truncation, snapshot/catch-up for lagging replicas, client request routing, and read linearizability without a Phase 1 round-trip. Chubby, Spanner, and Raft all made different choices for these sub-problems, which is why their behavior differs despite sharing the same safety core."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Multi-Paxos is the practical version: once one node wins the first round and becomes leader, it skips that first round for everything after — just sends accept messages directly. When the leader dies, someone else runs the first round to reclaim leadership. That's it. The rest is engineering details."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "dds-ch09-c016",
+      "order": 16,
+      "title": "Raft Leader Election",
+      "teaser": "Raft decomposes consensus into three independent subproblems — leader election, log replication, and safety — and resolves each with explicit mechanisms. Leader election uses randomized timeouts and term numbers to guarantee at most one leader per term.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Raft was designed by Diego Ongaro and John Ousterhout (\"In Search of an Understandable Consensus Algorithm\", USENIX ATC 2014) explicitly to be more understandable than Paxos. Raft's central claim: by decomposing consensus into three cleanly separated subproblems, each with a single mechanism, implementations are less prone to subtle bugs."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Leader election uses two key ideas:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Terms",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — time is divided into terms, numbered consecutively. Each term begins with a leader election. A term has at most one leader; some terms may have no leader (if an election fails). Terms are Raft's logical clock — a message with a term number lower than the receiver's current term is rejected."
+              }
+            ],
+            [
+              {
+                "text": "Randomized election timeouts",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — each follower waits a random timeout (typically 150–300ms) before declaring a candidate. Randomization prevents simultaneous elections: the first follower whose timeout fires will usually win before others start. A candidate votes for itself and sends RequestVote RPCs to all other nodes."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "code",
+          "language": "text",
+          "text": "Raft leader election sequence:\n\nInitial state: A, B, C are followers in term 1, leader has failed.\n\n(A's election timeout fires first)\nA: Increment term to 2, become candidate, vote for self\nA --RequestVote(term=2, lastLogIndex, lastLogTerm)--> B\nA --RequestVote(term=2, lastLogIndex, lastLogTerm)--> C\n\nB: term=2 > term=1, log is not more up-to-date than A's → grant vote\nC: term=2 > term=1, log is not more up-to-date than A's → grant vote\n\nA receives votes from B and C → A has a majority of 3 → A becomes leader for term 2\nA --AppendEntries(term=2, [heartbeat])--> B, C  (establishes leadership)\n\nIf B and C both started elections (split vote):\n  Neither gets majority → timeout → increment term → new election"
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "A critical safety constraint: a node grants a vote only if the candidate's log is at least as up-to-date as its own. \"Up-to-date\" is defined as: higher lastLogTerm, or (equal lastLogTerm and at least as long a log). This ensures the new leader contains all committed entries — a node that missed committed entries cannot win an election."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "CockroachDB, TiKV, etcd, and Consul all use Raft for their consensus layer. HashiCorp's Raft library (used by Consul and Nomad) is one of the most deployed Raft implementations. etcd's Raft implementation is used as a library by Kubernetes' underlying storage layer."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "In Raft, each server waits a random time before calling for an election. The first to wake up votes for itself and asks everyone else for their vote. If it gets a majority, it becomes leader. If two wake up simultaneously and split the votes, everyone resets their timer and tries again. The random timer makes split elections rare."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "dds-ch09-c017",
+      "order": 17,
+      "title": "Raft Log Replication",
+      "teaser": "Once a Raft leader is elected, it replicates all writes as log entries to a majority of followers before acknowledging success — this is the mechanism that makes Raft a replicated state machine, not just a leader election protocol.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The Raft leader handles all client writes. Every write becomes a log entry appended to the leader's log. The leader does not apply the entry to the state machine immediately — it first replicates it to followers."
+            }
+          ]
+        },
+        {
+          "type": "code",
+          "language": "text",
+          "text": "Raft log replication sequence:\n\nClient    Leader (A)         Follower B      Follower C\n  |           |\n  |--write--->|\n  |           | Append entry (index=5, term=2) to local log\n  |           |--AppendEntries(term=2, prevLogIndex=4, entries=[{idx:5,val:x}])-->B\n  |           |--AppendEntries(term=2, prevLogIndex=4, entries=[{idx:5,val:x}])-->C\n  |           |\n  |           |<----------- Success (B has appended)---|\n  |           |<--Success (C has appended)-------------|  (majority reached)\n  |           |\n  |           | commitIndex := 5; apply to state machine\n  |<---ok-----|  (reply to client)\n  |           |\n  |           |--AppendEntries(commitIndex=5, [heartbeat])-->B\n  |           |--AppendEntries(commitIndex=5, [heartbeat])-->C\n  |           | (followers apply index 5 to their state machines)"
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "An entry is "
+            },
+            {
+              "text": "committed",
+              "marks": ["bold"]
+            },
+            {
+              "text": " once the leader has replicated it to a majority of nodes. Committed entries are durable — they will not be lost even if the leader crashes, because any future leader must have been elected by a majority that includes at least one node with the committed entry."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Consistency check: each AppendEntries RPC includes the (index, term) of the entry immediately preceding the new entries. A follower rejects the RPC if its log doesn't contain an entry with that (index, term) pair. This forces the leader to retry with earlier entries until finding the point of agreement, then replicate all entries from that point forward — a "
+            },
+            {
+              "text": "log-matching",
+              "marks": ["italic"]
+            },
+            {
+              "text": " guarantee."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "A new leader may face followers with logs that diverge from its own (entries from a previous leader's term that were never committed). Raft resolves this by overwriting: the new leader's log is authoritative, and it replicates its log over the follower's divergent entries, provided those entries were never committed. This is safe because uncommitted entries were never acknowledged to clients."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The Raft leader writes every client request to its own log, then sends it to all followers in parallel. Once a majority have written it, the leader calls it committed and applies it to the database. Only then does it tell the client \"done\". If the leader dies after committing, the next leader will have the entry (because it won election from the majority that has it)."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "dds-ch09-c018",
+      "order": 18,
+      "title": "Raft Safety",
+      "teaser": "Raft's safety guarantee — that committed entries are never overwritten, and all state machines apply the same sequence of commands — rests on two invariants: log matching and leader completeness. Together they ensure linearizable reads and crash safety.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Raft's safety is defined by five properties that hold in all executions (Ongaro & Ousterhout §5.3–5.4):"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Election Safety",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — at most one leader is elected per term."
+              }
+            ],
+            [
+              {
+                "text": "Log Matching",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — if two entries in different nodes' logs have the same (index, term), the logs are identical in all entries up to that index. This is enforced by the consistency check in AppendEntries."
+              }
+            ],
+            [
+              {
+                "text": "Leader Completeness",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — if an entry is committed in some term, it will be present in the logs of all leaders for all higher terms. Enforced by the up-to-date log check in RequestVote."
+              }
+            ],
+            [
+              {
+                "text": "State Machine Safety",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — if a node applies log entry i to its state machine, no other node applies a different command at log entry i. This follows from Log Matching and Leader Completeness."
+              }
+            ],
+            [
+              {
+                "text": "Leader Append-Only",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — a leader never overwrites or deletes entries in its log; it only appends."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "A subtle trap: linearizable reads. If a Raft leader serves a read directly from its in-memory state without a new consensus round, it may be serving stale data — a new leader may have been elected on the other side of a network partition and committed new writes. Raft's solution is to "
+            },
+            {
+              "text": "confirm leadership",
+              "marks": ["bold"]
+            },
+            {
+              "text": " before serving a read: the leader sends a heartbeat to a majority and waits for acknowledgment, confirming that no new leader has been elected. etcd's ReadIndex optimization implements this: clients get a read index (the current commitIndex), and the leader confirms its leadership before responding."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "An alternative for lower-latency reads: "
+            },
+            {
+              "text": "lease-based reads",
+              "marks": ["bold"]
+            },
+            {
+              "text": ". The leader knows its election lease has not expired, so it cannot have been superseded. This avoids the heartbeat round-trip but requires bounded clock drift assumptions — the same assumptions required for Spanner's TrueTime. CockroachDB and etcd support lease reads as an opt-in configuration."
+            }
+          ]
+        },
+        {
+          "type": "comparison",
+          "headers": ["Dimension", "Paxos (Multi-Paxos)", "Raft"],
+          "rows": [
+            ["Leader election mechanism", "Implicit (highest ballot wins)", "Explicit (term + randomized timeout)"],
+            ["Log gap handling", "Each position independently negotiated", "Leader forces log convergence linearly"],
+            ["Cluster membership changes", "Not specified in original paper", "Joint consensus or single-server changes"],
+            ["Read linearizability", "Lease or Prepare round", "ReadIndex (heartbeat) or lease"],
+            ["Understandability", "Notoriously hard", "Designed to be understandable"],
+            ["Real systems", "Spanner, Chubby, ZAB (similar)", "etcd, CockroachDB, TiKV, Consul, MongoDB"],
+            ["Formal verification", "TLA+ spec exists (complex)", "TLA+ spec (simpler, included in paper)"]
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Raft's safety guarantees mean: once the cluster agrees a value is committed, no future leader can overwrite it — because any future leader must win votes from the majority that already committed it, and that majority won't vote for a leader with a worse log. All nodes end up applying the same commands in the same order."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "dds-ch09-c019",
+      "order": 19,
+      "title": "Epoch Numbers and Fencing the Leader",
+      "teaser": "Epoch numbers (also called generation numbers or fencing tokens) are monotonically increasing counters that prevent a deposed leader — one that does not yet know it has been replaced — from writing to storage and corrupting the distributed state.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Epoch numbers solve the "
+            },
+            {
+              "text": "split-brain",
+              "marks": ["bold"]
+            },
+            {
+              "text": " problem: after a network partition heals, two nodes may both believe they are the current leader. The old leader, isolated during the partition, may not yet know it has been replaced. If it continues to accept writes, data will diverge."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The fencing pattern works as follows: every time a new leader is elected, the election increments a "
+            },
+            {
+              "text": "fencing token",
+              "marks": ["bold"]
+            },
+            {
+              "text": " (or epoch number, or term in Raft's vocabulary). All requests from the leader to storage nodes include this token. Storage nodes reject any request with a token lower than the highest token they have seen."
+            }
+          ]
+        },
+        {
+          "type": "code",
+          "language": "text",
+          "text": "Fencing token sequence:\n\nTime 1: Leader A elected with epoch=5. A uses token 5 for all writes.\nTime 2: Network partition isolates A. B and C elect B as new leader, epoch=6.\nTime 3: A is still alive but partitioned. A believes it is still leader.\nTime 4: A sends Write(x=stale, token=5) to storage.\n         Storage has seen token 6 (from B). Rejects: 5 < 6. Write fails.\nTime 5: A sees the rejection, realizes it's no longer leader, steps down.\n\n-- Even if A's write arrives AFTER the partition heals:\n         Storage sees token=5, rejects it because token=6 was seen.\n         A's stale write cannot corrupt the current state."
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Raft's term number is exactly a fencing token: all AppendEntries RPCs carry the leader's term. A follower rejects any RPC from a leader with a term lower than its own current term, causing the old leader to immediately learn of its demotion and step down. This is implemented in the AppendEntries and RequestVote handlers: \"if term in message < currentTerm, reject.\""
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "For distributed locks, the fencing token must also propagate to the external storage system. This is the pattern recommended for Redis Redlock: any lock holder must include its fencing token in every write to the protected resource. If the lock expires while a client is still writing (due to a GC pause, for example), the storage system rejects the write because a higher fencing token was issued by the next lock holder. HBase's row versioning, ZooKeeper's znode version, and etcd's resource version all serve this function."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Kleppmann's analysis of Redlock (\"How to do distributed locking\", 2016) is the canonical reference for fencing tokens in practice. His argument: a distributed lock without a fencing token is not a safe lock, because any GC pause or network hiccup can cause the lock to expire while the client still believes it holds the lock. The fencing token ensures that even if the client acts on a stale belief, the storage layer rejects the write."
+            }
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "info",
+          "runs": [
+            {
+              "text": "etcd's transactions use a ModRevision field as a fencing token for compare-and-swap (CAS) operations: a client reads a key at revision R, performs a computation, then writes back only if the revision is still R. If another client modified the key in the interim (revision > R), the transaction fails. This prevents lost updates without requiring pessimistic locks."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "A fencing token is a serial number attached to leadership. Every time a new leader is elected, the number goes up. A deposed leader trying to write to storage gets rejected because its old serial number is too low — the storage already knows a newer leader exists. Stale leaders can't cause corruption because the storage refuses to accept their writes."
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
