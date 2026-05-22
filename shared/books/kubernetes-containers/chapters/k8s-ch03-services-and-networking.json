@@ -1,0 +1,1637 @@
+{
+  "chapterId": "k8s-ch03-services-and-networking",
+  "shardIndex": 1,
+  "cards": [
+    {
+      "id": "k8s-ch03-c001",
+      "order": 1,
+      "title": "The Service Abstraction — Stable Identity for Ephemeral Pods",
+      "teaser": "Pods are mortal. They crash, restart, and reschedule onto different nodes with different IPs. A Service is the indirection layer that decouples a stable network identity (IP + DNS name) from the constantly-changing set of pods that serve a workload.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "In Kubernetes, a pod IP is ephemeral by design. The scheduler places a pod on any available node, assigns it an IP from that node's pod CIDR range, and when the pod dies or is rescheduled, that IP is gone. Clients that hardcode a pod IP are permanently broken the moment the pod restarts."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "A "
+            },
+            {
+              "text": "Service",
+              "marks": ["bold"]
+            },
+            {
+              "text": " solves this by providing a stable, long-lived network identity in front of the changing pod set. A Service has:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "A stable virtual IP",
+                "marks": ["bold"]
+              },
+              {
+                "text": " (ClusterIP) that persists for the lifetime of the Service object, not the pods behind it."
+              }
+            ],
+            [
+              {
+                "text": "A stable DNS name",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — "
+              },
+              {
+                "text": "<service>.<namespace>.svc.cluster.local",
+                "marks": ["code"]
+              },
+              {
+                "text": " — registered by CoreDNS and resolvable by any pod in the cluster."
+              }
+            ],
+            [
+              {
+                "text": "A selector",
+                "marks": ["bold"]
+              },
+              {
+                "text": " that watches pods matching a label set and dynamically maintains the endpoint list."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The architecture is clean: clients talk to the Service IP; kube-proxy (or an eBPF equivalent) translates that IP into an actual pod IP at the packet level; when pods change, the endpoint list updates but the Service IP and DNS name never change. Clients require zero reconfiguration."
+            }
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "info",
+          "runs": [
+            {
+              "text": "This is the core Kubernetes networking contract: pods are cattle, Services are pets. The pattern is analogous to a load balancer VIP in traditional infrastructure, but implemented entirely in-cluster kernel space."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "A Service is a permanent address for a group of pods that keeps changing. Clients always connect to the Service IP or DNS name; Kubernetes invisibly routes those connections to whichever pods are healthy right now."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "k8s-ch03-c002",
+      "order": 2,
+      "title": "Service Selectors — Label-Based Pod Membership",
+      "teaser": "A Service doesn't reference pods by name or IP. It uses a label selector to declare 'any pod with these labels belongs to me.' The membership list is dynamic: pods enter and leave the set automatically as they start, pass readiness checks, or die.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The selector is the heart of how a Service tracks its members. A selector is a map of key-value pairs, and a pod is a member of the Service if and only if it has "
+            },
+            {
+              "text": "all",
+              "marks": ["italic"]
+            },
+            {
+              "text": " of the specified labels."
+            }
+          ]
+        },
+        {
+          "type": "code",
+          "language": "yaml",
+          "text": "apiVersion: v1\nkind: Service\nmetadata:\n  name: payments-api\n  namespace: billing\nspec:\n  selector:\n    app: payments        # must have this label\n    tier: backend        # AND this label\n  ports:\n    - name: http\n      port: 80           # the port clients connect to (Service port)\n      targetPort: 8080   # the port the container listens on\n  type: ClusterIP"
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "When this Service is created, the "
+            },
+            {
+              "text": "endpoints controller",
+              "marks": ["italic"]
+            },
+            {
+              "text": " watches all pods in the "
+            },
+            {
+              "text": "billing",
+              "marks": ["code"]
+            },
+            {
+              "text": " namespace, finds those matching "
+            },
+            {
+              "text": "app=payments,tier=backend",
+              "marks": ["code"]
+            },
+            {
+              "text": ", and populates the Endpoints (or EndpointSlice) object with their IPs and ports. As pods come and go, this list is continuously reconciled."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Crucially, only pods that are "
+            },
+            {
+              "text": "Ready",
+              "marks": ["bold"]
+            },
+            {
+              "text": " (readiness probe passing) are added to the endpoint list. A pod that is started but failing its readiness probe is excluded from Service traffic — a key mechanism for zero-downtime rolling deployments."
+            }
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "warning",
+          "runs": [
+            {
+              "text": "Services without a selector are valid and useful — they do not auto-manage endpoints. Instead, you manually create an Endpoints or EndpointSlice object pointing at any IP (including external systems). This is how you expose a legacy database as a Kubernetes Service."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "A Service uses labels to decide which pods belong to it. Any pod with the matching labels that passes its readiness probe gets added to the traffic pool. When a pod disappears or fails, it's removed. The Service doesn't care which specific pods exist — just that pods with the right labels exist."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "k8s-ch03-c003",
+      "order": 3,
+      "title": "ClusterIP — The Default Internal Virtual IP",
+      "teaser": "ClusterIP is the default Service type. It allocates a virtual IP from the cluster's service CIDR range — reachable only from inside the cluster. It is the building block every other Service type builds on.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "When you create a Service without specifying a type, Kubernetes creates a ClusterIP Service. The control plane allocates a free IP from the "
+            },
+            {
+              "text": "--service-cluster-ip-range",
+              "marks": ["code"]
+            },
+            {
+              "text": " CIDR (default "
+            },
+            {
+              "text": "10.96.0.0/12",
+              "marks": ["code"]
+            },
+            {
+              "text": " in kubeadm clusters). This IP is virtual — no network interface actually holds it. It exists only in the iptables/IPVS rules on every node."
+            }
+          ]
+        },
+        {
+          "type": "code",
+          "language": "yaml",
+          "text": "apiVersion: v1\nkind: Service\nmetadata:\n  name: redis\n  namespace: cache\nspec:\n  type: ClusterIP       # default; may be omitted\n  selector:\n    app: redis\n  ports:\n    - port: 6379\n      targetPort: 6379"
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Pods access this Service via:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "DNS name",
+                "marks": ["bold"]
+              },
+              {
+                "text": ": "
+              },
+              {
+                "text": "redis.cache.svc.cluster.local",
+                "marks": ["code"]
+              },
+              {
+                "text": " (or just "
+              },
+              {
+                "text": "redis",
+                "marks": ["code"]
+              },
+              {
+                "text": " within the same namespace)."
+              }
+            ],
+            [
+              {
+                "text": "ClusterIP",
+                "marks": ["bold"]
+              },
+              {
+                "text": ": the stable virtual IP, visible in "
+              },
+              {
+                "text": "kubectl get svc redis -n cache",
+                "marks": ["code"]
+              },
+              {
+                "text": "."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "ClusterIP is invisible outside the cluster. There is no way to reach a ClusterIP Service from outside the cluster network without an intermediary (NodePort, LoadBalancer, Ingress, or a VPN/tunnel). This makes it the safest default for internal microservice communication."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "ClusterIP gives a service a stable virtual IP that is only reachable from inside the cluster. It's the default type — if you don't say otherwise, this is what you get. External clients can't reach it directly; it's purely for pod-to-pod communication."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "k8s-ch03-c004",
+      "order": 4,
+      "title": "NodePort — Exposing a Service on Every Node",
+      "teaser": "NodePort punches a hole through every node's firewall by opening a static port in the 30000–32767 range on each node. External traffic hitting any node on that port is forwarded to the Service. Simple but not production-grade for most use cases.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "NodePort builds on ClusterIP: the Service gets a ClusterIP "
+            },
+            {
+              "text": "and",
+              "marks": ["italic"]
+            },
+            {
+              "text": " a port is opened on every node in the cluster. Any node IP + that port reaches the service — even if the pod serving the request is on a different node."
+            }
+          ]
+        },
+        {
+          "type": "code",
+          "language": "yaml",
+          "text": "apiVersion: v1\nkind: Service\nmetadata:\n  name: web-frontend\nspec:\n  type: NodePort\n  selector:\n    app: web\n  ports:\n    - port: 80          # ClusterIP port (internal)\n      targetPort: 8080  # container port\n      nodePort: 31080   # external port on each node (optional; auto-assigned if omitted)"
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Traffic flow:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "numbered",
+          "items": [
+            [
+              {
+                "text": "External client connects to "
+              },
+              {
+                "text": "<any-node-IP>:31080",
+                "marks": ["code"]
+              },
+              {
+                "text": "."
+              }
+            ],
+            [
+              {
+                "text": "The node's iptables/IPVS rules match and DNAT the packet to the Service's ClusterIP."
+              }
+            ],
+            [
+              {
+                "text": "A second DNAT translates the ClusterIP to a pod IP."
+              }
+            ],
+            [
+              {
+                "text": "The pod responds; the reply path is NATted back."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Limitations of NodePort in production:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Clients must know a node IP. If a node fails, clients must switch to another node IP."
+              }
+            ],
+            [
+              {
+                "text": "Ports are limited to 30000–32767, which conflicts with standard well-known ports."
+              }
+            ],
+            [
+              {
+                "text": "No SSL termination, path-based routing, or host-based routing."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "info",
+          "runs": [
+            {
+              "text": "NodePort is commonly used in on-premises clusters where a cloud load balancer is unavailable, or during development where a LoadBalancer service cannot be provisioned. In production, a LoadBalancer or Ingress typically sits in front of NodePort services."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "NodePort opens the same high-numbered port on every single cluster node. Point any client at any node IP on that port and it reaches your service. It's simple but crude — clients need to know node IPs, you can't use ports below 30000, and there's no load balancing between nodes from outside the cluster."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "k8s-ch03-c005",
+      "order": 5,
+      "title": "LoadBalancer — Cloud-Integrated External Exposure",
+      "teaser": "LoadBalancer extends NodePort by provisioning a cloud load balancer (AWS NLB/ALB, GCP Cloud LB, Azure LB) automatically. The Service object gets an external IP. No manual infrastructure plumbing required.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "When you set "
+            },
+            {
+              "text": "type: LoadBalancer",
+              "marks": ["code"]
+            },
+            {
+              "text": ", the cloud controller manager (running inside the cluster) calls the cloud provider API to provision an external load balancer. It then patches the Service's "
+            },
+            {
+              "text": "status.loadBalancer.ingress",
+              "marks": ["code"]
+            },
+            {
+              "text": " field with the external IP or hostname once provisioning completes."
+            }
+          ]
+        },
+        {
+          "type": "code",
+          "language": "yaml",
+          "text": "apiVersion: v1\nkind: Service\nmetadata:\n  name: api-gateway\n  annotations:\n    # AWS-specific: provision a Network Load Balancer\n    service.beta.kubernetes.io/aws-load-balancer-type: \"nlb\"\nspec:\n  type: LoadBalancer\n  selector:\n    app: gateway\n  ports:\n    - port: 443\n      targetPort: 8443\n  loadBalancerSourceRanges:\n    - \"10.0.0.0/8\"   # restrict external access to this CIDR"
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Cloud provider implementations:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "AWS",
+                "marks": ["bold"]
+              },
+              {
+                "text": ": Defaults to Classic ELB; annotations select NLB ("
+              },
+              {
+                "text": "aws-load-balancer-type: nlb",
+                "marks": ["code"]
+              },
+              {
+                "text": ") or ALB via the AWS Load Balancer Controller. NLB is L4 (TCP/UDP); ALB is L7 (HTTP/HTTPS) and is the recommended Ingress-capable option."
+              }
+            ],
+            [
+              {
+                "text": "GCP",
+                "marks": ["bold"]
+              },
+              {
+                "text": ": Provisions a GCP External Load Balancer with a static IP option. GKE also supports internal load balancers via annotation "
+              },
+              {
+                "text": "cloud.google.com/load-balancer-type: \"Internal\"",
+                "marks": ["code"]
+              },
+              {
+                "text": "."
+              }
+            ],
+            [
+              {
+                "text": "Azure",
+                "marks": ["bold"]
+              },
+              {
+                "text": ": Provisions an Azure Load Balancer. Internal variant via annotation "
+              },
+              {
+                "text": "service.beta.kubernetes.io/azure-load-balancer-internal: \"true\"",
+                "marks": ["code"]
+              },
+              {
+                "text": "."
+              }
+            ],
+            [
+              {
+                "text": "On-premises",
+                "marks": ["bold"]
+              },
+              {
+                "text": ": No cloud provider means no automatic provisioning. MetalLB is the standard OSS solution for bare-metal LoadBalancer services — it announces Service IPs via BGP or ARP."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "warning",
+          "runs": [
+            {
+              "text": "Each LoadBalancer Service creates a separate cloud LB, which has cost and quota implications. Ten microservices each with a LoadBalancer Service means ten cloud load balancers. Ingress controllers reduce this by multiplexing many Services behind a single LB."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "LoadBalancer tells Kubernetes to go provision a real cloud load balancer (AWS NLB, GCP LB, Azure LB) and wire it to your pods automatically. You get an external IP without touching the cloud console. The downside: one service, one load balancer, one bill line item — so it gets expensive at scale."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "k8s-ch03-c006",
+      "order": 6,
+      "title": "ExternalName and Headless Services — The Two Unusual Types",
+      "teaser": "ExternalName turns a Service into a DNS CNAME record — no proxying, just aliasing. Headless Services disable the virtual IP entirely and let DNS return pod IPs directly. Each solves a specific problem that ClusterIP/NodePort/LoadBalancer cannot.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "ExternalName",
+              "marks": ["bold"]
+            },
+            {
+              "text": " is a DNS alias. When a pod queries "
+            },
+            {
+              "text": "mydb.production.svc.cluster.local",
+              "marks": ["code"]
+            },
+            {
+              "text": ", CoreDNS returns a CNAME pointing at the external hostname. No proxying occurs — the pod's TCP connection goes directly to the external endpoint."
+            }
+          ]
+        },
+        {
+          "type": "code",
+          "language": "yaml",
+          "text": "# ExternalName: alias an external service as a Kubernetes DNS name\napiVersion: v1\nkind: Service\nmetadata:\n  name: legacy-db\n  namespace: production\nspec:\n  type: ExternalName\n  externalName: rds-instance.abc123.us-east-1.rds.amazonaws.com\n  # No selector, no ports, no ClusterIP"
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Use cases: abstracting external managed services (RDS, Cloud SQL, ElastiCache) behind a stable in-cluster DNS name so that application configs don't embed cloud-specific hostnames directly."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Headless Services",
+              "marks": ["bold"]
+            },
+            {
+              "text": " set "
+            },
+            {
+              "text": "clusterIP: None",
+              "marks": ["code"]
+            },
+            {
+              "text": ". No virtual IP is allocated. Instead, DNS queries for the Service return "
+            },
+            {
+              "text": "A records",
+              "marks": ["italic"]
+            },
+            {
+              "text": " for each individual pod IP. This exposes the pod identities directly."
+            }
+          ]
+        },
+        {
+          "type": "code",
+          "language": "yaml",
+          "text": "# Headless: DNS returns individual pod IPs, not a virtual IP\napiVersion: v1\nkind: Service\nmetadata:\n  name: kafka\n  namespace: messaging\nspec:\n  clusterIP: None   # headless\n  selector:\n    app: kafka\n  ports:\n    - port: 9092"
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Headless Services are the required companion for StatefulSets. Each StatefulSet pod gets a stable DNS name of the form "
+            },
+            {
+              "text": "<pod-name>.<service-name>.<namespace>.svc.cluster.local",
+              "marks": ["code"]
+            },
+            {
+              "text": " (e.g., "
+            },
+            {
+              "text": "kafka-0.kafka.messaging.svc.cluster.local",
+              "marks": ["code"]
+            },
+            {
+              "text": "). Clients — or the pods themselves — can address individual members by name, which is essential for clustered databases and message brokers that require peer identity."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "ExternalName is just a DNS alias — it maps a Kubernetes service name to an external hostname so your app doesn't hardcode AWS endpoint strings. Headless removes the VIP entirely and makes DNS return each pod's real IP directly — which StatefulSets like Kafka and etcd need so they can find each other by name."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "k8s-ch03-c007",
+      "order": 7,
+      "title": "Endpoints and EndpointSlices — The Pod IP Registry Behind a Service",
+      "teaser": "When a Service has a selector, Kubernetes maintains an Endpoints object listing the actual pod IPs and ports behind it. At scale, the original Endpoints API breaks down — EndpointSlices replace it with sharded, incremental updates.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Every Service with a selector has a corresponding Endpoints object (same name, same namespace). The endpoint controller watches pod readiness and keeps this object in sync."
+            }
+          ]
+        },
+        {
+          "type": "code",
+          "language": "yaml",
+          "text": "# Inspect the live endpoint list for a Service:\n# kubectl get endpoints payments-api -n billing -o yaml\napiVersion: v1\nkind: Endpoints\nmetadata:\n  name: payments-api\n  namespace: billing\nsubsets:\n  - addresses:\n      - ip: 10.244.1.5\n        nodeName: node-1\n      - ip: 10.244.2.9\n        nodeName: node-2\n    ports:\n      - port: 8080"
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The scaling problem",
+              "marks": ["bold"]
+            },
+            {
+              "text": ": the original Endpoints object is a single Kubernetes resource. A Service with 1,000 pods has an Endpoints object with 1,000 entries. Every time one pod changes, the "
+            },
+            {
+              "text": "entire",
+              "marks": ["italic"]
+            },
+            {
+              "text": " object is re-sent to every node's kube-proxy — O(nodes × endpoints) data transfer per pod change. At large scale (100+ pods, 1000+ nodes), this generates enormous API server and network load."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "EndpointSlices",
+              "marks": ["bold"]
+            },
+            {
+              "text": " (GA in Kubernetes 1.21) shard the endpoint list into slices of up to 100 entries by default. A single pod change updates only the one slice containing that pod, not the entire endpoint list. For a 1,000-pod Service, an update triggers 1 EndpointSlice change (100 entries) instead of the entire 1,000-entry Endpoints object — a 10x reduction in update traffic."
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "EndpointSlices are the default from Kubernetes 1.17+.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " kube-proxy reads EndpointSlices, not Endpoints, in modern clusters."
+              }
+            ],
+            [
+              {
+                "text": "Each EndpointSlice also records topology hints",
+                "marks": ["bold"]
+              },
+              {
+                "text": " (zone awareness), enabling kube-proxy to prefer local-zone endpoints for lower latency."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "info",
+          "runs": [
+            {
+              "text": "The EndpointSlice API extends endpoint metadata beyond what Endpoints supports: it tracks node name, zone, ready/serving/terminating states per endpoint, and supports IPv4+IPv6 dual-stack in the same slice."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "An Endpoints object is Kubernetes's list of 'which pod IPs are actually behind this Service right now.' It works fine for small services but becomes a performance problem at hundreds of pods because any change resends the entire list to every node. EndpointSlices fix this by breaking that list into small chunks — one pod change updates one chunk, not the whole list."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "k8s-ch03-c008",
+      "order": 8,
+      "title": "kube-proxy — The Data-Plane Implementation of Service Routing",
+      "teaser": "kube-proxy is the agent running on every node that translates Service virtual IPs into real pod IPs at packet-forwarding time. It operates in one of three modes — userspace (deprecated), iptables, or IPVS — with very different performance characteristics.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "kube-proxy watches the Kubernetes API for Service and EndpointSlice changes, then programs the local kernel to implement the forwarding rules. It does not sit in the packet path itself — the kernel handles forwarding using rules kube-proxy writes."
+            }
+          ]
+        },
+        {
+          "type": "code",
+          "language": "text",
+          "text": "iptables mode (default) — packet flow:\n\n  Pod/external ──SYN──▶ [NIC]\n                              │\n                        [iptables PREROUTING chain]\n                              │\n                        [KUBE-SERVICES chain]        ← kube-proxy writes this\n                              │\n                        match: dst=10.96.14.22:80\n                              │\n                        [KUBE-SVC-XXXXX chain]\n                              │\n                        statistically select endpoint\n                        (random selection across replicas)\n                              │\n                        [KUBE-SEP-YYYY chain]\n                              │\n                        DNAT: dst → 10.244.3.7:8080  ← actual pod IP\n                              │\n                         [pod]"
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "iptables mode",
+              "marks": ["bold"]
+            },
+            {
+              "text": " programs one chain per Service and one chain per endpoint. Random selection is implemented with probabilistic "
+            },
+            {
+              "text": "-m statistic --mode random",
+              "marks": ["code"]
+            },
+            {
+              "text": " rules. Limitation: iptables rule tables are O(n) per rule traversal. A cluster with 10,000 Services has a rule table that is expensive to traverse and extremely slow to update — each sync rewrites the entire iptables table."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "IPVS mode",
+              "marks": ["bold"]
+            },
+            {
+              "text": " uses the Linux Virtual Server kernel subsystem, which uses a hash table (O(1) lookup) for virtual IP to real server mappings. Updates are incremental — only changed entries are modified, not the full table. IPVS mode also offers richer load-balancing algorithms: round-robin, least connections, source hashing, and more."
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "iptables mode",
+                "marks": ["bold"]
+              },
+              {
+                "text": ": default, no extra dependencies, degrades at >1000 Services."
+              }
+            ],
+            [
+              {
+                "text": "IPVS mode",
+                "marks": ["bold"]
+              },
+              {
+                "text": ": requires "
+              },
+              {
+                "text": "ip_vs",
+                "marks": ["code"]
+              },
+              {
+                "text": " kernel modules, scales to tens of thousands of Services with O(1) lookup."
+              }
+            ],
+            [
+              {
+                "text": "eBPF mode (Cilium replaces kube-proxy)",
+                "marks": ["bold"]
+              },
+              {
+                "text": ": bypasses iptables and IPVS entirely; programs XDP/TC hook programs; highest performance, lowest latency."
+              }
+            ]
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "kube-proxy runs on every node and writes kernel forwarding rules so that packets destined for a Service's virtual IP get redirected to a real pod IP. In iptables mode this is a linear list of rules that slows down as your cluster grows. In IPVS mode it's a hash table with constant-time lookup that scales to tens of thousands of services."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "k8s-ch03-c009",
+      "order": 9,
+      "title": "CNI — How Pods Get IPs and the Plugin Ecosystem",
+      "teaser": "The Container Network Interface (CNI) specification defines how Kubernetes delegates pod networking to pluggable implementations. Calico, Cilium, and Flannel are the dominant plugins — each with different routing models, performance profiles, and policy capabilities.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The Kubernetes node itself does not assign pod IPs. When the kubelet creates a pod, it calls the CNI plugin via the CNI specification — a set of JSON-based interface calls ("
+            },
+            {
+              "text": "ADD",
+              "marks": ["code"]
+            },
+            {
+              "text": ", "
+            },
+            {
+              "text": "DEL",
+              "marks": ["code"]
+            },
+            {
+              "text": ", "
+            },
+            {
+              "text": "CHECK",
+              "marks": ["code"]
+            },
+            {
+              "text": "). The plugin wires up the pod's network namespace, assigns an IP from the node's pod CIDR, and sets up routes."
+            }
+          ]
+        },
+        {
+          "type": "code",
+          "language": "text",
+          "text": "Kubernetes networking stack (bottom to top):\n\n  ┌──────────────────────────────────────────────┐\n  │  Pod A (eth0: 10.244.1.5)                    │\n  └──────────────┬───────────────────────────────┘\n                 │ veth pair\n  ┌──────────────▼───────────────────────────────┐\n  │  Node 1 (cbr0/bridge or eBPF routing)        │\n  │  Pod CIDR: 10.244.1.0/24                     │\n  └──────────────┬───────────────────────────────┘\n                 │ CNI plugin routes\n  ┌──────────────▼───────────────────────────────┐\n  │  Node 2 (cbr0/bridge or eBPF routing)        │\n  │  Pod CIDR: 10.244.2.0/24                     │\n  └──────────────┬───────────────────────────────┘\n                 │ veth pair\n  ┌──────────────▼───────────────────────────────┐\n  │  Pod B (eth0: 10.244.2.9)                    │\n  └──────────────────────────────────────────────┘\n\n  CNI plugin responsibility: Pod A ↔ Pod B routing across nodes"
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Flannel",
+                "marks": ["bold"]
+              },
+              {
+                "text": ": the simplest CNI; uses VXLAN overlay to encapsulate pod traffic in UDP packets. No NetworkPolicy support natively. Good for learning and small clusters."
+              }
+            ],
+            [
+              {
+                "text": "Calico",
+                "marks": ["bold"]
+              },
+              {
+                "text": ": uses BGP to distribute pod routes without overlay (pure L3 routing). Natively supports NetworkPolicy and its own "
+              },
+              {
+                "text": "GlobalNetworkPolicy",
+                "marks": ["code"]
+              },
+              {
+                "text": " CRD for cluster-wide policy. Supports eBPF dataplane (Calico eBPF) as an alternative to iptables. The most widely deployed enterprise CNI."
+              }
+            ],
+            [
+              {
+                "text": "Cilium",
+                "marks": ["bold"]
+              },
+              {
+                "text": ": eBPF-native CNI. Replaces kube-proxy, implements NetworkPolicy in eBPF, provides L7 policy (HTTP-aware), distributed load balancing via XDP, and Hubble observability (packet-level flow telemetry). The highest-performance option for large clusters."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "info",
+          "runs": [
+            {
+              "text": "The fundamental requirement of Kubernetes networking (the 'flat network model'): every pod must be able to reach every other pod directly by IP, without NAT. The CNI plugin is responsible for satisfying this invariant across nodes."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "CNI is the API Kubernetes calls when a pod is created to say 'give this pod a network.' The plugin responds by wiring up a virtual ethernet interface, assigning an IP, and setting up routes so the pod can reach other pods on other nodes. Flannel uses tunneling, Calico uses BGP routing, and Cilium skips iptables entirely and uses eBPF to do all of it faster."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "k8s-ch03-c010",
+      "order": 10,
+      "title": "CoreDNS — Service Discovery via DNS",
+      "teaser": "CoreDNS is the cluster DNS server deployed by kubeadm and most managed Kubernetes offerings. It serves DNS records for Services and pods following a well-defined naming schema, making DNS the primary service discovery mechanism in Kubernetes.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "CoreDNS runs as a Deployment (typically two replicas) in the "
+            },
+            {
+              "text": "kube-system",
+              "marks": ["code"]
+            },
+            {
+              "text": " namespace behind a ClusterIP Service at the cluster DNS IP (e.g., "
+            },
+            {
+              "text": "10.96.0.10",
+              "marks": ["code"]
+            },
+            {
+              "text": "). The kubelet configures every pod's "
+            },
+            {
+              "text": "/etc/resolv.conf",
+              "marks": ["code"]
+            },
+            {
+              "text": " to point at this address."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "DNS record schema for Services:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "ClusterIP Service A record",
+                "marks": ["bold"]
+              },
+              {
+                "text": ": "
+              },
+              {
+                "text": "<service>.<namespace>.svc.cluster.local",
+                "marks": ["code"]
+              },
+              {
+                "text": " → ClusterIP"
+              }
+            ],
+            [
+              {
+                "text": "Headless Service A record",
+                "marks": ["bold"]
+              },
+              {
+                "text": ": "
+              },
+              {
+                "text": "<service>.<namespace>.svc.cluster.local",
+                "marks": ["code"]
+              },
+              {
+                "text": " → all pod IPs (multi-A)"
+              }
+            ],
+            [
+              {
+                "text": "StatefulSet pod A record",
+                "marks": ["bold"]
+              },
+              {
+                "text": ": "
+              },
+              {
+                "text": "<pod-name>.<service>.<namespace>.svc.cluster.local",
+                "marks": ["code"]
+              },
+              {
+                "text": " → pod IP"
+              }
+            ],
+            [
+              {
+                "text": "SRV record",
+                "marks": ["bold"]
+              },
+              {
+                "text": ": "
+              },
+              {
+                "text": "_<port-name>._<proto>.<service>.<namespace>.svc.cluster.local",
+                "marks": ["code"]
+              },
+              {
+                "text": " → port + hostname (for named ports)"
+              }
+            ],
+            [
+              {
+                "text": "ExternalName CNAME",
+                "marks": ["bold"]
+              },
+              {
+                "text": ": "
+              },
+              {
+                "text": "<service>.<namespace>.svc.cluster.local",
+                "marks": ["code"]
+              },
+              {
+                "text": " → CNAME to externalName value"
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Within the same namespace, the short name "
+            },
+            {
+              "text": "redis",
+              "marks": ["code"]
+            },
+            {
+              "text": " resolves because "
+            },
+            {
+              "text": "/etc/resolv.conf",
+              "marks": ["code"]
+            },
+            {
+              "text": " contains "
+            },
+            {
+              "text": "search <namespace>.svc.cluster.local svc.cluster.local cluster.local",
+              "marks": ["code"]
+            },
+            {
+              "text": " as search domains. Cross-namespace access requires the full "
+            },
+            {
+              "text": "<service>.<namespace>",
+              "marks": ["code"]
+            },
+            {
+              "text": " form."
+            }
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "info",
+          "runs": [
+            {
+              "text": "CoreDNS is configured via a Corefile ConfigMap in kube-system. Plugins extend its behavior: the kubernetes plugin serves in-cluster records; the forward plugin delegates external queries to upstream resolvers; the cache plugin reduces API server load; the ready and health plugins expose CoreDNS liveness probes."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "CoreDNS is the cluster's DNS server. Every pod's /etc/resolv.conf points at it. When your app asks for 'redis', CoreDNS expands that to the full cluster-local name and returns the Service's IP. The naming pattern is service.namespace.svc.cluster.local, with shorthand working within the same namespace via DNS search domains."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "k8s-ch03-c011",
+      "order": 11,
+      "title": "Ingress — L7 HTTP Routing Into the Cluster",
+      "teaser": "Ingress is the Kubernetes API object for L7 (HTTP/HTTPS) routing rules — host-based and path-based — terminating TLS and routing to backend Services. The rules are declarative; an Ingress controller is the software that actually implements them.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The Ingress "
+            },
+            {
+              "text": "resource",
+              "marks": ["bold"]
+            },
+            {
+              "text": " is a Kubernetes API object that declares routing rules. The Ingress "
+            },
+            {
+              "text": "controller",
+              "marks": ["bold"]
+            },
+            {
+              "text": " is a separate software component (nginx, Traefik, HAProxy Ingress, AWS ALB Ingress Controller) that watches these objects and programs a load balancer accordingly. Kubernetes does not ship a default controller — you choose one."
+            }
+          ]
+        },
+        {
+          "type": "code",
+          "language": "yaml",
+          "text": "apiVersion: networking.k8s.io/v1\nkind: Ingress\nmetadata:\n  name: app-ingress\n  namespace: production\n  annotations:\n    nginx.ingress.kubernetes.io/rewrite-target: /\nspec:\n  ingressClassName: nginx       # selects which controller handles this\n  tls:\n    - hosts:\n        - api.example.com\n      secretName: api-tls-cert  # TLS cert stored as a Secret\n  rules:\n    - host: api.example.com\n      http:\n        paths:\n          - path: /payments\n            pathType: Prefix\n            backend:\n              service:\n                name: payments-api\n                port:\n                  number: 80\n          - path: /orders\n            pathType: Prefix\n            backend:\n              service:\n                name: orders-api\n                port:\n                  number: 80"
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The resource/controller separation is important:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "The Ingress resource",
+                "marks": ["bold"]
+              },
+              {
+                "text": " is a portable, controller-agnostic declaration. It specifies "
+              },
+              {
+                "text": "what",
+                "marks": ["italic"]
+              },
+              {
+                "text": " traffic to route and where."
+              }
+            ],
+            [
+              {
+                "text": "The controller",
+                "marks": ["bold"]
+              },
+              {
+                "text": " is an opinionated implementation. nginx Ingress wraps nginx; Traefik wraps Traefik proxy; AWS ALB Ingress provisions Application Load Balancers. Each exposes additional features via controller-specific annotations."
+              }
+            ],
+            [
+              {
+                "text": "ingressClassName",
+                "marks": ["code"]
+              },
+              {
+                "text": " (or the legacy "
+              },
+              {
+                "text": "kubernetes.io/ingress.class",
+                "marks": ["code"]
+              },
+              {
+                "text": " annotation) selects which controller reconciles which Ingress objects, enabling multiple controllers to coexist."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "warning",
+          "runs": [
+            {
+              "text": "Ingress has limitations: it only speaks HTTP/HTTPS natively. TCP/UDP routing, gRPC with full header control, and traffic splitting for canary deployments require controller-specific annotations that are not portable. The Gateway API (covered in the next card) was designed to address these limitations with first-class API objects."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "An Ingress resource is a YAML file that says 'route api.example.com/payments to the payments service and /orders to the orders service, and terminate TLS here.' An Ingress controller is the nginx or Traefik process that reads that YAML and actually does the routing. You need both — the resource alone does nothing without a controller running."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "k8s-ch03-c012",
+      "order": 12,
+      "title": "NetworkPolicy — Pod-Level Firewall Rules",
+      "teaser": "NetworkPolicy is Kubernetes's firewall primitive. By default all pods can talk to all pods. A NetworkPolicy object selects pods and declares which ingress/egress traffic is allowed. Default-deny + explicit allow is the production security posture.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Without any NetworkPolicy objects, the Kubernetes network is flat and open — any pod can reach any other pod on any port. NetworkPolicy objects restrict this by defining allow rules. They are enforced by the CNI plugin (not by kube-proxy), which means "
+            },
+            {
+              "text": "the CNI plugin must support NetworkPolicy",
+              "marks": ["bold"]
+            },
+            {
+              "text": ". Flannel does not. Calico and Cilium do."
+            }
+          ]
+        },
+        {
+          "type": "code",
+          "language": "yaml",
+          "text": "# Step 1: Default-deny all ingress in the namespace\napiVersion: networking.k8s.io/v1\nkind: NetworkPolicy\nmetadata:\n  name: default-deny-ingress\n  namespace: payments\nspec:\n  podSelector: {}    # selects ALL pods in the namespace\n  policyTypes:\n    - Ingress\n  # no ingress rules = deny all\n---\n# Step 2: Explicitly allow payments-api to receive traffic from api-gateway only\napiVersion: networking.k8s.io/v1\nkind: NetworkPolicy\nmetadata:\n  name: allow-gateway-to-payments\n  namespace: payments\nspec:\n  podSelector:\n    matchLabels:\n      app: payments-api\n  policyTypes:\n    - Ingress\n  ingress:\n    - from:\n        - podSelector:\n            matchLabels:\n              app: api-gateway\n          namespaceSelector:\n            matchLabels:\n              kubernetes.io/metadata.name: production\n      ports:\n        - protocol: TCP\n          port: 8080"
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Key semantics:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "NetworkPolicies are additive.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Multiple policies selecting the same pod union their allow rules — there is no deny rule in the standard API."
+              }
+            ],
+            [
+              {
+                "text": "podSelector + namespaceSelector together",
+                "marks": ["bold"]
+              },
+              {
+                "text": " (within a single "
+              },
+              {
+                "text": "from",
+                "marks": ["code"]
+              },
+              {
+                "text": " element using AND semantics) select pods with the given labels in namespaces with the given labels. Putting them in separate list items uses OR semantics."
+              }
+            ],
+            [
+              {
+                "text": "ipBlock",
+                "marks": ["bold"]
+              },
+              {
+                "text": ": allows rules based on CIDR ranges (e.g., allow traffic from "
+              },
+              {
+                "text": "10.0.0.0/8",
+                "marks": ["code"]
+              },
+              {
+                "text": " except "
+              },
+              {
+                "text": "10.1.0.0/24",
+                "marks": ["code"]
+              },
+              {
+                "text": ")."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Calico extends NetworkPolicy with its "
+            },
+            {
+              "text": "GlobalNetworkPolicy",
+              "marks": ["code"]
+            },
+            {
+              "text": " CRD, which is not namespaced and can enforce cluster-wide rules (e.g., block all egress to the internet from all pods except a designated egress namespace). Cilium adds L7-aware NetworkPolicy (HTTP method/path matching) through its own CRDs."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "NetworkPolicy is pod-level firewall rules in YAML. The safe pattern: start with a default-deny policy that blocks all traffic to all pods in a namespace, then add allow policies for exactly the connections you need. Remember that enforcement happens in the CNI plugin — if you use Flannel, NetworkPolicy objects exist but do nothing."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "k8s-ch03-c013",
+      "order": 13,
+      "title": "Gateway API — The Ingress Successor with Role Separation",
+      "teaser": "Gateway API is the next-generation Kubernetes networking API. It replaces Ingress with a richer, multi-protocol model split across three role-separated resource types: GatewayClass (infrastructure), Gateway (operator), and Route (developer). It graduated to GA in Kubernetes 1.28.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The Gateway API was designed to address Ingress's core limitations: it is HTTP-only, under-specified, and has no clean separation of concerns between the infrastructure team (who owns load balancers) and the application team (who owns routing rules). Gateway API introduces three resource types that map to three organizational roles:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "GatewayClass",
+                "marks": ["bold"]
+              },
+              {
+                "text": " (cluster-scoped): defines a type of load balancer infrastructure, managed by an infrastructure provider or platform team. Examples: "
+              },
+              {
+                "text": "nginx-gateway",
+                "marks": ["code"]
+              },
+              {
+                "text": ", "
+              },
+              {
+                "text": "cilium",
+                "marks": ["code"]
+              },
+              {
+                "text": ", "
+              },
+              {
+                "text": "aws-alb",
+                "marks": ["code"]
+              },
+              {
+                "text": ". Analogous to an IngressClass but richer."
+              }
+            ],
+            [
+              {
+                "text": "Gateway",
+                "marks": ["bold"]
+              },
+              {
+                "text": " (namespace-scoped): instantiates a specific load balancer listener — a port, protocol (HTTP, HTTPS, TLS, TCP, UDP), and allowed Routes. Managed by a cluster operator. One Gateway can serve multiple Routes."
+              }
+            ],
+            [
+              {
+                "text": "HTTPRoute / TCPRoute / TLSRoute / UDPRoute / GRPCRoute",
+                "marks": ["bold"]
+              },
+              {
+                "text": " (namespace-scoped): declare routing rules authored by application developers. HTTPRoute handles HTTP/HTTPS. GRPCRoute (graduated beta in 1.28) handles gRPC with per-method matching."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "code",
+          "language": "yaml",
+          "text": "# GatewayClass — platform team defines the infrastructure\napiVersion: gateway.networking.k8s.io/v1\nkind: GatewayClass\nmetadata:\n  name: cilium\nspec:\n  controllerName: io.cilium/gateway-controller\n---\n# Gateway — cluster operator configures a listener\napiVersion: gateway.networking.k8s.io/v1\nkind: Gateway\nmetadata:\n  name: prod-gateway\n  namespace: infra\nspec:\n  gatewayClassName: cilium\n  listeners:\n    - name: https\n      protocol: HTTPS\n      port: 443\n      tls:\n        certificateRefs:\n          - name: wildcard-tls\n      allowedRoutes:\n        namespaces:\n          from: Selector\n          selector:\n            matchLabels:\n              gateway-access: allowed\n---\n# HTTPRoute — app developer defines traffic rules\napiVersion: gateway.networking.k8s.io/v1\nkind: HTTPRoute\nmetadata:\n  name: payments-route\n  namespace: production\nspec:\n  parentRefs:\n    - name: prod-gateway\n      namespace: infra\n  hostnames:\n    - \"payments.example.com\"\n  rules:\n    - matches:\n        - path:\n            type: PathPrefix\n            value: /v2\n      backendRefs:\n        - name: payments-api-v2\n          port: 80\n          weight: 90        # traffic splitting: 90% to v2\n        - name: payments-api-v1\n          port: 80\n          weight: 10        # 10% to v1 (canary rollout)"
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Key capabilities Gateway API adds over Ingress:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Traffic splitting / weighted routing",
+                "marks": ["bold"]
+              },
+              {
+                "text": " is first-class (not an annotation hack). Canary deployments are declared in spec."
+              }
+            ],
+            [
+              {
+                "text": "Multi-protocol",
+                "marks": ["bold"]
+              },
+              {
+                "text": ": TCP, UDP, TLS passthrough, gRPC — all as typed API resources, not annotation overloading."
+              }
+            ],
+            [
+              {
+                "text": "Role separation",
+                "marks": ["bold"]
+              },
+              {
+                "text": ": the Gateway owner controls which namespaces can attach Routes. Developers cannot route to infrastructure they do not own."
+              }
+            ],
+            [
+              {
+                "text": "Cross-namespace routing",
+                "marks": ["bold"]
+              },
+              {
+                "text": ": an HTTPRoute in one namespace can reference a backend Service in another namespace (with explicit ReferenceGrant approval)."
+              }
+            ]
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Gateway API splits Ingress into three layers owned by three different teams. The platform team defines what kind of load balancer technology is available (GatewayClass). The cluster operator configures a specific listener on a port (Gateway). The app developer writes routing rules (HTTPRoute). This separation makes multi-team clusters much cleaner and adds features like traffic splitting and TCP routing that Ingress can only fake with annotations."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "k8s-ch03-c014",
+      "order": 14,
+      "title": "Networking End-to-End — From Browser to Pod",
+      "teaser": "Tracing a single HTTP request from an external browser through the Kubernetes networking stack reveals how every layer — DNS, cloud LB, Ingress controller, Service, kube-proxy/eBPF, CNI, and NetworkPolicy — plays a specific role and where each failure mode lives.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Walking through a complete request:"
+            }
+          ]
+        },
+        {
+          "type": "code",
+          "language": "text",
+          "text": "Browser → api.example.com:443\n    │\n    ▼  (1) External DNS: api.example.com → AWS NLB IP\n    │\n    ▼  (2) AWS NLB: TCP passthrough to NodePort on a cluster node\n    │      (LoadBalancer Service provisioned by cloud controller manager)\n    │\n    ▼  (3) Node iptables/IPVS (kube-proxy): DNAT NodePort → nginx Ingress pod IP\n    │      (Ingress controller runs as a Deployment behind a Service)\n    │\n    ▼  (4) nginx Ingress controller: TLS termination, SNI → hostname match\n    │      reads Ingress/HTTPRoute rules; selects backend Service\n    │\n    ▼  (5) CoreDNS lookup (if controller uses service name): payments-api → ClusterIP\n    │\n    ▼  (6) kube-proxy: DNAT ClusterIP:80 → pod IP:8080 (random endpoint selection)\n    │\n    ▼  (7) CNI routing: packet crosses node boundary via BGP/VXLAN/eBPF\n    │\n    ▼  (8) NetworkPolicy enforcement (at destination node): allow/deny check\n    │\n    ▼  (9) Pod: application receives request on port 8080"
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Each numbered step is a potential failure point:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Steps 1–2",
+                "marks": ["bold"]
+              },
+              {
+                "text": ": external DNS or cloud LB misconfiguration; typically diagnosed with "
+              },
+              {
+                "text": "dig",
+                "marks": ["code"]
+              },
+              {
+                "text": " and cloud console."
+              }
+            ],
+            [
+              {
+                "text": "Steps 3, 6",
+                "marks": ["bold"]
+              },
+              {
+                "text": ": kube-proxy iptables rule not programmed; diagnose with "
+              },
+              {
+                "text": "iptables -t nat -L -n",
+                "marks": ["code"]
+              },
+              {
+                "text": " or "
+              },
+              {
+                "text": "ipvsadm -Ln",
+                "marks": ["code"]
+              },
+              {
+                "text": " on the node."
+              }
+            ],
+            [
+              {
+                "text": "Step 4",
+                "marks": ["bold"]
+              },
+              {
+                "text": ": Ingress controller logs; check "
+              },
+              {
+                "text": "kubectl logs -n ingress-nginx",
+                "marks": ["code"]
+              },
+              {
+                "text": " and verify Ingress object events."
+              }
+            ],
+            [
+              {
+                "text": "Step 7",
+                "marks": ["bold"]
+              },
+              {
+                "text": ": CNI pod-to-pod routing failure; verify with "
+              },
+              {
+                "text": "kubectl exec pod -- ping <other-pod-ip>",
+                "marks": ["code"]
+              },
+              {
+                "text": " and check CNI plugin logs."
+              }
+            ],
+            [
+              {
+                "text": "Step 8",
+                "marks": ["bold"]
+              },
+              {
+                "text": ": NetworkPolicy blocking traffic; diagnose with Cilium's "
+              },
+              {
+                "text": "hubble observe",
+                "marks": ["code"]
+              },
+              {
+                "text": " or Calico's "
+              },
+              {
+                "text": "calicoctl",
+                "marks": ["code"]
+              },
+              {
+                "text": " policy trace."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "info",
+          "runs": [
+            {
+              "text": "The most common Kubernetes networking bug is a NetworkPolicy that unintentionally blocks traffic after a namespace default-deny is added. Always test connectivity with a debug pod (kubectl run debug --image=busybox -it --rm) after applying new NetworkPolicy objects."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "A request from the internet passes through: external DNS → cloud load balancer → node iptables → Ingress controller → Service ClusterIP → kube-proxy DNAT → CNI cross-node routing → NetworkPolicy check → pod. Each hop is a distinct system. When something breaks, you walk the chain to find which hop is dropping or misdirecting the packet."
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
