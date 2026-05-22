@@ -1,0 +1,1283 @@
+{
+  "chapterId": "dbi-ch02-storage-engines-b-trees",
+  "shardIndex": 1,
+  "cards": [
+    {
+      "id": "dbi-ch02-c001",
+      "order": 1,
+      "title": "B-Tree Fundamentals",
+      "teaser": "The B-tree (Bayer & McCreight, 1972) is the data structure that has quietly powered relational databases for over 40 years. Its key invariant — all leaves at the same depth — makes every lookup cost exactly the same number of I/Os regardless of the key.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Rudolf Bayer and Edward McCreight introduced the B-tree in their 1972 paper "
+            },
+            {
+              "text": "\"Organization and Maintenance of Large Ordered Indexes\"",
+              "marks": ["italic"]
+            },
+            {
+              "text": " to solve a specific problem: indexing data stored on block-addressed disk, where reading even a single byte forces the OS to load an entire block. A good index structure must minimize the number of blocks read, not the number of key comparisons."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "A B-tree of order "
+            },
+            {
+              "text": "t",
+              "marks": ["italic"]
+            },
+            {
+              "text": " obeys three invariants:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Balanced depth.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Every leaf node is at the same depth. There are no short paths and no long paths — the tree is perfectly height-balanced."
+              }
+            ],
+            [
+              {
+                "text": "Bounded fan-out.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Every internal node (except the root) holds between "
+              },
+              {
+                "text": "t",
+                "marks": ["italic"]
+              },
+              {
+                "text": " and "
+              },
+              {
+                "text": "2t",
+                "marks": ["italic"]
+              },
+              {
+                "text": " keys, and correspondingly "
+              },
+              {
+                "text": "t+1",
+                "marks": ["italic"]
+              },
+              {
+                "text": " to "
+              },
+              {
+                "text": "2t+1",
+                "marks": ["italic"]
+              },
+              {
+                "text": " child pointers. The root holds at least 1 key. This bounds the tree height at O(log_t N)."
+              }
+            ],
+            [
+              {
+                "text": "Sorted keys.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Keys within each node are kept in sorted order. All keys in the left subtree of a separator key are less than that separator; all keys in the right subtree are greater."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "code",
+          "language": "plaintext",
+          "text": "B-tree structure (order t=2, branching factor up to 5):\n\n                    ┌─────────────────────────────┐\n          Root:     │  30       60       90       │\n                    └──┬────────┬────────┬────────┘\n                       │        │        │\n          ┌────────────┘        │        └────────────┐\n          ↓                     ↓                     ↓\n   ┌─────────────┐    ┌─────────────────┐    ┌─────────────┐\n   │  10  20  25 │    │  40  50  55     │    │  70  80  85 │\n   └─────────────┘    └─────────────────┘    └─────────────┘\n\nAll leaves at depth 2. Search for any key: 2 I/Os (root + leaf)."
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "With a branching factor of 500 (realistic for 8KB pages with 16-byte keys), a tree holding one billion keys is at most "
+            },
+            {
+              "text": "ceil(log_500(1,000,000,000)) = 4",
+              "marks": ["code"]
+            },
+            {
+              "text": " levels deep. The root and first two levels fit comfortably in the buffer pool, meaning nearly every production B-tree lookup touches exactly one page on disk — the leaf."
+            }
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "info",
+          "runs": [
+            {
+              "text": "The \"B\" in B-tree has never been authoritatively defined. Bayer himself was noncommittal. Common interpretations — Balanced, Broad, Boeing, Bayer — are all folk etymology. The important thing is the invariant, not the name."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "dbi-ch02-c002",
+      "order": 2,
+      "title": "B+ Tree — The Dominant Variant",
+      "teaser": "The B+ tree refines the original B-tree with one decisive change: data records live only in leaf nodes; internal nodes hold only routing keys and child pointers. This separation doubles the fan-out of internal pages and enables cheap range scans via the leaf-level linked list.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "In a classic B-tree, internal nodes carry both routing keys "
+            },
+            {
+              "text": "and",
+              "marks": ["italic"]
+            },
+            {
+              "text": " data records, which limits how many child pointers fit per page. The "
+            },
+            {
+              "text": "B+ tree",
+              "marks": ["bold"]
+            },
+            {
+              "text": " separates these concerns: internal nodes contain only keys and child pointers (acting as a routing index), while leaf nodes carry the full data records. Every logical key that appears as a separator in an internal node is also present — with its data — in a leaf."
+            }
+          ]
+        },
+        {
+          "type": "code",
+          "language": "plaintext",
+          "text": "B+ tree structure:\n\n  Internal (routing) nodes — keys only, no data:\n  ┌───────────────────────────┐\n  │  ptr │ 30 │ ptr │ 60 │ ptr│    (small; fits many keys per page)\n  └───────────────────────────┘\n\n  Leaf nodes — keys + full records, linked list across leaves:\n  ┌─────────────────┐     ┌─────────────────┐     ┌─────────────────┐\n  │ 10→r10  20→r20  │ ──► │ 30→r30  50→r50  │ ──► │ 60→r60  80→r80  │\n  └─────────────────┘     └─────────────────┘     └─────────────────┘\n\n  Range scan [20, 60]: seek leaf containing 20, follow next-pointers."
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The practical consequences of this design are significant:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Higher fan-out.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " An internal page without data records can pack far more keys. A typical InnoDB internal page (16 KB) holds ~1000 key-pointer pairs. A tree with three levels can index a trillion rows."
+              }
+            ],
+            [
+              {
+                "text": "Efficient range scans.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " All leaves form a doubly-linked list in key order. A range query seeks to the first matching leaf and then follows sibling pointers without returning to the root. This is the critical property for ORDER BY, BETWEEN, and index range scans in SQL."
+              }
+            ],
+            [
+              {
+                "text": "Predictable leaf access.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Because all data is at the leaf level, every point lookup has the same depth — root → internal → ... → leaf — regardless of which key is sought. InnoDB, PostgreSQL's nbtree, SQLite, Oracle, and SQL Server all implement B+ trees."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "info",
+          "runs": [
+            {
+              "text": "In practice, the terms \"B-tree\" and \"B+ tree\" are used interchangeably in documentation and source code. When a database vendor says \"B-tree index,\" they almost always mean a B+ tree. PostgreSQL's internal code even has a comment acknowledging this: the index is called btree but is implemented as a B+ tree."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "dbi-ch02-c003",
+      "order": 3,
+      "title": "Page (Block) Layout",
+      "teaser": "The fundamental I/O unit of a database storage engine is the page — a fixed-size block of bytes that maps onto disk sectors and OS memory pages. Everything the storage engine reads and writes is expressed in whole pages.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Disk I/O is not byte-granular. A hard drive reads and writes in sectors (historically 512 bytes, now 4096 bytes on Advanced Format drives); the OS virtual memory subsystem works in 4096-byte pages; SSDs erase in flash pages and blocks of 16 KB–512 KB. A database "
+            },
+            {
+              "text": "page",
+              "marks": ["bold"]
+            },
+            {
+              "text": " (also called a "
+            },
+            {
+              "text": "block",
+              "marks": ["bold"]
+            },
+            {
+              "text": ") is the database's unit of I/O, chosen to align with these hardware realities."
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "SQLite:",
+                "marks": ["bold"]
+              },
+              {
+                "text": " default 4 KB, configurable up to 65536 bytes. Tuned for embedded and mobile use cases with small working sets."
+              }
+            ],
+            [
+              {
+                "text": "PostgreSQL:",
+                "marks": ["bold"]
+              },
+              {
+                "text": " fixed at 8 KB (compiled in, not runtime-configurable without a source rebuild). All heap pages, B-tree pages, and WAL records are 8 KB."
+              }
+            ],
+            [
+              {
+                "text": "InnoDB (MySQL):",
+                "marks": ["bold"]
+              },
+              {
+                "text": " default 16 KB. Tunable at tablespace creation to 4, 8, 16, or 32 KB. Larger pages increase fan-out; smaller pages reduce write amplification for small-row workloads."
+              }
+            ],
+            [
+              {
+                "text": "LMDB:",
+                "marks": ["bold"]
+              },
+              {
+                "text": " uses the OS page size directly (4 KB on x86-64). This simplifies the mapping between database pages and OS virtual memory pages."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "code",
+          "language": "plaintext",
+          "text": "Generic page layout (top-level view):\n\n  ┌──────────────────────────────────────────────────────────┐\n  │  Page Header  (page id, LSN, checksum, free space ptr)   │  ← fixed size\n  ├──────────────────────────────────────────────────────────┤\n  │  Slot Directory  [offset₁][offset₂][offset₃]...         │  ← grows →\n  ├─────────────────────────────────────────────────────────┤\n  │                  free space                              │\n  ├──────────────────────────────────────────────────────────┤\n  │  ...tuple₃  |  tuple₂  |  tuple₁                       │  ← ← grows\n  └──────────────────────────────────────────────────────────┘\n\n  Slot directory grows from the top; tuples pack from the bottom."
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "A page is the unit of buffer pool management too: when the engine needs a row, it loads the entire containing page into the buffer pool (an in-memory cache of pages). Reads and writes to disk are always page-aligned and page-sized."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "dbi-ch02-c004",
+      "order": 4,
+      "title": "Slotted Page Format",
+      "teaser": "Variable-length records — rows whose columns include strings, JSON, or nullable fields — cannot be stored at fixed offsets. The slotted page format solves this with a two-directional layout: a slot directory grows inward from one end while tuple data packs inward from the other.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The slotted page design (described in detail in Ramakrishnan & Gehrke's "
+            },
+            {
+              "text": "Database Management Systems",
+              "marks": ["italic"]
+            },
+            {
+              "text": " and implemented in essentially every relational engine) solves three related problems: storing variable-length records, reclaiming space after deletes, and allowing records to move within a page for compaction — all without invalidating external pointers."
+            }
+          ]
+        },
+        {
+          "type": "code",
+          "language": "plaintext",
+          "text": "Slotted page in detail (8 KB PostgreSQL heap page):\n\n  Offset 0:\n  ┌──────────────────────────────────────────────────────────────────┐\n  │  PAGE HEADER (24 bytes in PostgreSQL)                           │\n  │  pd_lsn (8B) │ pd_flags (2B) │ pd_lower (2B) │ pd_upper (2B)   │\n  │  pd_special (2B) │ pd_pagesize_version (2B) │ pd_prune_xid (4B)│\n  ├──────────────────────────────────────────────────────────────────┤\n  │  ItemId[1]: offset=7990, length=36, flags=NORMAL                │\n  │  ItemId[2]: offset=7950, length=40, flags=NORMAL                │\n  │  ItemId[3]: offset=0,    length=0,  flags=DEAD (deleted)        │\n  │  ItemId[4]: offset=7910, length=40, flags=NORMAL                │\n  │  ItemId[5]: offset=7870, length=40, flags=NORMAL                │\n  │  pd_lower points here ↑                                         │\n  ├──────────────────────────────────────────────────────────────────┤\n  │                    FREE SPACE                                    │\n  │              (pd_upper - pd_lower bytes available)              │\n  ├──────────────────────────────────────────────────────────────────┤\n  │  ...tuple5 (40B) │ tuple4 (40B) │ tuple2 (40B) │ tuple1 (36B) │\n  │  ↑ pd_upper points here                                        │\n  └──────────────────────────────────────────────────────────────────┘\n  Offset 8192\n\n  External reference: page 44, slot 2  → always valid even if tuple\n  moves during vacuum/compaction (just update ItemId[2])."
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Indirection.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " An external pointer (CTID in PostgreSQL: page number + slot number) never points directly at the tuple's byte offset — it points at a slot. The slot contains the offset. When VACUUM compacts a page, it can move tuples freely and update slot offsets without invalidating any external references."
+              }
+            ],
+            [
+              {
+                "text": "Deleted slots.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " When a tuple is deleted, its slot is marked DEAD but not removed. The space is reclaimed lazily by VACUUM, which rewrites the page compactly, removing dead tuples and resetting the free space pointer."
+              }
+            ],
+            [
+              {
+                "text": "Overflow (TOAST in PostgreSQL).",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Tuples that exceed a threshold (typically ~2 KB in PostgreSQL, one-quarter of a page) are compressed or moved to a separate TOAST table, with a pointer left in the main page slot."
+              }
+            ]
+          ]
+        }
+      ]
+    },
+    {
+      "id": "dbi-ch02-c005",
+      "order": 5,
+      "title": "Page Header",
+      "teaser": "Every page begins with a header — a compact fixed-size structure that tells the engine everything it needs to know about the page without reading the rest of it: where the data is, whether the page is intact, and where this page fits in recovery.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The page header is the engine's metadata for a single page. It is read first on every page access and must be small enough to fit in a few cache lines. Content varies by engine but the core fields are universal."
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Page ID.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " The logical address of this page within the tablespace or file. Used to verify that the correct page was loaded — a guard against misrouted I/O (\"read page 500, got page 507 instead\" due to a seek or filesystem bug)."
+              }
+            ],
+            [
+              {
+                "text": "LSN (Log Sequence Number).",
+                "marks": ["bold"]
+              },
+              {
+                "text": " The WAL position of the last modification to this page. Used during crash recovery: if the WAL LSN is ahead of the page LSN, the modification needs to be replayed. PostgreSQL stores the LSN in the first 8 bytes of every heap and index page."
+              }
+            ],
+            [
+              {
+                "text": "Free space pointer.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " In a slotted page, two pointers ("
+              },
+              {
+                "text": "pd_lower",
+                "marks": ["code"]
+              },
+              {
+                "text": " and "
+              },
+              {
+                "text": "pd_upper",
+                "marks": ["code"]
+              },
+              {
+                "text": " in PostgreSQL): the end of the slot directory and the start of the tuple area. Free space = "
+              },
+              {
+                "text": "pd_upper - pd_lower",
+                "marks": ["code"]
+              },
+              {
+                "text": ". The free space map (FSM) uses this value to find candidate pages for inserts."
+              }
+            ],
+            [
+              {
+                "text": "Checksum.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " A CRC-32 or similar checksum of the page contents, verified on every read from disk. Detects storage-layer corruption (bit rot, partial writes). Optional in PostgreSQL (enable with "
+              },
+              {
+                "text": "initdb --data-checksums",
+                "marks": ["code"]
+              },
+              {
+                "text": "); mandatory in InnoDB. A checksum mismatch aborts the read with a hard error rather than silently serving corrupt data."
+              }
+            ],
+            [
+              {
+                "text": "Page type / version.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Distinguishes leaf pages from internal pages, and heap pages from index pages. Also carries a format version number so that an upgraded engine can recognize and migrate old page formats."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "warning",
+          "runs": [
+            {
+              "text": "Enabling page checksums in PostgreSQL has a cost: every page write requires a CRC computation, and every read verifies it. For write-heavy workloads this is measurable (~1–3% throughput reduction). The alternative — discovering storage corruption months later during a restore — is far more costly. Always enable checksums on production clusters."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "dbi-ch02-c006",
+      "order": 6,
+      "title": "Slot Directory",
+      "teaser": "The slot directory is the index inside a slotted page — an array of (offset, length, flags) entries, one per tuple. It is the only data structure that knows where each tuple lives within the page, and its indirection is what allows tuples to move without breaking external references.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The slot directory (PostgreSQL calls its entries "
+            },
+            {
+              "text": "ItemId",
+              "marks": ["code"]
+            },
+            {
+              "text": "s; InnoDB calls the per-record metadata a "
+            },
+            {
+              "text": "record directory",
+              "marks": ["code"]
+            },
+            {
+              "text": ") is a fixed-width array located immediately after the page header. Each entry is small — 4 bytes in PostgreSQL — and encodes:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "lp_off (15 bits).",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Byte offset of the tuple within the page. A 15-bit field supports page sizes up to 32 KB."
+              }
+            ],
+            [
+              {
+                "text": "lp_flags (2 bits).",
+                "marks": ["bold"]
+              },
+              {
+                "text": " UNUSED, NORMAL, REDIRECT, or DEAD. REDIRECT is used by HOT (Heap-Only Tuple) chains in PostgreSQL, where an updated tuple's slot is replaced with a forward pointer to the new version on the same page, avoiding index updates."
+              }
+            ],
+            [
+              {
+                "text": "lp_len (15 bits).",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Byte length of the tuple. The storage engine uses this to know how many bytes to read after seeking to lp_off."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "code",
+          "language": "plaintext",
+          "text": "Slot directory as an array (PostgreSQL, 4 bytes per ItemId):\n\n  Index │ lp_off │ lp_len │ lp_flags\n  ──────┼────────┼────────┼─────────\n    1   │  7990  │   36   │ NORMAL    ← tuple 1 at byte 7990, 36 bytes long\n    2   │  7950  │   40   │ NORMAL\n    3   │     0  │    0   │ DEAD      ← slot vacated; space reclaimed on VACUUM\n    4   │  7910  │   40   │ NORMAL\n    5   │  7870  │   40   │ REDIRECT  ← HOT chain; lp_off is next ItemId index\n\nExternal CTID = (page 44, slot 2) resolves to:\n  load page 44 → ItemId[2] → seek to offset 7950, read 40 bytes."
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The slot directory enables "
+            },
+            {
+              "text": "compaction without pointer invalidation",
+              "marks": ["bold"]
+            },
+            {
+              "text": ". When VACUUM compacts a page, it slides live tuples together to reclaim dead slots' space, then updates all ItemId offsets. Index entries pointing at (page, slot) remain valid because the slot itself is the stable reference; only the byte offset within the page changes."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "dbi-ch02-c007",
+      "order": 7,
+      "title": "Page Splits — Insert Overflow and Key Promotion",
+      "teaser": "When a B+ tree leaf page fills up and a new key must be inserted, the page must split into two. The split is a multi-step operation that propagates a separator key up the tree — and can cascade all the way to creating a new root.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "A page split is the most structurally complex write operation in a B+ tree. It involves creating a new page, redistributing keys, updating a parent, and — if the parent also overflows — propagating the split upward. Understanding the exact sequence is essential for appreciating why WAL, latches, and fill factor all exist."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The leaf split procedure:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Step 1 — Detect overflow.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " An insert arrives at a full leaf page (free space < record size). The engine allocates a new sibling page from the free page list."
+              }
+            ],
+            [
+              {
+                "text": "Step 2 — Redistribute.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Move the upper half of the leaf's entries to the new right sibling. Exactly which entries move depends on the split point — typically the median key, which balances the two pages. The linked-list next-pointer of the original page is updated to point at the new sibling, and the sibling's next-pointer points at the original page's former successor."
+              }
+            ],
+            [
+              {
+                "text": "Step 3 — Promote separator.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " The smallest key of the new right sibling is promoted as a separator key into the parent internal node, along with a pointer to the new sibling."
+              }
+            ],
+            [
+              {
+                "text": "Step 4 — Check parent.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " If the parent now overflows (too many separator keys), repeat the split process for the parent — but for internal nodes, the median key is "
+              },
+              {
+                "text": "pushed up",
+                "marks": ["bold"]
+              },
+              {
+                "text": " (removed from the node) rather than copied."
+              }
+            ],
+            [
+              {
+                "text": "Step 5 — Root split.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " If the root splits, a new root is allocated containing just the promoted key and two child pointers. This is the only way a B-tree grows taller."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "code",
+          "language": "plaintext",
+          "text": "Leaf split example — inserting key 45 into a full leaf:\n\nBefore:\n  Parent: [ptr | 30 | ptr | 60 | ptr]\n                      ↓\n              Leaf: [30 32 35 38 40 42]   ← full, no room for 45\n\nSplit: allocate new right sibling, move upper half, promote median (38):\n\n  Leaf-L: [30 32 35]         Leaf-R: [38 40 42 45]\n\nPromote 38 to parent:\n  Parent: [ptr | 30 | ptr | 38 | ptr | 60 | ptr]\n                      ↓               ↓\n                  Leaf-L           Leaf-R\n\nLeaf-L.next → Leaf-R → (former next of Leaf-L)  ← linked list maintained"
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "A split touches multiple pages: the original leaf, the new sibling, the parent (and potentially ancestors up to the root). In a WAL-based engine (InnoDB, PostgreSQL), all these page modifications are logged "
+            },
+            {
+              "text": "before",
+              "marks": ["bold"]
+            },
+            {
+              "text": " the pages are modified on disk. In a copy-on-write engine (LMDB), new versions of all touched pages are written to fresh locations and the parent pointer is updated atomically."
+            }
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "warning",
+          "runs": [
+            {
+              "text": "A crash between the leaf write and the parent update leaves the tree in an inconsistent state if no recovery mechanism exists. WAL prevents this: recovery replays the full split from the log record. Without WAL (or copy-on-write), a single partial write during a split can corrupt the tree permanently."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "dbi-ch02-c008",
+      "order": 8,
+      "title": "Page Merges — Delete Underflow and Rebalancing",
+      "teaser": "When deletes drain a B+ tree leaf below its minimum fill threshold, the engine must merge it with a sibling or redistribute keys to restore the B-tree invariant. Merges are the inverse of splits — and in most real systems, they are performed lazily or not at all.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The B-tree deletion algorithm described in textbooks is symmetric to insertion: when a node's key count falls below "
+            },
+            {
+              "text": "t-1",
+              "marks": ["italic"]
+            },
+            {
+              "text": " (the minimum), the engine either borrows a key from a sibling (rotation) or merges with a sibling, pulling down the separator key from the parent. In theory this preserves the invariant that every node is at least half full. In practice, the full algorithm is complex and most production engines take shortcuts."
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Borrow (rotation).",
+                "marks": ["bold"]
+              },
+              {
+                "text": " If the immediate left or right sibling has more than the minimum number of keys, one key is rotated through the parent: the sibling's boundary key is moved to the parent, and the parent's current separator descends into the underfull node. No pages are freed; just keys are redistributed."
+              }
+            ],
+            [
+              {
+                "text": "Merge.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " If no sibling can spare a key, the underfull node and one of its siblings are merged into a single page. The separator key in the parent is pulled down and incorporated into the merged leaf. The parent now has one fewer child — which can trigger a recursive underflow upward."
+              }
+            ],
+            [
+              {
+                "text": "Root collapse.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " If a merge causes the root to have only one child, the root is discarded and the sole child becomes the new root. This is the only way a B-tree shrinks in height."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "code",
+          "language": "plaintext",
+          "text": "Merge example — deleting keys 38, 40, 42 leaves Leaf-R underfull:\n\nBefore merge:\n  Parent: [ptr | 30 | ptr | 38 | ptr | 60 | ptr]\n                      ↓               ↓\n              Leaf-L: [30 32 35]   Leaf-R: [45]  ← below minimum\n\nMerge Leaf-R into Leaf-L (pull down separator 38):\n  Merged: [30 32 35 38 45]\n  Parent: [ptr | 30 | ptr | 60 | ptr]  ← one fewer pointer\n\nParent still has enough keys — no cascade needed."
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "InnoDB and PostgreSQL both implement lazy deletion: "
+            },
+            {
+              "text": "they mark tuples as deleted but do not immediately merge pages",
+              "marks": ["bold"]
+            },
+            {
+              "text": ". PostgreSQL VACUUM reclaims dead tuple space and can trigger index cleanup, but B-tree pages are only merged when a page becomes completely empty (in recent PostgreSQL versions, via the \"half-dead\" and \"deleted\" page states). InnoDB's background purge thread handles similar cleanup. The rationale: an immediately-reused page would just split again, making merges wasteful."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "dbi-ch02-c009",
+      "order": 9,
+      "title": "Fill Factor — Headroom for Future Inserts",
+      "teaser": "Fill factor controls how full the engine packs leaf pages at creation or rebuild time. Leaving free space upfront absorbs future inserts into existing pages rather than triggering immediate splits — trading wasted space now for avoided I/O later.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "A fill factor of 100% means each page is packed as tightly as possible. Any subsequent insert that touches this page must split it. For tables where inserts are always sequential (time-series append patterns), this is fine — new inserts land in new pages at the right end of the B+ tree, never touching full middle pages. For tables with random inserts across the key space, packing pages fully causes immediate and frequent splits."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "PostgreSQL allows per-index fill factor via "
+            },
+            {
+              "text": "CREATE INDEX ... WITH (fillfactor=70)",
+              "marks": ["code"]
+            },
+            {
+              "text": ". InnoDB uses a fixed default equivalent to roughly 93% (15/16 of a 16 KB page). The practical trade-offs are:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Lower fill factor (e.g., 70%).",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Each leaf page has 30% free space after creation. Inserts into existing key ranges can land in place without triggering splits. Index is larger (more pages, more I/O to scan); internal nodes have lower fan-out. Good for: OLTP tables with heavy random-key inserts and updates."
+              }
+            ],
+            [
+              {
+                "text": "Higher fill factor (e.g., 95–100%).",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Pages are compact; fewer pages means faster range scans and better buffer pool utilization. Inserts into full middle pages immediately split. Good for: read-heavy tables, static lookup tables, or tables with monotonically increasing primary keys (UUID v7, SERIAL, auto-increment)."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "comparison",
+          "left": {
+            "label": "Low fill factor (70%)",
+            "runs": [
+              { "text": "More free space per page\n" },
+              { "text": "Fewer mid-insert splits\n" },
+              { "text": "Larger index (more disk, more I/O for scans)\n" },
+              { "text": "Better for random-insert workloads" }
+            ]
+          },
+          "right": {
+            "label": "High fill factor (100%)",
+            "runs": [
+              { "text": "Compact pages\n" },
+              { "text": "More frequent splits on insert\n" },
+              { "text": "Smaller index (fewer pages, faster scans)\n" },
+              { "text": "Better for sequential-insert or read-heavy workloads" }
+            ]
+          }
+        },
+        {
+          "type": "callout",
+          "variant": "info",
+          "runs": [
+            {
+              "text": "Fill factor also interacts with HOT (Heap-Only Tuple) updates in PostgreSQL. If a page has free space and an updated version of a tuple can fit on the same page, PostgreSQL avoids updating indexes entirely — a significant write amplification reduction for UPDATE-heavy workloads. Reducing heap table fill factor (e.g., 70%) increases HOT update eligibility at the cost of table bloat."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "dbi-ch02-c010",
+      "order": 10,
+      "title": "Clustered vs Non-Clustered B+ Tree",
+      "teaser": "Whether the physical row data lives inside the B+ tree leaves or in a separate heap file is one of the most consequential storage engine decisions. InnoDB always clusters; PostgreSQL always uses a heap. Both choices have clear winners and losers.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "In a "
+            },
+            {
+              "text": "clustered index",
+              "marks": ["bold"]
+            },
+            {
+              "text": " (also called an index-organized table), the B+ tree leaf pages "
+            },
+            {
+              "text": "are",
+              "marks": ["italic"]
+            },
+            {
+              "text": " the table. The full row is stored at the leaf, physically sorted by the primary key. In a "
+            },
+            {
+              "text": "non-clustered index",
+              "marks": ["bold"]
+            },
+            {
+              "text": " (heap-organized table), the B+ tree leaf holds only the indexed key and a pointer (heap tuple ID) to the row in a separate heap file."
+            }
+          ]
+        },
+        {
+          "type": "code",
+          "language": "plaintext",
+          "text": "Clustered (InnoDB PRIMARY KEY B+ tree):\n\n  Internal: [ptr | 100 | ptr | 500 | ptr]\n                      ↓\n  Leaf:  [pk=50,  name=\"Alice\", email=\"a@x.com\", ...]  ← full row\n          [pk=75,  name=\"Bob\",   email=\"b@x.com\", ...]  ← full row\n          [pk=99,  name=\"Carol\", email=\"c@x.com\", ...]  ← full row\n\nNon-clustered (PostgreSQL nbtree + heap):\n\n  B-tree leaf: [pk=50 → (page 12, slot 3)]\n               [pk=75 → (page 7,  slot 1)]\n               [pk=99 → (page 22, slot 5)]\n\n  Heap (unordered):\n  page 7,  slot 1: [pk=75, name=\"Bob\",   ...]\n  page 12, slot 3: [pk=50, name=\"Alice\", ...]\n  page 22, slot 5: [pk=99, name=\"Carol\", ...]"
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Clustered primary-key reads.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " One B-tree traversal delivers the full row. No second I/O. InnoDB primary key reads are the fastest possible point lookups. PostgreSQL requires two I/Os: B-tree leaf → heap page."
+              }
+            ],
+            [
+              {
+                "text": "Clustered secondary index lookups.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Secondary indexes in InnoDB store the primary key in their leaves, not a physical pointer. Finding a row via a secondary index requires: secondary B-tree traversal → retrieve primary key → primary B-tree traversal. Two B-tree lookups. PostgreSQL secondary indexes store a physical heap TID, so a secondary index lookup is: B-tree traversal → one heap page read. Fewer lookups for non-clustered, but the heap page access is random I/O."
+              }
+            ],
+            [
+              {
+                "text": "Range scans.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " A clustered primary key range scan reads rows in primary key order from adjacent leaf pages — excellent sequential I/O. A PostgreSQL range scan via a secondary index may cause random heap reads (one heap page per row in the worst case); the planner may prefer a sequential heap scan instead."
+              }
+            ],
+            [
+              {
+                "text": "Updates and MVCC.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " PostgreSQL's heap-based model makes MVCC straightforward: old row versions remain in the heap, new versions are appended. InnoDB stores undo log entries in a separate undo tablespace and reconstructs old versions on read."
+              }
+            ]
+          ]
+        }
+      ]
+    },
+    {
+      "id": "dbi-ch02-c011",
+      "order": 11,
+      "title": "Copy-on-Write B-Tree — LMDB Style",
+      "teaser": "LMDB (Lightning Memory-Mapped Database) replaces write-ahead logging with a structurally immutable B+ tree: every write creates new page versions on fresh disk locations, and a single atomic pointer swap at the root makes the new tree visible. Crashes are safe by construction.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Howard Chu's LMDB (used by OpenLDAP and many embedded applications) takes a radically different approach to B-tree durability. Instead of logging modifications and replaying them on crash, LMDB "
+            },
+            {
+              "text": "never overwrites a live page",
+              "marks": ["bold"]
+            },
+            {
+              "text": ". Every write produces new copies of all modified pages along the path from the modified leaf up to the root. The previous page versions remain untouched until the new tree root is committed."
+            }
+          ]
+        },
+        {
+          "type": "code",
+          "language": "plaintext",
+          "text": "Copy-on-write B-tree — inserting key 45:\n\nBefore write (pages A, B, C are the live tree):\n  Root-A\n  ├── Internal-B\n  │   ├── Leaf-C  [30 32 35 38]\n  │   └── ...     [...]\n  └── ...\n\nCoW write path (new pages allocated; old pages untouched):\n  Root-A  (still live — readers use this)     New-Root-A'\n  ├── Internal-B  (still live)                ├── New-Internal-B'\n  │   ├── Leaf-C  [30 32 35 38]              │   ├── New-Leaf-C'  [30 32 35 38 45]\n  │   └── ...                                │   └── ...  (copied)\n  └── ...                                    └── ... (copied)\n\nCommit = atomic pointer swap: meta-page.root := New-Root-A'\n  → readers now see new tree; old pages freed when no reader holds them"
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "No WAL needed.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " The atomicity of the meta-page pointer swap (a single word write, which is atomic at the hardware level) is the only durability primitive required. There is no log to maintain, no log to replay. Recovery is instantaneous — the database is always consistent because old tree versions are never overwritten while they are referenced."
+              }
+            ],
+            [
+              {
+                "text": "Read concurrency is free.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Readers snapshot the root pointer at transaction start and traverse an immutable tree. No read locks are needed. LMDB achieves its exceptionally fast read performance this way — readers never block writers and writers never block readers."
+              }
+            ],
+            [
+              {
+                "text": "Write amplification.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Every write must copy and rewrite all pages on the path from leaf to root — O(log N) pages per write. For a 4-level tree, a single key insert rewrites 4 pages. WAL-based engines write a log record (much smaller) plus the single dirty page, which is often more I/O-efficient for write-heavy workloads."
+              }
+            ],
+            [
+              {
+                "text": "Single writer.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " LMDB allows only one writer at a time. The write lock is a file-level mutex. This is acceptable for embedded use cases but limits throughput on write-heavy concurrent workloads."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "info",
+          "runs": [
+            {
+              "text": "The CoW B-tree concept appears in filesystems too: btrfs and ZFS both use copy-on-write B-trees (btrfs uses a B-tree variant; ZFS uses a Merkle tree). The same properties apply: every block write produces a new version; the filesystem is always consistent because the superblock pointer is the single atomic commit point."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "dbi-ch02-c012",
+      "order": 12,
+      "title": "Right-Most Insert Optimization — The Append Fast Path",
+      "teaser": "When inserts always arrive with increasing key values — auto-increment IDs, timestamps, ULIDs — the B+ tree's right-most leaf is always the active insertion point. Engines exploit this to avoid redundant root-to-leaf traversals and to always split right.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The general B+ tree insert algorithm traverses from the root to the target leaf for every insert — O(log N) page reads. For sequential insert workloads (time-series data, event logs, auto-increment primary keys), this is wasteful: the target leaf is "
+            },
+            {
+              "text": "always",
+              "marks": ["bold"]
+            },
+            {
+              "text": " the right-most leaf, and the engine could cache a pointer to it directly."
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Cached right-most pointer.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " InnoDB maintains a per-index \"last inserted\" page reference. If the incoming key is greater than the current maximum, the engine inserts directly into the cached leaf page without traversing the tree. This reduces the common-case insert from a root-to-leaf traversal to a single page pinned in the buffer pool."
+              }
+            ],
+            [
+              {
+                "text": "Right-only splits.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " When the right-most page fills up, InnoDB performs a \"right split\": instead of dividing the page 50/50, it moves the new key into a brand-new right sibling and leaves the current page nearly full. This preserves the fill factor of existing pages. A traditional 50/50 split of the right-most page would leave the old right page half-empty — space wasted on a page that will never receive more inserts."
+              }
+            ],
+            [
+              {
+                "text": "PostgreSQL fastpath.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " PostgreSQL's nbtree uses a similar mechanism: the \"fastpath\" inserts directly to the cached right-most leaf for monotonically increasing keys, bypassing the standard descent. This is critical for SERIAL / BIGSERIAL primary keys, which are the most common PostgreSQL key type."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "code",
+          "language": "plaintext",
+          "text": "Sequential insert with right-only split:\n\n  Keys: 1, 2, 3, ..., N  (monotonically increasing)\n\n  Pages fill left-to-right:\n  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐  ┌───────┐\n  │ 1 2 3 ... K  │→ │ K+1 ... 2K   │→ │ 2K+1 ... 3K  │→ │ .... │\n  └──────────────┘  └──────────────┘  └──────────────┘  └───────┘\n       full              full              full           active\n\n  Right-only split when last page fills:\n  ┌──────────────────────────────────┐  ┌───────────────┐\n  │  3K+1 ... 4K  (remains full)    │→ │  4K+1  (new)  │  ← active\n  └──────────────────────────────────┘  └───────────────┘\n\n  No wasted space. All pages (except the current active page) are 100% full."
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "This optimization is the reason database benchmarks consistently recommend "
+            },
+            {
+              "text": "auto-increment or sequential IDs as primary keys",
+              "marks": ["bold"]
+            },
+            {
+              "text": " for InnoDB tables. Random UUIDs (UUID v4) force inserts into random interior pages, defeating the right-most optimization and causing constant 50/50 splits throughout the tree, resulting in approximately 50% page utilization and dramatically higher write amplification."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "dbi-ch02-c013",
+      "order": 13,
+      "title": "Concurrent B-Tree — Blink-Trees and Latch Coupling",
+      "teaser": "Allowing multiple threads to traverse and modify a B+ tree concurrently without corrupting it requires careful locking. Blink-trees (Lehman & Yao, 1981) and latch coupling (lock crabbing) are the two foundational techniques that modern engines build on.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Naive B-tree access serializes all operations with a single tree-wide lock — a non-starter for a database handling thousands of transactions per second. The challenge is more subtle than it appears: a concurrent split can make a page that a descending traversal has already passed inconsistent. Lehman and Yao's 1981 paper "
+            },
+            {
+              "text": "\"Concurrent Operations on B-Trees\"",
+              "marks": ["italic"]
+            },
+            {
+              "text": " is the foundational solution."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Latch coupling (also called",
+              "marks": []
+            },
+            {
+              "text": " lock crabbing",
+              "marks": ["bold"]
+            },
+            {
+              "text": ") is the baseline technique for safe concurrent descent:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Acquire latch on child before releasing latch on parent.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " The traversal holds a read latch on the parent while acquiring a read latch on the child. Once the child latch is held, the parent latch is released. This ensures that a split in progress cannot remove a key from the parent while a reader is mid-descent."
+              }
+            ],
+            [
+              {
+                "text": "Write path — conservative coupling.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " For inserts and deletes, the traversal must hold write latches on both parent and child if the child might split or merge. This means holding more latches simultaneously, increasing contention. Optimistic approaches (optimistic locking) try to acquire only read latches on the descent and upgrade to write latches only at the leaf, restarting if the page has changed in the interim."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The Blink-tree extends the standard B+ tree with a "
+            },
+            {
+              "text": "right-link pointer",
+              "marks": ["bold"]
+            },
+            {
+              "text": " on every node (including internal nodes) and a "
+            },
+            {
+              "text": "high key",
+              "marks": ["bold"]
+            },
+            {
+              "text": " field (the largest key that can live in this node). Together these enable a key insight: "
+            },
+            {
+              "text": "a split can proceed without holding a latch on the parent",
+              "marks": ["bold"]
+            },
+            {
+              "text": "."
+            }
+          ]
+        },
+        {
+          "type": "code",
+          "language": "plaintext",
+          "text": "Blink-tree — concurrent split without parent latch:\n\nBefore split (reader descending, currently at node N):\n  Parent: [ptr | 50 | ptr]                   high key of N = 50\n                 ↓\n          N: [30 35 40 45 48]  →right-link→  (null)\n\nWriter splits N → N and N' while reader holds latch on N:\n  N: [30 35 40]  →right-link→  N': [45 48 55]  high key of N = 44\n\nParent update (deferred, can happen later):\n  Parent: [ptr | 44 | ptr | 50 | ptr]\n\nReader after split: if search key > high key of N,\n  follow right-link to N' — correct without revisiting parent.\n  The split is transparent to the descending reader."
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Why the right-link is safe.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " After a split, a reader that has arrived at the old node N and finds the target key is not there can follow the right-link to N' without going back up. The high-key field tells the reader whether to follow the link: if its search key > high key, the key must be in N' or further right."
+              }
+            ],
+            [
+              {
+                "text": "Production use.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " PostgreSQL's nbtree is based on the Lehman-Yao Blink-tree. InnoDB uses a variant with optimistic latch coupling for reads and conservative coupling for writes. Blink-tree variants appear in every high-performance B-tree implementation because they reduce latch hold times on the critical traversal hot path."
+              }
+            ]
+          ]
+        }
+      ]
+    },
+    {
+      "id": "dbi-ch02-c014",
+      "order": 14,
+      "title": "Disk Layout — Extents, Segments, and Page Groups",
+      "teaser": "Individual pages are the engine's logical unit, but pages that are physically scattered across the disk cause seeks. Extents and segments group related pages together at the storage layer, turning logical B-tree locality into physical disk locality.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "A B+ tree range scan reads leaf pages in key order. If those leaf pages are scattered randomly across the disk file, each page access is a separate random I/O — fatal for rotational drives and costly for SSDs due to firmware-level write amplification. Storage engines address this by managing space in units larger than a single page."
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Extent.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " A contiguous run of pages allocated together. InnoDB uses 64-page extents (1 MB at 16 KB page size). When a table needs a new page, InnoDB allocates a full extent at once. A range scan that reads pages within the same extent reads them in a single sequential I/O burst, not individual random reads."
+              }
+            ],
+            [
+              {
+                "text": "Segment.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " A logical grouping of extents associated with a single B-tree index or table object. InnoDB's file-per-table tablespace contains exactly one segment for the clustered index leaf pages, one for the internal node pages, and one for each secondary index. Segments are the unit of space management at the object level: growing a table grows its segment; dropping a table frees its segment."
+              }
+            ],
+            [
+              {
+                "text": "Free space management.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " InnoDB maintains bitmap pages (IBUF bitmap pages) that record extent and page free status. PostgreSQL uses a per-database Free Space Map (FSM) file that stores the available free space in each heap page, and a Visibility Map (VM) that records which pages contain only live tuples (safe to skip for vacuum)."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "code",
+          "language": "plaintext",
+          "text": "InnoDB tablespace layout (simplified):\n\n  ┌────────────────────────────────────────────────────────────────┐\n  │  FSP header page  │  IBUF bitmap  │  ...                      │  Page 0–5\n  ├───────────────────────────────────────────────────────────────┤\n  │  Clustered index segment  (leaf extents)                     │\n  │  ┌─────────────────┐  ┌─────────────────┐  ┌──────────────┐ │\n  │  │ Extent (64 pages│  │ Extent (64 pages│  │ Extent ...   │ │\n  │  │ = 1MB) leafs    │  │ = 1MB) leafs    │  │              │ │\n  │  └─────────────────┘  └─────────────────┘  └──────────────┘ │\n  ├───────────────────────────────────────────────────────────────┤\n  │  Internal node segment (non-leaf extents)                    │\n  ├───────────────────────────────────────────────────────────────┤\n  │  Secondary index segments...                                 │\n  └────────────────────────────────────────────────────────────────┘\n\n  Range scan hits adjacent leaf pages in the same extent\n  → one sequential I/O burst, not N random reads."
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The extent model also matters for write patterns. When a new B-tree is freshly built (e.g., via "
+            },
+            {
+              "text": "CREATE INDEX",
+              "marks": ["code"]
+            },
+            {
+              "text": " or "
+            },
+            {
+              "text": "CLUSTER",
+              "marks": ["code"]
+            },
+            {
+              "text": " in PostgreSQL), the engine fills pages in order and allocates extents sequentially. Over time, as splits and merges rearrange pages, physical locality degrades. Periodic "
+            },
+            {
+              "text": "REINDEX",
+              "marks": ["code"]
+            },
+            {
+              "text": " (PostgreSQL) or "
+            },
+            {
+              "text": "OPTIMIZE TABLE",
+              "marks": ["code"]
+            },
+            {
+              "text": " (MySQL/InnoDB) rebuilds the B-tree from scratch, restoring extent locality and fill factor."
+            }
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "info",
+          "runs": [
+            {
+              "text": "On SSDs, physical locality matters less for random reads (microsecond seek vs millisecond for HDD), but extent grouping still reduces InnoDB's internal overhead and avoids fragmentation in the SSD's flash translation layer. Extent-aligned I/O also matches the SSD's erase block size, reducing write amplification at the firmware level."
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

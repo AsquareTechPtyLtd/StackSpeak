@@ -1,0 +1,1907 @@
+{
+  "chapterId": "dbi-ch04-write-ahead-logging-and-recovery",
+  "shardIndex": 4,
+  "cards": [
+    {
+      "id": "dbi-ch04-c001",
+      "order": 1,
+      "title": "Write-Ahead Logging — The Durability Primitive",
+      "teaser": "Before any change reaches a data page, its description must hit stable storage in the log. This single rule — write the log record before writing the page — is the foundation on which every durable database is built.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "A database's buffer pool is a lie. Pages live in memory; they look durable; they are not. A power failure, a kernel panic, or a stray "
+            },
+            {
+              "text": "kill -9",
+              "marks": ["code"]
+            },
+            {
+              "text": " can silently discard every dirty page in the cache. Without a recovery mechanism, the database has no way to reconstruct what was committed and what was in-flight."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Write-Ahead Logging (WAL) solves this by enforcing two rules before any page can be evicted or any transaction can be confirmed:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "numbered",
+          "items": [
+            [
+              {
+                "text": "Log before data.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " A log record describing the change (before-image, after-image, transaction ID, LSN) must reach durable storage "
+              },
+              {
+                "text": "before",
+                "marks": ["italic"]
+              },
+              {
+                "text": " the modified data page may be written to disk. This guarantees redo: if the page never made it to disk, the log record exists to replay it."
+              }
+            ],
+            [
+              {
+                "text": "Log before commit.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " All log records for a transaction must reach durable storage before the commit acknowledgment is returned to the client. This guarantees durability: once the application sees \"committed\", recovery can always restore that state."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "In practice, WAL is a sequential, append-only file. Sequential writes are the fastest durable-write pattern available on spinning disks and remain efficient on SSDs. The append-only nature means WAL writes never conflict with each other — the log is a single stream, and all writers contend only on the tail."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "PostgreSQL calls its implementation "
+            },
+            {
+              "text": "pg_wal",
+              "marks": ["code"]
+            },
+            {
+              "text": " (formerly "
+            },
+            {
+              "text": "pg_xlog",
+              "marks": ["code"]
+            },
+            {
+              "text": "). MySQL InnoDB maintains a redo log (historically "
+            },
+            {
+              "text": "ib_logfile0",
+              "marks": ["code"]
+            },
+            {
+              "text": " and "
+            },
+            {
+              "text": "ib_logfile1",
+              "marks": ["code"]
+            },
+            {
+              "text": "). SQL Server maintains the transaction log per database ("
+            },
+            {
+              "text": ".ldf",
+              "marks": ["code"]
+            },
+            {
+              "text": " file). The names differ; the append-before-apply invariant is universal."
+            }
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "info",
+          "runs": [
+            {
+              "text": "The WAL protocol is older than ARIES. IBM's System R used a similar approach in the 1970s. ARIES (1992) formalized and generalized it into the recovery algorithm used by virtually every production RDBMS today."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Before a database writes a changed page to disk — or confirms a commit — it must first write a description of the change to the log. If the machine crashes, the log is the trail that lets recovery figure out what happened and put things right."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "dbi-ch04-c002",
+      "order": 2,
+      "title": "Log Sequence Numbers — The Recovery Spine",
+      "teaser": "Every log record carries a Log Sequence Number: a monotonically increasing identifier that orders the entire history of writes. LSNs are stamped on pages, tracked in the transaction table, and used at every step of crash recovery to determine what needs to be done.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "A "
+            },
+            {
+              "text": "Log Sequence Number (LSN)",
+              "marks": ["bold"]
+            },
+            {
+              "text": " is the address of a log record in the WAL stream. In PostgreSQL, an LSN is a 64-bit byte offset into the WAL files. In SQL Server, it is a three-part number (log file, block within file, sequence within block). In InnoDB, the LSN is the total byte count written to the redo log since database creation."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "LSNs appear everywhere in a running database:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Page header.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Every data page stores the LSN of the most recent log record that modified it ("
+              },
+              {
+                "text": "pageLSN",
+                "marks": ["code"]
+              },
+              {
+                "text": "). This is the key that recovery uses to decide whether a page already reflects a given change."
+              }
+            ],
+            [
+              {
+                "text": "Transaction table.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " For each active transaction, the database tracks its "
+              },
+              {
+                "text": "lastLSN",
+                "marks": ["code"]
+              },
+              {
+                "text": " — the LSN of the most recent log record written by that transaction. The undo chain threads backward through these LSNs."
+              }
+            ],
+            [
+              {
+                "text": "Dirty page table.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " For each dirty page in the buffer pool, the database tracks the "
+              },
+              {
+                "text": "recLSN",
+                "marks": ["code"]
+              },
+              {
+                "text": " (recovery LSN) — the LSN of the first log record that dirtied the page since it was last flushed. This is the earliest LSN that redo must replay to make the page current."
+              }
+            ],
+            [
+              {
+                "text": "Checkpoint record.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " The checkpoint record stores the LSN at which the checkpoint began, bounding how far back recovery must scan."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The LSN comparison rule governs redo: if the page's "
+            },
+            {
+              "text": "pageLSN",
+              "marks": ["code"]
+            },
+            {
+              "text": " is greater than or equal to the log record's LSN, the page already contains that update — skip it. If "
+            },
+            {
+              "text": "pageLSN",
+              "marks": ["code"]
+            },
+            {
+              "text": " is less than the log record's LSN, the update is missing — apply it. This rule makes redo "
+            },
+            {
+              "text": "idempotent",
+              "marks": ["italic"]
+            },
+            {
+              "text": ": replaying the same log record twice is safe."
+            }
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "info",
+          "runs": [
+            {
+              "text": "In PostgreSQL, LSNs are human-readable. You can query pg_current_wal_lsn() to see the current log position, and pg_walfile_name() to map it to an on-disk file. This is useful for monitoring replication lag: the difference between a standby's replay LSN and the primary's current LSN is the exact byte count of un-applied WAL."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "An LSN is a serial number for every change ever written to the log. Every data page records which LSN last touched it. At recovery time, if the page's number is already at or past the log record's number, the change is already there — skip it. If the page is behind, apply the change. That comparison is how recovery knows exactly what to do."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "dbi-ch04-c003",
+      "order": 3,
+      "title": "ARIES — The Canonical Recovery Algorithm",
+      "teaser": "Algorithm for Recovery and Isolation Exploiting Semantics — published by Mohan, Haderle, Lindsay, Pirahesh, and Lomet in 1992 — is the recovery algorithm that Postgres, SQL Server, DB2, and most serious RDBMSs implement. Forty years old; still the standard.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "ARIES (Mohan et al., 1992, \"ARIES: A Transaction Recovery Method Supporting Fine-Granularity Locking and Partial Rollbacks Using Write-Ahead Logging\") solved a problem that earlier recovery schemes could not handle cleanly: recovering a database after a crash when dirty, uncommitted pages may already be on disk, and some committed pages may not be."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Earlier approaches — \"no-steal\" (never write dirty pages before commit) and \"force\" (always flush dirty pages at commit) — avoided this complexity by constraining buffer pool behavior. ARIES lifts both constraints: it allows "
+            },
+            {
+              "text": "steal",
+              "marks": ["bold"]
+            },
+            {
+              "text": " (uncommitted pages may be written to disk) and "
+            },
+            {
+              "text": "no-force",
+              "marks": ["bold"]
+            },
+            {
+              "text": " (committed pages need not be flushed immediately). This combination maximizes buffer pool efficiency but requires a recovery algorithm capable of handling arbitrary crash states."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "ARIES rests on three principles:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "numbered",
+          "items": [
+            [
+              {
+                "text": "Write-ahead logging.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " All log records must be flushed to stable storage before the modified page can be written (the WAL protocol described in card 1)."
+              }
+            ],
+            [
+              {
+                "text": "Repeating history during redo.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Recovery replays "
+              },
+              {
+                "text": "all",
+                "marks": ["italic"]
+              },
+              {
+                "text": " logged operations exactly — including those of uncommitted transactions — to reconstruct the exact database state at the time of the crash."
+              }
+            ],
+            [
+              {
+                "text": "Logging changes during undo.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " When ARIES rolls back a transaction during the undo phase, it writes "
+              },
+              {
+                "text": "Compensation Log Records (CLRs)",
+                "marks": ["bold"]
+              },
+              {
+                "text": " for each undo operation. CLRs allow recovery to survive a second crash during undo, because the CLRs themselves are redoable."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The steal/no-force combination with CLRs makes ARIES the most efficient practical recovery algorithm: it never stalls writes waiting for prior pages to flush, and it never forces a full page flush at commit. The log is the only synchronous disk operation on the commit path."
+            }
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "info",
+          "runs": [
+            {
+              "text": "The original ARIES paper is 72 pages. Its influence is hard to overstate: nearly every production relational database engine written after 1992 — PostgreSQL, SQL Server, DB2, InnoDB — implements ARIES or a close variant. Even systems like Oracle, which predates ARIES, retrofitted ARIES-compatible behavior."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "ARIES is the 1992 paper that defined how databases recover from crashes. Its key insight: let the buffer pool write uncommitted pages and skip flushing at commit — but keep a detailed log of everything. Recovery replays history exactly, then rolls back anything that was uncommitted. It's efficient because the only thing that must happen synchronously on commit is flushing the log."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "dbi-ch04-c004",
+      "order": 4,
+      "title": "The Three Phases of Crash Recovery",
+      "teaser": "ARIES recovery runs in exactly three passes over the log after a crash: Analysis rebuilds the state tables, Redo reapplies every logged change, and Undo rolls back every uncommitted transaction. The phases are sequential and each one depends on the previous.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "When a database restarts after a crash, the recovery manager finds the most recent checkpoint record in the WAL and begins three sequential phases:"
+            }
+          ]
+        },
+        {
+          "type": "code",
+          "language": "text",
+          "text": "WAL stream:\n\n  [checkpoint]---[T1 begin]---[T2 begin]---[T1 write A]---[T2 write B]---[T1 commit]---CRASH\n       ↑\n  Recovery starts scanning here\n\n  Phase 1: ANALYSIS  → scan forward from checkpoint\n    → Rebuild dirty page table (pages modified but not flushed)\n    → Rebuild transaction table (T1=committed, T2=active/uncommitted)\n    → Determine redo start point (smallest recLSN in dirty page table)\n\n  Phase 2: REDO      → replay from redo start point forward\n    → Re-apply T1 write A  (if pageLSN < LSN of record)\n    → Re-apply T2 write B  (even though T2 is uncommitted!)\n    → Re-apply T1 commit\n    → Database now exactly mirrors state at time of crash\n\n  Phase 3: UNDO      → roll back all uncommitted transactions\n    → T2 is in transaction table as active → undo T2 write B\n    → Write CLR (Compensation Log Record) for each undo step\n    → T2 is rolled back"
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Three points worth fixing in memory:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Redo is exhaustive.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " ARIES redoes "
+              },
+              {
+                "text": "everything",
+                "marks": ["italic"]
+              },
+              {
+                "text": " from the redo start point — including changes made by transactions that will be undone in phase 3. This \"repeat history\" principle is what lets the undo phase operate correctly on pages that reflect the exact crash-time state."
+              }
+            ],
+            [
+              {
+                "text": "Undo works in reverse LSN order.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Each active transaction is undone from its most recent change backward, following the "
+              },
+              {
+                "text": "prevLSN",
+                "marks": ["code"]
+              },
+              {
+                "text": " chain in the log. Transactions are interleaved in undo if multiple transactions need rolling back."
+              }
+            ],
+            [
+              {
+                "text": "CLRs prevent undo-loop.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " If the system crashes again during undo, recovery restarts. CLRs record which undo steps were already applied; redo re-applies the CLRs, and undo resumes from where it left off rather than starting over."
+              }
+            ]
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Recovery has three steps: first figure out what was going on at crash time (Analysis), then replay every logged change to get back to the crash state (Redo), then roll back anything that was mid-transaction (Undo). Redo runs everything — even work that will be undone — because the undo phase needs to see the exact crash-time state to work correctly."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "dbi-ch04-c005",
+      "order": 5,
+      "title": "Redo — Repeating History",
+      "teaser": "The redo phase re-applies every log record from the redo start point forward, whether the transaction committed or not. This \"repeat history\" principle is the key that makes ARIES provably correct — and counterintuitive to most people who first encounter it.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Earlier recovery algorithms tried to be selective: only replay committed transactions during redo, and discard uncommitted work. This seems efficient — why replay changes you are going to roll back anyway? ARIES proves this is wrong, and the reason is subtle."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "If redo is selective, the database state after redo is not the crash state — it is some idealized \"only committed work\" state. But the undo phase needs to operate on the "
+            },
+            {
+              "text": "actual crash state",
+              "marks": ["italic"]
+            },
+            {
+              "text": ": the state that includes all the dirty writes, because those dirty writes may have already physically reached disk via the steal buffer pool. Rolling back from the wrong base state produces wrong results."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The redo phase proceeds record by record from the redo start point (the smallest "
+            },
+            {
+              "text": "recLSN",
+              "marks": ["code"]
+            },
+            {
+              "text": " in the dirty page table):"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "numbered",
+          "items": [
+            [
+              {
+                "text": "Read the log record. Identify the page it modifies."
+              }
+            ],
+            [
+              {
+                "text": "Read the page from disk (or buffer pool). Check its "
+              },
+              {
+                "text": "pageLSN",
+                "marks": ["code"]
+              },
+              {
+                "text": "."
+              }
+            ],
+            [
+              {
+                "text": "If "
+              },
+              {
+                "text": "pageLSN >= LSN of log record",
+                "marks": ["code"]
+              },
+              {
+                "text": ": the page already has this change (it was flushed before the crash). Skip."
+              }
+            ],
+            [
+              {
+                "text": "If "
+              },
+              {
+                "text": "pageLSN < LSN of log record",
+                "marks": ["code"]
+              },
+              {
+                "text": ": the change is missing from the page. Apply the after-image and update "
+              },
+              {
+                "text": "pageLSN",
+                "marks": ["code"]
+              },
+              {
+                "text": "."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Crucially, redo operates on "
+            },
+            {
+              "text": "physical log records",
+              "marks": ["italic"]
+            },
+            {
+              "text": " — records that describe changes at the byte or slot level within a specific page. This makes redo fast and idempotent: applying the same physical change twice is a no-op if the "
+            },
+            {
+              "text": "pageLSN",
+              "marks": ["code"]
+            },
+            {
+              "text": " check catches it. InnoDB records redo in a compact physical format; PostgreSQL's WAL records are also physical at the page level, not logical row level."
+            }
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "warning",
+          "runs": [
+            {
+              "text": "\"Repeat history\" sounds wasteful. In practice, redo is fast: it reads the log sequentially (the fastest access pattern for disks) and skips most pages because their pageLSN already reflects the logged changes. Pages only need updates when they were in the buffer pool but not yet flushed — a minority of the total page population."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Redo replays every log record — even changes from uncommitted transactions — to get the database back to exactly the state it was in at the moment of the crash. It uses the pageLSN to skip any changes that already made it to disk. Once redo finishes, the database looks like it did right before the crash, dirty writes and all — and only then can the undo phase safely clean up the uncommitted ones."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "dbi-ch04-c006",
+      "order": 6,
+      "title": "Undo — Rolling Back Uncommitted Work",
+      "teaser": "After redo reconstructs the crash state, the undo phase scans the transaction table for every active (uncommitted) transaction and reverses its changes using the before-images stored in the log — writing Compensation Log Records to survive a second crash during undo.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Undo is the cleanup phase. At the end of redo, the transaction table lists every transaction that was active at crash time — these are transactions that wrote changes to disk (because steal is allowed) but never committed. Their writes are now in the database, and they need to be reversed."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "For each active transaction, ARIES follows the "
+            },
+            {
+              "text": "prevLSN",
+              "marks": ["code"]
+            },
+            {
+              "text": " chain backward from the transaction's "
+            },
+            {
+              "text": "lastLSN",
+              "marks": ["code"]
+            },
+            {
+              "text": ". For each update log record, it:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "numbered",
+          "items": [
+            [
+              {
+                "text": "Applies the "
+              },
+              {
+                "text": "before-image",
+                "marks": ["bold"]
+              },
+              {
+                "text": " stored in the log record — the page content as it was before the change — to the current page, restoring the prior state."
+              }
+            ],
+            [
+              {
+                "text": "Writes a "
+              },
+              {
+                "text": "Compensation Log Record (CLR)",
+                "marks": ["bold"]
+              },
+              {
+                "text": " to the WAL describing the undo operation. The CLR includes an "
+              },
+              {
+                "text": "undoNextLSN",
+                "marks": ["code"]
+              },
+              {
+                "text": " pointer: the LSN of the "
+              },
+              {
+                "text": "next",
+                "marks": ["italic"]
+              },
+              {
+                "text": " log record that would need to be undone (skipping the one just handled)."
+              }
+            ],
+            [
+              {
+                "text": "Moves to the "
+              },
+              {
+                "text": "prevLSN",
+                "marks": ["code"]
+              },
+              {
+                "text": " of the just-undone record and repeats."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "CLRs are the critical safety mechanism. If the system crashes during undo, recovery restarts. The redo phase re-applies the CLRs (they are redoable — they describe physical changes). The undo phase then reads each CLR's "
+            },
+            {
+              "text": "undoNextLSN",
+              "marks": ["code"]
+            },
+            {
+              "text": " to skip over already-undone work, resuming exactly where undo left off. This guarantees that undo always makes forward progress, even across repeated crashes."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Multiple active transactions are processed concurrently in undo: ARIES maintains a priority queue ordered by LSN, always undoing the highest-LSN operation first across all active transactions. This interleaving mirrors the commit-time interleaving and is what makes the undo result serializable."
+            }
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "info",
+          "runs": [
+            {
+              "text": "InnoDB separates undo differently from most ARIES implementations. Undo data is stored in a dedicated undo tablespace (undo_001, undo_002) rather than in the redo log. This allows InnoDB to purge undo records asynchronously after all readers have moved past them — a major advantage for MVCC read performance. The redo log in InnoDB contains physical redo only; logical undo lives separately."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Undo goes through every uncommitted transaction's changes in reverse order, applying the before-image to put each page back the way it was before that transaction touched it. For each thing it undoes, it writes a CLR to the log. If the system crashes again mid-undo, the CLRs let recovery skip over work already done and pick up where it left off."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "dbi-ch04-c007",
+      "order": 7,
+      "title": "Checkpoints — Bounding Recovery Time",
+      "teaser": "Without checkpoints, recovery must replay every log record ever written. A checkpoint periodically captures the in-memory state — dirty pages, active transactions — so recovery can start from a recent point rather than the beginning of time.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Consider a database running for weeks without a checkpoint. At crash time, the WAL spans weeks of log records. Recovery's analysis phase must scan the entire log to reconstruct the dirty page table and transaction table. Redo must replay weeks of changes. The database would be offline for minutes or hours."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "A "
+            },
+            {
+              "text": "checkpoint",
+              "marks": ["bold"]
+            },
+            {
+              "text": " bounds this by writing a checkpoint record to the WAL that captures:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "The transaction table at checkpoint time",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — every active transaction, its state, and its "
+              },
+              {
+                "text": "lastLSN",
+                "marks": ["code"]
+              },
+              {
+                "text": "."
+              }
+            ],
+            [
+              {
+                "text": "The dirty page table at checkpoint time",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — every dirty page and its "
+              },
+              {
+                "text": "recLSN",
+                "marks": ["code"]
+              },
+              {
+                "text": "."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Recovery begins by finding the most recent checkpoint record (stored in a "
+            },
+            {
+              "text": "control file",
+              "marks": ["italic"]
+            },
+            {
+              "text": " or equivalent in most engines). Analysis scans forward from the checkpoint LSN. Redo starts from the smallest "
+            },
+            {
+              "text": "recLSN",
+              "marks": ["code"]
+            },
+            {
+              "text": " in the restored dirty page table — which is at most as far back as the checkpoint. All log records before the earliest "
+            },
+            {
+              "text": "recLSN",
+              "marks": ["code"]
+            },
+            {
+              "text": " are irrelevant to recovery and can be safely recycled."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "PostgreSQL performs checkpoints automatically (controlled by "
+            },
+            {
+              "text": "checkpoint_completion_target",
+              "marks": ["code"]
+            },
+            {
+              "text": " and "
+            },
+            {
+              "text": "checkpoint_timeout",
+              "marks": ["code"]
+            },
+            {
+              "text": "). InnoDB uses a continuous checkpoint mechanism: as dirty pages are flushed, the checkpoint position advances. SQL Server uses the "
+            },
+            {
+              "text": "VLF",
+              "marks": ["code"]
+            },
+            {
+              "text": " (Virtual Log File) structure and checkpoints per database."
+            }
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "info",
+          "runs": [
+            {
+              "text": "The tradeoff: more frequent checkpoints mean faster recovery but more I/O pressure during normal operation, as dirty pages must be flushed more often. PostgreSQL's default checkpoint_timeout is 5 minutes — meaning worst-case recovery replays at most 5 minutes of WAL under normal write loads."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "A checkpoint is a snapshot of which pages are dirty and which transactions are active, written into the log periodically. When recovery starts, it finds the last checkpoint and only has to replay log records from there — not from the beginning of time. Checkpoints trade a little extra I/O during normal operation for dramatically faster restarts after a crash."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "dbi-ch04-c008",
+      "order": 8,
+      "title": "Fuzzy vs Sharp Checkpoints",
+      "teaser": "A sharp checkpoint stops the world to guarantee a clean snapshot. A fuzzy checkpoint writes the checkpoint record while the database keeps running, capturing an approximation that recovery can correct. All modern production engines use fuzzy checkpoints.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The simplest checkpoint algorithm is a "
+            },
+            {
+              "text": "sharp checkpoint",
+              "marks": ["bold"]
+            },
+            {
+              "text": ": pause all transactions, flush all dirty pages to disk, write the checkpoint record marking the log position where all pages are known clean, then resume. Recovery after a sharp checkpoint needs only the log records "
+            },
+            {
+              "text": "after",
+              "marks": ["italic"]
+            },
+            {
+              "text": " the checkpoint — all earlier data is already on disk."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Sharp checkpoints have an obvious problem: they cause a visible pause in database service. Flushing thousands of dirty pages from a large buffer pool can take several seconds. This is unacceptable in production workloads with latency SLAs."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "A "
+            },
+            {
+              "text": "fuzzy checkpoint",
+              "marks": ["bold"]
+            },
+            {
+              "text": " (also called a "
+            },
+            {
+              "text": "consistent checkpoint",
+              "marks": ["italic"]
+            },
+            {
+              "text": " in ARIES terminology) takes a different approach:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "numbered",
+          "items": [
+            [
+              {
+                "text": "Write a BEGIN_CHECKPOINT record to the log (checkpoint starts)."
+              }
+            ],
+            [
+              {
+                "text": "While the database continues running normally, flush dirty pages in the background — without stopping new writes."
+              }
+            ],
+            [
+              {
+                "text": "Write an END_CHECKPOINT record containing the transaction table and dirty page table "
+              },
+              {
+                "text": "as they were at BEGIN_CHECKPOINT time",
+                "marks": ["italic"]
+              },
+              {
+                "text": "."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Because transactions ran during the checkpoint, the dirty page table in the END_CHECKPOINT record may be stale — some pages listed as dirty may now be clean (flushed during the checkpoint), and new dirty pages may have appeared. Recovery handles this by scanning forward from the BEGIN_CHECKPOINT LSN and updating the restored dirty page table as it encounters log records for pages that were modified or flushed after the checkpoint started."
+            }
+          ]
+        },
+        {
+          "type": "code",
+          "language": "text",
+          "text": "Timeline:\n\n  [BEGIN_CKPT]---[T1 write page 42]---[page 7 flushed]---[END_CKPT]---CRASH\n       ↑\n  END_CKPT contains dirty page table as of BEGIN_CKPT:\n    dirty: {page 7 (recLSN=100), page 42 (recLSN=80), ...}\n\n  Recovery:\n    1. Load dirty page table from END_CKPT.\n    2. Scan forward from BEGIN_CKPT:\n       - T1 write page 42 → already in table, recLSN still 80, no change needed\n       - page 7 flushed    → remove page 7 from dirty page table\n    3. Redo starts from smallest recLSN in corrected table."
+        },
+        {
+          "type": "callout",
+          "variant": "info",
+          "runs": [
+            {
+              "text": "PostgreSQL's checkpoint is fuzzy: it spreads page writes over checkpoint_completion_target (default 90%) of the checkpoint_timeout interval, deliberately throttling I/O to avoid write spikes. InnoDB uses a continuous checkpoint (sometimes called the \"InnoDB log sequence\" or \"checkpoint age\") that advances as pages are flushed — an even more fine-grained form of fuzzy checkpointing."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "A sharp checkpoint pauses everything, flushes all dirty pages, then resumes — simple, but it causes a noticeable stall. A fuzzy checkpoint lets the database keep running while dirty pages flush in the background, then records the in-progress snapshot state. Recovery corrects any staleness by scanning forward from where the fuzzy checkpoint started."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "dbi-ch04-c009",
+      "order": 9,
+      "title": "Dirty Page Table and Transaction Table",
+      "teaser": "Two in-memory tables drive ARIES recovery. The dirty page table tracks which buffer pool pages have been modified but not yet flushed. The transaction table tracks which transactions are active and their WAL positions. Both are written at checkpoint time and rebuilt during the analysis phase.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "ARIES recovery depends on two data structures that exist in memory during normal operation and are persisted in checkpoint records:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Dirty Page Table (DPT).",
+                "marks": ["bold"]
+              },
+              {
+                "text": " An entry per dirty page in the buffer pool: "
+              },
+              {
+                "text": "(pageId, recLSN)",
+                "marks": ["code"]
+              },
+              {
+                "text": ". The "
+              },
+              {
+                "text": "recLSN",
+                "marks": ["code"]
+              },
+              {
+                "text": " is the LSN of the first log record that dirtied the page after its most recent flush. This is the earliest point in the log from which redo must run to make this page current. The DPT's minimum "
+              },
+              {
+                "text": "recLSN",
+                "marks": ["code"]
+              },
+              {
+                "text": " across all entries is the redo start point."
+              }
+            ],
+            [
+              {
+                "text": "Transaction Table (TT).",
+                "marks": ["bold"]
+              },
+              {
+                "text": " An entry per active (uncommitted) transaction: "
+              },
+              {
+                "text": "(txnId, status, lastLSN)",
+                "marks": ["code"]
+              },
+              {
+                "text": ". The "
+              },
+              {
+                "text": "lastLSN",
+                "marks": ["code"]
+              },
+              {
+                "text": " is the LSN of the most recent log record written by this transaction — the entry point for the undo chain. After recovery's redo phase, the TT lists every transaction that was active at crash time and is therefore a candidate for undo."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "During the analysis phase, the recovery manager initializes these tables from the most recent checkpoint record and then scans forward through the log, updating them as it encounters new events:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Update record for page P, LSN L:",
+                "marks": ["bold"]
+              },
+              {
+                "text": " if P is not in DPT, add it with "
+              },
+              {
+                "text": "recLSN = L",
+                "marks": ["code"]
+              },
+              {
+                "text": ". If P is already in DPT, "
+              },
+              {
+                "text": "recLSN",
+                "marks": ["code"]
+              },
+              {
+                "text": " stays at its existing (earlier) value. Update TT: set transaction's "
+              },
+              {
+                "text": "lastLSN = L",
+                "marks": ["code"]
+              },
+              {
+                "text": "."
+              }
+            ],
+            [
+              {
+                "text": "Commit or abort record for transaction T:",
+                "marks": ["bold"]
+              },
+              {
+                "text": " remove T from TT (it is no longer active)."
+              }
+            ],
+            [
+              {
+                "text": "Page flush notification (end-of-checkpoint page flush):",
+                "marks": ["bold"]
+              },
+              {
+                "text": " remove the page from DPT."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "info",
+          "runs": [
+            {
+              "text": "In PostgreSQL, the equivalent of the dirty page table is implicit: the buffer manager tracks dirty pages via buffer descriptors. The explicit ARIES-style DPT appears in SQL Server's checkpoint implementation, where it is called the \"Dirty Page Table\" directly in Microsoft's internal documentation. DB2's recovery closely follows the ARIES paper's terminology."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The dirty page table records which pages in memory haven't been written to disk yet and how far back in the log you'd need to go to reconstruct each one. The transaction table records which transactions were mid-flight. Together, they tell recovery exactly what to redo and what to undo. Both are saved at checkpoint time and rebuilt by scanning the log forward from there."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "dbi-ch04-c010",
+      "order": 10,
+      "title": "Group Commit — Batching fsyncs for Throughput",
+      "teaser": "A commit requires an fsync — a round trip to stable storage. At high transaction rates, serializing one fsync per commit saturates the disk. Group commit batches many commits into a single fsync, trading a small latency increase for a large throughput gain.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The durability guarantee of WAL requires that the commit log record reach stable storage before the application is told \"committed.\" On a spinning disk, an "
+            },
+            {
+              "text": "fsync",
+              "marks": ["code"]
+            },
+            {
+              "text": " (or "
+            },
+            {
+              "text": "fdatasync",
+              "marks": ["code"]
+            },
+            {
+              "text": ") takes approximately 1–10 ms. On an NVMe SSD, it is 50–200 µs. In either case, serializing one fsync per commit imposes a hard ceiling on commit throughput: ~100–10,000 commits/second, regardless of how fast everything else is."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Group commit relaxes this by allowing multiple committing transactions to share a single fsync:"
+            }
+          ]
+        },
+        {
+          "type": "code",
+          "language": "text",
+          "text": "Without group commit:\n  T1 commits → fsync #1 → T1 confirmed  (10 ms)\n  T2 commits → fsync #2 → T2 confirmed  (10 ms)\n  T3 commits → fsync #3 → T3 confirmed  (10 ms)\n  Throughput: ~100 commits/sec\n\nWith group commit:\n  T1 commits → wait...\n  T2 commits → wait...\n  T3 commits → single fsync #1 → T1, T2, T3 confirmed  (10 ms)\n  Throughput: 300+ commits / 10 ms = 30,000 commits/sec (at this batch size)"
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The implementation in most engines uses a commit queue. A transaction that reaches the commit point adds itself to the queue and waits. A background thread (or the first queued transaction) drains the queue, flushes the log, and wakes all waiting transactions. PostgreSQL has used group commit since version 8.3; InnoDB's group commit was broken for years due to a two-phase commit interaction bug and was fully fixed in MySQL 5.6."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The latency/throughput trade-off is tunable. PostgreSQL's "
+            },
+            {
+              "text": "commit_delay",
+              "marks": ["code"]
+            },
+            {
+              "text": " (microseconds to wait before fsync) and "
+            },
+            {
+              "text": "commit_siblings",
+              "marks": ["code"]
+            },
+            {
+              "text": " (minimum concurrent transactions to trigger the delay) control group commit aggressiveness. InnoDB's "
+            },
+            {
+              "text": "innodb_flush_log_at_trx_commit",
+              "marks": ["code"]
+            },
+            {
+              "text": " and the binlog sync variables interact to control group commit behavior."
+            }
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "warning",
+          "runs": [
+            {
+              "text": "Setting innodb_flush_log_at_trx_commit=2 on MySQL tells InnoDB to flush the log to the OS page cache but not fsync on every commit — the OS flushes once per second. This dramatically increases throughput but means up to 1 second of committed transactions can be lost in a crash. This is a durability trade-off, not a bug, and is appropriate for some workloads. Never use it for financial data."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Every commit needs a disk write to make it durable, and disk writes are slow. Group commit lets multiple transactions pile up and share a single disk write. Each transaction waits a tiny bit longer to get its confirmation, but the overall system handles far more commits per second. It's the log equivalent of batching."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "dbi-ch04-c011",
+      "order": 11,
+      "title": "WAL Archiving and Point-in-Time Recovery",
+      "teaser": "WAL archiving continuously copies completed log segments to long-term storage — S3, a network share, a tape library. This enables point-in-time recovery (PITR): restoring the database to any moment in the past, not just the most recent backup.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "A standard database backup captures a consistent snapshot at a point in time. If the backup is from midnight and the database is destroyed at 11:59 PM, you lose nearly 24 hours of data. WAL archiving eliminates this gap: by preserving every log segment between backups, you can restore to any second in the continuous log stream."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The mechanism in PostgreSQL (the canonical example):"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "numbered",
+          "items": [
+            [
+              {
+                "text": "Take a base backup",
+                "marks": ["bold"]
+              },
+              {
+                "text": " using "
+              },
+              {
+                "text": "pg_basebackup",
+                "marks": ["code"]
+              },
+              {
+                "text": " or equivalent. This creates a snapshot of all data files and records the WAL position at the start of the backup."
+              }
+            ],
+            [
+              {
+                "text": "Configure archive_command",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — a shell command that PostgreSQL calls whenever a WAL segment (16 MB by default) is completed. The command copies the segment to the archive destination: "
+              },
+              {
+                "text": "cp %p /mnt/archive/%f",
+                "marks": ["code"]
+              },
+              {
+                "text": " or an equivalent "
+              },
+              {
+                "text": "aws s3 cp",
+                "marks": ["code"]
+              },
+              {
+                "text": " invocation."
+              }
+            ],
+            [
+              {
+                "text": "To recover",
+                "marks": ["bold"]
+              },
+              {
+                "text": ": restore the base backup, configure "
+              },
+              {
+                "text": "recovery_target_time",
+                "marks": ["code"]
+              },
+              {
+                "text": " (or LSN, or transaction ID), set "
+              },
+              {
+                "text": "restore_command",
+                "marks": ["code"]
+              },
+              {
+                "text": " to fetch archived segments, and start PostgreSQL. It applies archived WAL segments until it reaches the target time, then pauses in recovery mode for inspection."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "code",
+          "language": "text",
+          "text": "Time axis:\n\n  [base backup: 00:00]----[WAL segs archived continuously]----[CRASH: 23:59]\n\n  PITR restore to 23:45:\n    1. Restore base backup (data as of 00:00)\n    2. Fetch and replay archived WAL segs from 00:00 → 23:45\n    3. Stop. Database is consistent as of 23:45.\n    4. 14 minutes of data lost vs 24 hours without archiving."
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "WAL archiving is also the mechanism behind streaming replication in PostgreSQL: standbys receive WAL either via "
+            },
+            {
+              "text": "streaming replication",
+              "marks": ["italic"]
+            },
+            {
+              "text": " (a direct connection that sends records as they are written) or via "
+            },
+            {
+              "text": "archive recovery",
+              "marks": ["italic"]
+            },
+            {
+              "text": " (periodically fetching completed segments). The log replay mechanism is identical in both cases."
+            }
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "info",
+          "runs": [
+            {
+              "text": "Tools like pgBackRest and Barman manage WAL archiving for PostgreSQL in production, adding compression, encryption, parallel transfer, and retention policies on top of the raw archive_command mechanism. Amazon RDS for PostgreSQL and Aurora automatically archive WAL to S3, enabling PITR to any second within the retention window with no user configuration."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "WAL archiving saves every log segment to long-term storage as it is filled. Combined with a periodic full backup, this lets you replay the log forward from the backup to any specific moment — so a crash at 11:59 PM doesn't mean losing 24 hours of data; it means losing seconds, not hours."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "dbi-ch04-c012",
+      "order": 12,
+      "title": "Log Replay — Applying Archived WAL",
+      "teaser": "Log replay is the engine that drives both crash recovery and standby replication: it reads WAL records sequentially and applies each one's physical changes to the appropriate page. The mechanism is identical whether you are recovering from a crash or keeping a standby synchronized.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Log replay is the operational core of WAL-based recovery. The recovery manager reads log records from the WAL stream — whether from on-disk WAL files during crash recovery, from archived segments during PITR, or from a streaming connection to the primary during replication — and applies them to data pages."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Each log record is self-contained. It identifies:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "The target relation and page",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — tablespace OID, database OID, relation OID, and block number — uniquely locating the page to be modified."
+              }
+            ],
+            [
+              {
+                "text": "The change to apply",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — typically a physical description: \"insert tuple at offset 88 in page 42\" or \"update byte range [40,56] in page 7 to value X.\" This is the after-image."
+              }
+            ],
+            [
+              {
+                "text": "The full-page image (FPI)",
+                "marks": ["bold"]
+              },
+              {
+                "text": " when required — if the page has been modified for the first time after the most recent checkpoint, PostgreSQL writes the entire page content into the log record ("
+              },
+              {
+                "text": "full_page_writes = on",
+                "marks": ["code"]
+              },
+              {
+                "text": "). This protects against torn writes: if a crash occurs while the OS is partially writing a page, the FPI in the WAL gives recovery a complete, consistent page to start from."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The replay loop is simple and fast:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "numbered",
+          "items": [
+            [
+              {
+                "text": "Read the next WAL record."
+              }
+            ],
+            [
+              {
+                "text": "Load the target page into the buffer pool (from disk if needed)."
+              }
+            ],
+            [
+              {
+                "text": "Compare the page's "
+              },
+              {
+                "text": "pageLSN",
+                "marks": ["code"]
+              },
+              {
+                "text": " with the record's LSN. Skip if "
+              },
+              {
+                "text": "pageLSN >= recordLSN",
+                "marks": ["code"]
+              },
+              {
+                "text": "."
+              }
+            ],
+            [
+              {
+                "text": "Apply the record. Update "
+              },
+              {
+                "text": "pageLSN",
+                "marks": ["code"]
+              },
+              {
+                "text": " to the record's LSN."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "For PITR, replay stops at the target LSN or timestamp. PostgreSQL enters \"paused recovery\" and waits for a promotion signal ("
+            },
+            {
+              "text": "pg_wal_replay_resume()",
+              "marks": ["code"]
+            },
+            {
+              "text": ") before accepting writes. This window — between \"all WAL applied\" and \"accepting new writes\" — is the moment at which a human can inspect the database state and verify it matches the intended restore point."
+            }
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "info",
+          "runs": [
+            {
+              "text": "PostgreSQL parallel replay (added in PostgreSQL 16 as parallel recovery workers) allows multiple workers to replay WAL records for different tables simultaneously. This can dramatically reduce recovery time on multi-core hardware when the database has many independent tables — though records for the same table must still be replayed in LSN order."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Log replay reads WAL records one by one and applies each change to the right page. For each record, it checks the page's LSN: if the page is already at or past that LSN, skip it; if the page is behind, apply the change. The same code runs during crash recovery, PITR, and streaming replication — it's just pointed at different WAL sources."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "dbi-ch04-c013",
+      "order": 13,
+      "title": "Crash Recovery End-to-End — kill -9 to Open",
+      "teaser": "From the kernel kill signal to the database accepting connections, crash recovery orchestrates analysis, redo, and undo in a precise sequence. Understanding the full timeline is essential for sizing recovery windows and diagnosing slow restarts.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Here is the complete sequence of events when a PostgreSQL instance is hard-killed and restarts. The same flow applies to InnoDB, SQL Server, and any ARIES-conformant engine."
+            }
+          ]
+        },
+        {
+          "type": "code",
+          "language": "text",
+          "text": "T=0: kill -9 postgres\n     All in-flight writes lost. WAL files on disk are the only record.\n     Buffer pool is gone.\n\nT=0+: Operator restarts postgres.\n\n      ┌─────────────────────────────────────────────────────────────┐\n      │  PHASE 1: ANALYSIS                                          │\n      │  Read control file → locate most recent checkpoint LSN.     │\n      │  Scan log from checkpoint forward:                          │\n      │    • Rebuild transaction table (who was active at crash?)   │\n      │    • Rebuild dirty page table (which pages needed flushing?)│\n      │  Identify redo start point = min(recLSN) across DPT.        │\n      └─────────────────────────────────────────────────────────────┘\n            ↓\n      ┌─────────────────────────────────────────────────────────────┐\n      │  PHASE 2: REDO                                               │\n      │  Scan log from redo start point to crash point.             │\n      │  For each record: if pageLSN < recordLSN → apply change.    │\n      │  Applies ALL records, including uncommitted transactions.    │\n      │  Database now mirrors exact crash-time state.               │\n      └─────────────────────────────────────────────────────────────┘\n            ↓\n      ┌─────────────────────────────────────────────────────────────┐\n      │  PHASE 3: UNDO                                               │\n      │  For each transaction in transaction table (uncommitted):   │\n      │    Follow prevLSN chain backward.                           │\n      │    Apply before-images. Write CLRs.                         │\n      │    Repeat until transaction's begin record is reached.      │\n      └─────────────────────────────────────────────────────────────┘\n            ↓\n      Database is consistent. Accepting connections."
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Recovery time is bounded by:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Checkpoint frequency.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " More frequent checkpoints → shorter log scan → faster recovery. PostgreSQL's default 5-minute checkpoint interval means at most ~5 minutes of WAL to replay under normal loads."
+              }
+            ],
+            [
+              {
+                "text": "Buffer pool hit rate during redo.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Redo must read pages from disk. A cold restart means every page read is a disk I/O. I/O parallelism (parallel recovery workers in PostgreSQL 16+, InnoDB's use of multiple redo threads) reduces wall-clock time."
+              }
+            ],
+            [
+              {
+                "text": "Number and depth of uncommitted transactions at crash time.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " A long-running transaction with millions of row updates requires millions of undo operations. This is why unbounded transactions are dangerous: they extend both redo (the changes must be replayed before undo can begin) and undo (the entire transaction must be rolled back)."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "warning",
+          "runs": [
+            {
+              "text": "InnoDB's crash recovery is particularly visible: a large transaction killed mid-flight will produce \"InnoDB: Starting crash recovery\" in the MySQL error log followed by minutes of undo work. The only levers are checkpoint frequency (innodb_log_checkpoint_now for tuning) and avoiding large unbounded transactions in application code."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "After a hard crash, recovery runs three laps over the log: first a scan to rebuild who was active and what was dirty, then a forward replay to restore the exact crash state, then a backward pass to roll back anything uncommitted. The time it takes depends on how recently the last checkpoint was and how long any uncommitted transactions had been running."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "dbi-ch04-c014",
+      "order": 14,
+      "title": "Compensation Log Records — Surviving a Crash During Undo",
+      "teaser": "ARIES writes a Compensation Log Record (CLR) for each undo operation. CLRs are redoable but never themselves undone — they record undo progress so that a second crash during rollback resumes from where it stopped rather than starting over.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "A subtle but critical feature of ARIES is that undo itself must be crash-safe. Without CLRs, a crash during the undo phase would restart recovery from scratch. The undo phase would replay all the same undo operations again — safe, but potentially very slow. With CLRs, undo is incremental: each step is logged, and a subsequent restart can skip already-completed undo steps."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "A CLR has the following fields:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "lsn",
+                "marks": ["code"]
+              },
+              {
+                "text": " — the LSN of this CLR record (assigned sequentially)."
+              }
+            ],
+            [
+              {
+                "text": "txnId",
+                "marks": ["code"]
+              },
+              {
+                "text": " — the transaction being rolled back."
+              }
+            ],
+            [
+              {
+                "text": "pageId, change",
+                "marks": ["code"]
+              },
+              {
+                "text": " — the physical undo operation applied (before-image restored)."
+              }
+            ],
+            [
+              {
+                "text": "undoNextLSN",
+                "marks": ["code"]
+              },
+              {
+                "text": " — the LSN of the next log record that still needs to be undone for this transaction. This \"jumps over\" the record just undone. If recovery crashes and restarts, the redo phase re-applies the CLR (restoring the before-image), and the undo phase follows "
+              },
+              {
+                "text": "undoNextLSN",
+                "marks": ["code"]
+              },
+              {
+                "text": " to continue from the correct position."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "code",
+          "language": "text",
+          "text": "Transaction T has log records at LSNs: 100 (begin), 200 (write A), 300 (write B), 400 (write C)\nT is being undone (most recent first):\n\n  Undo write C (LSN 400) → write CLR at LSN 500\n    CLR.undoNextLSN = 300  (next to undo is the write B record)\n\n  Crash here!\n\n  Recovery restarts:\n    Redo phase: re-applies CLR at LSN 500 (re-applies the undo of write C)\n    Undo phase: looks at T's lastLSN=500 (the CLR)\n                reads CLR.undoNextLSN=300 → skips LSN 400\n                continues undoing write B (LSN 300)\n\n  ✓ No undo work is repeated."
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "CLRs are never themselves placed in the undo candidates list — they have no "
+            },
+            {
+              "text": "prevLSN",
+              "marks": ["code"]
+            },
+            {
+              "text": " that points to an undoable record. They are redoable but not undoable, which is what makes them safe to generate during a recovery that might itself crash."
+            }
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "info",
+          "runs": [
+            {
+              "text": "In practice, the CLR mechanism means ARIES guarantees progress toward a consistent state regardless of how many times the system crashes during recovery. This property — sometimes called \"repeated restartability\" — is essential for databases running on unreliable hardware or in environments where power failures are common."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "When ARIES undoes a change, it writes a CLR to the log recording what it undid and where the next undo step should be. If the system crashes again during rollback, recovery can replay the CLRs (they're just regular redo records) and then skip the already-undone operations by following the undoNextLSN pointer. Undo always moves forward, never repeating work."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "dbi-ch04-c015",
+      "order": 15,
+      "title": "Steal, Force, and the Buffer Pool Contract",
+      "teaser": "Four buffer management policies — steal/no-steal and force/no-force — define the relationship between the buffer pool and recovery. The choice determines how much undo and redo work recovery must do, and ARIES's steal/no-force combination maximizes runtime performance at the cost of a more complex recovery algorithm.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Before ARIES, database designers chose between two orthogonal pairs of buffer management policies:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Steal vs No-Steal.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " "
+              },
+              {
+                "text": "Steal",
+                "marks": ["italic"]
+              },
+              {
+                "text": " means the buffer pool can evict (write to disk) a dirty page belonging to an uncommitted transaction. "
+              },
+              {
+                "text": "No-steal",
+                "marks": ["italic"]
+              },
+              {
+                "text": " means dirty pages of uncommitted transactions are pinned in memory until commit. No-steal eliminates the need for undo (uncommitted data never reaches disk) but pins large amounts of memory for long-running transactions — catastrophic for buffer pool efficiency."
+              }
+            ],
+            [
+              {
+                "text": "Force vs No-Force.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " "
+              },
+              {
+                "text": "Force",
+                "marks": ["italic"]
+              },
+              {
+                "text": " means all dirty pages for a transaction must be flushed to disk before commit is confirmed. "
+              },
+              {
+                "text": "No-force",
+                "marks": ["italic"]
+              },
+              {
+                "text": " means commit only requires the log to be flushed, not the data pages. Force eliminates the need for redo (committed data is always on disk) but forces a random-I/O flush of all modified pages on every commit — extremely expensive."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The four combinations and their recovery implications:"
+            }
+          ]
+        },
+        {
+          "type": "code",
+          "language": "text",
+          "text": "                | Force         | No-Force\n  No-Steal     | No undo,      | Redo only\n               | No redo       | (simple)\n  ─────────────┼───────────────┼─────────────────────\n  Steal        | Undo only     | Undo + Redo\n               | (unusual)     | ← ARIES (optimal)"
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "ARIES uses "
+            },
+            {
+              "text": "steal / no-force",
+              "marks": ["bold"]
+            },
+            {
+              "text": " — the bottom-right cell. This is the hardest combination to implement correctly (requires both undo and redo) but gives the best runtime performance:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Steal",
+                "marks": ["bold"]
+              },
+              {
+                "text": " lets the buffer pool freely evict any dirty page, preventing memory pressure from long-running transactions."
+              }
+            ],
+            [
+              {
+                "text": "No-force",
+                "marks": ["bold"]
+              },
+              {
+                "text": " means commit only pays the cost of a sequential log write (fast), not the cost of flushing all modified data pages (slow, random I/O)."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "info",
+          "runs": [
+            {
+              "text": "Every major commercial and open-source RDBMS uses steal/no-force: PostgreSQL, InnoDB, SQL Server, Oracle, DB2. The complexity of ARIES is the price paid for this efficiency. Systems that use no-steal (like some embedded databases or early System R variants) trade simplicity at crash time for reduced runtime flexibility."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Steal means dirty pages can be written before a transaction commits; force means all dirty pages must be flushed at commit. Combine steal with no-force — which is what every major database does — and you get maximum runtime efficiency: the buffer pool is never pinned, and commit only flushes the log. The tradeoff is a recovery algorithm complex enough to handle both redo (pages that made it to disk uncommitted) and undo (committed changes that didn't make it to disk)."
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
