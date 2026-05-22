@@ -1,0 +1,1672 @@
+{
+  "chapterId": "dds-ch10-batch-processing",
+  "shardIndex": 1,
+  "cards": [
+    {
+      "id": "dds-ch10-c001",
+      "order": 1,
+      "title": "Batch Processing & the Unix Philosophy",
+      "teaser": "MapReduce is Unix-at-cluster-scale: small tools composing via pipes, a uniform interface of stdin/stdout, and the same idea that each stage does one thing well — just spread across thousands of machines.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The Unix philosophy, as articulated by Doug McIlroy and captured in the Bell Labs technical memoranda of the 1970s, has three tenets that turn out to be surprisingly durable:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Each program does one thing well.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " grep filters lines, sort reorders them, awk reformats fields. No program tries to be a full data pipeline by itself."
+              }
+            ],
+            [
+              {
+                "text": "Programs compose via a uniform interface.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " stdin and stdout are just bytes — usually newline-delimited text. Any program can be piped into any other program because they speak the same language."
+              }
+            ],
+            [
+              {
+                "text": "Programs are written to be combined, not to be used directly.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " The complexity lives in the pipeline, not in any individual tool."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "A classic Unix pipeline for counting word frequencies:"
+            }
+          ]
+        },
+        {
+          "type": "code",
+          "language": "bash",
+          "text": "cat /var/log/nginx/access.log \\\n  | awk '{print $7}' \\\n  | sort \\\n  | uniq -c \\\n  | sort -rn \\\n  | head -5"
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "This pipeline is strikingly similar to MapReduce. The "
+            },
+            {
+              "text": "awk",
+              "marks": ["code"]
+            },
+            {
+              "text": " stage extracts a field from each line (mapping). The "
+            },
+            {
+              "text": "sort | uniq -c",
+              "marks": ["code"]
+            },
+            {
+              "text": " stage groups identical keys and counts them (reducing). The intermediate data is streamed between stages as newline-delimited text — the uniform interface."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "MapReduce takes this idea to cluster scale. Instead of a single machine reading a single log file, thousands of machines each read a shard of a petabyte dataset. The same composability principle applies: the mapper emits (key, value) pairs over a uniform interface; the framework routes them to reducers; the reducer aggregates. The programming model is the same; only the substrate has changed."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "There is one critical difference between Unix pipes and MapReduce: "
+            },
+            {
+              "text": "Unix pipes stream data in real time",
+              "marks": ["italic"]
+            },
+            {
+              "text": " — the output of stage N is available to stage N+1 as soon as the first byte is produced. MapReduce is "
+            },
+            {
+              "text": "bounded",
+              "marks": ["bold"]
+            },
+            {
+              "text": " — it reads a finite dataset, processes it completely, and writes output to a durable store before the next job begins. This is the defining characteristic of "
+            },
+            {
+              "text": "batch processing",
+              "marks": ["bold"]
+            },
+            {
+              "text": " as opposed to stream processing."
+            }
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "info",
+          "runs": [
+            {
+              "text": "Kleppmann's observation: the Unix philosophy is powerful precisely because the uniform interface (bytes on stdin/stdout) decouples programs from each other. MapReduce's insight was to apply the same decoupling at cluster scale by making the uniform interface (key/value pairs in files on HDFS) explicit and durable."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "dds-ch10-c002",
+      "order": 2,
+      "title": "MapReduce: Mapper and Reducer",
+      "teaser": "Google's 2004 paper distilled distributed batch computation to two functions: a mapper that emits (key, value) pairs from each input record, and a reducer that aggregates all values for a given key. The genius is how much complexity the framework absorbs between those two calls.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Jeffrey Dean and Sanjay Ghemawat's 2004 OSDI paper \"MapReduce: Simplified Data Processing on Large Clusters\" described the framework Google had been using internally since 2003 to rebuild its search index, compute PageRank, and process log files at scale. The programming model is deliberately minimal."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "A MapReduce job consists of exactly two user-supplied functions:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "map(key1, value1) → list(key2, value2)",
+                "marks": ["code", "bold"]
+              },
+              {
+                "text": " — called once per input record. The mapper extracts and transforms. It can emit zero, one, or many (key, value) pairs per input record. The mapper has no state that persists across records."
+              }
+            ],
+            [
+              {
+                "text": "reduce(key2, list(value2)) → list(value3)",
+                "marks": ["code", "bold"]
+              },
+              {
+                "text": " — called once per unique key, receiving all values the mappers emitted for that key. The reducer aggregates: it might sum, count, find max, join records, or produce a sorted list."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The canonical word-count example makes the model concrete:"
+            }
+          ]
+        },
+        {
+          "type": "code",
+          "language": "python",
+          "text": "# Mapper: emit (word, 1) for each word in the input line\ndef map(line_number, line_text):\n    for word in line_text.split():\n        emit(word.lower(), 1)\n\n# Reducer: sum the 1s for each word\ndef reduce(word, counts):   # counts = [1, 1, 1, ...]\n    emit(word, sum(counts))"
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Between map and reduce, the framework does the heavy lifting: it reads the input data from HDFS and assigns shards to mapper tasks; it partitions, sorts, and transfers mapper output to the correct reducer tasks (the shuffle phase); it handles retries when tasks fail; and it writes reducer output back to HDFS."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The two-phase model has a constraint that is also its strength: "
+            },
+            {
+              "text": "the reduce phase cannot begin until all mappers have finished.",
+              "marks": ["bold"]
+            },
+            {
+              "text": " This global synchronization barrier is what makes the sort-by-key guarantee possible — every reducer sees all values for its keys — but it is also what makes MapReduce rigid compared to later dataflow engines."
+            }
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "info",
+          "runs": [
+            {
+              "text": "Apache Hadoop is the open-source implementation of MapReduce + GFS (as HDFS). The original Google paper describes the same architecture. When engineers say \"Hadoop MapReduce\" they typically mean the Hadoop YARN-based execution engine; when they say \"MapReduce\" as an abstraction, they mean the two-phase programming model regardless of runtime."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "dds-ch10-c003",
+      "order": 3,
+      "title": "The Shuffle Phase",
+      "teaser": "The shuffle — sorting and partitioning mapper output by key so each reducer receives exactly the records it owns — is the most expensive and most-overlooked part of MapReduce. Everything interesting about distributed joins and aggregations happens here.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "After the mappers finish, the framework must route every (key, value) pair to the reducer responsible for that key. This requires three operations that together are called the "
+            },
+            {
+              "text": "shuffle and sort",
+              "marks": ["bold"]
+            },
+            {
+              "text": ":"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "numbered",
+          "items": [
+            [
+              {
+                "text": "Partition.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Each mapper applies a partitioning function (typically "
+              },
+              {
+                "text": "hash(key) % R",
+                "marks": ["code"]
+              },
+              {
+                "text": " where R is the number of reducers) to decide which reducer gets each key. All values for a given key go to the same partition — this is the fundamental routing guarantee."
+              }
+            ],
+            [
+              {
+                "text": "Sort.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Within each partition, the mapper sorts its output by key. This allows the reducer to perform a merge rather than a hash aggregation — it can process keys sequentially, which is cache-friendly and supports secondary sort."
+              }
+            ],
+            [
+              {
+                "text": "Transfer.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Each reducer pulls its assigned partitions from all mappers over the network. With M mappers and R reducers, this produces up to M × R network connections and transfers all intermediate data across the cluster. In a job processing 1 TB of data, the intermediate data can easily be 1 TB — or more."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The shuffle phase is expensive for three reasons:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "It writes to disk twice.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Mapper output is written to local disk (to survive mapper failure); reducers read it from that disk over the network and write reducer output to HDFS."
+              }
+            ],
+            [
+              {
+                "text": "It saturates the network.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " For data-heavy jobs, the shuffle can transfer terabytes across the cluster's internal network. Rack-aware placement in HDFS mitigates cross-rack traffic for reads, but shuffle is inherently cross-machine."
+              }
+            ],
+            [
+              {
+                "text": "It is a synchronization barrier.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Reducers cannot begin their merge phase until every mapper has finished and written its partition files. A single slow mapper delays the entire reduce phase."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Understanding the shuffle explains why optimizations like combiners (pre-aggregation before transfer) and map-side joins (eliminating the reduce phase entirely for one dataset) have such large payoffs: they directly reduce the data volume that must pass through this expensive phase."
+            }
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "warning",
+          "runs": [
+            {
+              "text": "Data skew — when some keys have vastly more values than others — is the classic shuffle failure mode. If 1% of keys hold 90% of the data, the reducers handling those keys take 100× longer than others, paralyzing the job. Detecting and handling hot keys (with randomized secondary keys, two-phase aggregation, or salting) is essential for production MapReduce."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "dds-ch10-c004",
+      "order": 4,
+      "title": "Reduce-Side Join (Sort-Merge Join)",
+      "teaser": "The reduce-side join partitions and sorts both input datasets by the join key, then merges them at the reducer — the most general MapReduce join strategy, capable of joining datasets of arbitrary size.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Consider Kleppmann's canonical example: you have a table of "
+            },
+            {
+              "text": "user_events",
+              "marks": ["code"]
+            },
+            {
+              "text": " (each row has a user_id and an event) and a table of "
+            },
+            {
+              "text": "users",
+              "marks": ["code"]
+            },
+            {
+              "text": " (each row has a user_id and a name). You want to annotate each event with the user's name. Both tables are too large to fit in memory. The reduce-side join handles this."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The algorithm has two phases:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "numbered",
+          "items": [
+            [
+              {
+                "text": "Map phase — tag and re-key both inputs.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Two sets of mappers run in parallel: one reads user_events and emits (user_id, {type: 'event', data: ...}); the other reads users and emits (user_id, {type: 'user', data: ...}). The key in both cases is user_id."
+              }
+            ],
+            [
+              {
+                "text": "Shuffle + Reduce phase — merge at the reducer.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Because both datasets are partitioned by user_id, the reducer for user_id=42 receives all events for user 42 AND the user record for user 42. The reducer can perform the join: for each event, look up the user record and emit the enriched row."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "code",
+          "language": "python",
+          "text": "# Map phase — both mappers emit with user_id as key\ndef map_events(_, row):       # row = {user_id, event_type, ts}\n    emit(row['user_id'], ('E', row))\n\ndef map_users(_, row):        # row = {user_id, name, country}\n    emit(row['user_id'], ('U', row))\n\n# Reduce phase — receives all records for one user_id\ndef reduce(user_id, records):\n    user = None\n    events = []\n    for tag, data in records:\n        if tag == 'U': user = data\n        else: events.append(data)\n    for ev in events:\n        if user: emit({**ev, 'name': user['name']})"
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "This is called a "
+            },
+            {
+              "text": "sort-merge join",
+              "marks": ["bold"]
+            },
+            {
+              "text": " because the shuffle sorts both inputs by join key before the merge. The reducer typically processes the user record first (using secondary sort to ensure the 'U' tag arrives before 'E' tags), then streams through the events — it never needs to hold all events for a user in memory simultaneously if it can rely on sorted order."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The cost: both full datasets traverse the shuffle. For a 1 TB events table and a 10 GB users table, you pay to shuffle all 1.01 TB. This is unavoidable in the reduce-side join. The map-side join strategies described in the next card exist specifically to eliminate this cost when one dataset is small enough."
+            }
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "info",
+          "runs": [
+            {
+              "text": "The same sort-merge join is used in relational databases for large equi-joins where neither table fits in memory. MapReduce simply implements it at distributed scale with HDFS as the sort buffer."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "dds-ch10-c005",
+      "order": 5,
+      "title": "Map-Side Join: Broadcast Hash Join",
+      "teaser": "When one side of a join is small enough to fit in every mapper's memory, you can load it into a hash table before the map phase starts — joining in O(1) per record without a shuffle.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The broadcast hash join is the most efficient join strategy when one input (the \"build\" side) is significantly smaller than the other (the \"probe\" side). In the user events example, if the users table is 50 MB — small enough to fit in RAM on every mapper node — there is no need to shuffle either dataset."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The algorithm:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "numbered",
+          "items": [
+            [
+              {
+                "text": "Before the job starts, distribute the small table to every mapper.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Hadoop's Distributed Cache (or Spark's broadcast variable) replicates the small dataset to the local disk of each worker node."
+              }
+            ],
+            [
+              {
+                "text": "Each mapper loads the small table into a hash map: {user_id → user_row}.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " This happens once per mapper at startup."
+              }
+            ],
+            [
+              {
+                "text": "The mapper processes the large input (user_events) record by record.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " For each event record, it does a hash lookup by user_id and emits the joined row directly — no shuffle required."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "code",
+          "language": "python",
+          "text": "# Broadcast hash join: no reduce phase needed\nclass BroadcastMapper:\n    def setup(self):\n        # Load small table from Distributed Cache into memory\n        self.users = {}\n        with open('users.tsv') as f:\n            for line in f:\n                uid, name, country = line.strip().split('\\t')\n                self.users[uid] = {'name': name, 'country': country}\n\n    def map(self, _, event_row):\n        user = self.users.get(event_row['user_id'])\n        if user:\n            emit({**event_row, 'name': user['name']})"
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The result: zero shuffle traffic. The large events table is read once by the mappers, joined locally, and output is written directly — no reducer phase at all. This is dramatically cheaper than the reduce-side join when the size constraint is satisfied."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Spark's "
+            },
+            {
+              "text": "broadcast()",
+              "marks": ["code"]
+            },
+            {
+              "text": " function materializes this pattern explicitly. When you call "
+            },
+            {
+              "text": "spark.broadcast(small_df)",
+              "marks": ["code"]
+            },
+            {
+              "text": ", Spark serializes the small dataset and ships it to every executor. The planner also applies this automatically when it detects a join where one side is below the "
+            },
+            {
+              "text": "spark.sql.autoBroadcastJoinThreshold",
+              "marks": ["code"]
+            },
+            {
+              "text": " (10 MB by default)."
+            }
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "warning",
+          "runs": [
+            {
+              "text": "The broadcast join fails when the \"small\" table is too large to fit in worker memory. Attempting to broadcast a 20 GB table will OOM every executor. Always size the broadcast threshold conservatively, accounting for the memory overhead of Java/Python object representation (often 3–5x the raw data size)."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "dds-ch10-c006",
+      "order": 6,
+      "title": "Map-Side Join: Partitioned Hash Join",
+      "teaser": "When both inputs are already partitioned and sorted by the join key — co-partitioned — each mapper can join its shard independently without any shuffle, making the join embarrassingly parallel.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The partitioned hash join (also called a "
+            },
+            {
+              "text": "co-partitioned join",
+              "marks": ["bold"]
+            },
+            {
+              "text": " or "
+            },
+            {
+              "text": "bucket join",
+              "marks": ["bold"]
+            },
+            {
+              "text": " in Hive) applies when both join inputs have already been partitioned into the same number of partitions using the same partitioning function on the join key, AND the partitions are the same size. Under these conditions, partition N of the left table can only join with partition N of the right table — they share the same key range."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "This allows the join to proceed entirely in the map phase:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "numbered",
+          "items": [
+            [
+              {
+                "text": "Assign each mapper a matching pair of partitions: partition N of the left table and partition N of the right table.",
+                "marks": ["bold"]
+              }
+            ],
+            [
+              {
+                "text": "The mapper loads the smaller partition into a hash table, then streams the larger partition through it.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Since both partitions cover the same key range, the join is complete by the end of the map phase."
+              }
+            ],
+            [
+              {
+                "text": "No reducer is needed.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Output goes directly to HDFS or the next stage."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The constraint is strict: the partitioning must be "
+            },
+            {
+              "text": "identical",
+              "marks": ["italic"]
+            },
+            {
+              "text": " across both datasets. This is achievable when both tables are outputs of earlier MapReduce jobs that used the same partitioner, or when the data was pre-bucketed at write time (Hive bucketed tables, Delta Lake Z-ordered on the join key)."
+            }
+          ]
+        },
+        {
+          "type": "comparison",
+          "items": [
+            {
+              "label": "Broadcast Hash Join",
+              "description": "One side small enough to fit in memory. Zero shuffle. Requires: small side fits in RAM on every mapper. Best for: fact-dimension table joins."
+            },
+            {
+              "label": "Partitioned Hash Join",
+              "description": "Both sides large, but pre-partitioned identically. Zero shuffle. Requires: both inputs co-partitioned on same key. Best for: recurring joins on the same key in a data warehouse."
+            },
+            {
+              "label": "Reduce-Side Sort-Merge Join",
+              "description": "General case — no co-partitioning required. Full shuffle cost. Handles any join on any key. Best for: ad hoc joins or first-time joins between new datasets."
+            }
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "info",
+          "runs": [
+            {
+              "text": "Hive's bucketed tables and Spark's bucketing feature (df.write.bucketBy(n, 'user_id')) are designed precisely to enable this optimization. When both sides of a recurring join are bucketed on the same column with the same bucket count, the query planner can skip the shuffle entirely on every future join."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "dds-ch10-c007",
+      "order": 7,
+      "title": "Combiners and Partitioners",
+      "teaser": "Combiners run a reduce-like aggregation on mapper output before the shuffle, slashing the data that crosses the network. Partitioners control which reducer receives which key — and the wrong choice produces ruinous data skew.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "In the word-count job, each occurrence of the word \"the\" causes the mapper to emit "
+            },
+            {
+              "text": "('the', 1)",
+              "marks": ["code"]
+            },
+            {
+              "text": ". In a 100 GB document corpus, \"the\" might appear 500 million times — which means 500 million records containing only this key traverse the shuffle. A "
+            },
+            {
+              "text": "combiner",
+              "marks": ["bold"]
+            },
+            {
+              "text": " runs on the mapper's local output before transfer and performs a partial reduce, collapsing all those "
+            },
+            {
+              "text": "('the', 1)",
+              "marks": ["code"]
+            },
+            {
+              "text": " records into a single "
+            },
+            {
+              "text": "('the', 12847)",
+              "marks": ["code"]
+            },
+            {
+              "text": " record per mapper. The shuffle now transfers at most one record per key per mapper, regardless of how many times that key appeared."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Combiners are optional and must satisfy a constraint: "
+            },
+            {
+              "text": "the combiner function must be associative and commutative",
+              "marks": ["bold"]
+            },
+            {
+              "text": ". Sum, max, min, and count all qualify. Average does not — the average of averages is not the average of the whole. For averages, you emit (sum, count) as a pair, combine those pairs, and divide at the reducer."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The "
+            },
+            {
+              "text": "partitioner",
+              "marks": ["bold"]
+            },
+            {
+              "text": " decides which reducer receives which key. The default is "
+            },
+            {
+              "text": "hash(key) % R",
+              "marks": ["code"]
+            },
+            {
+              "text": ". This produces an even distribution for uniformly distributed keys, but for skewed data (e.g., a key space where 90% of records have one of five keys) it causes "
+            },
+            {
+              "text": "reducer hot spots",
+              "marks": ["italic"]
+            },
+            {
+              "text": " — a small number of reducers handling almost all the data while the rest idle."
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Custom partitioners",
+                "marks": ["bold"]
+              },
+              {
+                "text": " can redistribute load: add a random secondary key suffix to hot keys, route specific known-skewed keys to dedicated reducers, or use a range partitioner that divides the key space based on sampled key distributions."
+              }
+            ],
+            [
+              {
+                "text": "TotalOrderPartitioner",
+                "marks": ["bold"]
+              },
+              {
+                "text": " (Hadoop) samples the key space before the job runs and builds a histogram of key frequencies. It then assigns key ranges to reducers such that each reducer handles approximately the same volume of data, even for skewed distributions."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "tip",
+          "runs": [
+            {
+              "text": "A combiner is essentially a local reduce. In Spark, the equivalent is aggregateByKey with a seqOp and combOp, or reduceByKey (which implicitly combines locally before shuffling). Understanding that these are the same concept as a Hadoop combiner helps you recognize when local pre-aggregation is safe."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "dds-ch10-c008",
+      "order": 8,
+      "title": "Workflows / Pipelines of MapReduce Jobs",
+      "teaser": "Real-world batch processing is never a single MapReduce job — it is a directed graph of dozens of jobs, each reading the output of predecessors from HDFS and writing its own output back. The workflow scheduler (Oozie, Airflow, Luigi) is what makes this manageable.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Consider a recommendation pipeline. To compute \"users who bought X also bought Y,\" you need to:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "numbered",
+          "items": [
+            [
+              {
+                "text": "Filter and clean the raw event log (MapReduce job 1)."
+              }
+            ],
+            [
+              {
+                "text": "Join events with the user dimension table to add demographic features (MapReduce job 2 — reduce-side join)."
+              }
+            ],
+            [
+              {
+                "text": "Group by user to build purchase histories (MapReduce job 3)."
+              }
+            ],
+            [
+              {
+                "text": "Compute item co-occurrence counts (MapReduce job 4 — a self-join)."
+              }
+            ],
+            [
+              {
+                "text": "Normalize co-occurrence scores and filter low-confidence pairs (MapReduce job 5)."
+              }
+            ],
+            [
+              {
+                "text": "Write the recommendation index to the serving store (MapReduce job 6)."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Each job reads from HDFS and writes to HDFS. The output of job N is the input of job N+1. This is the "
+            },
+            {
+              "text": "materialisation of intermediate state",
+              "marks": ["bold"]
+            },
+            {
+              "text": " pattern — every intermediate result is persisted to durable storage before the next job can begin. This has two consequences:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Fault tolerance is trivial.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " If job 4 fails, you re-run it from the job 3 output. No work from jobs 1–3 is lost."
+              }
+            ],
+            [
+              {
+                "text": "Latency is high.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " You cannot start job 4 until jobs 1, 2, and 3 have fully written their output to HDFS. The pipeline is as slow as the sum of all job runtimes, plus disk I/O between each."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Workflow schedulers — "
+            },
+            {
+              "text": "Apache Oozie",
+              "marks": ["bold"]
+            },
+            {
+              "text": " (the Hadoop-native scheduler), "
+            },
+            {
+              "text": "Apache Airflow",
+              "marks": ["bold"]
+            },
+            {
+              "text": " (Python-defined DAGs, the modern standard), and "
+            },
+            {
+              "text": "Luigi",
+              "marks": ["bold"]
+            },
+            {
+              "text": " (Spotify's Python-based scheduler) — manage this dependency graph. They track which jobs have completed, trigger downstream jobs when their dependencies are satisfied, and handle retries."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "In Airflow, the graph of jobs is expressed as a Python DAG object:"
+            }
+          ]
+        },
+        {
+          "type": "code",
+          "language": "python",
+          "text": "from airflow import DAG\nfrom airflow.providers.apache.spark.operators.spark_submit import SparkSubmitOperator\n\nwith DAG('recommendation_pipeline', schedule_interval='@daily') as dag:\n    clean    = SparkSubmitOperator(task_id='clean_events',   application='clean.py')\n    join     = SparkSubmitOperator(task_id='join_users',     application='join.py')\n    group    = SparkSubmitOperator(task_id='group_history',  application='group.py')\n    cooccur  = SparkSubmitOperator(task_id='co_occurrence',  application='cooccur.py')\n    normalize= SparkSubmitOperator(task_id='normalize',      application='normalize.py')\n    index    = SparkSubmitOperator(task_id='write_index',    application='index.py')\n\n    clean >> join >> group >> cooccur >> normalize >> index"
+        },
+        {
+          "type": "callout",
+          "variant": "info",
+          "runs": [
+            {
+              "text": "Airflow represents the DAG in code (Python), which means the pipeline structure is version-controlled, testable, and code-reviewable. This is a meaningful improvement over XML-based Oozie workflows, and partly explains Airflow's dominance in modern data engineering."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "dds-ch10-c009",
+      "order": 9,
+      "title": "Dataflow Engines (Spark, Flink, Tez)",
+      "teaser": "Spark, Flink, and Tez replace MapReduce's rigid two-phase model with a pipeline of operators that passes data between stages in memory — eliminating unnecessary materialisation to disk between every step.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "MapReduce's design forces every intermediate result to be written to HDFS. In a six-job pipeline, data is written and read from disk twelve times — six writes and six reads. For large datasets this is enormously wasteful: each HDFS write involves triple-replication, and each read incurs seek latency."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The "
+            },
+            {
+              "text": "dataflow engine",
+              "marks": ["bold"]
+            },
+            {
+              "text": " insight, which Spark (2009), Tez (2013), and Flink (2011) all arrived at independently, is: "
+            },
+            {
+              "text": "treat the entire pipeline as a single job with a graph of operators rather than a sequence of discrete map/reduce phases.",
+              "marks": ["italic"]
+            },
+            {
+              "text": " Operators pass data to each other through memory (or at most through local disk), not through HDFS."
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Apache Spark",
+                "marks": ["bold"]
+              },
+              {
+                "text": " (Berkeley AMPLab, 2009) introduced Resilient Distributed Datasets (RDDs) as a fault-tolerant in-memory abstraction. A Spark job compiles down to a DAG of stages; stages are divided by shuffle boundaries. Within a stage, operators are pipelined in memory — a filter, map, and partial aggregation can run as a single fused operator without writing intermediate results."
+              }
+            ],
+            [
+              {
+                "text": "Apache Tez",
+                "marks": ["bold"]
+              },
+              {
+                "text": " was Apache's first attempt to give Hive and Pig a faster execution engine than MapReduce while keeping the YARN resource manager. It removed the mandatory disk writes between map and reduce phases and allowed arbitrary operator DAGs."
+              }
+            ],
+            [
+              {
+                "text": "Apache Flink",
+                "marks": ["bold"]
+              },
+              {
+                "text": " (TU Berlin, 2011) was designed as a unified batch and stream processing engine from the start. Its batch processing model is pipeline-of-operators with spillable in-memory state — operators can spill to disk when memory is insufficient, unlike Spark's earlier RDD model which would fail on OOM."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The practical difference for the recommendation pipeline: in Spark, all six logical steps compile to a single DAG of operators. The clean → join → group sequence might execute entirely in memory, with HDFS writes only at the end and at shuffle boundaries. Job startup overhead is paid once, not six times. Runtime on typical workloads: 10–100× faster than Hadoop MapReduce."
+            }
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "info",
+          "runs": [
+            {
+              "text": "Spark has largely displaced Hadoop MapReduce for new batch workloads. However, Hadoop MapReduce remains in production at many organizations that built workflows on it pre-2015. Understanding MapReduce is still essential — both for maintaining those systems and because Spark's own execution model (stages, shuffles, tasks) is MapReduce's direct descendant."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "dds-ch10-c010",
+      "order": 10,
+      "title": "DAG of Operators",
+      "teaser": "The dataflow engine's compile target is a directed acyclic graph of operators — nodes are computations, edges are data dependencies. The DAG is what makes operator fusion, predicate pushdown, and parallel execution possible.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "When you write a Spark job in Python or Scala, you are constructing a logical plan: a description of "
+            },
+            {
+              "text": "what",
+              "marks": ["italic"]
+            },
+            {
+              "text": " you want to compute. Spark's query planner translates this into a physical DAG of operators — a description of "
+            },
+            {
+              "text": "how",
+              "marks": ["italic"]
+            },
+            {
+              "text": " to execute it efficiently."
+            }
+          ]
+        },
+        {
+          "type": "code",
+          "language": "python",
+          "text": "# Logical plan (user writes this)\nevents = spark.read.parquet('s3://data/events/')\nusers  = spark.read.parquet('s3://data/users/')\n\nresult = (\n    events\n    .filter(events.event_type == 'purchase')   # Filter operator\n    .join(users, 'user_id')                    # Join operator\n    .groupBy('country')                        # Aggregate operator\n    .agg(count('*').alias('purchases'))\n    .orderBy('purchases', ascending=False)     # Sort operator\n)\nresult.write.parquet('s3://data/output/')\n\n# Spark compiles this into a DAG:\n# [Scan events] → [Filter] → [Exchange (shuffle by user_id)]\n# [Scan users]  →────────────────────────────────────────────→ [HashJoin]\n#                                                               → [Aggregate]\n#                                                               → [Exchange (shuffle by country)]\n#                                                               → [Sort]\n#                                                               → [Write]"
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The DAG structure enables several optimizations that are impossible in sequential MapReduce:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Operator fusion.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Adjacent operators with no shuffle between them are fused into a single task that processes each record without materialising intermediate results. The filter and scan above run as one operator."
+              }
+            ],
+            [
+              {
+                "text": "Predicate pushdown.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " The planner pushes filter conditions as close to the data source as possible. If reading Parquet, the file reader skips row groups that cannot satisfy "
+              },
+              {
+                "text": "event_type == 'purchase'",
+                "marks": ["code"]
+              },
+              {
+                "text": " based on column statistics — without reading those pages from disk."
+              }
+            ],
+            [
+              {
+                "text": "Join reordering.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " The planner can reorder joins (applying smaller filters first) and select join strategies (broadcast vs sort-merge) based on estimated cardinalities."
+              }
+            ],
+            [
+              {
+                "text": "Whole-stage code generation.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Spark 2.0+ generates JVM bytecode for entire fused operator pipelines at runtime, eliminating virtual dispatch overhead and enabling CPU-register-level optimizations."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The DAG is acyclic by definition: an operator cannot be its own input, because that would imply iterative processing (handled separately by looping over the DAG in Spark's GraphX or by Pregel's superstep model). Cycles in the data dependency graph require explicit looping constructs, not a cyclic DAG."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "dds-ch10-c011",
+      "order": 11,
+      "title": "Materialisation of Intermediate State",
+      "teaser": "MapReduce pays a materialisation tax at every stage boundary: write to HDFS, replicate three times, wait for acknowledgement, then read it back. Dataflow engines avoid this cost by keeping intermediate state in memory or streaming between operators.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The term "
+            },
+            {
+              "text": "materialisation",
+              "marks": ["bold"]
+            },
+            {
+              "text": " refers to persisting a dataset to durable storage before the next stage can read it. In MapReduce, materialisation is mandatory at every job boundary:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Mapper output is written to local disk (for reducer fault tolerance)."
+              }
+            ],
+            [
+              {
+                "text": "Reducer output is written to HDFS with 3× replication (for job fault tolerance)."
+              }
+            ],
+            [
+              {
+                "text": "The next job reads its input from HDFS."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "For a six-job pipeline processing 1 TB of data, this can mean 6–12 TB of HDFS writes and reads. At 100 MB/s sequential disk throughput, that is 16–33 hours of I/O alone — before any computation."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Dataflow engines take a different approach: "
+            },
+            {
+              "text": "intermediate state between operators within a stage is not materialised",
+              "marks": ["italic"]
+            },
+            {
+              "text": ". Records flow from one operator to the next in-memory, pipelined. Materialisation happens only at "
+            },
+            {
+              "text": "shuffle boundaries",
+              "marks": ["bold"]
+            },
+            {
+              "text": " (where data must cross the network) and at the final output."
+            }
+          ]
+        },
+        {
+          "type": "comparison",
+          "items": [
+            {
+              "label": "MapReduce (always materialises)",
+              "description": "Every job boundary writes to HDFS. Durable, but disk-bound. Fault recovery: re-run the failed job. Intermediate data costs storage and I/O at every step."
+            },
+            {
+              "label": "Spark (materialises at shuffle boundaries)",
+              "description": "Within a stage, pipelines in memory. At shuffle boundaries (groupBy, join), writes to local disk. Final output to HDFS. Fault recovery via lineage recomputation."
+            },
+            {
+              "label": "Flink (streaming pipelined execution)",
+              "description": "Even shuffle can be streamed between operators in a pipelined fashion. Can spill to disk under memory pressure. Supports incremental checkpoints for fault tolerance."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The trade-off is fault tolerance cost. If a stage fails mid-execution in Spark, the framework must re-execute from the last materialised checkpoint — which may mean re-running several upstream stages. MapReduce's mandatory materialisation means failures are always recoverable from the immediately prior step, regardless of which job failed."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "dds-ch10-c012",
+      "order": 12,
+      "title": "Fault Tolerance via Re-computation (RDD)",
+      "teaser": "Spark's Resilient Distributed Datasets encode the lineage of a dataset — how it was derived — rather than the data itself. When a partition is lost, Spark re-executes only the missing portion of the computation graph, not the entire job.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The original Spark paper (Zaharia et al., NSDI 2012) introduced the "
+            },
+            {
+              "text": "Resilient Distributed Dataset",
+              "marks": ["bold"]
+            },
+            {
+              "text": " (RDD) as the answer to a precise fault-tolerance question: how do you recover from a lost partition without writing everything to disk?"
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "An RDD is not a collection of data — it is a "
+            },
+            {
+              "text": "description",
+              "marks": ["italic"]
+            },
+            {
+              "text": " of how to compute a collection of data. Specifically, an RDD records:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Its parent RDDs",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — what data it was derived from."
+              }
+            ],
+            [
+              {
+                "text": "The transformation applied",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — map, filter, join, etc."
+              }
+            ],
+            [
+              {
+                "text": "Partitioning metadata",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — how many partitions, what partitioner was used."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "This "
+            },
+            {
+              "text": "lineage graph",
+              "marks": ["bold"]
+            },
+            {
+              "text": " is the RDD's durability guarantee. If partition 7 of the filtered events RDD is lost (because the executor holding it crashed), Spark does not need to restart the whole job. It traces the lineage back to the last materialised ancestor (the raw Parquet files on S3), re-reads only the input data for partition 7, and re-applies only the transformations needed to reconstruct that partition."
+            }
+          ]
+        },
+        {
+          "type": "code",
+          "language": "python",
+          "text": "# Spark tracks lineage automatically as you build a pipeline\nevents    = sc.textFile('s3://data/events/')         # RDD[str] — base\nparsed    = events.map(parse_json)                   # RDD[dict] — lineage: [events, map]\nfiltered  = parsed.filter(lambda r: r['type']=='buy') # RDD[dict] — lineage: [parsed, filter]\nby_user   = filtered.map(lambda r: (r['user_id'], r)) # RDD[(k,v)] — lineage: [...]\n\n# If partition 3 of by_user is lost:\n# Spark re-reads events partition 3 → applies parse_json → filter → map\n# Only 3 tasks re-execute; 99 other partitions are unaffected."
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "For "
+            },
+            {
+              "text": "wide dependencies",
+              "marks": ["bold"]
+            },
+            {
+              "text": " (shuffles, joins) the lineage-based recovery is more expensive: a lost partition after a shuffle may require re-reading data from multiple parent partitions. For this reason, Spark allows you to "
+            },
+            {
+              "text": "checkpoint",
+              "marks": ["bold"]
+            },
+            {
+              "text": " an RDD — materialise it to HDFS — to truncate the lineage graph and bound recovery cost for long pipelines."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Modern Spark uses DataFrames and Datasets (not the raw RDD API) for most work, but the underlying execution model is still lineage-based. The DataFrame's query plan is the RDD lineage, reified as a logical plan that the Catalyst optimizer transforms into a physical plan before execution."
+            }
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "info",
+          "runs": [
+            {
+              "text": "RDD lineage is a form of data provenance: you can always reconstruct how a dataset was computed. This is distinct from the broader data lineage concept (which tracks which business entities contributed to a result) but uses the same fundamental idea — recording derivation rather than just the derived value."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "dds-ch10-c013",
+      "order": 13,
+      "title": "Bulk Synchronous Parallel (BSP)",
+      "teaser": "The Bulk Synchronous Parallel model — supersteps of local computation alternating with global barrier synchronization and message passing — is the foundation of Pregel, Giraph, and GraphX for iterative graph algorithms that defeat the DAG model.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "MapReduce and dataflow DAGs share an implicit assumption: computation terminates after a fixed, known number of stages. Graph algorithms like PageRank, connected components, and shortest paths are "
+            },
+            {
+              "text": "iterative",
+              "marks": ["bold"]
+            },
+            {
+              "text": " — the number of iterations is data-dependent and typically unknown in advance. Running such an algorithm as a MapReduce workflow means spinning up a new job for each iteration, paying job-startup overhead and full materialisation at every step. For PageRank on a billion-node graph, this is prohibitive."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The "
+            },
+            {
+              "text": "Bulk Synchronous Parallel",
+              "marks": ["bold"]
+            },
+            {
+              "text": " (BSP) model, proposed by Leslie Valiant in 1990 and applied to graph computation by Google's Pregel paper (Malewicz et al., SIGMOD 2010), provides a better abstraction. Each processor executes the same program in a sequence of "
+            },
+            {
+              "text": "supersteps",
+              "marks": ["bold"]
+            },
+            {
+              "text": ":"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "numbered",
+          "items": [
+            [
+              {
+                "text": "Compute.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Each vertex (processor) receives the messages sent to it in the previous superstep, updates its local state, and sends messages to its neighbours."
+              }
+            ],
+            [
+              {
+                "text": "Barrier synchronization.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " All vertices complete superstep S before any vertex begins superstep S+1. Messages sent in superstep S are delivered at the start of superstep S+1."
+              }
+            ],
+            [
+              {
+                "text": "Repeat until convergence.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Vertices vote to halt when they have converged. The job terminates when all vertices have halted and no messages are in flight."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "code",
+          "language": "python",
+          "text": "# Pregel-style PageRank vertex program\n# Each superstep: receive rank contributions from neighbours,\n# update own rank, send updated contribution to own neighbours\n\ndef vertex_compute(vertex, messages):\n    if superstep == 0:\n        vertex.rank = 1.0 / num_vertices\n    else:\n        # Sum incoming rank contributions\n        rank_sum = sum(messages)\n        vertex.rank = 0.15 / num_vertices + 0.85 * rank_sum\n\n    # Send contribution to each out-neighbour\n    for neighbour in vertex.out_edges:\n        send_message(neighbour, vertex.rank / len(vertex.out_edges))\n\n    # Halt when rank change is negligible\n    if abs(vertex.rank - vertex.prev_rank) < 0.0001:\n        vertex.vote_to_halt()"
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Open-source implementations of the BSP model for graphs include:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Apache Giraph",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — Facebook's open-source Pregel implementation on Hadoop YARN. Powers Facebook's social graph analysis at trillion-edge scale."
+              }
+            ],
+            [
+              {
+                "text": "Spark GraphX",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — Spark's graph processing library. Implements Pregel semantics on top of RDDs, giving you Spark's lineage-based fault tolerance with BSP's iterative computation model. The "
+              },
+              {
+                "text": "GraphX.Pregel()",
+                "marks": ["code"]
+              },
+              {
+                "text": " API directly mirrors Pregel supersteps."
+              }
+            ],
+            [
+              {
+                "text": "PowerGraph / GraphLab",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — academic systems that introduced vertex-cut partitioning to handle power-law graph degree distributions more efficiently than Pregel's edge-cut model."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "info",
+          "runs": [
+            {
+              "text": "BSP's barrier synchronization is what makes it unsuitable for stream processing — waiting for all vertices to finish a superstep before proceeding introduces latency proportional to the slowest vertex. For iterative batch algorithms over bounded graph data, it is the right model. For real-time graph updates, systems like Flink's stateful streaming or TigerGraph's native graph database use different approaches."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "dds-ch10-c014",
+      "order": 14,
+      "title": "Data Lineage",
+      "teaser": "Data lineage — the provenance record of which source data contributed to a given output — is what separates a reproducible batch pipeline from an opaque data artifact. It enables debugging, compliance, and re-computation after upstream corrections.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "When a batch pipeline produces a recommendation model or a billing report, questions inevitably arise: which rows of the raw event log contributed to this number? If we discovered that yesterday's sensor data was corrupted, which downstream reports need to be recomputed? Who authorized the use of this user data for this model?"
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "These are lineage questions. "
+            },
+            {
+              "text": "Data lineage",
+              "marks": ["bold"]
+            },
+            {
+              "text": " (also called "
+            },
+            {
+              "text": "data provenance",
+              "marks": ["italic"]
+            },
+            {
+              "text": ") is the record of how a derived dataset was produced: which source datasets it reads from, which transformations were applied, and which job (and which version of that job) performed each transformation."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Lineage operates at multiple levels of granularity:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Job-level lineage.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " \"This output table was produced by job "
+              },
+              {
+                "text": "recommendation_v3.py",
+                "marks": ["code"]
+              },
+              {
+                "text": " at 2026-05-21T03:00Z, reading from "
+              },
+              {
+                "text": "events_2026-05-20",
+                "marks": ["code"]
+              },
+              {
+                "text": " and "
+              },
+              {
+                "text": "users_snapshot_2026-05-21",
+                "marks": ["code"]
+              },
+              {
+                "text": ".\" This is the minimum useful lineage."
+              }
+            ],
+            [
+              {
+                "text": "Column-level lineage.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " \"The "
+              },
+              {
+                "text": "predicted_revenue",
+                "marks": ["code"]
+              },
+              {
+                "text": " column was derived from "
+              },
+              {
+                "text": "events.purchase_amount",
+                "marks": ["code"]
+              },
+              {
+                "text": " * "
+              },
+              {
+                "text": "model.conversion_rate",
+                "marks": ["code"]
+              },
+              {
+                "text": ".\" Critical for GDPR right-to-erasure compliance and debugging unexpected values."
+              }
+            ],
+            [
+              {
+                "text": "Row-level lineage.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " \"This record in the fraud_alerts table came from event_id=XYZ-123.\" Required for audit trails in financial systems but expensive to track at scale."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The connection to Spark's RDD lineage is direct but narrow. RDD lineage is a technical mechanism for fault recovery — it records operator transformations, not the business-level provenance. True data lineage requires additional metadata management, typically via:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Apache Atlas",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — Hadoop-ecosystem metadata and lineage tracking, with a graph of entities (datasets, processes, columns) and relationships."
+              }
+            ],
+            [
+              {
+                "text": "OpenLineage",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — an open standard (backed by Astronomer and Datakin, now part of the CNCF) for emitting lineage events from Spark, Airflow, dbt, and other tools. Consumed by Marquez (the open-source lineage server) or commercial catalogs."
+              }
+            ],
+            [
+              {
+                "text": "dbt (data build tool)",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — records lineage as a side effect of its SQL transformation model. Every model in a dbt project declares its upstream dependencies; the lineage DAG is generated automatically."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Lineage is the key to "
+            },
+            {
+              "text": "reproducibility",
+              "marks": ["bold"]
+            },
+            {
+              "text": " in batch pipelines. A batch job whose inputs are fully specified (snapshot of source data at a specific timestamp + exact version of the transformation code) is deterministic: re-running it produces the same output. This is what Kleppmann means when he argues that batch processing's immutable inputs are a fundamental advantage — the job is a pure function, and lineage is its documentation."
+            }
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "warning",
+          "runs": [
+            {
+              "text": "Lineage breaks when jobs read from mutable sources (databases that were updated between the original run and the re-run) or embed non-determinism (current timestamp, random seeds without fixed initialization). Immutable input snapshots — reading from dated partition paths like s3://data/events/dt=2026-05-21/ rather than a live OLTP table — are the primary technique for preserving lineage integrity."
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

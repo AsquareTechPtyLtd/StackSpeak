@@ -1,0 +1,1541 @@
+{
+  "chapterId": "k8s-ch07-health-readiness-and-probes",
+  "shardIndex": 7,
+  "cards": [
+    {
+      "id": "k8s-ch07-c001",
+      "order": 1,
+      "title": "Liveness Probe — Is This Pod Still Alive?",
+      "teaser": "A liveness probe answers one question: is this container still functioning? A failed liveness probe causes kubelet to restart the container — it is Kubernetes' way of recovering from a process that is running but stuck.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "A process can be running — visible in "
+            },
+            {
+              "text": "ps",
+              "marks": ["code"]
+            },
+            {
+              "text": ", consuming CPU — and still be completely stuck. A deadlock, a goroutine leak blocking all goroutines, a JVM stuck in full GC: the process is alive in the OS sense but dead in the application sense. Without a liveness probe, Kubernetes has no way to detect this. The pod stays Running; traffic keeps flowing in; responses never come out."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The liveness probe is the fix. Kubelet runs it on a schedule. If it fails "
+            },
+            {
+              "text": "failureThreshold",
+              "marks": ["code"]
+            },
+            {
+              "text": " consecutive times, kubelet kills the container and restarts it according to the pod's "
+            },
+            {
+              "text": "restartPolicy",
+              "marks": ["code"]
+            },
+            {
+              "text": "."
+            }
+          ]
+        },
+        {
+          "type": "code",
+          "lang": "yaml",
+          "text": "livenessProbe:\n  httpGet:\n    path: /healthz\n    port: 8080\n  initialDelaySeconds: 15\n  periodSeconds: 10\n  failureThreshold: 3\n  timeoutSeconds: 5"
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "This probe hits "
+            },
+            {
+              "text": "/healthz",
+              "marks": ["code"]
+            },
+            {
+              "text": " every 10 seconds. Three consecutive failures trigger a container restart. The 15-second initial delay prevents a false kill during startup."
+            }
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "warning",
+          "runs": [
+            {
+              "text": "Common failure mode: a liveness probe that calls a heavy endpoint (one that queries a database, holds a lock, or takes >1 s) will fail under load — triggering a restart loop that makes the problem worse. The liveness endpoint must be cheap, stateless, and fast."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "A liveness probe that fails continuously is called a "
+            },
+            {
+              "text": "CrashLoopBackOff",
+              "marks": ["code"]
+            },
+            {
+              "text": ". Kubernetes applies exponential backoff between restarts (10 s, 20 s, 40 s … up to 5 min). The pod stays in "
+            },
+            {
+              "text": "CrashLoopBackOff",
+              "marks": ["code"]
+            },
+            {
+              "text": " state, which is a clear signal that the liveness probe itself — or the application — is misconfigured."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "A liveness probe asks the container \"are you still functional?\" on a schedule. If the answer is no enough times in a row, Kubernetes restarts the container. It catches the stuck-but-running failure mode that the OS alone cannot detect."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "k8s-ch07-c002",
+      "order": 2,
+      "title": "Readiness Probe — Is This Pod Ready for Traffic?",
+      "teaser": "A readiness probe answers: should this pod receive traffic right now? A failed readiness probe removes the pod from Service endpoints — no restart, just traffic removal — and re-adds it once the probe passes again.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Liveness and readiness are often confused. They are not the same thing. Liveness is about survival; readiness is about capacity. A pod can be alive but not ready: it may be warming up a cache, running a database migration, or temporarily overloaded. Restarting it would make things worse. Removing it from the load balancer rotation is the right move."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "When a readiness probe fails, kubelet sets the "
+            },
+            {
+              "text": "Ready",
+              "marks": ["code"]
+            },
+            {
+              "text": " condition on the pod to "
+            },
+            {
+              "text": "False",
+              "marks": ["code"]
+            },
+            {
+              "text": ". The endpoints controller immediately removes the pod's IP from the "
+            },
+            {
+              "text": "Endpoints",
+              "marks": ["code"]
+            },
+            {
+              "text": " object backing the Service. No new traffic reaches it. When the probe passes again, the pod is re-added."
+            }
+          ]
+        },
+        {
+          "type": "code",
+          "lang": "yaml",
+          "text": "readinessProbe:\n  httpGet:\n    path: /ready\n    port: 8080\n  initialDelaySeconds: 5\n  periodSeconds: 5\n  failureThreshold: 3\n  successThreshold: 1"
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Notice "
+            },
+            {
+              "text": "successThreshold: 1",
+              "marks": ["code"]
+            },
+            {
+              "text": " — a single success re-admits the pod. This is the default and usually correct. If your application takes several seconds after becoming ready to warm caches, set "
+            },
+            {
+              "text": "successThreshold: 2",
+              "marks": ["code"]
+            },
+            {
+              "text": " or "
+            },
+            {
+              "text": "3",
+              "marks": ["code"]
+            },
+            {
+              "text": " to avoid flapping."
+            }
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "info",
+          "runs": [
+            {
+              "text": "Ready vs Healthy: a pod that is unhealthy (liveness fails) gets restarted. A pod that is not ready (readiness fails) stays alive but off rotation. Use readiness to signal \"I'm temporarily unable to serve\" — backpressure, dependency unavailability, or graceful shutdown draining. Use liveness to signal \"I'm broken and need to be replaced.\""
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "A subtle deployment pattern: set the readiness probe to fail intentionally at startup (return 503 until the application is warm). This prevents the Deployment rolling update from sending traffic to the new pod until it is genuinely ready — even if the liveness probe passes."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "A readiness probe asks \"are you ready for customers?\" not \"are you alive?\" Fail it and you get pulled off the load balancer. Pass it again and you get put back. The container never restarts — you are just temporarily invisible to traffic."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "k8s-ch07-c003",
+      "order": 3,
+      "title": "Startup Probe — Protecting Slow-Starting Containers",
+      "teaser": "A startup probe handles the bootstrapping phase: until it passes, liveness and readiness probes are disabled. This lets slow-starting containers (JVM apps, containers running migrations) take as long as they need without triggering false liveness kills.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Before startup probes (added in Kubernetes 1.16, stable in 1.20), teams faced a dilemma with slow-starting containers. Set "
+            },
+            {
+              "text": "initialDelaySeconds",
+              "marks": ["code"]
+            },
+            {
+              "text": " high enough to cover the worst-case startup and liveness probes will be slow to detect real failures during steady-state operation. Set it tight and a slow startup on a cold node kills the container before it has a chance to start."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The startup probe solves this cleanly. Kubernetes runs only the startup probe until it succeeds. Once it succeeds once, liveness and readiness probes take over. The startup probe is allowed to fail "
+            },
+            {
+              "text": "failureThreshold * periodSeconds",
+              "marks": ["code"]
+            },
+            {
+              "text": " seconds before Kubernetes gives up and restarts the container."
+            }
+          ]
+        },
+        {
+          "type": "code",
+          "lang": "yaml",
+          "text": "# Allow up to 5 minutes (30 * 10s) for the app to start\nstartupProbe:\n  httpGet:\n    path: /healthz\n    port: 8080\n  failureThreshold: 30\n  periodSeconds: 10\n\n# Once startup succeeds, tight liveness probe is safe\nlivenessProbe:\n  httpGet:\n    path: /healthz\n    port: 8080\n  failureThreshold: 3\n  periodSeconds: 10"
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "This pattern gives the container up to 300 seconds to start. Once started, liveness failures are detected within 30 seconds (3 * 10 s). Without a startup probe, you would need "
+            },
+            {
+              "text": "initialDelaySeconds: 300",
+              "marks": ["code"]
+            },
+            {
+              "text": " on the liveness probe — meaning after a real hang in steady state, Kubernetes would wait 300 seconds before acting."
+            }
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "info",
+          "runs": [
+            {
+              "text": "The startup probe can use the same endpoint as the liveness probe. The difference is purely in timing: startup probe is a one-shot bootstrap gate; liveness probe is an ongoing steady-state health check. You can run both with identical HTTP checks."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "A startup probe is a \"do not disturb\" sign for slow containers. Kubernetes holds off on liveness and readiness checks until the startup probe passes. Once the app has bootstrapped, normal health checking kicks in — with tight thresholds that would have been dangerous during startup."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "k8s-ch07-c004",
+      "order": 4,
+      "title": "Probe Types: HTTP GET",
+      "teaser": "HTTP GET is the most common probe type. Kubelet sends an HTTP request; a 2xx or 3xx response means success. It requires the container to run an HTTP server — but gives the most expressive health signal.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "HTTP probes are ideal for applications that already expose an HTTP server — web apps, APIs, gRPC services with an HTTP health endpoint. The kubelet itself makes the HTTP request (not a proxy), so the probe fires regardless of the Service or Ingress configuration."
+            }
+          ]
+        },
+        {
+          "type": "code",
+          "lang": "yaml",
+          "text": "livenessProbe:\n  httpGet:\n    path: /healthz\n    port: 8080\n    scheme: HTTP          # or HTTPS\n    httpHeaders:\n      - name: X-Health-Check\n        value: \"kubelet\"\n  periodSeconds: 10\n  timeoutSeconds: 3"
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Key gotchas with HTTP probes:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Any 2xx or 3xx status code",
+                "marks": ["bold"]
+              },
+              {
+                "text": " is treated as success. 4xx and 5xx are failures. A 301 redirect is a success — kubelet does not follow the redirect."
+              }
+            ],
+            [
+              {
+                "text": "HTTPS probes skip certificate verification",
+                "marks": ["bold"]
+              },
+              {
+                "text": " by default. Self-signed certificates work fine for probes."
+              }
+            ],
+            [
+              {
+                "text": "The probe endpoint must not require authentication",
+                "marks": ["bold"]
+              },
+              {
+                "text": ". Kubelet has no credentials. A 401 Unauthorized is a probe failure."
+              }
+            ],
+            [
+              {
+                "text": "timeoutSeconds defaults to 1",
+                "marks": ["bold"]
+              },
+              {
+                "text": ". If your health endpoint does any I/O (even a DB ping), set "
+              },
+              {
+                "text": "timeoutSeconds: 3",
+                "marks": ["code"]
+              },
+              {
+                "text": " or higher. A timeout counts as a failure."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Recommended health endpoint design: "
+            },
+            {
+              "text": "/healthz",
+              "marks": ["code"]
+            },
+            {
+              "text": " (liveness) should check only internal state — no outbound calls. "
+            },
+            {
+              "text": "/ready",
+              "marks": ["code"]
+            },
+            {
+              "text": " (readiness) can check dependency availability — can I reach the database? Can I reach my upstream API? If a dependency is down, the pod should report not-ready, not dead."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "HTTP GET probes have kubelet knock on a URL door. 200? Healthy. 500? Failed. The endpoint must be cheap, unauthenticated, and timeout-safe — kubelet is not your browser and has no patience for slow responses."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "k8s-ch07-c005",
+      "order": 5,
+      "title": "Probe Types: TCP Socket, Exec, and gRPC",
+      "teaser": "Three alternatives to HTTP probes: TCP socket (can I open a connection?), exec (run a command and check its exit code), and gRPC (1.24+, calls the standard gRPC Health Checking Protocol). Each serves a different workload profile.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Not every container runs an HTTP server. Kubernetes offers three additional probe mechanisms."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "TCP Socket",
+              "marks": ["bold"]
+            },
+            {
+              "text": " — kubelet opens a TCP connection to the specified port. If the connection succeeds, the probe passes. No data is exchanged. Useful for databases (Postgres, Redis, MySQL) and any TCP service that does not speak HTTP."
+            }
+          ]
+        },
+        {
+          "type": "code",
+          "lang": "yaml",
+          "text": "livenessProbe:\n  tcpSocket:\n    port: 5432     # e.g. Postgres sidecar\n  periodSeconds: 15"
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Gotcha: a TCP socket probe only verifies the port is open and accepting connections — not that the application behind it is healthy. A Postgres that accepts connections but is stuck in recovery will pass the TCP probe while serving no queries."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Exec",
+              "marks": ["bold"]
+            },
+            {
+              "text": " — kubelet runs a command inside the container. Exit code 0 is success; anything else is failure. Powerful but expensive: each probe spawns a process inside the container."
+            }
+          ]
+        },
+        {
+          "type": "code",
+          "lang": "yaml",
+          "text": "livenessProbe:\n  exec:\n    command:\n      - /bin/sh\n      - -c\n      - redis-cli ping | grep PONG\n  periodSeconds: 10\n  timeoutSeconds: 5"
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Exec gotchas: the command runs inside the container's PID namespace. If the container image is distroless (no shell), exec probes cannot use "
+            },
+            {
+              "text": "/bin/sh",
+              "marks": ["code"]
+            },
+            {
+              "text": ". Use a statically compiled health-check binary, or switch to TCP/HTTP. Also, exec probes add fork overhead — avoid "
+            },
+            {
+              "text": "periodSeconds: 1",
+              "marks": ["code"]
+            },
+            {
+              "text": " with exec."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "gRPC",
+              "marks": ["bold"]
+            },
+            {
+              "text": " (stable in Kubernetes 1.27) — kubelet calls the gRPC "
+            },
+            {
+              "text": "grpc.health.v1.Health/Check",
+              "marks": ["code"]
+            },
+            {
+              "text": " RPC. The application must implement the standard gRPC Health Checking Protocol. No sidecar, no shell, no HTTP server needed."
+            }
+          ]
+        },
+        {
+          "type": "code",
+          "lang": "yaml",
+          "text": "livenessProbe:\n  grpc:\n    port: 50051\n    service: \"\"    # empty string checks overall server health\n  periodSeconds: 10"
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "TCP socket checks if a port answers. Exec runs a command and checks the exit code. gRPC calls the standard health RPC directly. TCP is the bluntest tool; exec is the most flexible; gRPC is the cleanest for native gRPC services."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "k8s-ch07-c006",
+      "order": 6,
+      "title": "Probe Parameters: Tuning Timing and Thresholds",
+      "teaser": "Five parameters control probe timing: initialDelaySeconds, periodSeconds, timeoutSeconds, failureThreshold, and successThreshold. Getting them wrong produces either slow failure detection or constant false-positive restarts.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "All probe types share the same five parameters."
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "initialDelaySeconds",
+                "marks": ["code", "bold"]
+              },
+              {
+                "text": " (default: 0) — how long to wait after the container starts before the first probe fires. Set this to at least your application's fastest observed startup time. Too low triggers false kills. Too high delays both failure detection and traffic admission on new pods."
+              }
+            ],
+            [
+              {
+                "text": "periodSeconds",
+                "marks": ["code", "bold"]
+              },
+              {
+                "text": " (default: 10) — how often to run the probe. Decrease for faster failure detection; increase to reduce probe overhead on sensitive endpoints."
+              }
+            ],
+            [
+              {
+                "text": "timeoutSeconds",
+                "marks": ["code", "bold"]
+              },
+              {
+                "text": " (default: 1) — how long kubelet waits for a response. A probe that exceeds this limit counts as a failure. The default of 1 second is almost always too tight for any endpoint that touches I/O."
+              }
+            ],
+            [
+              {
+                "text": "failureThreshold",
+                "marks": ["code", "bold"]
+              },
+              {
+                "text": " (default: 3) — how many consecutive failures before Kubernetes acts (restart for liveness, traffic removal for readiness). Set higher for endpoints with known transient latency spikes."
+              }
+            ],
+            [
+              {
+                "text": "successThreshold",
+                "marks": ["code", "bold"]
+              },
+              {
+                "text": " (default: 1; minimum for liveness: 1) — how many consecutive successes to re-establish healthy state. For readiness probes, setting this to 2 or 3 prevents flapping when an application oscillates at its capacity boundary."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Time-to-action formula: the worst case time from failure to Kubernetes acting is:"
+            }
+          ]
+        },
+        {
+          "type": "code",
+          "lang": "text",
+          "text": "time_to_act = initialDelaySeconds\n            + (periodSeconds * failureThreshold)\n            + (timeoutSeconds * failureThreshold)"
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "With defaults: 0 + (10 * 3) + (1 * 3) = 33 seconds from first failure to restart. For a liveness probe where a fast recovery matters, tuning "
+            },
+            {
+              "text": "periodSeconds: 5",
+              "marks": ["code"]
+            },
+            {
+              "text": " and "
+            },
+            {
+              "text": "failureThreshold: 2",
+              "marks": ["code"]
+            },
+            {
+              "text": " cuts this to ~12 seconds."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Probe parameters are a timing contract: wait this long to start, check this often, wait this long for a reply, fail this many times in a row before acting. The defaults are conservative — tune them to match your application's actual startup and response characteristics."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "k8s-ch07-c007",
+      "order": 7,
+      "title": "Choosing the Right Probe Type",
+      "teaser": "The probe-type decision is not just \"what does my app expose?\" — it involves trade-offs in fidelity, overhead, and distroless compatibility. Each type has a natural home.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Match the probe type to the workload, not to convenience."
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "HTTP GET",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — best default for web apps and APIs. Highest fidelity: the app controls the response body and can report internal state (cache warm, dependency health). Use this unless there is a specific reason not to."
+              }
+            ],
+            [
+              {
+                "text": "TCP socket",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — use for non-HTTP TCP services (databases, message brokers, legacy daemons). Accept the limitation: it proves the port is open, not that the application is healthy. Pair with an exec probe that actually tests a query if you need more than port-open assurance."
+              }
+            ],
+            [
+              {
+                "text": "Exec",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — use when the container has no listening port (batch jobs, sidecars that write files). Avoid on high-frequency probes or minimal images. Exec is the most flexible and the most dangerous: a probe that forks 60 processes per minute into a stressed container worsens the failure it is trying to detect."
+              }
+            ],
+            [
+              {
+                "text": "gRPC",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — use for native gRPC services (Envoy, etcd, most service meshes). Requires the application to implement "
+              },
+              {
+                "text": "grpc.health.v1",
+                "marks": ["code"]
+              },
+              {
+                "text": ". This is now the idiomatic choice for gRPC workloads — cleaner than adding an HTTP health sidecar."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "warning",
+          "runs": [
+            {
+              "text": "Anti-pattern: the same heavy endpoint for both liveness and readiness probes. Liveness probes should be fast and internal-only. Readiness probes can be slower and check dependencies. Using one expensive endpoint for both means a dependency outage (which should only make the pod not-ready) will instead restart the container — exactly wrong."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The readiness/liveness endpoint split is the most important health probe design decision. In a dependency failure scenario:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Correct:",
+                "marks": ["bold"]
+              },
+              {
+                "text": " readiness fails (pod removed from load balancer), liveness passes (pod stays alive). When the dependency recovers, readiness passes and traffic resumes."
+              }
+            ],
+            [
+              {
+                "text": "Wrong:",
+                "marks": ["bold"]
+              },
+              {
+                "text": " liveness fails (pod is restarted). Restarting a pod does not fix a downstream database. All pods restart in a cascade. Now you have a full restart loop during a dependency outage."
+              }
+            ]
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "HTTP for web services, TCP for non-HTTP ports, exec when there is no port at all, gRPC for gRPC services. And always keep liveness cheap and internal — save the dependency checks for readiness."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "k8s-ch07-c008",
+      "order": 8,
+      "title": "Container Lifecycle Hooks: PostStart and PreStop",
+      "teaser": "Kubernetes exposes two lifecycle hooks per container: PostStart fires immediately after the container starts; PreStop fires before SIGTERM is sent. Both are synchronous — Kubernetes waits for them to complete before proceeding.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Lifecycle hooks let application authors inject behavior at fixed points in the container lifecycle without modifying the container image. Both hooks support the same three handler types as probes: "
+            },
+            {
+              "text": "exec",
+              "marks": ["code"]
+            },
+            {
+              "text": ", "
+            },
+            {
+              "text": "httpGet",
+              "marks": ["code"]
+            },
+            {
+              "text": ", and (since 1.30) "
+            },
+            {
+              "text": "sleep",
+              "marks": ["code"]
+            },
+            {
+              "text": "."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "PostStart",
+              "marks": ["bold"]
+            },
+            {
+              "text": " — runs concurrently with the container's ENTRYPOINT. The word \"after\" in the docs is misleading: PostStart is not guaranteed to run after the ENTRYPOINT starts; it runs alongside it. The container's "
+            },
+            {
+              "text": "Ready",
+              "marks": ["code"]
+            },
+            {
+              "text": " state is not set until PostStart completes. If PostStart fails, the container is killed and subject to the restart policy."
+            }
+          ]
+        },
+        {
+          "type": "code",
+          "lang": "yaml",
+          "text": "lifecycle:\n  postStart:\n    exec:\n      command: [\"/bin/sh\", \"-c\", \"/scripts/register-service.sh\"]"
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "PreStop",
+              "marks": ["bold"]
+            },
+            {
+              "text": " — runs synchronously before SIGTERM is sent. Kubernetes waits for it to complete (or for "
+            },
+            {
+              "text": "terminationGracePeriodSeconds",
+              "marks": ["code"]
+            },
+            {
+              "text": " to expire) before signaling the container. Use this for graceful shutdown tasks: draining connections, deregistering from a service registry, flushing a write buffer."
+            }
+          ]
+        },
+        {
+          "type": "code",
+          "lang": "yaml",
+          "text": "lifecycle:\n  preStop:\n    exec:\n      command: [\"/bin/sh\", \"-c\", \"nginx -s quit; while killall -0 nginx; do sleep 1; done\"]\n  # Or simply add a sleep to let the load balancer drain:\n  # preStop:\n  #   sleep:\n  #     seconds: 5"
+        },
+        {
+          "type": "callout",
+          "variant": "warning",
+          "runs": [
+            {
+              "text": "A preStop hook that hangs (never exits) will run until terminationGracePeriodSeconds expires, after which Kubernetes sends SIGKILL regardless. The hook does not extend the grace period — it consumes it."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "PostStart and PreStop are callbacks that run at the bookends of a container's life. PostStart gives you a window to do setup work; PreStop gives you a window to do cleanup before the kill signal arrives. Both are blocking — Kubernetes waits for them."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "k8s-ch07-c009",
+      "order": 9,
+      "title": "preStop Hook — The Graceful Shutdown Bridge",
+      "teaser": "The preStop hook is the primary mechanism for graceful shutdown in Kubernetes. It solves a race condition: without it, traffic can arrive at a pod that has already received SIGTERM and closed its listener.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "There is a well-known race condition in Kubernetes pod termination. When a pod is deleted, two things happen concurrently:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "numbered",
+          "items": [
+            [
+              {
+                "text": "The endpoints controller removes the pod IP from the Service Endpoints object. This propagates to kube-proxy (which updates iptables/IPVS) and to Ingress controllers."
+              }
+            ],
+            [
+              {
+                "text": "The kubelet begins terminating the pod (runs preStop, sends SIGTERM)."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "These happen in parallel. Endpoint propagation is not instantaneous — it takes 1–5 seconds to percolate through kube-proxy on all nodes. During that window, clients still receive the pod's IP as a valid backend and send new requests to it. If the pod has already closed its listener in response to SIGTERM, those requests get connection-refused errors."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The fix is a preStop sleep:"
+            }
+          ]
+        },
+        {
+          "type": "code",
+          "lang": "yaml",
+          "text": "lifecycle:\n  preStop:\n    sleep:\n      seconds: 5   # Kubernetes 1.29+ native sleep\n    # Or for older clusters:\n    # exec:\n    #   command: [\"/bin/sleep\", \"5\"]"
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The 5-second sleep gives the control plane time to drain the pod from all load balancer backends before the application starts shutting down. After the preStop hook completes, Kubernetes sends SIGTERM, the application drains in-flight requests, and then exits cleanly."
+            }
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "info",
+          "runs": [
+            {
+              "text": "This preStop sleep is a best practice for any HTTP service running in Kubernetes, regardless of the application framework. Without it, rolling updates will produce 502/503 errors for in-flight requests during the transition window."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "When a pod is deleted, Kubernetes simultaneously starts removing it from the load balancer AND killing it. The load balancer update is slow. A preStop sleep bridges the gap — hold the pod alive long enough for traffic to stop arriving, then proceed with shutdown."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "k8s-ch07-c010",
+      "order": 10,
+      "title": "terminationGracePeriodSeconds and the SIGKILL Deadline",
+      "teaser": "terminationGracePeriodSeconds (default: 30) is the total budget from pod deletion decision to SIGKILL. It covers the preStop hook, the application's SIGTERM handling, and connection draining. After it expires, SIGKILL is unconditional.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "When a pod is deleted, Kubernetes starts a countdown. The "
+            },
+            {
+              "text": "terminationGracePeriodSeconds",
+              "marks": ["code"]
+            },
+            {
+              "text": " field on the pod spec (default: 30) defines the total time budget. After that many seconds, kubelet sends SIGKILL to every container in the pod that has not yet exited — regardless of what they are doing."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The budget is shared. The preStop hook consumes from the same 30-second clock. If the preStop hook takes 10 seconds, the application has 20 seconds to drain connections and exit cleanly."
+            }
+          ]
+        },
+        {
+          "type": "code",
+          "lang": "yaml",
+          "text": "spec:\n  terminationGracePeriodSeconds: 60   # give the app 60 seconds total\n  containers:\n    - name: api\n      lifecycle:\n        preStop:\n          sleep:\n            seconds: 5                # consume 5s for LB drain\n      # Application has ~55s to handle SIGTERM and exit"
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Common failure mode: the default 30 seconds is too short for batch workers or streaming consumers. A Kafka consumer mid-processing a batch may take 45 seconds to commit and exit cleanly. With "
+            },
+            {
+              "text": "terminationGracePeriodSeconds: 30",
+              "marks": ["code"]
+            },
+            {
+              "text": ", it gets SIGKILLed, the offset is never committed, and the message is reprocessed. Set the grace period to match your worst-case shutdown time."
+            }
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "warning",
+          "runs": [
+            {
+              "text": "Setting terminationGracePeriodSeconds very high (e.g., 3600) to \"be safe\" has a real cost: a pod stuck in Terminating blocks node drain operations (kubectl drain), PodDisruptionBudget evaluations, and rolling updates — potentially for an hour. Match the grace period to the actual shutdown SLA."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The grace period can also be overridden at delete time:"
+            }
+          ]
+        },
+        {
+          "type": "code",
+          "lang": "bash",
+          "text": "kubectl delete pod my-pod --grace-period=0 --force  # immediate SIGKILL (dangerous)"
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "terminationGracePeriodSeconds is a countdown timer. The moment a pod is deleted, the timer starts. PreStop hook, SIGTERM, connection drain — all of it must finish before the timer hits zero. At zero, SIGKILL fires no matter what."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "k8s-ch07-c011",
+      "order": 11,
+      "title": "Graceful Shutdown — The Full Sequence",
+      "teaser": "Graceful shutdown is a choreography between Kubernetes and the application. Getting it right requires understanding the exact sequence of events from pod deletion to process exit — and writing application code that handles SIGTERM correctly.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The full shutdown sequence in timeline form:"
+            }
+          ]
+        },
+        {
+          "type": "code",
+          "lang": "text",
+          "text": "T+0s   kubectl delete pod / Deployment rolling update begins\n       |\n       +--[parallel]---> Endpoints controller removes pod IP from Service\n       |                  (propagates to kube-proxy; takes 1-5s)\n       |\n       +--[parallel]---> kubelet begins termination sequence\n                          |\n                          T+0s  preStop hook fires\n                          |     (e.g. sleep 5s for LB drain)\n                          |\n                          T+5s  preStop hook completes\n                          |     kubelet sends SIGTERM to PID 1\n                          |\n                          T+5s  Application receives SIGTERM\n                          |     - Stop accepting new connections\n                          |     - Drain in-flight requests\n                          |     - Flush buffers / commit offsets\n                          |     - Exit with code 0\n                          |\n                          T+Xs  Process exits cleanly\n                          |     kubelet acknowledges; pod removed\n                          |\n       terminationGracePeriodSeconds expires (T+30s by default)\n                          |\n                          SIGKILL sent to any remaining processes"
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Application-side requirements for graceful shutdown:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Trap SIGTERM",
+                "marks": ["bold"]
+              },
+              {
+                "text": ". PID 1 in the container receives SIGTERM. If your app runs inside a shell wrapper ("
+              },
+              {
+                "text": "CMD [\"/bin/sh\", \"-c\", \"./app\"]",
+                "marks": ["code"]
+              },
+              {
+                "text": "), the shell receives SIGTERM but may not forward it to the child process. Use exec form ("
+              },
+              {
+                "text": "CMD [\"./app\"]",
+                "marks": ["code"]
+              },
+              {
+                "text": ") or handle signal forwarding explicitly."
+              }
+            ],
+            [
+              {
+                "text": "Drain the HTTP server",
+                "marks": ["bold"]
+              },
+              {
+                "text": ". Stop the listener from accepting new connections. Allow in-flight requests to complete. Most frameworks (Go's net/http, Node.js http.Server, Spring Boot) provide a graceful shutdown mode."
+              }
+            ],
+            [
+              {
+                "text": "Exit promptly after draining",
+                "marks": ["bold"]
+              },
+              {
+                "text": ". An application that ignores SIGTERM will sit idle until SIGKILL. This causes unnecessary delays and blocks node drain."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "info",
+          "runs": [
+            {
+              "text": "Go example: http.Server.Shutdown(ctx) with a context deadline. Node.js: server.close(callback). Spring Boot: server.shutdown=graceful + spring.lifecycle.timeout-per-shutdown-phase=20s. All modern frameworks have a graceful shutdown primitive — use it."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Graceful shutdown is a handshake: Kubernetes says SIGTERM, your app stops taking new work, finishes what it started, and exits. The preStop hook buys time for the load balancer to stop sending traffic. The terminationGracePeriodSeconds is the hard deadline for the whole handshake."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "k8s-ch07-c012",
+      "order": 12,
+      "title": "The 30-Second Default and When to Change It",
+      "teaser": "terminationGracePeriodSeconds defaults to 30. This is reasonable for stateless HTTP services but dangerously short for batch workers, message consumers, and stateful services. Know when to change it — and what breaks if you don't.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "30 seconds became the Kubernetes default because it covers the majority of HTTP service shutdowns: drain the load balancer, finish serving in-flight requests, and exit. A typical HTTP request takes milliseconds to seconds; a connection drain window of 20-25 seconds after a 5-second preStop hook is more than enough."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "When 30 seconds is not enough:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Kafka / RabbitMQ consumers",
+                "marks": ["bold"]
+              },
+              {
+                "text": ". A consumer mid-batch may need 30-120 seconds to process, commit, and exit cleanly. SIGKILLing triggers reprocessing (at-least-once semantics). Set "
+              },
+              {
+                "text": "terminationGracePeriodSeconds: 120",
+                "marks": ["code"]
+              },
+              {
+                "text": " and ensure the consumer handles SIGTERM by finishing the current batch."
+              }
+            ],
+            [
+              {
+                "text": "Database migration containers",
+                "marks": ["bold"]
+              },
+              {
+                "text": ". An init container running schema migrations should never be SIGKILLed mid-migration. Set the grace period on the pod that owns the migration job appropriately."
+              }
+            ],
+            [
+              {
+                "text": "ML inference servers",
+                "marks": ["bold"]
+              },
+              {
+                "text": ". A GPU inference request may take 10-60 seconds. Interrupting it mid-inference is wasteful and may return corrupted responses to clients."
+              }
+            ],
+            [
+              {
+                "text": "Stateful services writing to disk",
+                "marks": ["bold"]
+              },
+              {
+                "text": ". Postgres, etcd, and similar services need time to flush WAL, close file descriptors cleanly, and release locks. Running with the default grace period risks corruption on forced shutdown."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "For Jobs and CronJobs specifically, the activeDeadlineSeconds on the Job spec and "
+            },
+            {
+              "text": "terminationGracePeriodSeconds",
+              "marks": ["code"]
+            },
+            {
+              "text": " on the pod spec serve different purposes: activeDeadlineSeconds is the total job wall-clock limit; terminationGracePeriodSeconds is the cleanup budget per-pod after the job is killed."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "30 seconds is long enough for \"finish this HTTP request.\" It is not long enough for \"finish processing this Kafka batch\" or \"flush this database WAL.\" Match the grace period to your actual shutdown scenario — the default is just a starting point."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "k8s-ch07-c013",
+      "order": 13,
+      "title": "Restart Policies: Always, OnFailure, Never",
+      "teaser": "A pod's restartPolicy controls what happens when a container exits. Three values: Always (always restart), OnFailure (restart on non-zero exit), Never (never restart). The policy applies to all containers in the pod and is immutable after creation.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The "
+            },
+            {
+              "text": "restartPolicy",
+              "marks": ["code"]
+            },
+            {
+              "text": " field lives on the Pod spec, not on the container spec. It applies to every container in the pod and cannot be changed after the pod is created."
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Always",
+                "marks": ["bold", "code"]
+              },
+              {
+                "text": " (default) — restart the container whenever it exits, regardless of exit code. Appropriate for long-running services (Deployments, StatefulSets, DaemonSets use this). A container that exits with code 0 will still be restarted."
+              }
+            ],
+            [
+              {
+                "text": "OnFailure",
+                "marks": ["bold", "code"]
+              },
+              {
+                "text": " — restart only on non-zero exit codes. Appropriate for Jobs: if the job completes successfully (exit 0), leave it alone; if it crashes, retry. CronJobs use this as their natural restart policy."
+              }
+            ],
+            [
+              {
+                "text": "Never",
+                "marks": ["bold", "code"]
+              },
+              {
+                "text": " — never restart the container after it exits. Appropriate for one-shot tasks (database migration init containers, debug pods). The pod enters "
+              },
+              {
+                "text": "Completed",
+                "marks": ["code"]
+              },
+              {
+                "text": " or "
+              },
+              {
+                "text": "Failed",
+                "marks": ["code"]
+              },
+              {
+                "text": " state and stays there."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "code",
+          "lang": "yaml",
+          "text": "# A batch Job pod — restart on failure, stop on success\napiVersion: v1\nkind: Pod\nspec:\n  restartPolicy: OnFailure\n  containers:\n    - name: batch-worker\n      image: my-worker:latest"
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Important clarification: "
+            },
+            {
+              "text": "restartPolicy",
+              "marks": ["code"]
+            },
+            {
+              "text": " is a "
+            },
+            {
+              "text": "Pod",
+              "marks": ["bold"]
+            },
+            {
+              "text": " property. Deployments always create pods with "
+            },
+            {
+              "text": "restartPolicy: Always",
+              "marks": ["code"]
+            },
+            {
+              "text": " — it is not configurable at the Deployment level. The Deployment's own self-healing (replace failed pods) is separate from the pod's container restart behavior."
+            }
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "info",
+          "runs": [
+            {
+              "text": "CrashLoopBackOff is what Always and OnFailure look like when a container keeps failing. Kubernetes retries with exponential backoff starting at 10 seconds, doubling up to a maximum of 5 minutes between attempts. The backoff resets after the container has been running stably for 10 minutes."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Restart policies are simple: Always (keep it running, restart on any exit), OnFailure (restart only if it crashes), Never (let it finish and stop). Use Always for services, OnFailure for jobs, Never for one-shots."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "k8s-ch07-c014",
+      "order": 14,
+      "title": "Pod Disruption Budgets — Protecting Availability During Voluntary Disruptions",
+      "teaser": "A PodDisruptionBudget (PDB) limits how many pods of a deployment can be voluntarily disrupted simultaneously — during node drains, cluster upgrades, or rolling updates. Without one, a cluster upgrade can take down your entire service.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Kubernetes distinguishes two types of pod disruptions:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Involuntary",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — hardware failure, out-of-memory kill, kernel panic. Kubernetes cannot prevent these; it recovers from them."
+              }
+            ],
+            [
+              {
+                "text": "Voluntary",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — node drain (cluster upgrade), pod eviction (autoscaler scale-down), rolling update. These are disruptions that a human or controller initiates deliberately."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "PDBs constrain voluntary disruptions. They do not affect involuntary disruptions."
+            }
+          ]
+        },
+        {
+          "type": "code",
+          "lang": "yaml",
+          "text": "apiVersion: policy/v1\nkind: PodDisruptionBudget\nmetadata:\n  name: api-pdb\nspec:\n  minAvailable: 2        # at least 2 pods must remain available\n  selector:\n    matchLabels:\n      app: api"
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Alternatively, use "
+            },
+            {
+              "text": "maxUnavailable",
+              "marks": ["code"]
+            },
+            {
+              "text": ":"
+            }
+          ]
+        },
+        {
+          "type": "code",
+          "lang": "yaml",
+          "text": "spec:\n  maxUnavailable: 1    # at most 1 pod may be unavailable at a time\n  selector:\n    matchLabels:\n      app: api"
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "When "
+            },
+            {
+              "text": "kubectl drain",
+              "marks": ["code"]
+            },
+            {
+              "text": " tries to evict pods from a node, it checks the PDB first. If evicting a pod would violate the budget, the drain blocks until the deployment schedules a replacement and it becomes ready. This is the correct behavior — it enforces your availability guarantee automatically."
+            }
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "warning",
+          "runs": [
+            {
+              "text": "A PDB of minAvailable: 1 with a single-replica deployment is a deadlock: there is always exactly 1 pod, the PDB requires 1 to remain, so the drain can never evict the pod. Set minAvailable to less than your replica count, or use maxUnavailable: 1 which allows one pod down at a time regardless of replica count."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "A PodDisruptionBudget is a promise to Kubernetes: when you voluntarily evict or drain pods, always keep at least N available (or take down no more than M at once). It is your availability SLO expressed as a cluster-enforced policy."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "k8s-ch07-c015",
+      "order": 15,
+      "title": "Putting It All Together — A Production Health Configuration",
+      "teaser": "Combining startup probes, liveness probes, readiness probes, a preStop hook, and a tuned terminationGracePeriodSeconds into one manifest produces a container that starts safely, stays healthy, and shuts down gracefully.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "A complete production-grade health configuration for a Java Spring Boot API with a ~60-second startup time and Kafka consumer draining:"
+            }
+          ]
+        },
+        {
+          "type": "code",
+          "lang": "yaml",
+          "text": "apiVersion: apps/v1\nkind: Deployment\nmetadata:\n  name: api\nspec:\n  replicas: 3\n  template:\n    spec:\n      terminationGracePeriodSeconds: 90\n      containers:\n        - name: api\n          image: my-api:latest\n          lifecycle:\n            preStop:\n              sleep:\n                seconds: 10   # wait for LB drain before SIGTERM\n\n          # Gate for slow JVM startup — up to 120s allowed\n          startupProbe:\n            httpGet:\n              path: /actuator/health/liveness\n              port: 8080\n            failureThreshold: 24   # 24 * 5s = 120s max startup\n            periodSeconds: 5\n\n          # Ongoing liveness — tight threshold, cheap endpoint\n          livenessProbe:\n            httpGet:\n              path: /actuator/health/liveness\n              port: 8080\n            periodSeconds: 10\n            failureThreshold: 3\n            timeoutSeconds: 3\n\n          # Readiness — checks downstream deps\n          readinessProbe:\n            httpGet:\n              path: /actuator/health/readiness\n              port: 8080\n            periodSeconds: 5\n            failureThreshold: 3\n            successThreshold: 1\n            timeoutSeconds: 5"
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Key decisions in this configuration:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Startup probe",
+                "marks": ["bold"]
+              },
+              {
+                "text": " gives the JVM up to 120 seconds without triggering liveness kills."
+              }
+            ],
+            [
+              {
+                "text": "Liveness and readiness use separate Spring Boot Actuator endpoints",
+                "marks": ["bold"]
+              },
+              {
+                "text": " ("
+              },
+              {
+                "text": "/liveness",
+                "marks": ["code"]
+              },
+              {
+                "text": " vs "
+              },
+              {
+                "text": "/readiness",
+                "marks": ["code"]
+              },
+              {
+                "text": "). A dependency failure makes the app not-ready without triggering a restart."
+              }
+            ],
+            [
+              {
+                "text": "preStop sleep of 10 seconds",
+                "marks": ["bold"]
+              },
+              {
+                "text": " covers the load balancer propagation delay."
+              }
+            ],
+            [
+              {
+                "text": "terminationGracePeriodSeconds: 90",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — 10s (preStop) + 60s (Kafka batch drain) + 20s buffer = 90s total."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "info",
+          "runs": [
+            {
+              "text": "Pair this with a PodDisruptionBudget (minAvailable: 2 for 3 replicas) and you have a deployment that handles rolling updates, node drains, and dependency outages without dropping traffic."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The full picture: startup probe shields slow bootstrap, liveness probe catches stuck processes, readiness probe controls traffic flow, preStop hook handles the load-balancer race, and terminationGracePeriodSeconds sets the hard shutdown deadline. Each piece solves a different failure mode."
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

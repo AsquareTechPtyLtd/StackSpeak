@@ -1,0 +1,1549 @@
+{
+  "chapterId": "k8s-ch01-from-containers-to-orchestration",
+  "shardIndex": 1,
+  "cards": [
+    {
+      "id": "k8s-ch01-c001",
+      "order": 1,
+      "title": "Container Fundamentals — Process Isolation, Not VMs",
+      "teaser": "A container is not a virtual machine — it is a process running on the host kernel with restricted visibility. That distinction shapes everything: startup time, density, security posture, and the architecture of every container runtime ever built.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "A virtual machine emulates hardware: the guest OS boots on a hypervisor, acquires its own kernel, and believes it owns physical resources. A container does none of this. It is an ordinary Linux process — identified by a PID on the host — that the kernel has placed inside a set of isolation boundaries. The process shares the host kernel; there is no separate OS image, no boot sequence, no hardware emulation."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "This distinction has concrete consequences:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Startup time.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " A VM boots in 15–60 seconds; a container starts in milliseconds. The container process exists the moment the kernel executes its entry point — no boot loader, no kernel init, no udev."
+              }
+            ],
+            [
+              {
+                "text": "Density.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " A physical host running 100 VMs pays the RAM overhead of 100 OS images. A host running 100 containers pays only the overhead of 100 processes; the kernel is shared. Practical container densities of 300–1,000 per host are common."
+              }
+            ],
+            [
+              {
+                "text": "Kernel surface.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Because containers share the host kernel, a kernel vulnerability is a container escape. VMs are isolated at the hypervisor layer; a kernel exploit in a guest does not reach the host. This is the fundamental security trade-off that runtime sandboxes (Kata Containers, gVisor) address."
+              }
+            ],
+            [
+              {
+                "text": "Image size.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " A container image contains only the application and its userspace dependencies — not the kernel. Images are typically 50 MB–500 MB; VM images are typically 1–20 GB."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The two kernel primitives that make containers possible are "
+            },
+            {
+              "text": "namespaces",
+              "marks": ["bold"]
+            },
+            {
+              "text": " (what a process can see) and "
+            },
+            {
+              "text": "cgroups",
+              "marks": ["bold"]
+            },
+            {
+              "text": " (what a process can consume). Everything a container runtime does reduces to manipulating these two primitives before executing the container process."
+            }
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "info",
+          "runs": [
+            {
+              "text": "Liz Rice's \"Containers From Scratch\" (2018) demonstrates this clearly: a functional container can be assembled in ~50 lines of Go by calling clone() with namespace flags, mounting a rootfs, and exec-ing the target binary. No Docker required. The primitives are raw Linux syscalls."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "A container is a process that the kernel has made believe it is alone on the machine — it can not see other processes, has its own network stack, and is limited in how much CPU and RAM it can use. There is no separate OS and no hardware emulation; it is just your process with walls around it."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "k8s-ch01-c002",
+      "order": 2,
+      "title": "Linux Namespaces — The Isolation Primitive",
+      "teaser": "Linux namespaces partition global kernel resources so that processes in different namespaces see different views of the system. Six namespace types give containers their isolated view of processes, networking, filesystems, hostnames, IPC, and user IDs.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Namespaces were introduced incrementally into the Linux kernel starting with Linux 2.4.19 (mount namespaces, 2002). By Linux 3.8 (2013), all six types needed for a functional container were present. A namespace wraps a global kernel resource — the PID table, the network stack, the mount table — and makes each namespace an independent copy of that resource."
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "pid",
+                "marks": ["code", "bold"]
+              },
+              {
+                "text": " — Process ID namespace. Processes inside see a PID space starting at 1. The init process of the container (PID 1 inside) is a normal process from the host's perspective. A container cannot see or signal host processes."
+              }
+            ],
+            [
+              {
+                "text": "net",
+                "marks": ["code", "bold"]
+              },
+              {
+                "text": " — Network namespace. Provides an isolated network stack: separate network interfaces, routing tables, iptables rules, and port numbers. A process in a net namespace can bind port 80 without conflicting with another container also binding port 80."
+              }
+            ],
+            [
+              {
+                "text": "mnt",
+                "marks": ["code", "bold"]
+              },
+              {
+                "text": " — Mount namespace. Controls which filesystems are visible. The container's root filesystem (from the image layers) is mounted here. The host's filesystem is invisible unless explicitly bind-mounted."
+              }
+            ],
+            [
+              {
+                "text": "uts",
+                "marks": ["code", "bold"]
+              },
+              {
+                "text": " — UNIX Time-sharing System namespace. Isolates hostname and domain name. Each container can have its own hostname independent of the host."
+              }
+            ],
+            [
+              {
+                "text": "ipc",
+                "marks": ["code", "bold"]
+              },
+              {
+                "text": " — Inter-Process Communication namespace. Isolates System V IPC objects (message queues, semaphores, shared memory segments) and POSIX message queues. Prevents containers from interfering with each other's IPC resources."
+              }
+            ],
+            [
+              {
+                "text": "user",
+                "marks": ["code", "bold"]
+              },
+              {
+                "text": " — User namespace. Maps user and group IDs between the container and the host. A process can be UID 0 (root) inside a user namespace while being a non-root UID on the host — the basis for rootless containers. User namespaces are the primary mechanism for running containers without host root privileges."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Namespaces are created with the "
+            },
+            {
+              "text": "clone()",
+              "marks": ["code"]
+            },
+            {
+              "text": " or "
+            },
+            {
+              "text": "unshare()",
+              "marks": ["code"]
+            },
+            {
+              "text": " syscalls, using flags like "
+            },
+            {
+              "text": "CLONE_NEWPID",
+              "marks": ["code"]
+            },
+            {
+              "text": ", "
+            },
+            {
+              "text": "CLONE_NEWNET",
+              "marks": ["code"]
+            },
+            {
+              "text": ", etc. A container runtime calls "
+            },
+            {
+              "text": "clone()",
+              "marks": ["code"]
+            },
+            {
+              "text": " with all six flags simultaneously before exec-ing the container process."
+            }
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "info",
+          "runs": [
+            {
+              "text": "Linux 5.6 (2020) added the time namespace (CLONE_NEWTIME), allowing containers to have an isolated view of CLOCK_MONOTONIC and CLOCK_BOOTTIME. This is useful for testing time-dependent code without affecting the host clock."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "A namespace is a wrapper around a kernel resource that gives each container its own private copy: its own process table, its own network stack, its own filesystem view, its own hostname. Six types cover everything a process can see about the system. Put them all together and the container genuinely cannot tell it is sharing a kernel."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "k8s-ch01-c003",
+      "order": 3,
+      "title": "Linux cgroups — The Resource Control Primitive",
+      "teaser": "Control groups (cgroups) limit, account for, and prioritize what a process can consume — CPU time, RAM, disk I/O, network bandwidth. Where namespaces control what a container can see, cgroups control what it can use.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "cgroups were developed at Google by Paul Menage and Rohit Seth and merged into Linux 2.6.24 in 2008. The initial motivation was Google's internal need to run thousands of workloads per machine (what would become Borg) without any one job consuming resources needed by others. cgroups v2 (unified hierarchy) was introduced in Linux 4.5 (2016) and is the standard used by modern container runtimes."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "A cgroup is a hierarchical grouping of processes. Each group has a set of "
+            },
+            {
+              "text": "controllers",
+              "marks": ["bold"]
+            },
+            {
+              "text": " attached to it, each enforcing a resource limit:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "cpu controller.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Allocates CPU time shares using the Completely Fair Scheduler (CFS). A container given "
+              },
+              {
+                "text": "cpu.max = 50000 100000",
+                "marks": ["code"]
+              },
+              {
+                "text": " (cgroups v2) receives at most 50 ms of CPU time per 100 ms period — 50% of one core. CPU throttling is enforced even on an idle host."
+              }
+            ],
+            [
+              {
+                "text": "memory controller.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Sets hard limits on RAM usage ("
+              },
+              {
+                "text": "memory.max",
+                "marks": ["code"]
+              },
+              {
+                "text": "). When a container exceeds its limit, the OOM (Out-of-Memory) killer terminates the process rather than impacting other workloads. "
+              },
+              {
+                "text": "memory.swap.max",
+                "marks": ["code"]
+              },
+              {
+                "text": " controls swap usage separately."
+              }
+            ],
+            [
+              {
+                "text": "io controller.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Limits throughput and IOPS to block devices. A noisy-neighbor container doing heavy disk I/O will not starve co-located services of their I/O bandwidth."
+              }
+            ],
+            [
+              {
+                "text": "pids controller.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Limits the number of processes a cgroup can fork. Prevents a container from executing a fork bomb that exhausts the system's PID table."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The critical distinction from namespaces: namespaces are about "
+            },
+            {
+              "text": "visibility",
+              "marks": ["italic"]
+            },
+            {
+              "text": " (what can you see?); cgroups are about "
+            },
+            {
+              "text": "consumption",
+              "marks": ["italic"]
+            },
+            {
+              "text": " (how much can you use?). A container with namespaces but no cgroups is isolated but unconstrained — it can still monopolize CPU or exhaust RAM. Both primitives are required for a production-safe container."
+            }
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "warning",
+          "runs": [
+            {
+              "text": "A common Kubernetes mistake: setting memory.limits without setting memory.requests, or setting requests far below actual usage. The kubelet uses requests for scheduling placement and uses limits for OOM enforcement. A pod with no memory limit competes unrestricted with every co-located pod for RAM."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Namespaces give containers walls to see through; cgroups give containers a budget to spend. A cgroup wraps a group of processes and the kernel enforces: this group gets at most X CPU, Y RAM, and Z disk I/O. Without cgroups, containers are isolated but unconstrained — any one could starve all others."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "k8s-ch01-c004",
+      "order": 4,
+      "title": "OCI — The Open Container Initiative Standard",
+      "teaser": "The Open Container Initiative defines two interoperable specifications — the Image Spec and the Runtime Spec — that ensure any OCI-compliant image can run on any OCI-compliant runtime. Without OCI, the container ecosystem would be a proprietary lock-in swamp.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "In 2015, Docker donated its image format and runtime specification to the Linux Foundation to create the Open Container Initiative (OCI). The impetus was fragmentation risk: CoreOS had released its own container runtime (rkt) and image format (ACI), and the industry was heading toward the kind of incompatibility war that had plagued earlier packaging ecosystems. The OCI was founded by Docker, CoreOS, Google, Red Hat, and others to standardize the container substrate."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The OCI publishes two specifications:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "OCI Image Spec",
+                "marks": ["bold"]
+              },
+              {
+                "text": " (opencontainers/image-spec). Defines how a container image is structured: a manifest (list of layers and config), a config (JSON metadata including entrypoint, environment variables, labels), and a set of filesystem layers (each a tar archive of file changes). Any tool that can read an OCI image manifest can run an OCI image — the format is registry-agnostic and runtime-agnostic."
+              }
+            ],
+            [
+              {
+                "text": "OCI Runtime Spec",
+                "marks": ["bold"]
+              },
+              {
+                "text": " (opencontainers/runtime-spec). Defines the interface between a container manager (containerd, CRI-O) and a low-level runtime (runc). The spec defines a "
+              },
+              {
+                "text": "config.json",
+                "marks": ["code"]
+              },
+              {
+                "text": " bundle format: a root filesystem directory plus a JSON file specifying namespaces, cgroups, mounts, capabilities, and the process to run. Any runtime that consumes an OCI bundle and executes it correctly is OCI-compliant."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The reference OCI runtime implementation is "
+            },
+            {
+              "text": "runc",
+              "marks": ["code", "bold"]
+            },
+            {
+              "text": ", donated by Docker and maintained under the OCI umbrella. runc is a thin binary: given an OCI bundle, it calls "
+            },
+            {
+              "text": "clone()",
+              "marks": ["code"]
+            },
+            {
+              "text": " with namespace flags, sets up cgroups, mounts the rootfs, and exec-s the container process. Kata Containers and gVisor are alternative OCI runtime implementations that provide stronger isolation (VM-level and syscall interception respectively) while remaining OCI-compliant — the container manager does not need to change."
+            }
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "info",
+          "runs": [
+            {
+              "text": "The OCI Distribution Spec (opencontainers/distribution-spec) was added later to standardize the registry API — the HTTP protocol for pushing and pulling images. Docker Hub, GHCR, ECR, and GCR all implement it. A Docker image pushed to ECR can be pulled by containerd on a Kubernetes node without any Docker-specific tooling."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "OCI is the standard that ensures a container image built with Docker runs the same way on containerd, CRI-O, or any other runtime. The Image Spec defines what an image looks like on disk and in a registry; the Runtime Spec defines what a runtime must do to execute it. Without OCI, every runtime would be a proprietary island."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "k8s-ch01-c005",
+      "order": 5,
+      "title": "Container Images and Layers — Copy-on-Write Filesystem",
+      "teaser": "A container image is a stack of read-only filesystem layers. The union mount presents them as a single filesystem. This layered design makes image pulls incremental, enables layer sharing between containers, and gives each container a writable layer without copying the entire image.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Each instruction in a Dockerfile that modifies the filesystem ("
+            },
+            {
+              "text": "RUN",
+              "marks": ["code"]
+            },
+            {
+              "text": ", "
+            },
+            {
+              "text": "COPY",
+              "marks": ["code"]
+            },
+            {
+              "text": ", "
+            },
+            {
+              "text": "ADD",
+              "marks": ["code"]
+            },
+            {
+              "text": ") produces a new read-only layer: a tar archive of all files added, modified, or deleted relative to the previous layer. An image is the ordered list of these layers plus a config JSON. The OCI Image Spec formalizes this as a manifest referencing a content-addressed sequence of layer blobs."
+            }
+          ]
+        },
+        {
+          "type": "code",
+          "language": "plaintext",
+          "text": "Image layer stack (bottom to top):\n\n  ┌─────────────────────────────────────┐  ← writable container layer (tmpfs)\n  ├─────────────────────────────────────┤  ← COPY app /app      (layer 3, read-only)\n  ├─────────────────────────────────────┤  ← RUN pip install     (layer 2, read-only)\n  ├─────────────────────────────────────┤  ← FROM python:3.12    (layer 1, read-only)\n  └─────────────────────────────────────┘  ← scratch base\n\n  OverlayFS presents this as one unified /\n  Writes go to the writable layer only (copy-on-write)"
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The union filesystem that merges layers on Linux is "
+            },
+            {
+              "text": "OverlayFS",
+              "marks": ["bold"]
+            },
+            {
+              "text": " (merged into the kernel in Linux 3.18). It works by presenting a "
+            },
+            {
+              "text": "lowerdir",
+              "marks": ["code"]
+            },
+            {
+              "text": " (the read-only image layers, merged), an "
+            },
+            {
+              "text": "upperdir",
+              "marks": ["code"]
+            },
+            {
+              "text": " (the writable container layer), and a "
+            },
+            {
+              "text": "workdir",
+              "marks": ["code"]
+            },
+            {
+              "text": " (OverlayFS internal scratch space). Reads come from the merged view; writes go to "
+            },
+            {
+              "text": "upperdir",
+              "marks": ["code"]
+            },
+            {
+              "text": " only. Deleting a file in a lower layer writes a \"whiteout\" entry to "
+            },
+            {
+              "text": "upperdir",
+              "marks": ["code"]
+            },
+            {
+              "text": " that hides it."
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Layer sharing.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " If 50 containers on a host share the same "
+              },
+              {
+                "text": "python:3.12",
+                "marks": ["code"]
+              },
+              {
+                "text": " base layer, that layer is stored once on disk. Only the per-container writable layer is unique. This dramatically reduces both disk usage and pull time."
+              }
+            ],
+            [
+              {
+                "text": "Incremental pulls.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " When pulling a new image version, only layers not already present on the host are downloaded. Docker and containerd use content-addressed storage (layers identified by their SHA-256 digest) to determine what is already cached."
+              }
+            ],
+            [
+              {
+                "text": "Layer ordering matters.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Changing an early Dockerfile instruction invalidates all subsequent layer caches. Place "
+              },
+              {
+                "text": "COPY requirements.txt",
+                "marks": ["code"]
+              },
+              {
+                "text": " and "
+              },
+              {
+                "text": "RUN pip install",
+                "marks": ["code"]
+              },
+              {
+                "text": " before "
+              },
+              {
+                "text": "COPY . .",
+                "marks": ["code"]
+              },
+              {
+                "text": " to avoid reinstalling dependencies on every source change."
+              }
+            ]
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "A container image is a stack of read-only layers, one per Dockerfile instruction. The container gets a thin writable layer on top. When it reads a file, OverlayFS looks from the top down until it finds it. When it writes a file, the change goes to the writable layer only. This means 50 containers can share the same base without 50 copies on disk."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "k8s-ch01-c006",
+      "order": 6,
+      "title": "Container Registries — Image Distribution",
+      "teaser": "A container registry is a content-addressed artifact store for OCI images. It provides the HTTP API that runtimes use to pull images onto nodes and that CI pipelines use to push newly built images. Understanding registry semantics — tags, digests, garbage collection — prevents image distribution surprises at scale.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Registries implement the OCI Distribution Spec: an HTTP API with endpoints for manifests, layer blobs, and tags. The major public registries — Docker Hub ("
+            },
+            {
+              "text": "docker.io",
+              "marks": ["code"]
+            },
+            {
+              "text": "), GitHub Container Registry ("
+            },
+            {
+              "text": "ghcr.io",
+              "marks": ["code"]
+            },
+            {
+              "text": "), Amazon ECR ("
+            },
+            {
+              "text": "*.dkr.ecr.*.amazonaws.com",
+              "marks": ["code"]
+            },
+            {
+              "text": "), and Google Artifact Registry ("
+            },
+            {
+              "text": "*.pkg.dev",
+              "marks": ["code"]
+            },
+            {
+              "text": ") — all implement this spec, enabling runtime portability."
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Tags vs digests.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " A tag ("
+              },
+              {
+                "text": "myapp:v1.2.3",
+                "marks": ["code"]
+              },
+              {
+                "text": ") is a mutable pointer — it can be reassigned to a different image at any time. A digest ("
+              },
+              {
+                "text": "myapp@sha256:abc123...",
+                "marks": ["code"]
+              },
+              {
+                "text": ") is the SHA-256 hash of the image manifest — immutable. Production Kubernetes deployments should pin digests, not tags, to guarantee reproducibility. "
+              },
+              {
+                "text": "latest",
+                "marks": ["code"]
+              },
+              {
+                "text": " is the most mutable tag of all."
+              }
+            ],
+            [
+              {
+                "text": "Layer deduplication.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Registries store layers by their SHA-256 digest. If two images share a base layer, the registry stores one copy. Push and pull operations only transfer layers not already present — the registry's "
+              },
+              {
+                "text": "HEAD /v2/{name}/blobs/{digest}",
+                "marks": ["code"]
+              },
+              {
+                "text": " endpoint lets clients check existence before uploading."
+              }
+            ],
+            [
+              {
+                "text": "Pull rate limits.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Docker Hub enforces pull rate limits (100 pulls/6 hours for anonymous IPs; 200 for free authenticated users as of 2024). At Kubernetes cluster scale, many nodes pulling from Docker Hub simultaneously will hit these limits. Private registries (ECR, GHCR, Artifact Registry) or a registry mirror/proxy (Harbor, Nexus) eliminate this problem."
+              }
+            ],
+            [
+              {
+                "text": "Garbage collection.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Untagged manifests (dangling images) and unreferenced layer blobs accumulate over time. Registries need a GC pass to reclaim storage. ECR Lifecycle Policies and GitHub Container Registry's retention settings automate this."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "info",
+          "runs": [
+            {
+              "text": "Multi-platform images use an OCI Image Index (also called a manifest list): a manifest of manifests, each pointing to an image for a specific OS/architecture pair (linux/amd64, linux/arm64, etc.). When a runtime pulls the index, it selects the correct manifest for the node's architecture automatically. This is how Docker Hub serves the same image tag to x86 laptops and ARM-based Kubernetes nodes."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "A registry is an image warehouse: you push images to it from CI, nodes pull images from it at runtime. Tags are mutable nicknames for images; digests are immutable SHA-256 addresses. Use digests in production to guarantee you are running exactly the image you tested — a tag can silently change under you."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "k8s-ch01-c007",
+      "order": 7,
+      "title": "Docker vs containerd — Runtime Architecture",
+      "teaser": "Docker Engine was the original container runtime, but the industry converged on containerd as the standard low-level runtime. Understanding the layering — Docker as a developer-facing frontend, containerd as the Kubernetes-integrated daemon, runc as the kernel-touching executor — explains why Kubernetes removed Docker in v1.24 without breaking anything.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The container runtime stack has three distinct layers, each with a different interface:"
+            }
+          ]
+        },
+        {
+          "type": "code",
+          "language": "plaintext",
+          "text": "Container runtime layers:\n\n  ┌─────────────────────────────────────────────────┐\n  │  Developer tooling   │  Kubernetes (kubelet)    │\n  │  (docker CLI, SDK)   │                          │\n  └──────────┬───────────┴──────────────────────────┘\n             │                         │\n             │ Docker socket           │ CRI (gRPC)\n             │ (/var/run/docker.sock)  │\n  ┌──────────▼──────────┐  ┌──────────▼──────────┐\n  │    Docker Engine    │  │     containerd       │\n  │  (moby/moby)        │  │  (containerd/        │\n  │                     │  │   containerd)        │\n  └──────────┬──────────┘  └──────────┬──────────┘\n             │                        │\n             │   OCI Runtime Spec (executes bundles)\n             │                        │\n  ┌──────────▼────────────────────────▼──────────┐\n  │               runc  (OCI runtime)            │\n  │  clone() + cgroups + mount + exec            │\n  └──────────────────────────────────────────────┘\n             │\n             ▼\n       Linux Kernel (namespaces, cgroups)"
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Docker Engine",
+                "marks": ["bold"]
+              },
+              {
+                "text": " (moby/moby). The developer-facing product: a daemon that handles image building, volume management, networking, the "
+              },
+              {
+                "text": "docker run",
+                "marks": ["code"]
+              },
+              {
+                "text": " UX, and the Docker socket API. Docker Engine itself delegates container lifecycle to containerd internally. Kubernetes did not use the Docker socket — it spoke CRI to containerd directly."
+              }
+            ],
+            [
+              {
+                "text": "containerd",
+                "marks": ["bold"]
+              },
+              {
+                "text": " (CNCF graduated project). The industry-standard container runtime. Manages image pulls, snapshotters (OverlayFS layers), and container lifecycle. Exposes the CRI (Container Runtime Interface) gRPC API that kubelet calls. Also used by Docker Engine as its own underlying runtime."
+              }
+            ],
+            [
+              {
+                "text": "runc",
+                "marks": ["bold"]
+              },
+              {
+                "text": " (OCI reference runtime). A small binary that receives an OCI bundle and executes it: creates namespaces, configures cgroups, mounts the rootfs, and exec-s the process. containerd spawns runc per container. runc exits after the container starts; the container process is reparented to containerd-shim."
+              }
+            ],
+            [
+              {
+                "text": "CRI-O",
+                "marks": ["bold"]
+              },
+              {
+                "text": " (CNCF project). An alternative CRI implementation purpose-built for Kubernetes — it implements only the CRI API, without Docker-compatible features. Lighter than containerd for pure Kubernetes deployments."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Kubernetes deprecated dockershim (the adapter between kubelet and Docker Engine) in v1.20 and removed it in v1.24. Nodes using Docker Engine automatically continued working because Docker Engine uses containerd underneath — only the shim layer was removed. containerd became the de-facto default; CRI-O is common in OpenShift."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Docker is the friendly face; containerd is the engine room; runc is the person who actually calls the kernel. Kubernetes speaks directly to containerd (via the CRI API), skipping Docker entirely. When Kubernetes removed Docker support in v1.24 it was removing a translation layer, not the container runtime — containerd was already there."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "k8s-ch01-c008",
+      "order": 8,
+      "title": "Why Orchestrators Exist — The Many-Containers Problem",
+      "teaser": "Running one container is trivial. Running a thousand containers across fifty hosts, keeping them healthy, rescheduling failures, rolling out updates, routing traffic, and enforcing resource limits — that is what orchestrators are built for. The gap between 'docker run' and production is why Kubernetes exists.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "A single "
+            },
+            {
+              "text": "docker run",
+              "marks": ["code"]
+            },
+            {
+              "text": " command solves the deployment problem for one service on one machine. Scale to ten services, then a hundred, across a fleet of hosts, and new problems emerge that containers themselves do not address:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Placement.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Which host should run this container? The answer must account for available CPU and memory, affinity and anti-affinity rules (co-locate services that talk to each other; spread replicas across availability zones), and hardware constraints (GPU nodes, SSD nodes)."
+              }
+            ],
+            [
+              {
+                "text": "Health and rescheduling.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " When a container crashes or a host fails, someone must detect the failure and restart the container elsewhere. Polling health endpoints, deciding whether a slowdown is a crash, and draining traffic before restart require dedicated control logic."
+              }
+            ],
+            [
+              {
+                "text": "Service discovery and load balancing.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Containers get new IP addresses on every restart. Upstream services cannot hardcode container IPs. An orchestrator must maintain a stable virtual IP or DNS name that routes to healthy instances and updates in real time."
+              }
+            ],
+            [
+              {
+                "text": "Rolling updates and rollbacks.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Replacing 100 running containers with a new version without downtime requires a controlled rollout: start new containers, wait for health checks, drain old containers, repeat. A failed rollout must be reversible."
+              }
+            ],
+            [
+              {
+                "text": "Secret and configuration management.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Production credentials should not be baked into images. An orchestrator provides a mechanism to inject secrets and configuration at runtime, scoped to authorized workloads."
+              }
+            ],
+            [
+              {
+                "text": "Resource quotas.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " In a multi-tenant cluster, teams need resource limits. An orchestrator enforces namespace-level quotas so one team cannot monopolize the fleet."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The lineage for Kubernetes is direct: Google's internal cluster manager "
+            },
+            {
+              "text": "Borg",
+              "marks": ["bold"]
+            },
+            {
+              "text": " ran every Google workload for over a decade before Kubernetes. The 2015 Borg paper (Verma et al., \"Large-scale cluster management at Google with Borg\", EuroSys 2015) describes the same problems: bin packing, health management, service discovery, and quota. Kubernetes was designed by the same engineers (Brendan Burns, Joe Beda, Craig McLuckie) to bring Borg-style orchestration to the open-source world with a cleaner API."
+            }
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "info",
+          "runs": [
+            {
+              "text": "The Borg paper (2015) is worth reading as first principles for Kubernetes design. Almost every Kubernetes concept — cells (clusters), allocs (pods), tasks (containers), Jobs (Deployments), naming service (Service/DNS) — maps directly to a Borg concept. Understanding Borg explains why Kubernetes made the choices it did."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Running one container is easy. Running a thousand across fifty machines — deciding where each goes, restarting the ones that crash, routing traffic to healthy instances, rolling out updates safely — is the hard part. An orchestrator is the system that automates all of that. Kubernetes is what you use so you do not have to write that system yourself."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "k8s-ch01-c009",
+      "order": 9,
+      "title": "Pre-Kubernetes Alternatives — Mesos, Nomad, and Docker Swarm",
+      "teaser": "Kubernetes was not the first container orchestrator. Apache Mesos, HashiCorp Nomad, and Docker Swarm each solved the multi-host scheduling problem with different philosophies. Understanding what they got right — and where they fell short — reveals why Kubernetes achieved dominant adoption.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The orchestration problem was solved — partially — before Kubernetes existed:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Apache Mesos (2009).",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Originated at UC Berkeley, adopted by Twitter, Airbnb, and Apple. Mesos provided a two-level scheduling model: a central resource negotiator offered resources to framework schedulers (Marathon for long-running services, Chronos for batch jobs) which then decided placement. What it got right: unprecedented scale (10,000+ node clusters at Apple), excellent bin packing, and support for non-containerized workloads. Where it fell short: the two-level model added operational complexity; each framework had independent APIs; the rise of Kubernetes and the decline of Twitter-scale early adopters left Mesos without a large commercial ecosystem. Apache Mesos went dormant in 2022."
+              }
+            ],
+            [
+              {
+                "text": "Docker Swarm (2015).",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Docker's native clustering mode. What it got right: simplicity — converting a Docker host into a Swarm required one command; the existing Docker CLI worked against Swarm without change. Where it fell short: networking was fragile at scale, the control plane was not highly available by default, and the feature set lagged Kubernetes significantly. Docker Swarm is still maintained but adoption has collapsed to small deployments where operational simplicity matters more than features."
+              }
+            ],
+            [
+              {
+                "text": "HashiCorp Nomad (2015).",
+                "marks": ["bold"]
+              },
+              {
+                "text": " A general-purpose workload scheduler supporting Docker containers, VMs, JARs, and raw binaries. What it got right: operational simplicity (a single binary for server and client), first-class support for non-container workloads, and HashiCorp Vault and Consul integration. Where it falls short relative to Kubernetes: no built-in service mesh, no native persistent volume abstraction, and a much smaller ecosystem of operators and integrations. Nomad retains a real user base, especially for organizations already invested in the HashiCorp stack."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Why did Kubernetes win? A combination of Google's credibility (backed by Borg's decade of production use), the CNCF's vendor-neutral governance (preventing single-vendor lock-in), and a deliberate extensibility model (Custom Resource Definitions, the operator pattern) that let the ecosystem build on Kubernetes rather than around it. The timing aligned with Docker's growth and the industry's readiness for infrastructure standardization."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Before Kubernetes there was Mesos (powerful but complex, backed by Google-scale companies), Docker Swarm (simple but limited), and Nomad (flexible but niche). Kubernetes won by combining proven design from Google's internal Borg system, CNCF vendor-neutral governance so no one company owned it, and an extensibility model that let the whole cloud industry build on top of it."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "k8s-ch01-c010",
+      "order": 10,
+      "title": "The Kubernetes Control Plane — API Server, Scheduler, Controller Manager, etcd",
+      "teaser": "The control plane is Kubernetes's brain: it stores desired state, makes scheduling decisions, and runs the reconciliation loops that keep the cluster converging toward what you declared. Four components divide this work, each with a clearly bounded responsibility.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The control plane runs on dedicated master nodes (or as a managed service in EKS, GKE, AKS). It never runs user workloads. Every cluster operation — creating a Deployment, scaling a ReplicaSet, updating a ConfigMap — flows through the control plane:"
+            }
+          ]
+        },
+        {
+          "type": "code",
+          "language": "plaintext",
+          "text": "Kubernetes Control Plane:\n\n  ┌─────────────────────────────────────────────────────────┐\n  │                    CONTROL PLANE                        │\n  │                                                         │\n  │  ┌──────────────────┐    ┌──────────────────────────┐  │\n  │  │   kube-apiserver  │    │       etcd               │  │\n  │  │                  │◄──►│  (distributed KV store)  │  │\n  │  │  REST / gRPC     │    │  source of truth for all  │  │\n  │  │  auth/admission  │    │  cluster state            │  │\n  │  └────────┬─────────┘    └──────────────────────────┘  │\n  │           │  watches/lists                              │\n  │  ┌────────▼─────────┐    ┌──────────────────────────┐  │\n  │  │ kube-scheduler   │    │  kube-controller-manager  │  │\n  │  │                  │    │                          │  │\n  │  │  watches Pods    │    │  ReplicaSet controller   │  │\n  │  │  with no node    │    │  Deployment controller   │  │\n  │  │  assigns node    │    │  Node controller         │  │\n  │  └──────────────────┘    │  Service Account ctrl    │  │\n  │                          └──────────────────────────┘  │\n  └─────────────────────────────────────────────────────────┘"
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "kube-apiserver.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " The single entry point to the cluster. All clients ("
+              },
+              {
+                "text": "kubectl",
+                "marks": ["code"]
+              },
+              {
+                "text": ", controllers, kubelets) communicate exclusively through the API server. It validates and persists objects to etcd, enforces authentication (x509 certs, tokens, OIDC), authorization (RBAC), and admission control (webhooks). The API server is the only component that writes to etcd."
+              }
+            ],
+            [
+              {
+                "text": "etcd.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " A distributed, strongly consistent key-value store (based on the Raft consensus algorithm). Stores the entire cluster state: every Pod, every Service, every ConfigMap, every Secret. etcd is the only stateful component in the control plane; losing etcd without a backup loses the cluster. Production deployments run etcd as a 3-node or 5-node cluster for HA."
+              }
+            ],
+            [
+              {
+                "text": "kube-scheduler.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Watches for Pods with "
+              },
+              {
+                "text": "spec.nodeName == \"\"",
+                "marks": ["code"]
+              },
+              {
+                "text": " (unscheduled) and assigns them to a node using a two-phase algorithm: "
+              },
+              {
+                "text": "Filtering",
+                "marks": ["bold"]
+              },
+              {
+                "text": " (eliminate nodes that cannot run the Pod: insufficient resources, taint mismatches, node selector mismatches) followed by "
+              },
+              {
+                "text": "Scoring",
+                "marks": ["bold"]
+              },
+              {
+                "text": " (rank remaining nodes by spread, resource utilization, affinity weights). The scheduler writes the node assignment back via the API server."
+              }
+            ],
+            [
+              {
+                "text": "kube-controller-manager.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " A single binary that runs dozens of control loop controllers. Each controller watches a specific resource type and acts to reconcile observed state to desired state. The ReplicaSet controller ensures the correct number of Pod replicas exist. The Node controller detects and taints NotReady nodes. The EndpointSlice controller updates endpoint lists when Pods come and go."
+              }
+            ]
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The control plane is four components working together: etcd stores everything; the API server is the gatekeeper everyone talks through; the scheduler decides which node each Pod runs on; and the controller manager runs dozens of loops that watch the cluster and fix anything that drifts from what you declared."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "k8s-ch01-c011",
+      "order": 11,
+      "title": "The Kubernetes Data Plane — kubelet, CRI, and kube-proxy",
+      "teaser": "The data plane is where workloads actually run. On every worker node, three components form the execution layer: kubelet enforces the Pod spec, the container runtime executes the containers, and kube-proxy programs network routing rules.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Worker nodes host the actual container workloads. Each node runs three components that together implement the Kubernetes execution model:"
+            }
+          ]
+        },
+        {
+          "type": "code",
+          "language": "plaintext",
+          "text": "Kubernetes Worker Node (Data Plane):\n\n  ┌───────────────────────────────────────────────────────┐\n  │                    WORKER NODE                        │\n  │                                                       │\n  │  ┌─────────────┐   CRI (gRPC)   ┌─────────────────┐  │\n  │  │   kubelet   │◄──────────────►│   containerd    │  │\n  │  │             │                │   (or CRI-O)    │  │\n  │  │  watches    │                └────────┬────────┘  │\n  │  │  PodSpec    │                         │ OCI       │\n  │  │  reports    │                ┌────────▼────────┐  │\n  │  │  status     │                │      runc       │  │\n  │  └─────────────┘                └────────┬────────┘  │\n  │                                          │            │\n  │  ┌─────────────┐                ┌────────▼────────┐  │\n  │  │  kube-proxy │                │   Linux Kernel  │  │\n  │  │             │                │ (namespaces,    │  │\n  │  │  iptables / │                │  cgroups,       │  │\n  │  │  ipvs rules │                │  OverlayFS)     │  │\n  │  │  for Svc VIP│                └─────────────────┘  │\n  │  └─────────────┘                                      │\n  └───────────────────────────────────────────────────────┘"
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "kubelet.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " The node agent. Watches the API server for Pods assigned to its node and calls the container runtime (via CRI) to start, stop, and health-check containers. Reports Pod status back to the API server. Manages pod-level resources: volume mounts, secrets injection, readiness/liveness probes. The kubelet is the bridge between the control plane's desired state and the node's actual state."
+              }
+            ],
+            [
+              {
+                "text": "Container Runtime Interface (CRI).",
+                "marks": ["bold"]
+              },
+              {
+                "text": " A gRPC API defined by Kubernetes that decouples the kubelet from the specific runtime. The kubelet calls "
+              },
+              {
+                "text": "RunPodSandbox",
+                "marks": ["code"]
+              },
+              {
+                "text": ", "
+              },
+              {
+                "text": "CreateContainer",
+                "marks": ["code"]
+              },
+              {
+                "text": ", "
+              },
+              {
+                "text": "StartContainer",
+                "marks": ["code"]
+              },
+              {
+                "text": " on the CRI endpoint. containerd and CRI-O both implement this API. The CRI was introduced in Kubernetes 1.5 to enable runtime pluggability."
+              }
+            ],
+            [
+              {
+                "text": "kube-proxy.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Programs network rules on each node to implement Kubernetes Service virtual IPs. When a Service is created, kube-proxy watches EndpointSlices and writes iptables or IPVS rules that map the Service ClusterIP:Port to one of the backing Pod IPs. In IPVS mode, kube-proxy uses the Linux kernel's IP Virtual Server for O(1) rule lookup instead of O(n) iptables chain traversal — critical at clusters with thousands of Services."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "info",
+          "runs": [
+            {
+              "text": "kube-proxy is increasingly being replaced by eBPF-based alternatives like Cilium, which programs network routing directly in the kernel via BPF maps — bypassing iptables entirely. Cilium provides lower latency, better observability, and network policy enforcement at line rate. Many managed Kubernetes offerings now support Cilium as an optional CNI plugin."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "On every worker node, kubelet reads what the control plane wants and tells containerd to make it happen. containerd calls runc to actually create the container. kube-proxy writes the iptables rules that let the Service virtual IP route to real Pod IPs. Together they are the hands that do what the brain (control plane) decided."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "k8s-ch01-c012",
+      "order": 12,
+      "title": "Declarative vs Imperative — Kubernetes as a Desired-State System",
+      "teaser": "Kubernetes is a desired-state system: you declare what you want, not what to do. This declarative model shifts the source of truth from shell commands to versioned YAML, enables GitOps, and is the reason Kubernetes can self-heal without operator intervention.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The contrast between imperative and declarative is fundamental to understanding Kubernetes's programming model:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Imperative",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — you tell the system what steps to execute. "
+              },
+              {
+                "text": "docker run nginx",
+                "marks": ["code"]
+              },
+              {
+                "text": " is imperative: start this process now. If the process dies, nothing restarts it — you issued a command, not a declaration of intent."
+              }
+            ],
+            [
+              {
+                "text": "Declarative",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — you tell the system what end state you want. "
+              },
+              {
+                "text": "kubectl apply -f deployment.yaml",
+                "marks": ["code"]
+              },
+              {
+                "text": " is declarative: I want three replicas of this container running at all times. Kubernetes accepts this as a goal to continuously maintain, not a one-time command to execute."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Every Kubernetes resource object has two key sub-fields:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "spec",
+                "marks": ["code", "bold"]
+              },
+              {
+                "text": " — the desired state you declare. \"I want 3 replicas of this Pod template.\""
+              }
+            ],
+            [
+              {
+                "text": "status",
+                "marks": ["code", "bold"]
+              },
+              {
+                "text": " — the observed state that controllers report. \"Currently 2 replicas are running; 1 is being scheduled.\""
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The gap between "
+            },
+            {
+              "text": "spec",
+              "marks": ["code"]
+            },
+            {
+              "text": " and "
+            },
+            {
+              "text": "status",
+              "marks": ["code"]
+            },
+            {
+              "text": " is what controllers act on. This model has several important properties:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Idempotency.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Applying the same manifest twice produces the same result. Imperative commands are not idempotent: running "
+              },
+              {
+                "text": "kubectl scale --replicas=3",
+                "marks": ["code"]
+              },
+              {
+                "text": " twice does not harm anything, but the second invocation is redundant rather than self-describing."
+              }
+            ],
+            [
+              {
+                "text": "Self-healing.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " If a Pod crashes, the ReplicaSet controller sees "
+              },
+              {
+                "text": "status.replicas < spec.replicas",
+                "marks": ["code"]
+              },
+              {
+                "text": " and creates a replacement. No human intervention required — the desired state is the standing instruction."
+              }
+            ],
+            [
+              {
+                "text": "GitOps compatibility.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Declarative manifests stored in Git are the source of truth. Tools like Argo CD and Flux CD continuously reconcile the cluster state against the Git repository — cluster drift triggers automated correction."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "warning",
+          "runs": [
+            {
+              "text": "kubectl has both imperative commands (kubectl run, kubectl expose, kubectl scale) and declarative commands (kubectl apply). Using imperative commands bypasses the manifest as source of truth: state changes made imperatively are not tracked in Git and will be overwritten by the next kubectl apply. In production, always prefer kubectl apply with version-controlled manifests."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Declarative means you write down what you want the cluster to look like, not the steps to get there. Kubernetes reads your declaration and continuously works to make the cluster match it. If something crashes, Kubernetes fixes it automatically because your declared intent is still in effect — you never said 'start three containers once', you said 'always have three containers'."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "k8s-ch01-c013",
+      "order": 13,
+      "title": "The Reconciliation Loop — Observe, Diff, Act",
+      "teaser": "The reconciliation loop is the fundamental pattern inside every Kubernetes controller: watch the current state of the cluster, compare it to the desired state, and take the minimum action needed to close the gap. Everything Kubernetes does — scheduling, scaling, rollouts, certificate rotation — is a reconciliation loop.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Every controller in Kubernetes — the ReplicaSet controller, the Deployment controller, the kubelet itself — implements the same three-step loop:"
+            }
+          ]
+        },
+        {
+          "type": "code",
+          "language": "plaintext",
+          "text": "The Reconciliation Loop:\n\n  ┌──────────────────────────────────────────────────────┐\n  │                                                      │\n  │   ┌───────────┐                                      │\n  │   │  OBSERVE  │  Read current state from API server  │\n  │   │           │  (via Informer cache, not raw watch)  │\n  │   └─────┬─────┘                                      │\n  │         │                                            │\n  │         ▼                                            │\n  │   ┌───────────┐                                      │\n  │   │   DIFF    │  desired state (spec)                 │\n  │   │           │       vs                              │\n  │   │           │  observed state (status)              │\n  │   └─────┬─────┘                                      │\n  │         │                                            │\n  │         ▼                                            │\n  │   ┌───────────┐                                      │\n  │   │    ACT    │  Create / Update / Delete resources  │\n  │   │           │  to close the gap                    │\n  │   └─────┬─────┘                                      │\n  │         │                                            │\n  │         └──────────────────────────────────┐         │\n  │                                   re-queue  │         │\n  │                              (after change  │         │\n  │                               or on error)  │         │\n  └─────────────────────────────────────────────▼────────┘"
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Controllers use the "
+            },
+            {
+              "text": "Informer",
+              "marks": ["bold"]
+            },
+            {
+              "text": " pattern to avoid polling the API server directly. An Informer maintains a local in-memory cache (backed by a "
+            },
+            {
+              "text": "List",
+              "marks": ["code"]
+            },
+            {
+              "text": " + "
+            },
+            {
+              "text": "Watch",
+              "marks": ["code"]
+            },
+            {
+              "text": " against the API server) and delivers events (Added, Modified, Deleted) to a work queue. The controller pops items from the queue and runs one reconciliation per item. This design means the API server is not flooded with requests and controllers are event-driven, not polling-driven."
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Level-based vs edge-based.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Kubernetes controllers are "
+              },
+              {
+                "text": "level-triggered",
+                "marks": ["italic"]
+              },
+              {
+                "text": " (like a thermostat checking temperature) rather than "
+              },
+              {
+                "text": "edge-triggered",
+                "marks": ["italic"]
+              },
+              {
+                "text": " (reacting only to the transition). This means if an event is missed, the controller will still converge on the next reconciliation — it checks the full state each time, not just what changed. This makes controllers robust to dropped events."
+              }
+            ],
+            [
+              {
+                "text": "Idempotent actions.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Because a controller may run the same reconciliation multiple times (the work queue re-queues on errors), every action must be safe to repeat. Creating a resource that already exists returns a conflict error; the controller handles this by re-reading and re-diffing."
+              }
+            ],
+            [
+              {
+                "text": "Custom controllers (operators).",
+                "marks": ["bold"]
+              },
+              {
+                "text": " The same pattern extends to user-defined controllers. An "
+              },
+              {
+                "text": "operator",
+                "marks": ["bold"]
+              },
+              {
+                "text": " is a controller paired with a Custom Resource Definition (CRD). The CRD defines a new API type (e.g., "
+              },
+              {
+                "text": "PostgresCluster",
+                "marks": ["code"]
+              },
+              {
+                "text": "); the operator implements the reconciliation loop for that type. This is the extension mechanism at the heart of the Kubernetes ecosystem — tools like Cert-Manager, the Prometheus Operator, and database operators (CloudNativePG, Zalando Postgres Operator) are all reconciliation loops over CRDs."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "info",
+          "runs": [
+            {
+              "text": "The controller-runtime library (sigs.k8s.io/controller-runtime) is the standard Go framework for building Kubernetes controllers. It provides the Informer cache, work queue, reconciler interface, and leader election out of the box. Kubebuilder and Operator SDK both generate controller scaffolding on top of controller-runtime."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Every controller in Kubernetes is a loop that does three things: look at what the cluster actually looks like right now, compare that to what you declared you want, and do the minimum work needed to make reality match the declaration. If something goes wrong mid-loop, it just runs again. That loop — observe, diff, act — is how Kubernetes heals itself and how every operator you write should work."
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

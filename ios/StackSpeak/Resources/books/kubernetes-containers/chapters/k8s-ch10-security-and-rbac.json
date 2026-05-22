@@ -1,0 +1,1650 @@
+{
+  "chapterId": "k8s-ch10-security-and-rbac",
+  "shardIndex": 10,
+  "cards": [
+    {
+      "id": "k8s-ch10-c001",
+      "order": 1,
+      "title": "ServiceAccount: Pod Identity for API Access",
+      "teaser": "Every pod in Kubernetes has an identity — the ServiceAccount. RBAC rules bind to ServiceAccounts, tokens are mounted inside the pod, and the API server uses them to decide what the pod can do. Understanding ServiceAccounts is the foundation of the entire Kubernetes security model.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "When a pod calls the Kubernetes API — to list pods, read a ConfigMap, or patch a Deployment — it authenticates as a "
+            },
+            {
+              "text": "ServiceAccount",
+              "marks": ["bold"]
+            },
+            {
+              "text": ". By default every namespace contains a ServiceAccount named "
+            },
+            {
+              "text": "default",
+              "marks": ["code"]
+            },
+            {
+              "text": ", and every pod that does not specify otherwise is automatically assigned to it. Kubernetes mounts a JWT token for that ServiceAccount at a well-known path inside the pod."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Since Kubernetes 1.22, tokens are "
+            },
+            {
+              "text": "projected service account tokens",
+              "marks": ["bold"]
+            },
+            {
+              "text": " (bound tokens): they are time-limited, audience-scoped, and automatically rotated by the kubelet. The mount path is "
+            },
+            {
+              "text": "/var/run/secrets/kubernetes.io/serviceaccount/token",
+              "marks": ["code"]
+            },
+            {
+              "text": ". Pre-1.22 tokens were permanent Secrets; bound tokens expire (default: 1 hour) and are far safer."
+          }
+          ]
+        },
+        {
+          "type": "code",
+          "language": "yaml",
+          "text": "# Create a dedicated ServiceAccount for a workload\napiVersion: v1\nkind: ServiceAccount\nmetadata:\n  name: orders-api\n  namespace: production\n  annotations:\n    # AWS IRSA: link to an IAM role for cloud API access\n    eks.amazonaws.com/role-arn: arn:aws:iam::123456789012:role/orders-api-role\n---\n# Reference it from a Pod or Deployment\napiVersion: apps/v1\nkind: Deployment\nmetadata:\n  name: orders-api\n  namespace: production\nspec:\n  template:\n    spec:\n      serviceAccountName: orders-api\n      # Disable token automounting if the pod needs no API access\n      # automountServiceAccountToken: false"
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Three key principles for ServiceAccount hygiene:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "One ServiceAccount per workload",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — never share the default ServiceAccount across workloads. If one workload is compromised, it can only exercise the permissions bound to its own account."
+              }
+            ],
+            [
+              {
+                "text": "Disable automounting when not needed",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — set "
+              },
+              {
+                "text": "automountServiceAccountToken: false",
+                "marks": ["code"]
+              },
+              {
+                "text": " on the ServiceAccount or the Pod spec for workloads that make no API calls. This eliminates the token entirely from the pod's filesystem."
+              }
+            ],
+            [
+              {
+                "text": "Use cloud provider integrations for IAM",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — IRSA (AWS), Workload Identity (GCP), and Workload Identity Federation (Azure) bind a ServiceAccount to a cloud IAM role. The pod gets short-lived cloud credentials without storing any secret."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "warning",
+          "runs": [
+            {
+              "text": "The default ServiceAccount in most namespaces has no RBAC permissions — but it still mounts a valid token. An attacker inside a pod with the default ServiceAccount can still call the API server. Always set automountServiceAccountToken: false on the ServiceAccount if the workload has no legitimate reason to call the Kubernetes API."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "A ServiceAccount is a pod's ID badge for talking to the Kubernetes API. Every pod gets one automatically; every RBAC rule is attached to one. Create a unique ServiceAccount per workload and disable the token entirely for pods that never need to call Kubernetes."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "k8s-ch10-c002",
+      "order": 2,
+      "title": "RBAC Overview: The Authorization Model",
+      "teaser": "Role-Based Access Control is Kubernetes's standard authorization mode. Every API request passes through it. The model is intentional and precise: a subject (who) is bound to a role (what they can do) within a scope (where). No wildcards, no implicit grants.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Kubernetes RBAC (enabled by the "
+            },
+            {
+              "text": "--authorization-mode=RBAC",
+              "marks": ["code"]
+            },
+            {
+              "text": " API server flag, the default since Kubernetes 1.8) controls which users, groups, and ServiceAccounts can perform which verbs on which resources. It is a "
+            },
+            {
+              "text": "deny-by-default",
+              "marks": ["bold"]
+            },
+            {
+              "text": " model: a principal has no access unless a binding explicitly grants it."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The RBAC data model has four resource types:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Role",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — a named set of permissions within a specific namespace. Permissions are expressed as verbs (get, list, watch, create, update, patch, delete) on API groups and resource types."
+              }
+            ],
+            [
+              {
+                "text": "ClusterRole",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — same structure as Role but cluster-scoped: applies to all namespaces or to non-namespaced resources (nodes, PersistentVolumes, namespaces themselves)."
+              }
+            ],
+            [
+              {
+                "text": "RoleBinding",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — binds a Role (or a ClusterRole used in namespace scope) to one or more subjects (ServiceAccount, User, Group) within a specific namespace."
+              }
+            ],
+            [
+              {
+                "text": "ClusterRoleBinding",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — binds a ClusterRole to subjects with cluster-wide effect."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "RBAC is purely additive: there are no deny rules. A subject's effective permissions are the union of all permissions granted by all roles bound to it. You cannot remove a permission granted by another binding — you must design bindings carefully from the start."
+            }
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "info",
+          "runs": [
+            {
+              "text": "kubectl auth can-i is your primary debugging tool. For example: kubectl auth can-i list pods --namespace production --as system:serviceaccount:production:orders-api. Add --list to see every permission the subject has. Use this when writing new bindings to verify least privilege before applying."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "RBAC is Kubernetes's access control system. A role says what actions are allowed on what resources. A binding attaches that role to a subject — a user, a group, or a ServiceAccount. Nothing is allowed unless a binding says it is."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "k8s-ch10-c003",
+      "order": 3,
+      "title": "Role and RoleBinding: Namespace-Scoped Permissions",
+      "teaser": "Role and RoleBinding are the least-privilege tools of Kubernetes RBAC. They grant access only within a single namespace — the right scope for almost every application workload. Understanding their YAML structure is essential before building real access policies.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "A "
+            },
+            {
+              "text": "Role",
+              "marks": ["bold"]
+            },
+            {
+              "text": " specifies permitted actions on Kubernetes API resources within its namespace. Each rule has three parts: "
+            },
+            {
+              "text": "apiGroups",
+              "marks": ["code"]
+            },
+            {
+              "text": " (which API group, empty string for core resources), "
+            },
+            {
+              "text": "resources",
+              "marks": ["code"]
+            },
+            {
+              "text": " (the resource type), and "
+            },
+            {
+              "text": "verbs",
+              "marks": ["code"]
+            },
+            {
+              "text": " (the allowed operations)."
+            }
+          ]
+        },
+        {
+          "type": "code",
+          "language": "yaml",
+          "text": "# Role: allow reading Pods and watching their logs\napiVersion: rbac.authorization.k8s.io/v1\nkind: Role\nmetadata:\n  name: pod-reader\n  namespace: production\nrules:\n  - apiGroups: [\"\"]          # core API group\n    resources: [\"pods\", \"pods/log\"]\n    verbs: [\"get\", \"list\", \"watch\"]\n\n---\n# RoleBinding: grant pod-reader to the monitoring ServiceAccount\napiVersion: rbac.authorization.k8s.io/v1\nkind: RoleBinding\nmetadata:\n  name: pod-reader-binding\n  namespace: production\nsubjects:\n  - kind: ServiceAccount\n    name: monitoring-agent\n    namespace: production   # must match the namespace of the ServiceAccount\nroleRef:\n  kind: Role\n  name: pod-reader\n  apiGroup: rbac.authorization.k8s.io"
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Key design guidance for namespace-scoped RBAC:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Prefer specific verbs over wildcards",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — "
+              },
+              {
+                "text": "verbs: [\"*\"]",
+                "marks": ["code"]
+              },
+              {
+                "text": " is equivalent to full admin on those resources. Enumerate only what the subject actually needs."
+              }
+            ],
+            [
+              {
+                "text": "Use resourceNames to scope to specific objects",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — add "
+              },
+              {
+                "text": "resourceNames: [\"my-config\"]",
+                "marks": ["code"]
+              },
+              {
+                "text": " to restrict access to a named ConfigMap or Secret, not all ConfigMaps or Secrets in the namespace."
+              }
+            ],
+            [
+              {
+                "text": "Avoid cross-namespace ServiceAccount references",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — a RoleBinding in namespace A can reference a ServiceAccount from namespace B, but this creates implicit coupling and is a common source of privilege escalation paths."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Kubernetes ships with several useful built-in ClusterRoles (e.g., "
+            },
+            {
+              "text": "view",
+              "marks": ["code"]
+            },
+            {
+              "text": ", "
+            },
+            {
+              "text": "edit",
+              "marks": ["code"]
+            },
+            {
+              "text": ", "
+            },
+            {
+              "text": "admin",
+              "marks": ["code"]
+            },
+            {
+              "text": ") that can be used in a RoleBinding to scope them to a single namespace — a common pattern for granting namespace-level admin access to a team without cluster-wide access."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "A Role is a list of allowed actions within one namespace. A RoleBinding connects a Role to a subject — a ServiceAccount, a user, or a group. Together they answer: \"who can do what, within this namespace.\""
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "k8s-ch10-c004",
+      "order": 4,
+      "title": "ClusterRole and ClusterRoleBinding: Cluster-Wide Permissions",
+      "teaser": "ClusterRoles govern access to non-namespaced resources and across all namespaces. ClusterRoleBindings grant those permissions globally. Both are necessary for platform-level tooling — and both are dangerous when granted too broadly.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Some Kubernetes resources exist outside any namespace: "
+            },
+            {
+              "text": "nodes",
+              "marks": ["code"]
+            },
+            {
+              "text": ", "
+            },
+            {
+              "text": "namespaces",
+              "marks": ["code"]
+            },
+            {
+              "text": ", "
+            },
+            {
+              "text": "persistentvolumes",
+              "marks": ["code"]
+            },
+            {
+              "text": ", "
+            },
+            {
+              "text": "clusterroles",
+              "marks": ["code"]
+            },
+            {
+              "text": ", storage classes, and CRDs. These can only be governed by a "
+            },
+            {
+              "text": "ClusterRole",
+              "marks": ["bold"]
+            },
+            {
+              "text": ". Operators, monitoring systems, CSI drivers, and ingress controllers frequently need ClusterRoles."
+            }
+          ]
+        },
+        {
+          "type": "code",
+          "language": "yaml",
+          "text": "# ClusterRole: allow a metrics collector to read nodes and pods everywhere\napiVersion: rbac.authorization.k8s.io/v1\nkind: ClusterRole\nmetadata:\n  name: metrics-collector\nrules:\n  - apiGroups: [\"\"]\n    resources: [\"nodes\", \"nodes/metrics\", \"pods\"]\n    verbs: [\"get\", \"list\", \"watch\"]\n  - apiGroups: [\"metrics.k8s.io\"]\n    resources: [\"nodes\", \"pods\"]\n    verbs: [\"get\", \"list\"]\n\n---\n# ClusterRoleBinding: grant it globally to the monitoring ServiceAccount\napiVersion: rbac.authorization.k8s.io/v1\nkind: ClusterRoleBinding\nmetadata:\n  name: metrics-collector-binding\nsubjects:\n  - kind: ServiceAccount\n    name: prometheus\n    namespace: monitoring\nroleRef:\n  kind: ClusterRole\n  name: metrics-collector\n  apiGroup: rbac.authorization.k8s.io"
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "A critical pattern: use a ClusterRole but bind it with a "
+            },
+            {
+              "text": "RoleBinding",
+              "marks": ["bold"]
+            },
+            {
+              "text": " (not a ClusterRoleBinding) to limit scope to one namespace. This is useful for the built-in "
+            },
+            {
+              "text": "admin",
+              "marks": ["code"]
+            },
+            {
+              "text": " or "
+            },
+            {
+              "text": "edit",
+              "marks": ["code"]
+            },
+            {
+              "text": " ClusterRoles — you get the standard permission set but restricted to a single namespace, avoiding duplication of Role definitions across namespaces."
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Audit cluster-admin bindings",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — "
+              },
+              {
+                "text": "cluster-admin",
+                "marks": ["code"]
+              },
+              {
+                "text": " is a built-in ClusterRole that grants every action on every resource. Any subject bound to it is a superuser. Run "
+              },
+              {
+                "text": "kubectl get clusterrolebindings -o wide | grep cluster-admin",
+                "marks": ["code"]
+              },
+              {
+                "text": " regularly; minimize cluster-admin bindings to system components only."
+              }
+            ],
+            [
+              {
+                "text": "Beware of escalation verbs",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — verbs like "
+              },
+              {
+                "text": "create",
+                "marks": ["code"]
+              },
+              {
+                "text": " on "
+              },
+              {
+                "text": "rolebindings",
+                "marks": ["code"]
+              },
+              {
+                "text": " or "
+              },
+              {
+                "text": "clusterrolebindings",
+                "marks": ["code"]
+              },
+              {
+                "text": " effectively grant the ability to self-escalate privileges. Kubernetes prevents direct escalation (you cannot grant more than you have) but indirect paths exist."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "warning",
+          "runs": [
+            {
+              "text": "cluster-admin is an all-or-nothing grant. Helm v2's Tiller required cluster-admin — a major reason Helm v3 removed the server-side component. If a tool claims to require cluster-admin, check whether it actually needs full access or whether a scoped ClusterRole would suffice."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "A ClusterRole is like a Role but works on cluster-wide resources and across all namespaces. Bind it globally with a ClusterRoleBinding, or to just one namespace with a RoleBinding. cluster-admin is the superuser equivalent — audit who has it and keep the list short."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "k8s-ch10-c005",
+      "order": 5,
+      "title": "Pod Security Standards: Privileged, Baseline, Restricted",
+      "teaser": "Pod Security Standards are Kubernetes's official taxonomy of workload risk. Three named profiles — privileged, baseline, and restricted — replace the deprecated PodSecurityPolicy with a simpler, well-documented contract that platform teams and application teams can reason about together.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "PodSecurityPolicy (PSP) was deprecated in Kubernetes 1.21 and removed in 1.25. Its replacement is a two-part system: "
+            },
+            {
+              "text": "Pod Security Standards (PSS)",
+              "marks": ["bold"]
+            },
+            {
+              "text": " define what the profiles mean, and Pod Security Admission (PSA) enforces them. PSS defines three profiles:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Privileged",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — completely unrestricted. Allows all Linux capabilities, host networking, host PID namespace, privileged containers, HostPath volumes. Intended only for cluster infrastructure components (CNI plugins, CSI drivers, node-level daemons). Running application workloads at this level is a security failure."
+              }
+            ],
+            [
+              {
+                "text": "Baseline",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — prevents known privilege escalation paths while permitting typical application patterns. Blocks host namespaces (HostPID, HostIPC, HostNetwork), privileged containers, and dangerous capabilities (SYS_ADMIN, NET_ADMIN). Allows most application containers without modification. This is the recommended floor for multi-tenant clusters."
+              }
+            ],
+            [
+              {
+                "text": "Restricted",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — hardened policy following current security best practices. Requires non-root execution (runAsNonRoot: true), drops all capabilities, disallows privilege escalation (allowPrivilegeEscalation: false), restricts volume types (no hostPath), and requires a restricted seccomp profile. Some applications require small changes to run under this profile."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "A comparison of what each profile allows:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Host namespaces (HostPID/HostIPC/HostNetwork)",
+                "marks": ["bold"]
+              },
+              {
+                "text": ": Privileged = allowed; Baseline = blocked; Restricted = blocked"
+              }
+            ],
+            [
+              {
+                "text": "Privileged containers",
+                "marks": ["bold"]
+              },
+              {
+                "text": ": Privileged = allowed; Baseline = blocked; Restricted = blocked"
+              }
+            ],
+            [
+              {
+                "text": "Linux capabilities",
+                "marks": ["bold"]
+              },
+              {
+                "text": ": Privileged = all allowed; Baseline = dangerous caps blocked (e.g. SYS_ADMIN); Restricted = all dropped, only NET_BIND_SERVICE allowed"
+              }
+            ],
+            [
+              {
+                "text": "RunAsNonRoot",
+                "marks": ["bold"]
+              },
+              {
+                "text": ": Privileged = not required; Baseline = not required; Restricted = required"
+              }
+            ],
+            [
+              {
+                "text": "Seccomp profile",
+                "marks": ["bold"]
+              },
+              {
+                "text": ": Privileged = any; Baseline = any; Restricted = RuntimeDefault or Localhost"
+              }
+            ],
+            [
+              {
+                "text": "Volume types",
+                "marks": ["bold"]
+              },
+              {
+                "text": ": Privileged = all; Baseline = most (no hostPath); Restricted = configMap, secret, emptyDir, projected, persistentVolumeClaim, downwardAPI, csi (ephemeral only)"
+              }
+            ]
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "info",
+          "runs": [
+            {
+              "text": "Target restricted for new application namespaces. Audit existing namespaces against baseline first — most workloads already comply. Restricted requires the most application changes but provides the strongest defense-in-depth. The Kubernetes documentation at kubernetes.io/docs/concepts/security/pod-security-standards/ maintains the complete rule set for each Kubernetes version."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Kubernetes defines three security profiles for pods: privileged (everything allowed, for cluster infrastructure), baseline (no privilege escalation, most apps fit), and restricted (runs as non-root, drops all Linux capabilities, strictest). Start at baseline; aim for restricted for new application namespaces."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "k8s-ch10-c006",
+      "order": 6,
+      "title": "Pod Security Admission: Enforcing PSS at the Namespace Level",
+      "teaser": "Pod Security Admission is the built-in enforcement engine for Pod Security Standards. It operates as an admission controller that evaluates every pod against the policy configured on its namespace — enforce, audit, or warn — without any external webhook.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Pod Security Admission (PSA) was promoted to stable in Kubernetes 1.25. It is enabled by default in all modern clusters and requires no additional components. PSA reads labels on a namespace and enforces the corresponding PSS profile for every pod created in that namespace."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Three enforcement modes:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "enforce",
+                "marks": ["code"]
+              },
+              {
+                "text": " — pods that violate the profile are rejected. The workload will not run."
+              }
+            ],
+            [
+              {
+                "text": "audit",
+                "marks": ["code"]
+              },
+              {
+                "text": " — violations are logged to the audit log but pods are allowed. Use to assess impact before switching to enforce."
+              }
+            ],
+            [
+              {
+                "text": "warn",
+                "marks": ["code"]
+              },
+              {
+                "text": " — violations return a user-facing warning in the API response and in "
+              },
+              {
+                "text": "kubectl",
+                "marks": ["code"]
+              },
+              {
+                "text": " output but do not block the pod. Useful during migration."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "code",
+          "language": "yaml",
+          "text": "# Apply PSA labels to a namespace\napiVersion: v1\nkind: Namespace\nmetadata:\n  name: production\n  labels:\n    # Enforce baseline, audit and warn for restricted\n    pod-security.kubernetes.io/enforce: baseline\n    pod-security.kubernetes.io/enforce-version: v1.29\n    pod-security.kubernetes.io/audit: restricted\n    pod-security.kubernetes.io/audit-version: v1.29\n    pod-security.kubernetes.io/warn: restricted\n    pod-security.kubernetes.io/warn-version: v1.29"
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The "
+            },
+            {
+              "text": "-version",
+              "marks": ["code"]
+            },
+            {
+              "text": " label pins evaluation against the PSS rules as of a specific Kubernetes version, preventing upgrades from silently changing enforcement behavior. Set it to the Kubernetes minor version you are currently running."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "PSA applies to pods directly — it does not inspect Deployments or ReplicaSets at creation time. A Deployment that creates violating pods will fail at pod scheduling, not at "
+            },
+            {
+              "text": "kubectl apply",
+              "marks": ["code"]
+            },
+            {
+              "text": " time. Use "
+            },
+            {
+              "text": "warn",
+              "marks": ["code"]
+            },
+            {
+              "text": " mode during CI to surface violations earlier."
+            }
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "info",
+          "runs": [
+            {
+              "text": "For complex policy needs beyond PSS profiles — custom rules, image registry allowlists, label requirements — PSA is insufficient. Use OPA Gatekeeper or Kyverno (covered in later cards) as the policy engine and leave PSA as the baseline floor."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Pod Security Admission is a built-in Kubernetes feature that reads labels on a namespace and enforces a security profile for every pod in it. You configure it with namespace labels and choose whether violations block the pod (enforce), log it (audit), or warn only."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "k8s-ch10-c007",
+      "order": 7,
+      "title": "SecurityContext: Pod-Level and Container-Level Hardening",
+      "teaser": "SecurityContext is the per-pod and per-container mechanism for configuring Linux-level security settings: which user runs the process, which Linux capabilities it has, whether the root filesystem is read-only, and whether privilege escalation is allowed. It is the primary dial for hardening individual workloads.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "SecurityContext exists at two levels in a pod spec. Settings on "
+            },
+            {
+              "text": "spec.securityContext",
+              "marks": ["code"]
+            },
+            {
+              "text": " (the pod-level context) apply to all containers. Settings on "
+            },
+            {
+              "text": "spec.containers[*].securityContext",
+              "marks": ["code"]
+            },
+            {
+              "text": " (the container-level context) override pod-level settings for a specific container. Some fields only exist at one level."
+            }
+          ]
+        },
+        {
+          "type": "code",
+          "language": "yaml",
+          "text": "apiVersion: v1\nkind: Pod\nmetadata:\n  name: hardened-app\nspec:\n  # Pod-level SecurityContext: applies to all containers\n  securityContext:\n    runAsNonRoot: true          # forbid UID 0 for all containers\n    runAsUser: 1000             # run as this UID\n    runAsGroup: 3000            # run as this GID\n    fsGroup: 2000               # volume ownership GID\n    seccompProfile:\n      type: RuntimeDefault      # apply container runtime's seccomp filter\n\n  containers:\n    - name: app\n      image: myapp:1.0\n      # Container-level SecurityContext: container-specific settings\n      securityContext:\n        allowPrivilegeEscalation: false   # no sudo, no setuid binaries\n        readOnlyRootFilesystem: true      # prevent filesystem writes\n        capabilities:\n          drop: [\"ALL\"]                   # drop all Linux capabilities\n          add: [\"NET_BIND_SERVICE\"]       # add back only what is needed\n      # Writable paths must be explicitly mounted\n      volumeMounts:\n        - name: tmp\n          mountPath: /tmp\n        - name: cache\n          mountPath: /app/cache\n\n  volumes:\n    - name: tmp\n      emptyDir: {}\n    - name: cache\n      emptyDir: {}"
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The most impactful settings and what each defends against:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "runAsNonRoot: true",
+                "marks": ["code"]
+              },
+              {
+                "text": " — if the container image runs as UID 0 by default, Kubernetes rejects it. Prevents root-level filesystem writes and lateral movement if the container is compromised."
+              }
+            ],
+            [
+              {
+                "text": "allowPrivilegeEscalation: false",
+                "marks": ["code"]
+              },
+              {
+                "text": " — prevents the process from acquiring more privileges than its parent (no setuid binaries, no sudo). This alone blocks a large class of container escape techniques."
+              }
+            ],
+            [
+              {
+                "text": "readOnlyRootFilesystem: true",
+                "marks": ["code"]
+              },
+              {
+                "text": " — prevents an attacker who gains code execution from writing malware to the container's filesystem. Any persistent write must go through an explicitly mounted volume."
+              }
+            ],
+            [
+              {
+                "text": "capabilities drop ALL, add only what is needed",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — Linux capabilities are fine-grained root privileges. Dropping all capabilities then adding only "
+              },
+              {
+                "text": "NET_BIND_SERVICE",
+                "marks": ["code"]
+              },
+              {
+                "text": " (for services binding ports below 1024) is the correct default for stateless applications."
+              }
+            ],
+            [
+              {
+                "text": "seccompProfile RuntimeDefault",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — applies the container runtime's built-in seccomp filter, which blocks ~100 rarely-needed and dangerous system calls. Available in Kubernetes 1.22+ without any custom profile."
+              }
+            ]
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "SecurityContext is the YAML you add to a pod or container to say how locked-down its Linux environment should be: what user it runs as, what filesystem writes are allowed, and what system-level privileges it has. Start with: non-root user, no privilege escalation, read-only root filesystem, all capabilities dropped."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "k8s-ch10-c008",
+      "order": 8,
+      "title": "Admission Controllers: The API Server's Security Checkpoint",
+      "teaser": "Every request to the Kubernetes API server passes through admission controllers before it is persisted. Validating webhooks can reject requests that violate policy. Mutating webhooks can rewrite them to inject security settings. This is the layer where cluster-wide security invariants are enforced.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Kubernetes admission controllers are plugins in the API server request pipeline. After authentication and authorization, and before the object is written to etcd, admission controllers evaluate the request. There are two types:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "MutatingAdmissionWebhook",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — can modify the incoming object. Common uses: inject sidecar containers (Istio, Linkerd), set default resource limits, add labels or annotations, inject environment variables."
+              }
+            ],
+            [
+              {
+                "text": "ValidatingAdmissionWebhook",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — can approve or reject an object without modifying it. Common uses: enforce image registry allowlists, require resource limits, validate label schemas, block images without signatures."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "A webhook is registered by creating a "
+            },
+            {
+              "text": "ValidatingWebhookConfiguration",
+              "marks": ["code"]
+            },
+            {
+              "text": " or "
+            },
+            {
+              "text": "MutatingWebhookConfiguration",
+              "marks": ["code"]
+            },
+            {
+              "text": " resource. The registration specifies which resources and operations trigger the webhook, the service endpoint, the CA bundle for TLS verification, and the failure policy."
+          }
+          ]
+        },
+        {
+          "type": "code",
+          "language": "yaml",
+          "text": "# ValidatingWebhookConfiguration skeleton\napiVersion: admissionregistration.k8s.io/v1\nkind: ValidatingWebhookConfiguration\nmetadata:\n  name: image-policy\nwebhooks:\n  - name: check-image-registry.example.com\n    admissionReviewVersions: [\"v1\"]\n    clientConfig:\n      service:\n        name: image-policy-webhook\n        namespace: security\n        path: /validate\n      caBundle: <base64-encoded-CA>\n    rules:\n      - apiGroups: [\"\"]\n        apiVersions: [\"v1\"]\n        resources: [\"pods\"]\n        operations: [\"CREATE\", \"UPDATE\"]\n    failurePolicy: Fail   # block if webhook is unavailable\n    namespaceSelector:\n      matchExpressions:\n        - key: kubernetes.io/metadata.name\n          operator: NotIn\n          values: [\"kube-system\", \"kube-public\"]"
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The "
+            },
+            {
+              "text": "failurePolicy",
+              "marks": ["bold"]
+            },
+            {
+              "text": " field is critical: "
+            },
+            {
+              "text": "Fail",
+              "marks": ["code"]
+            },
+            {
+              "text": " means the object is rejected if the webhook is unreachable; "
+            },
+            {
+              "text": "Ignore",
+              "marks": ["code"]
+            },
+            {
+              "text": " means errors are silently bypassed. For security webhooks, always use "
+            },
+            {
+              "text": "Fail",
+              "marks": ["code"]
+            },
+            {
+              "text": " — a policy that can be bypassed by taking the webhook offline is not a policy. Ensure webhook deployments are highly available (multiple replicas, PodDisruptionBudget)."
+            }
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "warning",
+          "runs": [
+            {
+              "text": "Admission webhooks that apply to kube-system can deadlock cluster upgrades or break core components. Always use a namespaceSelector to exclude kube-system, kube-public, and the namespace where the webhook itself runs from its own admission rules."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Admission controllers are checkpoints inside the Kubernetes API server: every create or update request passes through them before being saved. A validating webhook can reject any request that breaks a security rule; a mutating webhook can rewrite the request to add missing security settings."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "k8s-ch10-c009",
+      "order": 9,
+      "title": "OPA Gatekeeper: Policy as Code with Rego",
+      "teaser": "OPA Gatekeeper is the CNCF-graduated integration between Open Policy Agent and Kubernetes admission control. It turns policy into a first-class Kubernetes resource: ConstraintTemplates define the rule; Constraints instantiate it. Policy violations are visible in resource status fields, not just log files.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Gatekeeper (github.com/open-policy-agent/gatekeeper) deploys OPA as a validating admission webhook and extends the Kubernetes API with two CRD types:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "ConstraintTemplate",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — defines a new constraint type by embedding a Rego policy and declaring its parameters. Gatekeeper generates a new CRD from each template."
+              }
+            ],
+            [
+              {
+                "text": "Constraint",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — an instance of a ConstraintTemplate, specifying what resources it applies to and supplying parameter values. Multiple Constraints can instantiate the same template with different parameters."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "code",
+          "language": "yaml",
+          "text": "# ConstraintTemplate: require containers to have resource limits\napiVersion: templates.gatekeeper.sh/v1\nkind: ConstraintTemplate\nmetadata:\n  name: requireresourcelimits\nspec:\n  crd:\n    spec:\n      names:\n        kind: RequireResourceLimits\n  targets:\n    - target: admission.k8s.gatekeeper.sh\n      rego: |\n        package requireresourcelimits\n        violation[{\"msg\": msg}] {\n          container := input.review.object.spec.containers[_]\n          not container.resources.limits.cpu\n          msg := sprintf(\"Container %v missing CPU limit\", [container.name])\n        }\n        violation[{\"msg\": msg}] {\n          container := input.review.object.spec.containers[_]\n          not container.resources.limits.memory\n          msg := sprintf(\"Container %v missing memory limit\", [container.name])\n        }\n---\n# Constraint: enforce the template on all pods in production\napiVersion: constraints.gatekeeper.sh/v1beta1\nkind: RequireResourceLimits\nmetadata:\n  name: require-resource-limits-production\nspec:\n  enforcementAction: deny   # or: warn, dryrun\n  match:\n    kinds:\n      - apiGroups: [\"\"]\n        kinds: [\"Pod\"]\n    namespaceSelector:\n      matchLabels:\n        env: production"
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Gatekeeper's Audit feature periodically re-evaluates all existing resources against all constraints and surfaces violations in the Constraint status field — not just at admission time. This means existing non-compliant resources are continuously flagged, even if they predate the policy."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Use cases well-suited to Gatekeeper: complex multi-rule policies where Rego's logical completeness matters, environments already invested in OPA for other policy decisions (API gateway, Terraform), and teams comfortable with Rego. Use cases better served by Kyverno: platform teams that prefer Kubernetes-native YAML, generation policies (creating resources), and simpler validation rules."
+            }
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "info",
+          "runs": [
+            {
+              "text": "The Gatekeeper Policy Library (github.com/open-policy-agent/gatekeeper-library) provides pre-built ConstraintTemplates for common policies: container registry allowlists, required labels, resource limits, replica minimum counts, and PSP-equivalent rules. Start there before writing custom Rego."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Gatekeeper is an OPA-powered admission controller for Kubernetes. You write a ConstraintTemplate (the policy logic in Rego) and a Constraint (where and how to apply it). Gatekeeper blocks any resource that violates the rule at admission time and reports existing violations continuously."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "k8s-ch10-c010",
+      "order": 10,
+      "title": "Kyverno: Kubernetes-Native Policy Without Rego",
+      "teaser": "Kyverno is a CNCF-graduated policy engine designed for Kubernetes teams who prefer YAML over a policy language. It validates, mutates, and generates resources — and it can verify image signatures natively. For teams already fluent in Kubernetes manifests, it has a lower adoption barrier than OPA Gatekeeper.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Kyverno (kyverno.io) operates as both a validating and mutating admission webhook. Its policies are expressed as Kubernetes custom resources ("
+            },
+            {
+              "text": "ClusterPolicy",
+              "marks": ["code"]
+            },
+            {
+              "text": " or "
+            },
+            {
+              "text": "Policy",
+              "marks": ["code"]
+            },
+            {
+              "text": ") with YAML rules that use JMESPath expressions for field matching — no separate policy language required."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Kyverno supports four rule types that go beyond what Gatekeeper offers out of the box:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "validate",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — block resources that do not meet a condition. Equivalent to Gatekeeper's enforcement mode."
+              }
+            ],
+            [
+              {
+                "text": "mutate",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — rewrite incoming resources before persistence. Example: automatically add "
+              },
+              {
+                "text": "readOnlyRootFilesystem: true",
+                "marks": ["code"]
+              },
+              {
+                "text": " to every container that does not set it."
+              }
+            ],
+            [
+              {
+                "text": "generate",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — create additional resources in response to an event. Example: create a default NetworkPolicy when a new namespace is created."
+              }
+            ],
+            [
+              {
+                "text": "verifyImages",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — verify cosign signatures or SBOM attestations on container images at admission time. This is native, first-class functionality — no custom Rego required."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "code",
+          "language": "yaml",
+          "text": "# Kyverno policy: disallow latest tag and require non-root\napiVersion: kyverno.io/v1\nkind: ClusterPolicy\nmetadata:\n  name: pod-security-baseline\nspec:\n  validationFailureAction: Enforce\n  background: true   # also audit existing resources\n  rules:\n    - name: disallow-latest-tag\n      match:\n        any:\n          - resources:\n              kinds: [Pod]\n      validate:\n        message: \"Image tag ':latest' is not allowed. Use an immutable digest or version tag.\"\n        pattern:\n          spec:\n            containers:\n              - image: \"!*:latest\"\n\n    - name: require-non-root\n      match:\n        any:\n          - resources:\n              kinds: [Pod]\n      validate:\n        message: \"Pods must run as non-root.\"\n        pattern:\n          spec:\n            securityContext:\n              runAsNonRoot: true"
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "OPA Gatekeeper vs Kyverno comparison:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Policy language",
+                "marks": ["bold"]
+              },
+              {
+                "text": ": Gatekeeper uses Rego (powerful, full logic, steeper learning curve); Kyverno uses YAML + JMESPath (gentler, Kubernetes-native, some expressiveness limits)"
+              }
+            ],
+            [
+              {
+                "text": "Mutation support",
+                "marks": ["bold"]
+              },
+              {
+                "text": ": Gatekeeper has limited mutation support (beta); Kyverno has first-class mutation rules"
+              }
+            ],
+            [
+              {
+                "text": "Resource generation",
+                "marks": ["bold"]
+              },
+              {
+                "text": ": Gatekeeper does not generate resources; Kyverno generate rules do"
+              }
+            ],
+            [
+              {
+                "text": "Image verification",
+                "marks": ["bold"]
+              },
+              {
+                "text": ": Gatekeeper requires custom Rego + external data; Kyverno has native verifyImages support"
+              }
+            ],
+            [
+              {
+                "text": "CNCF status",
+                "marks": ["bold"]
+              },
+              {
+                "text": ": both are CNCF graduated projects"
+              }
+            ]
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Kyverno lets you write Kubernetes security policies in YAML — no separate policy language. It can validate (block bad resources), mutate (fix missing settings automatically), generate (create related resources), and verify image signatures. Think of it as a smarter admission controller you configure the same way you configure any other Kubernetes resource."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "k8s-ch10-c011",
+      "order": 11,
+      "title": "Image Signing with Sigstore and Cosign",
+      "teaser": "Container image signing lets you prove at admission time that an image came from your CI pipeline and was not tampered with in the registry. Sigstore and its cosign tool make keyless signing the default — using CI identity rather than long-lived private keys.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The supply chain attacks that image signing defends against:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Registry compromise",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — an attacker who gains write access to a container registry can push a malicious image under a legitimate tag. Without signature verification, Kubernetes will pull and run it."
+              }
+            ],
+            [
+              {
+                "text": "Tag mutability",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — OCI tags are mutable by default. A "
+              },
+              {
+                "text": "v1.2.3",
+                "marks": ["code"]
+              },
+              {
+                "text": " tag can be silently reassigned to a different digest. Signing a digest (not a tag) pins the exact image bytes."
+              }
+            ],
+            [
+              {
+                "text": "Build system compromise (SolarWinds-style)",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — when the CI system itself is compromised, the attacker can build and push images that appear legitimate. Keyless signing with OIDC identity records exactly which workflow produced the image in Rekor's transparency log, making unauthorized builds detectable."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Sigstore (sigstore.dev) provides the infrastructure: "
+            },
+            {
+              "text": "Fulcio",
+              "marks": ["bold"]
+            },
+            {
+              "text": " (a certificate authority issuing short-lived certificates bound to CI OIDC identity), "
+            },
+            {
+              "text": "Rekor",
+              "marks": ["bold"]
+            },
+            {
+              "text": " (a tamper-evident transparency log recording every signing event), and "
+            },
+            {
+              "text": "cosign",
+              "marks": ["bold"]
+            },
+            {
+              "text": " (the CLI tool for signing and verification)."
+            }
+          ]
+        },
+        {
+          "type": "code",
+          "language": "bash",
+          "text": "# Sign an image keylessly in GitHub Actions CI\n# The GitHub Actions OIDC token is the signing identity\ncosign sign \\\n  --yes \\\n  ghcr.io/myorg/myapp@sha256:abc123def456\n# Fulcio issues a cert valid for 10 minutes; Rekor logs the event permanently\n\n# Verify at admission time (or in CD pipeline before deployment)\ncosign verify \\\n  --certificate-identity-regexp \\\n    \"https://github.com/myorg/myapp/.github/workflows/release.yml@refs/heads/main\" \\\n  --certificate-oidc-issuer \\\n    \"https://token.actions.githubusercontent.com\" \\\n  ghcr.io/myorg/myapp@sha256:abc123def456\n\n# cosign exits 0 if the signature is valid and the identity matches\n# exits non-zero if the image was not signed by the expected workflow"
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Verification is mandatory — signing without enforcing verification at admission time provides no protection. Integrate verification into Kyverno "
+            },
+            {
+              "text": "verifyImages",
+              "marks": ["code"]
+            },
+            {
+              "text": " rules or a Gatekeeper policy (using OPA's external data feature to call cosign). Without admission-time verification, an attacker who pushes an unsigned image to the registry can deploy it freely."
+            }
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "info",
+          "runs": [
+            {
+              "text": "Rekor's transparency log (rekor.sigstore.dev) is public and append-only. Every cosign keyless signature is permanently visible there. This is by design: it enables detection of unexpected signings — if an image is signed by a workflow you did not authorize, the evidence is in the log. Use rekor-cli to query signing events for your images."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Image signing proves an image came from your CI pipeline and has not been tampered with since. Cosign uses your pipeline's identity (not a stored private key) to sign the image. At deploy time, your cluster checks the signature — if it does not match, the pod is rejected. This stops attackers who compromise the registry from running their own images."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "k8s-ch10-c012",
+      "order": 12,
+      "title": "NetworkPolicy for Security: Default-Deny and Explicit Allow",
+      "teaser": "Kubernetes pods are open to all cluster traffic by default. NetworkPolicy changes this: a default-deny policy blocks all ingress and egress, then explicit allow rules open only the connections each workload legitimately needs. This is network segmentation at the pod level.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Without any NetworkPolicy, a compromised pod can reach every other pod in the cluster on every port — a flat network that provides no isolation. NetworkPolicy objects (which require a CNI plugin that enforces them: Calico, Cilium, Weave Net, or the cloud provider's CNI) create firewall rules at the pod level based on label selectors."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The recommended approach is a two-step pattern per namespace:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Step 1: default-deny",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — apply a policy that selects all pods (empty "
+              },
+              {
+                "text": "podSelector",
+                "marks": ["code"]
+              },
+              {
+                "text": ") and specifies "
+              },
+              {
+                "text": "policyTypes: [Ingress, Egress]",
+                "marks": ["code"]
+              },
+              {
+                "text": " with no rules. This blocks all ingress and egress for every pod in the namespace."
+              }
+            ],
+            [
+              {
+                "text": "Step 2: explicit allow",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — add specific policies that open only the required traffic paths for each workload."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "code",
+          "language": "yaml",
+          "text": "# Step 1: Default-deny all ingress and egress in the namespace\napiVersion: networking.k8s.io/v1\nkind: NetworkPolicy\nmetadata:\n  name: default-deny-all\n  namespace: production\nspec:\n  podSelector: {}   # matches all pods in the namespace\n  policyTypes:\n    - Ingress\n    - Egress\n\n---\n# Step 2a: Allow orders-api to receive traffic from frontend on port 8080\napiVersion: networking.k8s.io/v1\nkind: NetworkPolicy\nmetadata:\n  name: allow-frontend-to-orders\n  namespace: production\nspec:\n  podSelector:\n    matchLabels:\n      app: orders-api\n  policyTypes:\n    - Ingress\n  ingress:\n    - from:\n        - podSelector:\n            matchLabels:\n              app: frontend\n      ports:\n        - protocol: TCP\n          port: 8080\n\n---\n# Step 2b: Allow orders-api egress to its PostgreSQL database and kube-dns only\napiVersion: networking.k8s.io/v1\nkind: NetworkPolicy\nmetadata:\n  name: orders-api-egress\n  namespace: production\nspec:\n  podSelector:\n    matchLabels:\n      app: orders-api\n  policyTypes:\n    - Egress\n  egress:\n    - to:\n        - podSelector:\n            matchLabels:\n              app: postgres\n      ports:\n        - protocol: TCP\n          port: 5432\n    - to:   # allow DNS resolution (critical — always include this)\n        - namespaceSelector:\n            matchLabels:\n              kubernetes.io/metadata.name: kube-system\n          podSelector:\n            matchLabels:\n              k8s-app: kube-dns\n      ports:\n        - protocol: UDP\n          port: 53\n        - protocol: TCP\n          port: 53"
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "A common mistake: applying a default-deny egress policy without an explicit allow for kube-dns (port 53, both UDP and TCP). DNS resolution fails silently, and pods appear broken because hostnames cannot be resolved — not because the target service is unreachable."
+            }
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "warning",
+          "runs": [
+            {
+              "text": "NetworkPolicy requires a supporting CNI plugin. The default kubenet/flannel CNI on many clusters does not enforce NetworkPolicy — the resources are accepted by the API server but silently ignored. Verify your CNI supports policy enforcement before relying on it as a security control. Run: kubectl describe pod -n kube-system -l k8s-app=calico-node (or cilium-agent) to confirm the enforcing CNI is installed."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "By default, every pod can reach every other pod. NetworkPolicy fixes that. Apply a default-deny policy to block all traffic in a namespace, then add specific allow policies for exactly the connections each service legitimately makes. The result is network segmentation: a compromised pod cannot reach services it has no business talking to."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "k8s-ch10-c013",
+      "order": 13,
+      "title": "Secrets Encryption at Rest: KMS Providers for etcd",
+      "teaser": "Kubernetes Secrets are stored in etcd — base64-encoded by default, which is encoding, not encryption. Enabling encryption at rest with a KMS provider means Secret data is encrypted before it is written to etcd, and the encryption key never lives in the cluster.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "A default Kubernetes installation stores Secrets in etcd with base64 encoding. Anyone with etcd access — through a snapshot, a backup, or direct etcd client access — can read all Secret values. This is a compliance failure for any environment handling credentials, tokens, or private keys."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Kubernetes supports encryption at rest via an "
+            },
+            {
+              "text": "EncryptionConfiguration",
+              "marks": ["bold"]
+            },
+            {
+              "text": " resource that specifies one or more providers. The API server encrypts Secret data before writing to etcd and decrypts it on read. The provider determines where the encryption key lives:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "aescbc / aesgcm",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — symmetric AES encryption with a local key in the EncryptionConfiguration file. Better than plaintext, but the key is stored on the control plane — still exposed if the control plane host is compromised."
+              }
+            ],
+            [
+              {
+                "text": "KMS v2 provider",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — wraps the data encryption key (DEK) with a key managed by an external KMS. The DEK is AES-GCM encrypted; the KMS only holds the key-encryption key (KEK). The KEK never leaves the KMS. Even an etcd snapshot is useless without KMS access."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "code",
+          "language": "yaml",
+          "text": "# /etc/kubernetes/encryption-config.yaml (on the API server)\napiVersion: apiserver.config.k8s.io/v1\nkind: EncryptionConfiguration\nresources:\n  - resources:\n      - secrets\n      - configmaps   # optionally encrypt ConfigMaps too\n    providers:\n      # KMS v2 provider (preferred for production)\n      - kms:\n          apiVersion: v2\n          name: aws-kms-provider\n          endpoint: unix:///var/run/kmsplugin/socket.sock\n          # endpoint connects to the KMS plugin sidecar\n          # The sidecar calls AWS KMS, GCP Cloud KMS, or Azure Key Vault\n          cachesize: 1000\n          timeout: 3s\n      # Fallback: identity (no encryption) for reading old unencrypted secrets\n      - identity: {}"
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Cloud provider KMS plugins:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "AWS",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — EKS enables envelope encryption natively via the cluster config. Self-managed: use the "
+              },
+              {
+                "text": "aws-encryption-provider",
+                "marks": ["code"]
+              },
+              {
+                "text": " sidecar calling AWS KMS."
+              }
+            ],
+            [
+              {
+                "text": "GCP",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — GKE Application-layer secrets encryption is a cluster feature flag; self-managed: "
+              },
+              {
+                "text": "k8s-cloudkms-plugin",
+                "marks": ["code"]
+              },
+              {
+                "text": " calling Cloud KMS."
+              }
+            ],
+            [
+              {
+                "text": "Azure",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — AKS Key Management Service (KMS) plugin calling Azure Key Vault."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "After enabling encryption, existing Secrets must be re-encrypted:"
+            }
+          ]
+        },
+        {
+          "type": "code",
+          "language": "bash",
+          "text": "# Force re-encrypt all existing Secrets with the new provider\nkubectl get secrets --all-namespaces -o json | \\\n  kubectl replace -f -\n\n# Verify that the first provider in the list is the KMS provider\n# (not identity) to ensure new writes are encrypted"
+        },
+        {
+          "type": "callout",
+          "variant": "info",
+          "runs": [
+            {
+              "text": "KMS v2 (stable in Kubernetes 1.29) improves on KMS v1 with per-object DEKs cached in memory, reducing KMS API call volume dramatically compared to KMS v1 which called the KMS on every read. Use KMS v2 for new deployments. The KMS plugin must be highly available — if it becomes unreachable, the API server cannot decrypt Secrets and workloads that read Secrets will fail."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "By default, Kubernetes stores Secrets in etcd with only base64 encoding — anyone with etcd access can read them. Enabling KMS encryption means each Secret is encrypted with a key that lives outside the cluster, in AWS KMS, GCP Cloud KMS, or Azure Key Vault. Even a stolen etcd backup is unreadable without access to the external KMS."
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

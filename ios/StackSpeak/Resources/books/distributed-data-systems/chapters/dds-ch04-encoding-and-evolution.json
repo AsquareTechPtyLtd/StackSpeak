@@ -1,0 +1,1761 @@
+{
+  "chapterId": "dds-ch04-encoding-and-evolution",
+  "shardIndex": 4,
+  "cards": [
+    {
+      "id": "dds-ch04-c001",
+      "order": 1,
+      "title": "Why Encoding Matters",
+      "teaser": "The choice of encoding format is not an implementation detail — it determines whether your system can evolve, interoperate, and survive the failure modes of distributed data.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Every time data leaves a process — written to disk, sent over a network, published to a message queue — it must be encoded into a byte sequence. Every time it arrives somewhere, it must be decoded back into an in-memory data structure. The encoding is the contract at that boundary."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Language-specific serialization formats — Python's "
+            },
+            {
+              "text": "pickle",
+              "marks": ["code"]
+            },
+            {
+              "text": ", Java's "
+            },
+            {
+              "text": "Serializable",
+              "marks": ["code"]
+            },
+            {
+              "text": ", Ruby's "
+            },
+            {
+              "text": "Marshal",
+              "marks": ["code"]
+            },
+            {
+              "text": " — are a trap. They tie your data to a specific language runtime forever. Reading a pickled Python object from Java is not merely inconvenient; it is architecturally impossible without a Python interpreter. These formats also carry serious security implications: deserializing untrusted data with "
+            },
+            {
+              "text": "pickle",
+              "marks": ["code"]
+            },
+            {
+              "text": " or Java's native serialization can execute arbitrary code."
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Language lock-in.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Language-specific formats cannot be read by services written in other languages. As soon as you add a second service in a different language, the format becomes a hard dependency on the first language's runtime."
+              }
+            ],
+            [
+              {
+                "text": "Version fragility.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Updating the class definition — renaming a field, changing a type — silently breaks deserialization of data written with the old version. There is no explicit schema, so there is no tooling to catch incompatibilities."
+              }
+            ],
+            [
+              {
+                "text": "Security surface.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Java's "
+              },
+              {
+                "text": "Serializable",
+                "marks": ["code"]
+              },
+              {
+                "text": " has been the attack vector for dozens of critical CVEs. The ability to invoke arbitrary constructors during deserialization is not a feature you want on a data boundary."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Cross-language encoding requires an explicit, language-independent format with a defined schema. The rest of this chapter examines the options — textual (JSON, XML, CSV), binary-JSON (MessagePack, BSON), and schema-driven binary (Protocol Buffers, Thrift, Avro) — and explains when each is the right tool."
+            }
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "warning",
+          "runs": [
+            {
+              "text": "If data persisted today will be read by a different version of your software tomorrow, you need a schema with defined evolution rules. Language-specific serialization provides neither."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Encoding is the translation layer at every data boundary — get it wrong and your services can't talk to each other, your old data can't be read by new code, and your system becomes fragile every time you change a field name."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "dds-ch04-c002",
+      "order": 2,
+      "title": "JSON, XML, and CSV",
+      "teaser": "The textual encodings are everywhere precisely because they are human-readable — but that readability comes at the cost of type ambiguity, verbosity, and silent data loss at the edges.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "JSON, XML, and CSV are the lingua franca of data exchange: nearly every language has a library, nearly every tool can consume them, and you can read them in a text editor. These properties make them excellent for quick integration and debugging. They also carry structural weaknesses that matter at scale."
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Type ambiguity.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " JSON has no distinction between a 32-bit integer and a 64-bit integer — both are just \"number\". JavaScript's "
+              },
+              {
+                "text": "Number",
+                "marks": ["code"]
+              },
+              {
+                "text": " type can safely represent integers only up to 2^53. Twitter's user IDs exceeded this and had to be returned as both a number and a string in their API. CSV has no type information at all: every value is a string, and the consumer guesses."
+              }
+            ],
+            [
+              {
+                "text": "Verbosity.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Field names are repeated in every record. A JSON object with ten fields stores the key strings ten thousand times if you have ten thousand records. For high-throughput messaging, this overhead is real."
+              }
+            ],
+            [
+              {
+                "text": "No schema enforcement.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " JSON and CSV have no built-in mechanism to declare that a field is required, what type it must be, or what values are valid. A producer can add or remove fields without any error at the consumer. Silent data loss is the result."
+              }
+            ],
+            [
+              {
+                "text": "Encoding edge cases.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " XML and HTML have different character escaping rules for the same characters. CSV has no standard for escaping commas inside values, newlines inside fields, or null vs empty string. These edge cases cause subtle bugs that only appear in production data."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "JSON Schema and XML Schema (XSD) exist to add schema validation on top of these formats, but they are optional overlays — they do not change the encoding itself. Two systems exchanging JSON can enforce a schema independently or not at all; there is no built-in mechanism to ensure both use the same schema version."
+            }
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "info",
+          "runs": [
+            {
+              "text": "For human-facing APIs, configuration files, and systems where debuggability matters most, JSON remains a pragmatic choice. The key is to overlay it with JSON Schema validation and acknowledge its type limitations explicitly rather than discovering them in a production incident."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "JSON, XML, and CSV are readable and universally supported, but they have fuzzy types, no mandatory schema, and verbose field names — problems that show up as subtle bugs and performance pain as your data volumes grow."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "dds-ch04-c003",
+      "order": 3,
+      "title": "Binary Encodings of JSON-like Data",
+      "teaser": "MessagePack, BSON, and UBJSON shrink JSON's wire footprint without changing its data model — the field names are still in the payload, but packed into fewer bytes.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "A class of formats takes JSON's data model — strings, numbers, booleans, arrays, objects — and encodes it in a binary rather than textual representation. The result is smaller and faster to parse, but the underlying structure is identical. These formats are "
+            },
+            {
+              "text": "self-describing",
+              "marks": ["italic"]
+            },
+            {
+              "text": ": every value carries a type tag, and field names are still embedded in the message."
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "MessagePack",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — the most widely used. Maps directly to JSON types. A string that would be 5 bytes in JSON might be 2-3 bytes in MessagePack. Supported in nearly every language. Used by Redis, Fluentd, and many RPC frameworks."
+              }
+            ],
+            [
+              {
+                "text": "BSON",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — \"Binary JSON,\" created by MongoDB. Extends JSON with additional types: "
+              },
+              {
+                "text": "Date",
+                "marks": ["code"]
+              },
+              {
+                "text": ", "
+              },
+              {
+                "text": "BinData",
+                "marks": ["code"]
+              },
+              {
+                "text": ", "
+              },
+              {
+                "text": "ObjectId",
+                "marks": ["code"]
+              },
+              {
+                "text": ", 32-bit and 64-bit integers. Designed for efficient in-place mutation (MongoDB updates individual fields without re-encoding the whole document). Can be larger than JSON for small documents due to length prefixes."
+              }
+            ],
+            [
+              {
+                "text": "UBJSON",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — Universal Binary JSON. Adds typed numeric arrays for efficient representation of numeric data. Less widely adopted than MessagePack or BSON."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The critical limitation of all these formats: "
+            },
+            {
+              "text": "field names are still present in every message",
+              "marks": ["bold"]
+            },
+            {
+              "text": ". A MessagePack encoding of a record with ten fields still contains the ten field name strings. For a record with a field named "
+            },
+            {
+              "text": "transactionReferenceIdentifier",
+              "marks": ["code"]
+            },
+            {
+              "text": ", you save nothing compared to JSON — just the quoted delimiters. Schema-driven formats (Protocol Buffers, Avro) solve this by replacing field names with integer tags or schema-derived offsets."
+            }
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "info",
+          "runs": [
+            {
+              "text": "Binary JSON formats are a good fit when you need a drop-in JSON replacement with smaller payload sizes and richer types, but don't want to commit to a schema-driven format. They are particularly common in embedded systems, IoT, and internal caching layers."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "MessagePack and BSON are compact JSON — the same data model packed into fewer bytes. They're faster and smaller than JSON, but still self-describing: every record carries its field names, so they don't get the dramatic size savings that schema-driven formats do."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "dds-ch04-c004",
+      "order": 4,
+      "title": "Protocol Buffers",
+      "teaser": "Google's Protocol Buffers replace field names with numeric tags and encode values without delimiters — the result is compact, fast, and strictly schema-driven, with tag numbers as the durable contract.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Protocol Buffers (Protobuf) defines data structures in an Interface Definition Language (IDL), the "
+            },
+            {
+              "text": ".proto",
+              "marks": ["code"]
+            },
+            {
+              "text": " file. A schema compiler ("
+            },
+            {
+              "text": "protoc",
+              "marks": ["code"]
+            },
+            {
+              "text": ") generates typed code for your target language. On the wire, every field is identified by its "
+            },
+            {
+              "text": "tag number",
+              "marks": ["bold"]
+            },
+            {
+              "text": " — a small integer defined in the schema — not by its name."
+            }
+          ]
+        },
+        {
+          "type": "code",
+          "language": "protobuf",
+          "text": "syntax = \"proto3\";\n\nmessage UserEvent {\n  int64  user_id        = 1;\n  string email          = 2;\n  string full_name      = 3;\n  repeated string roles = 4;\n  int64  created_at_ms  = 5;\n}"
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The encoded wire format for this message contains no field names at all. Each field is prefixed by a varint encoding "
+            },
+            {
+              "text": "(field_number << 3) | wire_type",
+              "marks": ["code"]
+            },
+            {
+              "text": ". The decoder uses the schema to map tag numbers back to field names. A field named "
+            },
+            {
+              "text": "full_name",
+              "marks": ["code"]
+            },
+            {
+              "text": " can be renamed to "
+            },
+            {
+              "text": "display_name",
+              "marks": ["code"]
+            },
+            {
+              "text": " in the schema without changing the wire encoding, as long as tag "
+            },
+            {
+              "text": "3",
+              "marks": ["code"]
+            },
+            {
+              "text": " remains associated with the same field."
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Tag numbers are permanent.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " They are the wire contract. Changing tag 3 from "
+              },
+              {
+                "text": "string",
+                "marks": ["code"]
+              },
+              {
+                "text": " to "
+              },
+              {
+                "text": "int64",
+                "marks": ["code"]
+              },
+              {
+                "text": " is a breaking change. Deleting tag 3 and reusing the number for a new field is also a breaking change. Deleted fields must be reserved to prevent accidental reuse: "
+              },
+              {
+                "text": "reserved 3; reserved \"full_name\";",
+                "marks": ["code"]
+              },
+              {
+                "text": "."
+              }
+            ],
+            [
+              {
+                "text": "Unknown fields are preserved.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " In proto3, a decoder encountering a tag it does not recognize stores it as an unknown field and re-emits it on re-encode. This is what enables forward compatibility: old code reading a message written by new code will ignore new fields rather than fail."
+              }
+            ],
+            [
+              {
+                "text": "Compact and fast.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Varint encoding means small integers (including most tag numbers) occupy a single byte. A typical Protobuf message is 3–10x smaller than the equivalent JSON."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Protobuf is the encoding behind gRPC, Google's internal RPC infrastructure, and a large fraction of Google's inter-service traffic. It is the dominant choice for high-throughput binary RPC and event schemas where schema evolution must be controlled."
+            }
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "info",
+          "runs": [
+            {
+              "text": "The discipline required by Protobuf — assigning tag numbers, never reusing them, reserving deleted ones — is not boilerplate. It is the mechanism that makes backward and forward compatibility possible. Treat tag numbers as immutable identifiers, not implementation details."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Protocol Buffers encodes data using small numeric tags instead of field names — the schema maps tags to field names, so the wire format is compact and language-independent. The tags are the contract: they can never change."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "dds-ch04-c005",
+      "order": 5,
+      "title": "Thrift",
+      "teaser": "Facebook's Thrift delivers the same schema-driven binary encoding as Protocol Buffers, with a richer IDL that includes service definitions — and a different ecosystem shaped by its origins in the pre-Protobuf open-source world.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Apache Thrift was developed at Facebook around 2006 — before Protobuf was open-sourced — as a cross-language RPC framework. Like Protobuf, it uses numeric field identifiers on the wire and an IDL to generate typed code. Unlike Protobuf, the Thrift IDL also defines services (RPC method signatures), making it a complete RPC framework rather than just a serialization layer."
+            }
+          ]
+        },
+        {
+          "type": "code",
+          "language": "thrift",
+          "text": "struct UserEvent {\n  1: required i64    user_id,\n  2: required string email,\n  3: optional string full_name,\n  4: list<string>    roles,\n  5: required i64    created_at_ms\n}\n\nservice UserService {\n  UserEvent getUser(1: i64 user_id)\n  void      deleteUser(1: i64 user_id)\n}"
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Thrift ships multiple binary protocols:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "BinaryProtocol",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — straightforward binary encoding; field type and ID in a header, followed by value. Simple and fast."
+              }
+            ],
+            [
+              {
+                "text": "CompactProtocol",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — uses variable-length encoding for integers and delta-encoding for field IDs. Produces smaller messages, comparable to Protobuf wire sizes."
+              }
+            ],
+            [
+              {
+                "text": "DenseProtocol",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — omits field IDs entirely, using schema-driven positional encoding. Even more compact but less compatible with schema evolution."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The evolution rules mirror Protobuf: field IDs are permanent, adding optional fields is safe, and changing a field's type is a breaking change. The same discipline applies: never reuse a field ID once a field has been removed."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Thrift is widely deployed at Facebook (Meta), Twitter, Pinterest, and Evernote. It is less dominant than Protobuf in new greenfield systems, partly because gRPC (built on Protobuf) absorbed much of the structured RPC market. The Thrift ecosystem remains strongest in Java and C++ shops that built their internal infrastructure in the 2008–2015 period."
+            }
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "info",
+          "runs": [
+            {
+              "text": "Thrift and Protobuf solve the same core problem — schema-driven binary encoding with explicit field identifiers — and the compatibility rules are nearly identical. Choosing between them today is primarily an ecosystem and tooling decision, not a technical one."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Thrift is Facebook's answer to the same problem Protobuf solves — compact binary encoding with numeric field IDs. It adds built-in service definitions for RPC and ships multiple wire protocols, but the schema evolution rules are essentially the same: field IDs are forever."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "dds-ch04-c006",
+      "order": 6,
+      "title": "Avro — Encoding and the Writer's Schema",
+      "teaser": "Avro encodes data without any field identifiers in the binary payload — the schema alone determines how to interpret the bytes, making it the most compact option but demanding a new approach to schema management.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Apache Avro takes a different approach from Protobuf and Thrift. There are no field tags, no type markers in the encoded data. The binary payload is just the values, in the order defined by the schema. To decode an Avro message, you must have the exact schema that was used to write it — this is called the "
+            },
+            {
+              "text": "writer's schema",
+              "marks": ["bold"]
+            },
+            {
+              "text": "."
+            }
+          ]
+        },
+        {
+          "type": "code",
+          "language": "json",
+          "text": "{\n  \"type\": \"record\",\n  \"name\": \"UserEvent\",\n  \"namespace\": \"com.example.events\",\n  \"fields\": [\n    { \"name\": \"user_id\",      \"type\": \"long\" },\n    { \"name\": \"email\",        \"type\": \"string\" },\n    { \"name\": \"full_name\",    \"type\": [\"null\", \"string\"], \"default\": null },\n    { \"name\": \"roles\",        \"type\": { \"type\": \"array\", \"items\": \"string\" }, \"default\": [] },\n    { \"name\": \"created_at_ms\",\"type\": \"long\" }\n  ]\n}"
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Because there are no tags in the payload, Avro achieves the most compact binary encoding of any mainstream format. A record with ten "
+            },
+            {
+              "text": "long",
+              "marks": ["code"]
+            },
+            {
+              "text": " fields is encoded as ten consecutive zigzag varints — no headers, no delimiters. For columnar analytics workloads (Hadoop, Spark, Flink), this density is the primary reason Avro was chosen as the default encoding for Kafka messages and HDFS files."
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Schema is required for decoding.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Without the writer's schema, the binary payload is uninterpretable. This is not a limitation — it is the mechanism that makes schema management explicit and enforced rather than optional."
+              }
+            ],
+            [
+              {
+                "text": "Nullable fields use union types.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " In Avro, optional fields are modeled as a union of "
+              },
+              {
+                "text": "[\"null\", \"string\"]",
+                "marks": ["code"]
+              },
+              {
+                "text": " with a "
+              },
+              {
+                "text": "null",
+                "marks": ["code"]
+              },
+              {
+                "text": " default. This is more explicit than Protobuf's implicit optional fields."
+              }
+            ],
+            [
+              {
+                "text": "Dynamically generated schemas.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Avro's schema is JSON, so it can be generated at runtime from a database table definition, ORM model, or API spec. This makes Avro popular for ETL pipelines that need to capture schema changes automatically."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "info",
+          "runs": [
+            {
+              "text": "Avro is the canonical choice for Kafka message schemas and Hadoop/Spark data pipelines precisely because of its density and dynamically-generated schema capability. The Confluent Schema Registry was built primarily around Avro before adding Protobuf and JSON Schema support."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Avro strips everything from the wire payload — no field names, no type tags, just values in schema order. It's the most compact encoding, but you must have the writer's schema to read any message."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "dds-ch04-c007",
+      "order": 7,
+      "title": "Avro — Schema Resolution at Read Time",
+      "teaser": "Avro's two-schema model — writer's schema and reader's schema — allows producer and consumer to evolve independently, with mismatches resolved by Avro's schema resolution rules at decode time.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The key insight in Avro's design is that the schema used to write data need not be identical to the schema used to read it. Avro resolves the differences at read time using defined "
+            },
+            {
+              "text": "schema resolution rules",
+              "marks": ["bold"]
+            },
+            {
+              "text": ". This two-schema model is what makes independent schema evolution possible."
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Writer's schema",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — the schema that was active when the message was encoded. This schema travels with the data (typically as a schema ID referencing a schema registry) or is known from the file header."
+              }
+            ],
+            [
+              {
+                "text": "Reader's schema",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — the schema the consuming application expects, defined by the current version of its code."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The resolution process:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Fields present in writer but not reader:",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Silently discarded. The reader simply does not receive them."
+              }
+            ],
+            [
+              {
+                "text": "Fields present in reader but not writer:",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Filled with the field's default value declared in the reader's schema. If no default is defined for a missing field, resolution fails — this is an incompatibility."
+              }
+            ],
+            [
+              {
+                "text": "Type promotion:",
+                "marks": ["bold"]
+              },
+              {
+                "text": " "
+              },
+              {
+                "text": "int",
+                "marks": ["code"]
+              },
+              {
+                "text": " can be promoted to "
+              },
+              {
+                "text": "long",
+                "marks": ["code"]
+              },
+              {
+                "text": ", "
+              },
+              {
+                "text": "float",
+                "marks": ["code"]
+              },
+              {
+                "text": " to "
+              },
+              {
+                "text": "double",
+                "marks": ["code"]
+              },
+              {
+                "text": ". Other type changes are incompatible."
+              }
+            ],
+            [
+              {
+                "text": "Field renaming:",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Supported via the "
+              },
+              {
+                "text": "aliases",
+                "marks": ["code"]
+              },
+              {
+                "text": " attribute in the reader's schema. The reader declares the old field name as an alias, and Avro matches it to the writer's field."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "This model has a critical implication for evolution: "
+            },
+            {
+              "text": "every new field added to the reader's schema must have a default value",
+              "marks": ["bold"]
+            },
+            {
+              "text": ". Otherwise, messages written before the field was added will fail to decode. In practice, this means Avro's evolution discipline is enforced by the schema itself rather than by a tag-numbering convention — the schema structure is the compatibility mechanism."
+            }
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "tip",
+          "runs": [
+            {
+              "text": "For Kafka consumers, the standard pattern is: look up the writer's schema ID from the message header, fetch the schema from the Schema Registry, and pass both writer's and reader's schema to the Avro decoder. The decoder handles all field-level differences automatically."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Avro lets the reader and writer use different schemas — the decoder reconciles them by matching fields by name and filling missing fields from defaults. As long as every new field has a default, old messages can always be read by new code."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "dds-ch04-c008",
+      "order": 8,
+      "title": "Schema Registry",
+      "teaser": "A schema registry is the central coordination layer for schema evolution — it stores versioned schemas, enforces compatibility rules on registration, and lets producers and consumers find each other's schemas by ID.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "When messages flow through a Kafka topic or across service boundaries, producers and consumers need a shared mechanism to discover which schema version was used to encode each message. The "
+            },
+            {
+              "text": "Confluent Schema Registry",
+              "marks": ["bold"]
+            },
+            {
+              "text": " is the dominant implementation of this pattern."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The protocol is simple. A Kafka message using the Schema Registry wire format begins with a magic byte ("
+            },
+            {
+              "text": "0x00",
+              "marks": ["code"]
+            },
+            {
+              "text": ") followed by a 4-byte schema ID. The consumer reads this ID, fetches the corresponding schema from the registry (usually cached locally after the first fetch), and uses it as the writer's schema for decoding."
+            }
+          ]
+        },
+        {
+          "type": "code",
+          "language": "text",
+          "text": "Kafka message wire format (Confluent):\n+--------+------------+------------------+\n| 0x00   | schema_id  | avro_payload     |\n| 1 byte | 4 bytes    | N bytes          |\n+--------+------------+------------------+"
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Subjects and compatibility modes.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Schemas are registered under a "
+              },
+              {
+                "text": "subject",
+                "marks": ["italic"]
+              },
+              {
+                "text": " (typically "
+              },
+              {
+                "text": "<topic>-value",
+                "marks": ["code"]
+              },
+              {
+                "text": "). When a new schema version is registered, the registry checks it against the configured compatibility mode: "
+              },
+              {
+                "text": "BACKWARD",
+                "marks": ["code"]
+              },
+              {
+                "text": ", "
+              },
+              {
+                "text": "FORWARD",
+                "marks": ["code"]
+              },
+              {
+                "text": ", "
+              },
+              {
+                "text": "FULL",
+                "marks": ["code"]
+              },
+              {
+                "text": ", or "
+              },
+              {
+                "text": "NONE",
+                "marks": ["code"]
+              },
+              {
+                "text": ". A registration that would violate the mode is rejected."
+              }
+            ],
+            [
+              {
+                "text": "Schema IDs are immutable.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Once a schema is assigned an ID, that ID is permanent. Messages written with that schema can always be decoded, even years later, as long as the registry retains the schema."
+              }
+            ],
+            [
+              {
+                "text": "Supports multiple formats.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " The Confluent Schema Registry supports Avro (the original), Protobuf, and JSON Schema. Each format has its own compatibility checking logic."
+              }
+            ],
+            [
+              {
+                "text": "Client-side caching.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Producer and consumer clients cache schema lookups locally. A high-throughput consumer reading 100,000 messages per second fetches each schema ID only once, not per-message."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The registry is the enforcement point for schema governance. Teams that want to prevent breaking changes from reaching production configure their CI pipelines to run "
+            },
+            {
+              "text": "schema compatibility checks",
+              "marks": ["bold"]
+            },
+            {
+              "text": " against the registry before merging schema changes. The registration API returns an error if the new schema is incompatible, and the CI job fails."
+            }
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "warning",
+          "runs": [
+            {
+              "text": "A schema registry with compatibility mode set to NONE provides schema discovery but no compatibility enforcement. This is useful during initial development but dangerous in production — it allows breaking changes to be registered and deployed without any automated check."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "A schema registry is a versioned store of schemas identified by integer IDs — producers embed the ID in each message, consumers look it up to decode. The registry also enforces compatibility rules so a breaking schema change is rejected before it reaches your consumers."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "dds-ch04-c009",
+      "order": 9,
+      "title": "Schema Evolution Rules",
+      "teaser": "Schema evolution is not a free-for-all — specific changes are safe, specific changes are breaking, and knowing which is which is the difference between a seamless rolling deploy and a production outage.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Every schema-driven encoding format defines a set of changes that are compatible (can be deployed without breaking existing data or services) and changes that are incompatible (require a coordinated cutover or dual-write migration). Getting this wrong is how you corrupt data in flight."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Safe changes (for Protobuf, Thrift, and Avro):"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Add a new optional field with a default value.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Old readers ignore the field (or never see it). New readers see the default when reading old messages."
+              }
+            ],
+            [
+              {
+                "text": "Remove an optional field.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " New readers simply do not read a field that old writers still populate. The bytes are ignored."
+              }
+            ],
+            [
+              {
+                "text": "Rename a field",
+                "marks": ["bold"]
+              },
+              {
+                "text": " (Avro: with aliases; Protobuf: freely, since the wire identifier is the tag number, not the name)."
+              }
+            ],
+            [
+              {
+                "text": "Widen a numeric type.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " "
+              },
+              {
+                "text": "int32",
+                "marks": ["code"]
+              },
+              {
+                "text": " → "
+              },
+              {
+                "text": "int64",
+                "marks": ["code"]
+              },
+              {
+                "text": " is safe (Avro promotes; Protobuf handles with the same wire type). The reverse is not."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Unsafe changes (breaking, for all formats):"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Change a tag number (Protobuf/Thrift).",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Old readers look for the field at the old tag; new writers write it at the new tag. The field appears to vanish."
+              }
+            ],
+            [
+              {
+                "text": "Change a field's type incompatibly.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " "
+              },
+              {
+                "text": "string",
+                "marks": ["code"]
+              },
+              {
+                "text": " → "
+              },
+              {
+                "text": "int64",
+                "marks": ["code"]
+              },
+              {
+                "text": " will cause parse errors when old data is read by new code or vice versa."
+              }
+            ],
+            [
+              {
+                "text": "Add a required field (Protobuf/Thrift).",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Old messages that don't have the field will fail validation on new readers. This is why proto3 removed "
+              },
+              {
+                "text": "required",
+                "marks": ["code"]
+              },
+              {
+                "text": " entirely."
+              }
+            ],
+            [
+              {
+                "text": "Reuse a deleted field's tag number or Avro field name.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Old messages with the old field type will be decoded with the new field's semantics, producing silently wrong data."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "warning",
+          "runs": [
+            {
+              "text": "proto3 removed the `required` keyword for exactly this reason — required fields make backward compatibility impossible. Any schema evolution policy that includes adding required fields will eventually cause a production break."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Safe schema changes add or remove optional fields with defaults. Breaking changes alter the type, tag number, or requiredness of an existing field. The golden rule: never change what already exists on the wire; only add new things."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "dds-ch04-c010",
+      "order": 10,
+      "title": "Backward Compatibility",
+      "teaser": "Backward compatibility means newer code can read data written by older code — the direction that matters when you deploy a new service version and it encounters messages your old service produced.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "A schema change is "
+            },
+            {
+              "text": "backward compatible",
+              "marks": ["bold"]
+            },
+            {
+              "text": " if code running the new schema can read data encoded with the old schema. This is the guarantee you need when you roll out a new service version: the new code will encounter messages (from Kafka, from a database, from a peer service) that were encoded by the old version. If the new schema is backward compatible with the old, those messages will decode correctly."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The canonical backward-compatible operation is adding a new field with a default value:"
+            }
+          ]
+        },
+        {
+          "type": "code",
+          "language": "protobuf",
+          "text": "// v1 schema\nmessage Order {\n  int64  order_id = 1;\n  string customer = 2;\n}\n\n// v2 schema — backward compatible: new optional field, tag 3\nmessage Order {\n  int64  order_id     = 1;\n  string customer     = 2;\n  string promo_code   = 3;  // absent in old messages; defaults to \"\"\n}"
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "When v2 code reads an old message that has no tag 3, "
+            },
+            {
+              "text": "promo_code",
+              "marks": ["code"]
+            },
+            {
+              "text": " is empty string (proto3 default for string). The v2 code must be written to handle this case correctly — treating the absence of a promo code as \"no promo\" rather than \"unknown\"."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Backward compatibility also applies to databases. When a new column is added to a table with a "
+            },
+            {
+              "text": "NOT NULL DEFAULT",
+              "marks": ["code"]
+            },
+            {
+              "text": " constraint, the new application version that reads from the table will find the default value for rows written before the migration. If the application misinterprets the default as a meaningful value rather than \"not yet set,\" it produces incorrect behavior — even though the schema change was technically backward compatible."
+            }
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "info",
+          "runs": [
+            {
+              "text": "In the Confluent Schema Registry, BACKWARD compatibility mode verifies that the latest schema version can read data written by the immediately preceding version. BACKWARD_TRANSITIVE verifies compatibility against all previous versions — use this for long-lived event logs where you cannot guarantee consumers are up to date."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Backward compatibility means new code can read old data. It's what you need when you deploy a new service and it encounters messages written by the old version — which happens during every rolling deploy."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "dds-ch04-c011",
+      "order": 11,
+      "title": "Forward Compatibility",
+      "teaser": "Forward compatibility means older code can read data written by newer code — the direction that matters during a rolling deploy when old instances encounter messages from instances that are already running the new version.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "A schema change is "
+            },
+            {
+              "text": "forward compatible",
+              "marks": ["bold"]
+            },
+            {
+              "text": " if code running the old schema can read data encoded with the new schema. This is the guarantee you need when you have a mixed-version deployment: some instances have been upgraded to v2, and they are producing messages that v1 instances must still be able to consume."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "For Protobuf and Thrift, forward compatibility is a property of the old decoder's behavior: unknown fields (tags it does not recognize) are preserved but ignored. Adding a new field with a new tag to the v2 schema is therefore forward compatible because v1 readers encounter an unknown tag and skip it rather than failing."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The deployment pattern for forward compatibility:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Deploy readers first, writers second.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " If you need to add a new field to a Kafka topic schema, first deploy all consumers with the new schema (they ignore the field when it is absent). Then deploy producers that start writing the new field. Consumers are now reading messages both with and without the field, which they handle via the default."
+              }
+            ],
+            [
+              {
+                "text": "Never delete a field before all readers are updated.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Removing a field from the writer before all readers no longer depend on it produces the missing-field case, which is only safe if the reader schema defines a default."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Full compatibility (both backward and forward) is the strictest mode and corresponds to FULL in the Confluent Schema Registry. It is achievable for adding optional fields, removing optional fields, and renaming fields. It is not achievable for type changes or required field additions."
+            }
+          ]
+        },
+        {
+          "type": "comparison",
+          "items": [
+            {
+              "label": "Backward Compat",
+              "description": "New code reads old data. Deploy new readers before new writers are fully rolled out."
+            },
+            {
+              "label": "Forward Compat",
+              "description": "Old code reads new data. Deploy readers before writers. Old instances survive until replaced."
+            },
+            {
+              "label": "Full Compat",
+              "description": "Both directions. Only achievable with additive, optional-only changes."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Forward compatibility means old code can read new data. During a rolling deploy, new instances start producing messages with a new schema before all old instances have been replaced — forward compatibility ensures old instances don't crash when they see new fields."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "dds-ch04-c012",
+      "order": 12,
+      "title": "Dataflow Through Databases",
+      "teaser": "A database is not just a storage layer — it is an encoding boundary where data written by one version of your application must survive to be read by a future version, sometimes years later.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "When an application writes to a database, it encodes its in-memory objects into the database's storage format. When another process reads those rows, it decodes them back into objects. The database stores data far longer than any individual service deployment lasts — rows written by v1 code will be read by v3 code, v10 code, code not yet written."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Two distinct dataflow directions interact:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "New code writing, old code reading.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " During a rolling deploy, the new version of your service writes rows with the new schema. Instances running the old version read those rows. This requires forward compatibility: old code must tolerate new columns it doesn't know about."
+              }
+            ],
+            [
+              {
+                "text": "Old code writing, new code reading.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " After a migration, new code reads rows that were written before the schema change. This requires backward compatibility: new code must tolerate the absence of new columns or new fields."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The specific challenge of relational databases: schema migrations run "
+            },
+            {
+              "text": "once",
+              "marks": ["italic"]
+            },
+            {
+              "text": " and affect all rows, including rows written by old code. Adding a "
+            },
+            {
+              "text": "NOT NULL",
+              "marks": ["code"]
+            },
+            {
+              "text": " column to a large table requires a default to avoid immediate failures on the millions of rows that were written before the column existed. This is often the source of long-running migration locks that cause production incidents."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The expand-contract pattern (also called parallel-change) makes database schema evolution safe:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Expand:",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Add the new column as nullable (or with a default). Deploy code that writes both the old and new columns."
+              }
+            ],
+            [
+              {
+                "text": "Migrate:",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Backfill the new column for existing rows. Add the "
+              },
+              {
+                "text": "NOT NULL",
+                "marks": ["code"]
+              },
+              {
+                "text": " constraint once all rows have a value."
+              }
+            ],
+            [
+              {
+                "text": "Contract:",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Deploy code that reads only the new column, stop writing the old column, then drop it."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "warning",
+          "runs": [
+            {
+              "text": "ORMs and application code that serialize arbitrary object fields to a text column (a JSON blob, a serialized Ruby Hash) embed all the language-specific serialization risks inside a relational database. These \"schemaless\" columns are where compatibility problems are hardest to detect and most likely to corrupt data silently."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "A database stores data across many application versions — rows written by v1 are read by v5. Every schema change must handle this gap with proper defaults, expand-contract migrations, and code that tolerates both old and new schema shapes simultaneously."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "dds-ch04-c013",
+      "order": 13,
+      "title": "Dataflow Through Services",
+      "teaser": "Services communicate via REST or RPC — each is an encoding boundary where schema evolution rules determine whether a rolling deploy succeeds or takes down your API mid-deploy.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Service-to-service communication is a synchronous encoding boundary: one process encodes a request, sends it over the network, and another process decodes and responds. The two processes may be running different versions of their respective codebases during any rolling deploy."
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "REST over HTTP/JSON.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " The dominant pattern for public APIs and many internal services. JSON is self-describing but type-loose. API versioning (path-based "
+              },
+              {
+                "text": "/v1/orders",
+                "marks": ["code"]
+              },
+              {
+                "text": " or header-based "
+              },
+              {
+                "text": "Accept: application/vnd.company.v2+json",
+                "marks": ["code"]
+              },
+              {
+                "text": ") is the usual mechanism for managing breaking changes. The cost: maintaining multiple API versions simultaneously until old clients migrate."
+              }
+            ],
+            [
+              {
+                "text": "gRPC over HTTP/2 + Protobuf.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Google's open-source RPC framework. Schemas are defined in "
+              },
+              {
+                "text": ".proto",
+                "marks": ["code"]
+              },
+              {
+                "text": " files; code is generated for the client and server. Compatibility is governed by Protobuf's tag-number rules. A new optional field with a new tag is a safe deploy; changing an existing field is not."
+              }
+            ],
+            [
+              {
+                "text": "Thrift RPC.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Structurally identical to gRPC but using Thrift IDL and transport. Widely deployed in older Java/C++ infrastructure."
+              }
+            ],
+            [
+              {
+                "text": "SOAP/WSDL.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " XML-based RPC with XSD schemas. Still present in financial and enterprise integrations. Schema evolution is theoretically possible but historically painful in practice."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The multi-version coexistence problem during deploys is real and unavoidable. A Kubernetes rolling deploy of 100 pods takes minutes during which some pods are running v1 and some are running v2. Both versions must be able to handle requests from either version of the calling service."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The Robustness Principle (Postel's Law) applies here: "
+            },
+            {
+              "text": "be conservative in what you send, liberal in what you accept",
+              "marks": ["italic"]
+            },
+            {
+              "text": ". Concretely: do not fail on unknown JSON fields; do not fail on a response that has more fields than your struct; use sensible defaults for fields you don't recognize. This is the service-tier equivalent of schema evolution."
+            }
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "tip",
+          "runs": [
+            {
+              "text": "For gRPC services, run a Protobuf breaking-change checker (such as `buf breaking`) in CI. This catches incompatible .proto changes before they reach production and prevents the most common source of service-tier schema breakage."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Every service call crosses an encoding boundary — REST uses JSON, gRPC uses Protobuf. During a rolling deploy, old and new versions of both caller and callee run simultaneously, so each must tolerate the other's message format."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "dds-ch04-c014",
+      "order": 14,
+      "title": "Dataflow Through Async Messaging",
+      "teaser": "Message brokers decouple producers from consumers in time and space — but that decoupling means schema evolution happens independently on each side, making compatibility rules more important, not less.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "In asynchronous messaging, producers write messages to a broker (Kafka, RabbitMQ, Amazon SQS, Google Pub/Sub) and consumers read them independently, potentially hours or days later. The producer and consumer never communicate directly. This decoupling is the feature — but it creates the most demanding schema evolution requirements: a message may be read by any version of any consumer, including versions not yet deployed when the message was written."
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Kafka.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Retains messages for a configurable retention period (days to weeks to forever). A consumer that was offline for a week will process messages written a week ago when it comes back online. All consumers in a Kafka consumer group must handle every schema version that exists in the topic's retention window."
+              }
+            ],
+            [
+              {
+                "text": "RabbitMQ and AMQP brokers.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Messages are typically consumed and acknowledged quickly, so retention is shorter. But schema evolution matters during upgrades: messages queued before the consumer upgrade must be processable by the upgraded consumer."
+              }
+            ],
+            [
+              {
+                "text": "Distributed actors (Erlang/OTP, Akka).",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Actor mailboxes accumulate messages between processing cycles. A restarted actor may encounter messages serialized before the latest code was deployed. Akka's serialization layer supports schema evolution via Protobuf; Erlang's native term encoding is forward-compatible by convention but does not enforce a schema."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The practical implications:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Dead-letter queues (DLQs) as a compatibility probe.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Messages that fail to decode land in a DLQ. A spike in DLQ depth after a schema deployment is the first signal of a compatibility problem. Monitor DLQ depth as a deployment health check."
+              }
+            ],
+            [
+              {
+                "text": "Avoid payload redesigns inside a topic.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " If a schema change is not evolution-compatible (e.g., renaming a required field), the correct pattern is to introduce a new topic with the new schema and run dual consumers temporarily, not to update the existing topic schema in place."
+              }
+            ],
+            [
+              {
+                "text": "Envelope pattern.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Wrap all messages in an outer envelope that includes a "
+              },
+              {
+                "text": "schema_version",
+                "marks": ["code"]
+              },
+              {
+                "text": " field and an "
+              },
+              {
+                "text": "event_type",
+                "marks": ["code"]
+              },
+              {
+                "text": " field. The consumer switches on these fields to apply the correct decoder — enabling multiple schema versions to coexist in a single topic."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "warning",
+          "runs": [
+            {
+              "text": "Kafka's log compaction and long retention windows mean you can never assume a topic contains only \"recent\" messages written with the current schema. Any consumer restart, new consumer group, or replay scenario will encounter the full history. BACKWARD_TRANSITIVE compatibility — compatible with all past versions, not just the previous one — is the correct default for Kafka topics."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Async messaging decouples producer and consumer, but that means a consumer can see messages from any point in the topic's retention history — all written with potentially different schemas. Schema evolution rules apply to the entire retention window, not just the latest version."
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

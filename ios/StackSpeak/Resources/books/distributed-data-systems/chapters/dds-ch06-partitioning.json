@@ -1,0 +1,1087 @@
+{
+  "chapterId": "dds-ch06-partitioning",
+  "shardIndex": 1,
+  "cards": [
+    {
+      "id": "dds-ch06-c001",
+      "order": 1,
+      "title": "Why Partition",
+      "teaser": "A single node can hold only so much data and serve only so many requests per second. Partitioning — splitting a dataset across multiple nodes — is what lets a distributed system grow beyond those limits.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The fundamental motivation for partitioning is straightforward: if you have a dataset of 10 TB and each node holds 1 TB, you need at least ten nodes. But storage capacity is only half the story. The more important benefit is "
+            },
+            {
+              "text": "parallel processing",
+              "marks": ["bold"]
+            },
+            {
+              "text": ". If each partition is handled by a dedicated CPU core and set of disks, a query that touches all partitions can be fanned out across all nodes simultaneously — throughput scales (roughly) linearly with the number of nodes."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Partitioning is usually combined with replication: each partition is stored on multiple nodes for fault tolerance. So each node may hold the primary copy of some partitions and follower copies of others. This chapter focuses on the partitioning structure itself — how to decide which records go to which partition."
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Horizontal scaling of storage:",
+                "marks": ["bold"]
+              },
+              {
+                "text": " large datasets (Petabytes in analytics, hundreds of TB in transactional systems) cannot fit on a single machine. Partitioning distributes the load."
+              }
+            ],
+            [
+              {
+                "text": "Parallel read/write throughput:",
+                "marks": ["bold"]
+              },
+              {
+                "text": " with N partitions spread across N nodes, you can in principle achieve N× write throughput compared to a single node."
+              }
+            ],
+            [
+              {
+                "text": "Independent failure isolation:",
+                "marks": ["bold"]
+              },
+              {
+                "text": " a node failure affects only its partitions; the rest of the cluster continues serving requests."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "info",
+          "runs": [
+            {
+              "text": "Kleppmann's term for partitioning is interchangeable with \"sharding\" (used in MongoDB, Elasticsearch), \"region\" (HBase), \"tablet\" (Bigtable), and \"vnode\" (Cassandra, Riak). The concept is the same across all these systems."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Partitioning is like splitting a library's books across multiple rooms: each room can be browsed independently, so ten readers can search ten rooms simultaneously rather than one reader searching one room at a time."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "dds-ch06-c002",
+      "order": 2,
+      "title": "Key-Range Partitioning",
+      "teaser": "Assign contiguous ranges of keys to each partition — like volumes of an encyclopedia — so that range scans are efficient, but sequential-key workloads can send every write to a single hot node.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "In key-range partitioning the key space is divided into sorted contiguous ranges. Each partition owns one range: partition 0 holds keys A–G, partition 1 holds H–N, and so on. Bigtable and its open-source analogue HBase use this approach, as does RethinkDB and MongoDB prior to hashed sharding."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The primary advantage is "
+            },
+            {
+              "text": "range scan efficiency",
+              "marks": ["bold"]
+            },
+            {
+              "text": ". Because keys within a partition are stored in sorted order on disk, retrieving all sensor readings from a device over a 24-hour window is a single sequential disk read — the storage engine can use a B-tree or SSTable index to jump directly to the start of the range and scan forward."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The partition boundaries do not need to be evenly spaced. If some key ranges are more popular than others — all sensor names start with letters A–C — the database administrator (or the system automatically, as in HBase) can split partitions at non-uniform boundaries to balance load."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The critical weakness: "
+            },
+            {
+              "text": "hot spots on sequential keys",
+              "marks": ["bold"]
+            },
+            {
+              "text": ". If the application uses timestamps as keys (a common sensor or log pattern), all writes for \"right now\" go to the single partition that owns today's timestamp range. The other partitions sit idle while one node is slammed. Kleppmann's canonical example is a sensor network that prefixes keys with a timestamp — all writes concentrate on the partition holding the current minute."
+            }
+          ]
+        },
+        {
+          "type": "code",
+          "language": "text",
+          "text": "Key-range partition layout (encyclopedia analogy):\n\nPartition 0: [A ................. G]\nPartition 1: [H ................. N]\nPartition 2: [O ................. T]\nPartition 3: [U ................. Z]\n\nRange scan for keys D–F → hits only Partition 0 (efficient).\nAll new writes use timestamp prefix → all land on current-time partition (hot spot)."
+        },
+        {
+          "type": "callout",
+          "variant": "warning",
+          "runs": [
+            {
+              "text": "Key-range partitioning is a bad fit for write-heavy workloads whose keys are monotonically increasing (auto-increment IDs, timestamps, UUIDs in time-sorted format). Hash partitioning or key salting is needed to spread the write load."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Key-range partitioning divides the key alphabet into chapters, like encyclopedia volumes A–G, H–N, O–Z. Adjacent keys stay together so range queries are fast — but if everyone is writing entries that start with today's letter, only one volume gets updated."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "dds-ch06-c003",
+      "order": 3,
+      "title": "Hash Partitioning",
+      "teaser": "Apply a hash function to each key and assign partitions by hash range — writes are uniformly distributed across nodes, but range scans become scatter-gather operations across every partition.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Hash partitioning solves the hot-spot problem of key-range schemes. A good hash function takes skewed data and distributes it uniformly across the output range. Cassandra and MongoDB (in hash-sharding mode) use this approach, and DynamoDB routes requests to partitions via a consistent hash ring."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Concretely: apply "
+            },
+            {
+              "text": "hash(key) mod N",
+              "marks": ["code"]
+            },
+            {
+              "text": " (or, in the consistent hashing variant, map onto a ring — more on that in card 11). The hash of \"user:12345\" might land in partition 2; the hash of \"user:12346\" might land in partition 7. Even though the keys are consecutive integers, the partitions are different. No partition accumulates sequential writes."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Cassandra uses MD5 as the hash function for its Murmur3 variant. MongoDB's hashed shard key applies the internal hash to the shard key value. In both systems the resulting hash value, not the raw key, determines partition placement."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The fundamental trade-off: "
+            },
+            {
+              "text": "range queries become slow",
+              "marks": ["bold"]
+            },
+            {
+              "text": ". Adjacent keys in the original space end up in different partitions after hashing. A query for all users with IDs between 1000 and 2000 must be sent to all partitions, and the results merged — scatter-gather rather than a point-lookup on one partition. Cassandra explicitly acknowledges this: if you declare a compound primary key like "
+            },
+            {
+              "text": "(user_id, timestamp)",
+              "marks": ["code"]
+            },
+            {
+              "text": ", only the "
+            },
+            {
+              "text": "first column",
+              "marks": ["italic"]
+            },
+            {
+              "text": " (user_id) is hashed for partitioning; the second column (timestamp) is sorted within the partition, supporting range scans within a user."
+            }
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "info",
+          "runs": [
+            {
+              "text": "Cassandra's compound partition key is the elegant middle ground: hash on the first component to spread load, range-scan on subsequent components within the resulting partition. This is the pattern to reach for when both distribution and local ordering matter."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Hash partitioning scrambles the key space like shuffling a deck of cards: each card ends up in a different slot, so no slot gets all the high cards. The cost is you can no longer deal out a sequence in order — you have to search every slot."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "dds-ch06-c004",
+      "order": 4,
+      "title": "Skewed Workloads and Hot Spots",
+      "teaser": "Even a perfect hash function cannot save you when the application-layer key is inherently concentrated — a celebrity posting on a social network sends millions of reads and writes through a single partition key.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Hash partitioning assumes that different keys are accessed with roughly equal frequency. But many real workloads violate this assumption. Kleppmann's canonical example is a celebrity on a social network: if the user ID is the partition key and Beyoncé posts a video, all activity related to that post — millions of likes, comments, reshares within minutes — maps to the single partition that owns her user ID. Every other node is underutilized while one partition is overwhelmed."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "This is the "
+            },
+            {
+              "text": "hot-spot problem",
+              "marks": ["bold"]
+            },
+            {
+              "text": " at the application level. Unlike the sequential-key hot spot (which a hash function fixes), this one persists even with ideal hashing because the "
+            },
+            {
+              "text": "data access pattern",
+              "marks": ["italic"]
+            },
+            {
+              "text": " is skewed, not the key distribution. No hash function can spread requests for a single key across multiple nodes — a key always hashes to one partition."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The mitigation is "
+            },
+            {
+              "text": "key salting",
+              "marks": ["bold"]
+            },
+            {
+              "text": ": append a random two-digit suffix to the hot key, distributing writes across 100 variants of that key (e.g., "
+            },
+            {
+              "text": "celebrity_user_id_42",
+              "marks": ["code"]
+            },
+            {
+              "text": " through "
+            },
+            {
+              "text": "celebrity_user_id_99",
+              "marks": ["code"]
+            },
+            {
+              "text": "). Reads then must query all 100 variants and merge the results. This is a deliberate scatter-gather trade-off: you accept read amplification to avoid write concentration."
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Random prefix salting:",
+                "marks": ["bold"]
+              },
+              {
+                "text": " append a random N-digit suffix to hot keys. Writes spread across N partitions. Reads query all N variants."
+              }
+            ],
+            [
+              {
+                "text": "Deterministic salting:",
+                "marks": ["bold"]
+              },
+              {
+                "text": " derive the suffix from a secondary attribute (e.g., the requesting user's own ID mod N). Reads for a specific user only need to check one variant, reducing read amplification at the cost of skew if secondary keys cluster."
+              }
+            ],
+            [
+              {
+                "text": "Application-level sharding:",
+                "marks": ["bold"]
+              },
+              {
+                "text": " maintain a separate hot-key registry in the application layer. When a key is detected as hot (via monitoring), activate salting only for those keys rather than all keys."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "warning",
+          "runs": [
+            {
+              "text": "Key salting must be tracked at the application level — the database has no knowledge that celebrity_user_id_00 through celebrity_user_id_99 represent the same logical entity. All merging logic lives in the application. This is operational complexity that must be weighed against the hot-spot pain it solves."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "A hot spot from a celebrity key is like a single checkout lane that every customer in the supermarket wants. Hashing the IDs doesn't help — everyone still wants that one lane. You fix it by adding fake clones of that lane (salted keys) so the crowd spreads out, then reassemble their carts at the exit."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "dds-ch06-c005",
+      "order": 5,
+      "title": "Local Secondary Indexes (Document-Partitioned)",
+      "teaser": "Each partition maintains its own secondary index covering only the records it holds — writes are cheap and local, but any query on the indexed field must scatter across all partitions and gather results.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "A secondary index lets you query records by a field other than the primary key (e.g., find all cars with "
+            },
+            {
+              "text": "color = red",
+              "marks": ["code"]
+            },
+            {
+              "text": " rather than by car ID). In a partitioned database, secondary indexes add complexity because the indexed field usually does not determine the partition — a red car might live in any partition."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "With "
+            },
+            {
+              "text": "document-partitioned secondary indexes",
+              "marks": ["bold"]
+            },
+            {
+              "text": " (also called local indexes), each partition maintains an index for only the records it stores. When a new car is added to partition 3, partition 3 updates its local index with the car's color, make, and year. The write touches only one partition — the one that owns that car — so writes are fast and require no cross-partition coordination."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The cost appears at read time. A query for all red cars must be sent to "
+            },
+            {
+              "text": "every partition",
+              "marks": ["bold"]
+            },
+            {
+              "text": " — because red cars may exist in any partition — and the results aggregated. This is called "
+            },
+            {
+              "text": "scatter-gather",
+              "marks": ["bold"]
+            },
+            {
+              "text": " (or \"map-reduce\" in some documentation). It is inherently slower and more complex than a primary-key point lookup. MongoDB uses this approach for its secondary indexes; Riak and Cassandra also use local indexes with the same scatter-gather read cost."
+            }
+          ]
+        },
+        {
+          "type": "code",
+          "language": "text",
+          "text": "Document-partitioned (local) secondary index:\n\nPartition 0: records {car_1, car_5, ...}  |  local index: {red: [car_1], blue: [car_5]}\nPartition 1: records {car_2, car_7, ...}  |  local index: {red: [car_7], green: [car_2]}\nPartition 2: records {car_3, car_6, ...}  |  local index: {red: [car_3], blue: [car_6]}\n\nWrite car_8 (red) → goes to Partition 1 → updates only Partition 1's local index. (fast)\nQuery color=red  → must query ALL partitions, merge results.             (scatter-gather)"
+        },
+        {
+          "type": "callout",
+          "variant": "warning",
+          "runs": [
+            {
+              "text": "Kleppmann describes scatter-gather as \"prone to tail latency amplification\" — if even one partition responds slowly, the entire query waits. This is the fundamental cost of local secondary indexes: reads are never faster than the slowest partition."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Local secondary indexes are like each bookstore branch keeping its own catalogue of what it stocks. Adding a book is instant — just update your local catalogue. But finding who in the city sells a specific title means calling every branch."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "dds-ch06-c006",
+      "order": 6,
+      "title": "Global Secondary Indexes (Term-Partitioned)",
+      "teaser": "A global index covers all partitions' data but is itself partitioned by the indexed term — reads hit only the relevant index partition, but writes must update index entries that may live on remote nodes.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "A "
+            },
+            {
+              "text": "term-partitioned (global) secondary index",
+              "marks": ["bold"]
+            },
+            {
+              "text": " takes the opposite trade-off from a local index. Instead of each partition owning its own index fragment, the index is centralized and then "
+            },
+            {
+              "text": "itself partitioned",
+              "marks": ["italic"]
+            },
+            {
+              "text": " by the term. The global index for color might be split so that partition A holds the index for colors A–M (including \"blue\", \"green\") and partition B holds N–Z (including \"red\", \"yellow\"). All red cars everywhere — regardless of which data partition they live in — are indexed in partition B."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The read advantage is significant: querying "
+            },
+            {
+              "text": "color = red",
+              "marks": ["code"]
+            },
+            {
+              "text": " routes to a single index partition, retrieves all matching car IDs, and then fetches those records from their respective data partitions. Reads are fast and do not scatter across all partitions. DynamoDB global secondary indexes work this way, as do Elasticsearch's shard-level global indexes and Riak's search feature."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The write cost is the catch. When a new red car is added to data partition 3, the write must "
+            },
+            {
+              "text": "also update the global index on partition B",
+              "marks": ["bold"]
+            },
+            {
+              "text": " — a different node. This requires a cross-partition, potentially cross-node write. For strong consistency, this requires a distributed transaction. Most real systems avoid that cost by making global index updates "
+            },
+            {
+              "text": "asynchronous",
+              "marks": ["italic"]
+            },
+            {
+              "text": ": the index lags behind the data, so a freshly written record may not appear in the index immediately. DynamoDB GSIs are documented as eventually consistent for this reason."
+            }
+          ]
+        },
+        {
+          "type": "comparison",
+          "label": "Local vs Global Secondary Index",
+          "items": [
+            {
+              "name": "Local (Document-Partitioned)",
+              "description": "Write: update one partition. Read: scatter-gather all partitions. Consistency: immediate."
+            },
+            {
+              "name": "Global (Term-Partitioned)",
+              "description": "Write: update multiple nodes (data + index). Read: query one index partition. Consistency: often eventual."
+            }
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "info",
+          "runs": [
+            {
+              "text": "The DynamoDB documentation explicitly states that global secondary index queries return results with \"eventual consistency\" — writes to the base table propagate to GSIs asynchronously. Applications that need the index to reflect a write immediately after it completes must use a consistent read on the base table, not the GSI."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "A global secondary index is a central library catalogue covering every branch. Finding all copies of a book is one lookup. But adding a new book means updating both the shelf at your branch and the central catalogue — two places, possibly with a delay before the catalogue reflects the new arrival."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "dds-ch06-c007",
+      "order": 7,
+      "title": "Rebalancing: Fixed Number of Partitions",
+      "teaser": "Create far more partitions than nodes at startup — when nodes join or leave, move whole partitions between nodes rather than splitting them, keeping the partition count constant.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "As a cluster grows or shrinks, data must be moved between nodes to keep load balanced — a process called "
+            },
+            {
+              "text": "rebalancing",
+              "marks": ["bold"]
+            },
+            {
+              "text": ". The simplest strategy is to fix the total number of partitions when the cluster is first created and assign multiple partitions per node. Riak and Elasticsearch follow this model."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The key insight is to make the number of partitions much larger than the number of nodes — Riak defaults to 64 or 128 partitions even for a 3-node cluster. When a new node joins, it claims a subset of existing partitions from each existing node, receiving a proportional share of data. When a node leaves, its partitions are distributed across the surviving nodes. "
+            },
+            {
+              "text": "Individual partitions are never split or merged",
+              "marks": ["italic"]
+            },
+            {
+              "text": " — only whole partitions move."
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Operational simplicity:",
+                "marks": ["bold"]
+              },
+              {
+                "text": " the partition schema is defined once at cluster creation. No logic needed to decide when to split or merge."
+              }
+            ],
+            [
+              {
+                "text": "Predictable data size per partition:",
+                "marks": ["bold"]
+              },
+              {
+                "text": " if you pre-allocate 1000 partitions for what you expect to eventually be a 10 TB dataset, each partition is ~10 GB — a predictable unit to move during rebalancing."
+              }
+            ],
+            [
+              {
+                "text": "Partition count is fixed forever:",
+                "marks": ["bold"]
+              },
+              {
+                "text": " if the dataset grows 100× beyond the initial estimate, individual partitions become too large. Choosing the right initial partition count requires anticipating future data growth."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "code",
+          "language": "text",
+          "text": "Fixed partitions (10 partitions, 3 nodes → 4 nodes):\n\nBefore: Node A: [P0, P1, P2, P3]  Node B: [P4, P5, P6]  Node C: [P7, P8, P9]\nAfter:  Node A: [P0, P1, P2]     Node B: [P4, P5]      Node C: [P7, P8]    Node D: [P3, P6, P9]\n\nWhole partitions moved; partition structure unchanged."
+        },
+        {
+          "type": "callout",
+          "variant": "info",
+          "runs": [
+            {
+              "text": "Elasticsearch uses this model: the number of primary shards is fixed at index creation time and cannot be changed (without re-indexing). The Elasticsearch documentation explicitly warns: \"plan your shard count carefully before you create an index.\""
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Fixed partitioning is like pre-cutting a pizza into 12 slices before anyone sits down. When more people arrive, you redistribute whole slices — you never re-cut the pizza. The trade-off is that you must guess the right number of slices in advance."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "dds-ch06-c008",
+      "order": 8,
+      "title": "Rebalancing: Dynamic Partitioning",
+      "teaser": "Let the database split partitions that grow too large and merge partitions that shrink too small — the approach taken by HBase and MongoDB, where partition count grows with data volume.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Dynamic partitioning adapts partition count to data volume. A new cluster starts with a single partition (or a small pre-split set); as data accumulates, partitions automatically split when they exceed a configured size threshold (HBase defaults to 10 GB per region). When data is deleted and a partition shrinks below a threshold, adjacent partitions can be merged."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "HBase and the original Google Bigtable use this model. So does MongoDB for its WiredTiger storage engine when range-based sharding is chosen. The split operation takes an existing partition, divides it at the median key, and migrates one half to another node."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The advantage: the number of partitions adapts to the actual amount of data. A 100 GB dataset and a 100 TB dataset both end up with appropriately sized partitions without requiring the operator to predict future growth in advance. There is no fixed-partition-count planning problem."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The disadvantage is an initialization problem: a single partition at startup means "
+            },
+            {
+              "text": "all writes go to one node",
+              "marks": ["bold"]
+            },
+            {
+              "text": " until the first split occurs. HBase and MongoDB allow "
+            },
+            {
+              "text": "pre-splitting",
+              "marks": ["italic"]
+            },
+            {
+              "text": " at cluster creation — manually specifying initial partition boundaries when the key distribution is known in advance. Without pre-splitting, a new cluster has a cold-start hot-spot."
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Automatic split on size threshold:",
+                "marks": ["bold"]
+              },
+              {
+                "text": " HBase splits when a region exceeds the configured maximum size (default 10 GB for HBase 2.x). The split point is chosen at the midpoint of the key range."
+              }
+            ],
+            [
+              {
+                "text": "Automatic merge on small size:",
+                "marks": ["bold"]
+              },
+              {
+                "text": " adjacent partitions that are both below a minimum threshold are candidates for merging, reducing metadata overhead."
+              }
+            ],
+            [
+              {
+                "text": "Pre-splitting for known distributions:",
+                "marks": ["bold"]
+              },
+              {
+                "text": " if the key distribution is predictable at cluster creation (e.g., UUIDs uniformly distributed), pre-create partitions at known boundaries to avoid the cold-start problem."
+              }
+            ]
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Dynamic partitioning is like a living cell that divides when it gets too large and fuses with a neighbor when it shrinks too small. The population of cells self-regulates to match the amount of material, with no need to predict the right count up front."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "dds-ch06-c009",
+      "order": 9,
+      "title": "Rebalancing: Proportional to Nodes",
+      "teaser": "Keep the number of partitions proportional to the number of nodes — as the cluster grows, each new node claims fractions of existing partitions by splitting them, maintaining constant partition size per node.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The third rebalancing strategy, used by Cassandra and Ketama-style consistent hashing systems, ties the number of partitions directly to the number of nodes. The target is a fixed number of partitions "
+            },
+            {
+              "text": "per node",
+              "marks": ["italic"]
+            },
+            {
+              "text": " (Cassandra defaults to 256 vnodes per physical node). When a new node joins, it picks that many random points on the hash ring and claims the data in those ranges, splitting existing partitions."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The consequence is that partition size stays roughly constant in terms of "
+            },
+            {
+              "text": "data volume per node",
+              "marks": ["bold"]
+            },
+            {
+              "text": " as the cluster scales. In the fixed-partition model, adding nodes makes each node hold fewer whole partitions but the partitions stay the same size. In the proportional model, adding nodes creates more, smaller partitions."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "This approach provides smoother rebalancing: the new node steals a little data from many existing nodes rather than pulling a lot of data from a few. The statistical argument is that with enough vnodes per physical node, the random placement produces a roughly equal split of the keyspace across all physical nodes, and any temporary imbalance is small."
+            }
+          ]
+        },
+        {
+          "type": "comparison",
+          "label": "Three Rebalancing Strategies",
+          "items": [
+            {
+              "name": "Fixed partitions (Riak, Elasticsearch)",
+              "description": "Partition count fixed at creation. Move whole partitions on resize. Simple but requires capacity planning."
+            },
+            {
+              "name": "Dynamic partitions (HBase, MongoDB range sharding)",
+              "description": "Split/merge on size threshold. Self-adapting but cold-start risk requires pre-splitting."
+            },
+            {
+              "name": "Proportional to nodes (Cassandra, Ketama)",
+              "description": "Partitions per node stays fixed; total partitions grows with cluster. Splits on new-node entry."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Proportional rebalancing is like a potluck dinner: each new guest brings their own dish and takes a small portion from every existing guest's dish to fill it. The more guests, the more dishes — but each dish stays the same size."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "dds-ch06-c010",
+      "order": 10,
+      "title": "Why Hash-Mod-N Is Bad",
+      "teaser": "The naive approach — assign a key to partition hash(key) mod N — guarantees that adding a single node reshuffles nearly every key in the cluster, causing a massive data migration storm.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "If you have 10 nodes and assign key K to node "
+            },
+            {
+              "text": "hash(K) mod 10",
+              "marks": ["code"]
+            },
+            {
+              "text": ", the formula seems appealing in its simplicity. But consider what happens when you add an 11th node. Now the formula is "
+            },
+            {
+              "text": "hash(K) mod 11"
+            },
+            {
+              "text": ". Because the modulus changed, most keys compute a different partition number. A key that was on node 3 might now belong on node 7. "
+            },
+            {
+              "text": "Almost every key must be moved",
+              "marks": ["bold"]
+            },
+            {
+              "text": "."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "More precisely: when the number of nodes changes from N to N+1, the fraction of keys that do NOT need to move is only 1/(N+1). For a 10-node cluster growing to 11 nodes, roughly 90% of all keys must be migrated. For a 100-node cluster, ~99% must move. This is catastrophic for a live system: the entire cluster churns data while trying to serve requests."
+            }
+          ]
+        },
+        {
+          "type": "code",
+          "language": "text",
+          "text": "hash-mod-N problem illustrated:\n\nN=4 nodes. Key K has hash value 10.\n  hash(K) mod 4 = 2  → assigned to Node 2\n\nAdd a 5th node (N=5):\n  hash(K) mod 5 = 0  → now assigned to Node 0  (must migrate!)\n\nFor a cluster with 1 million keys, adding 1 node forces ~800,000 keys to move.\nFor a cluster with 100 nodes growing to 101, ~990,000 of every million keys must move."
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "This is not a theoretical concern. Early caching systems (including early memcached deployments) used naive modular hashing. Adding a cache node caused an avalanche: almost all cache entries became stale references (pointing to the wrong node), resulting in a cache miss storm that hit the underlying database hard. Consistent hashing was invented specifically to fix this."
+            }
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "warning",
+          "runs": [
+            {
+              "text": "hash-mod-N is acceptable when the cluster size is permanently fixed (e.g., a fixed-size cache pool that never grows). The moment the cluster must scale up or down — which is the case for any production distributed database — hash-mod-N is the wrong tool."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "hash-mod-N is like assigning office desks by (employee ID mod total desks). Hire one new employee — add one desk — and the modulus changes, forcing almost every employee to move to a new desk. It's maximally disruptive for the smallest possible change."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "dds-ch06-c011",
+      "order": 11,
+      "title": "Consistent Hashing",
+      "teaser": "Place both nodes and keys on a conceptual ring using the same hash function — adding or removing a node moves only the keys in its immediate neighborhood, leaving the rest of the ring undisturbed.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Consistent hashing was introduced by Karger et al. in their 1997 paper \"Consistent Hashing and Random Trees\" and became the foundational technique for distributed caching and storage systems. The key idea: treat the entire hash output range as a ring (0 to 2³² − 1, wrapping around), and place both "
+            },
+            {
+              "text": "nodes",
+              "marks": ["bold"]
+            },
+            {
+              "text": " and "
+            },
+            {
+              "text": "keys",
+              "marks": ["bold"]
+            },
+            {
+              "text": " on this ring using the same hash function."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "To find which node owns a key, walk clockwise around the ring from the key's hash position until you hit a node. That node is the owner. When a new node joins, it inserts itself at its hash position on the ring and takes ownership of the keys between itself and the previous node going counter-clockwise — a small, localized range. All other key-to-node assignments are unchanged. When a node leaves, its keys are inherited by the next node clockwise. "
+            },
+            {
+              "text": "Only O(K/N) keys must move on a resize",
+              "marks": ["bold"]
+            },
+            {
+              "text": ", where K is the total key count and N is the node count — the theoretical minimum."
+            }
+          ]
+        },
+        {
+          "type": "code",
+          "language": "text",
+          "text": "Consistent hash ring (simplified):\n\n         0\n    ....   ....\n   .              .\n  .   [Node A]     .\n .  key_1→ NodeA   .\n .                  .\n. [Node D]   [Node B].\n .                  .\n  .   [Node C]     .\n   .              .\n    ....   ....\n        (max)\n\nEach key maps clockwise to its nearest node.\nAdding Node E between A and B: only keys in (A..E] move to E.\nAll other key→node assignments unchanged."
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The practical problem with the basic ring: if nodes are few and their positions are chosen by hashing their node IDs, they will not be evenly distributed — some arcs of the ring will be larger than others, creating load imbalance. The solution, used by Cassandra, Riak, and Dynamo, is "
+            },
+            {
+              "text": "virtual nodes (vnodes)",
+              "marks": ["bold"]
+            },
+            {
+              "text": ": each physical node is represented by many points on the ring (Cassandra uses 256 by default). The many small arcs average out, producing a statistically uniform distribution even with a small number of physical nodes."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Vnodes also make rebalancing smoother: when a node is added, it takes a little data from many existing nodes (one arc from each) rather than a large chunk from one neighbor. Heterogeneous hardware can be accommodated by assigning more vnodes to more powerful machines."
+            }
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "info",
+          "runs": [
+            {
+              "text": "Amazon's Dynamo paper (2007) popularized consistent hashing with vnodes for production storage systems. Cassandra inherited this design. A Cassandra cluster with 3 physical nodes each representing 256 vnodes has 768 points on the ring — producing a well-distributed keyspace with minimal rebalancing overhead on node churn."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Consistent hashing is like a circular bus route: each stop is a node, each passenger is a key. A passenger boards at the first stop they reach going clockwise. When a new stop is added, only passengers between the new stop and the previous one reroute — everyone else keeps their usual stop."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "dds-ch06-c012",
+      "order": 12,
+      "title": "Request Routing",
+      "teaser": "Once data is partitioned, clients must know which node to contact for a given key — the routing problem. Solutions range from broadcasting to all nodes, to forwarding layers, to external coordination services like ZooKeeper.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Partitioning solves the storage and throughput problem, but it creates a routing problem: when a client wants to read or write key K, which of the N nodes should it contact? The partition assignment is not static — rebalancing moves partitions between nodes — so the routing layer must stay in sync with the current partition table."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Kleppmann identifies three main approaches:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Contact any node (gossip-based routing):",
+                "marks": ["bold"]
+              },
+              {
+                "text": " the client contacts any node in the cluster. If that node owns the key, it responds directly. If not, it forwards the request to the correct node and proxies the response back. Cassandra and Riak use this model. Nodes keep each other informed of partition ownership via a gossip protocol — no single coordinator, no external dependency."
+              }
+            ],
+            [
+              {
+                "text": "Route through a partition-aware load balancer:",
+                "marks": ["bold"]
+              },
+              {
+                "text": " a routing tier sits between clients and nodes. Clients contact the load balancer, which reads the current partition table and forwards each request to the right node. The load balancer bears the complexity of tracking partition assignments; individual nodes are relieved of forwarding logic."
+              }
+            ],
+            [
+              {
+                "text": "Client-side routing with coordination service:",
+                "marks": ["bold"]
+              },
+              {
+                "text": " clients subscribe to a coordination service (ZooKeeper, etcd) that maintains the authoritative partition-to-node mapping. Clients cache the routing table locally and route requests directly to the correct node. HBase and Kafka use ZooKeeper for partition metadata; SolrCloud uses ZooKeeper for shard routing. The client must handle re-routing when the coordination service reports a partition has moved."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "code",
+          "language": "text",
+          "text": "Three routing architectures:\n\n1. Gossip (Cassandra, Riak):\n   Client → any Node → Node consults local routing table → forward if needed\n   Advantage: no SPOF, no external dep. Cost: routing table propagation lag.\n\n2. Routing tier (some load balancers):\n   Client → Proxy/LB (reads partition table) → correct Node\n   Advantage: simple clients. Cost: proxy is bottleneck/SPOF.\n\n3. Client-side + ZooKeeper (HBase, Kafka):\n   Client ← ZooKeeper (partition map) → Client contacts correct Node directly\n   Advantage: fast direct connections. Cost: ZooKeeper dependency; client complexity."
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Regardless of the routing mechanism, there is a race condition risk: a partition moves during a request. Most systems handle this with "
+            },
+            {
+              "text": "version-tagged routing",
+              "marks": ["italic"]
+            },
+            {
+              "text": " — if a node receives a request for a partition it no longer owns, it returns a \"wrong partition\" error and the client re-fetches the routing table. This is the mechanism used by MongoDB's mongos router when a chunk migration is in progress."
+            }
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "info",
+          "runs": [
+            {
+              "text": "LinkedIn's Helix and Apache Curator are purpose-built libraries for ZooKeeper-based partition routing. Kafka's consumer group coordinator is itself a distributed system built on top of Kafka — a fascinating case of a system using its own partitioning infrastructure to manage partition assignments for its clients."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Request routing is like getting mail delivered after you move: someone has to know your new address. Either the post office has a forwarding directory (ZooKeeper), your neighbors tell each other you've moved (gossip), or the mail carrier knows the whole street map (routing tier). All three work; they differ in who holds the knowledge and what happens when it goes stale."
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

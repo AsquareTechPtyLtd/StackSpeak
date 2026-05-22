@@ -1,0 +1,1434 @@
+{
+  "chapterId": "k8s-ch04-storage-and-statefulsets",
+  "shardIndex": 1,
+  "cards": [
+    {
+      "id": "k8s-ch04-c001",
+      "order": 1,
+      "title": "Volumes — Ephemeral Storage Tied to the Pod",
+      "teaser": "A Kubernetes Volume is not a disk — it is a named directory that a pod mounts into one or more containers. Ephemeral volumes exist only while the pod lives; when the pod is deleted, the data is gone.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Every container filesystem is ephemeral by default — when a container crashes and is restarted by the kubelet, the writable layer is wiped. Volumes solve the first problem: data surviving a container restart within the same pod. They do not solve the second problem: data surviving pod deletion. That requires a PersistentVolume."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The four most commonly used ephemeral volume types:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "emptyDir",
+                "marks": ["code"]
+              },
+              {
+                "text": " — an empty directory created when the pod starts and deleted when the pod terminates. Shared scratch space between containers in the same pod. Backed by node disk or, optionally, tmpfs (RAM). Survives container restarts; does not survive pod deletion."
+              }
+            ],
+            [
+              {
+                "text": "hostPath",
+                "marks": ["code"]
+              },
+              {
+                "text": " — mounts a file or directory from the node filesystem into the pod. Useful for node-level system access (log collectors, node monitoring agents). Creates node affinity — if the pod is rescheduled to another node, the data does not follow."
+              }
+            ],
+            [
+              {
+                "text": "configMap",
+                "marks": ["code"]
+              },
+              {
+                "text": " — mounts a ConfigMap as a directory of files. Each key becomes a filename; the value becomes the file content. The files are updated automatically when the ConfigMap changes (with a short propagation delay). Read-only."
+              }
+            ],
+            [
+              {
+                "text": "secret",
+                "marks": ["code"]
+              },
+              {
+                "text": " — mounts a Secret as files, identical to configMap but backed by in-memory tmpfs by default so the data is never written to node disk. Used for TLS certificates, API keys, and credentials."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "A minimal pod spec using emptyDir for shared scratch space between an app container and a sidecar:"
+            }
+          ]
+        },
+        {
+          "type": "code",
+          "lang": "yaml",
+          "text": "apiVersion: v1\nkind: Pod\nmetadata:\n  name: app-with-scratch\nspec:\n  volumes:\n    - name: scratch\n      emptyDir: {}\n    - name: config\n      configMap:\n        name: app-config\n  containers:\n    - name: app\n      image: myapp:1.0\n      volumeMounts:\n        - mountPath: /tmp/work\n          name: scratch\n        - mountPath: /etc/config\n          name: config\n          readOnly: true\n    - name: log-forwarder\n      image: fluent-bit:2.1\n      volumeMounts:\n        - mountPath: /tmp/work\n          name: scratch"
+        },
+        {
+          "type": "callout",
+          "variant": "warning",
+          "runs": [
+            {
+              "text": "hostPath volumes are a security risk — a container with hostPath access can read arbitrary node files including the kubelet credentials. Restrict their use to DaemonSets that genuinely require node-level access and apply strict PodSecurityAdmission policies."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "A Volume is a named directory that one or more containers in a pod can all write to. It survives container crashes inside the pod but is wiped when the pod itself is deleted — for data that must outlast pods, you need a PersistentVolume."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "k8s-ch04-c002",
+      "order": 2,
+      "title": "PersistentVolume — Cluster-Level Storage Resource",
+      "teaser": "A PersistentVolume is a cluster-level object representing a piece of provisioned storage — an NFS share, a cloud disk, a Ceph RBD — that exists independently of any pod and outlasts pod deletions.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "A "
+            },
+            {
+              "text": "PersistentVolume (PV)",
+              "marks": ["bold"]
+            },
+            {
+              "text": " is a Kubernetes resource that abstracts a backing storage implementation. It is cluster-scoped (not namespaced) and has its own lifecycle independent of any pod. Admins provision PVs either manually (static provisioning) or automatically via StorageClasses (dynamic provisioning)."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Key fields on a PersistentVolume spec:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "capacity.storage",
+                "marks": ["code"]
+              },
+              {
+                "text": " — the size of the volume (e.g. 20Gi). This is what is advertised; actual allocation depends on the backend."
+              }
+            ],
+            [
+              {
+                "text": "accessModes",
+                "marks": ["code"]
+              },
+              {
+                "text": " — which access patterns are supported by this volume (RWO, RWX, ROX, RWOP). The PVC must request a compatible mode."
+              }
+            ],
+            [
+              {
+                "text": "persistentVolumeReclaimPolicy",
+                "marks": ["code"]
+              },
+              {
+                "text": " — what happens when the bound PVC is deleted: Retain (keep the data), Delete (delete the underlying disk), or Recycle (deprecated)."
+              }
+            ],
+            [
+              {
+                "text": "storageClassName",
+                "marks": ["code"]
+              },
+              {
+                "text": " — binds this PV to a StorageClass. A PVC can only bind to a PV with a matching StorageClass."
+              }
+            ],
+            [
+              {
+                "text": "volumeMode",
+                "marks": ["code"]
+              },
+              {
+                "text": " — Filesystem (default) or Block. Block mode exposes the raw device to the pod without a filesystem; used for databases that manage their own I/O."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "A manually provisioned NFS-backed PersistentVolume:"
+            }
+          ]
+        },
+        {
+          "type": "code",
+          "lang": "yaml",
+          "text": "apiVersion: v1\nkind: PersistentVolume\nmetadata:\n  name: pv-nfs-data\nspec:\n  capacity:\n    storage: 50Gi\n  accessModes:\n    - ReadWriteMany\n  persistentVolumeReclaimPolicy: Retain\n  storageClassName: nfs-storage\n  mountOptions:\n    - hard\n    - nfsvers=4.1\n  nfs:\n    path: /exports/data\n    server: 10.0.0.5"
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "PV lifecycle states: "
+            },
+            {
+              "text": "Available",
+              "marks": ["bold"]
+            },
+            {
+              "text": " (not yet claimed) → "
+            },
+            {
+              "text": "Bound",
+              "marks": ["bold"]
+            },
+            {
+              "text": " (claimed by a PVC) → "
+            },
+            {
+              "text": "Released",
+              "marks": ["bold"]
+            },
+            {
+              "text": " (PVC deleted, data retained) → "
+            },
+            {
+              "text": "Failed",
+              "marks": ["bold"]
+            },
+            {
+              "text": " (reclamation error). A Released PV cannot be re-bound to a new PVC unless the claimRef is manually cleared."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "A PersistentVolume is the cluster's catalog entry for a piece of real storage. It says: \"I have a 50 GB NFS share available at this address, supporting these access patterns.\" It exists independently of any pod — deleting the pod does not delete the PV."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "k8s-ch04-c003",
+      "order": 3,
+      "title": "PersistentVolumeClaim — User Request for Storage",
+      "teaser": "A PersistentVolumeClaim is a namespace-scoped request for storage by a workload. The control plane binds the PVC to a matching PV; the pod mounts the claim rather than referencing the PV directly.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The separation of PV (cluster resource) from "
+            },
+            {
+              "text": "PVC (namespace-scoped claim)",
+              "marks": ["bold"]
+            },
+            {
+              "text": " is intentional: it lets platform teams manage storage provisioning independently from the application teams who consume it. The application team writes a PVC asking for \"10Gi with ReadWriteOnce\"; the platform team (or the dynamic provisioner) satisfies that request."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Binding rules: the control plane finds a PV that satisfies all of: matching StorageClass, sufficient capacity, compatible access modes, and compatible volumeMode. It prefers the smallest PV that meets the size request. If no match exists, the PVC stays in Pending until one appears."
+            }
+          ]
+        },
+        {
+          "type": "code",
+          "lang": "yaml",
+          "text": "apiVersion: v1\nkind: PersistentVolumeClaim\nmetadata:\n  name: postgres-data\n  namespace: production\nspec:\n  accessModes:\n    - ReadWriteOnce\n  storageClassName: fast-ssd\n  resources:\n    requests:\n      storage: 20Gi"
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Mounting the PVC in a pod:"
+            }
+          ]
+        },
+        {
+          "type": "code",
+          "lang": "yaml",
+          "text": "volumes:\n  - name: db-storage\n    persistentVolumeClaim:\n      claimName: postgres-data\ncontainers:\n  - name: postgres\n    image: postgres:16\n    volumeMounts:\n      - mountPath: /var/lib/postgresql/data\n        name: db-storage"
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Important PVC behaviors:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "A PVC can only be mounted by pods in the same namespace."
+              }
+            ],
+            [
+              {
+                "text": "Once bound, a PVC stays bound to that specific PV for its lifetime — it will not re-bind to a different PV."
+              }
+            ],
+            [
+              {
+                "text": "Deleting a PVC triggers the reclaim policy on the bound PV (Delete or Retain, depending on the StorageClass)."
+              }
+            ],
+            [
+              {
+                "text": "A PVC with a pod actively using it cannot be deleted — the deletion is deferred (the PVC enters a Terminating state) until all pods release it."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "info",
+          "runs": [
+            {
+              "text": "Set storageClassName: \"\" (empty string) in a PVC to request a pre-provisioned PV with no StorageClass. Omitting storageClassName entirely uses the cluster default StorageClass, which may trigger dynamic provisioning."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "A PVC is an application team's storage order form: \"I need 20 GB, write access from one node at a time, backed by fast SSDs.\" The cluster finds a matching PV and binds them together. The pod references the PVC by name — it never needs to know anything about the underlying disk."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "k8s-ch04-c004",
+      "order": 4,
+      "title": "StorageClass — The Provisioning Template",
+      "teaser": "A StorageClass decouples the 'what do I want' (PVC) from the 'how do I create it' (provisioner). It defines a provisioner, parameters, and reclaim policy so that PVs can be created on-demand with the right performance and cost characteristics.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "A "
+            },
+            {
+              "text": "StorageClass",
+              "marks": ["bold"]
+            },
+            {
+              "text": " is a cluster-scoped resource that acts as a template for dynamic PV provisioning. When a PVC references a StorageClass, the provisioner defined in that class is invoked to create the PV automatically."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Key fields:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "provisioner",
+                "marks": ["code"]
+              },
+              {
+                "text": " — the CSI driver or in-tree provisioner responsible for creating the volume. Example: ",
+                "marks": []
+              },
+              {
+                "text": "ebs.csi.aws.com",
+                "marks": ["code"]
+              },
+              {
+                "text": " or ",
+                "marks": []
+              },
+              {
+                "text": "pd.csi.storage.gke.io",
+                "marks": ["code"]
+              },
+              {
+                "text": "."
+              }
+            ],
+            [
+              {
+                "text": "parameters",
+                "marks": ["code"]
+              },
+              {
+                "text": " — provisioner-specific key-value pairs. For AWS EBS: ",
+                "marks": []
+              },
+              {
+                "text": "type: gp3",
+                "marks": ["code"]
+              },
+              {
+                "text": ", ",
+                "marks": []
+              },
+              {
+                "text": "iopsPerGB: \"10\"",
+                "marks": ["code"]
+              },
+              {
+                "text": ". For GCE PD: ",
+                "marks": []
+              },
+              {
+                "text": "type: pd-ssd",
+                "marks": ["code"]
+              },
+              {
+                "text": "."
+              }
+            ],
+            [
+              {
+                "text": "reclaimPolicy",
+                "marks": ["code"]
+              },
+              {
+                "text": " — Delete (default for dynamically provisioned volumes) or Retain. Applies to PVs created by this class."
+              }
+            ],
+            [
+              {
+                "text": "allowVolumeExpansion",
+                "marks": ["code"]
+              },
+              {
+                "text": " — set to true to allow online resize of PVCs backed by this class."
+              }
+            ],
+            [
+              {
+                "text": "volumeBindingMode",
+                "marks": ["code"]
+              },
+              {
+                "text": " — Immediate (PV created when PVC is created) or WaitForFirstConsumer (PV created only when a pod using the PVC is scheduled, so the volume is created in the correct availability zone)."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "code",
+          "lang": "yaml",
+          "text": "apiVersion: storage.k8s.io/v1\nkind: StorageClass\nmetadata:\n  name: fast-ssd\n  annotations:\n    storageclass.kubernetes.io/is-default-class: \"false\"\nprovisioner: ebs.csi.aws.com\nparameters:\n  type: gp3\n  iops: \"4000\"\n  throughput: \"200\"\n  encrypted: \"true\"\nreclaimPolicy: Retain\nallowVolumeExpansion: true\nvolumeBindingMode: WaitForFirstConsumer"
+        },
+        {
+          "type": "callout",
+          "variant": "info",
+          "runs": [
+            {
+              "text": "WaitForFirstConsumer is the correct volumeBindingMode for multi-zone clusters. Immediate can create a PV in us-east-1a while the pod is scheduled to us-east-1b — the pod will then fail to start because an EBS volume cannot cross availability zones."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "A StorageClass is the blueprint the cluster uses to mint new PVs on demand. It says which provisioner to call, what parameters to pass (disk type, encryption settings), and what reclaim policy to apply when the volume is released."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "k8s-ch04-c005",
+      "order": 5,
+      "title": "Dynamic Provisioning — Automatic PV Creation",
+      "teaser": "Dynamic provisioning eliminates the admin overhead of pre-creating PVs. When a PVC references a StorageClass, the provisioner creates the PV, the disk, and the binding automatically — the application team never touches storage infrastructure.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Before dynamic provisioning, the workflow was: admin creates the backing disk in AWS/GCP/Azure, creates a PV manifest describing it, and waits for a developer to claim it. This was a bottleneck — developers waited for storage, and admins accumulated a backlog of PV provisioning requests."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The dynamic provisioning flow:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Developer creates a PVC referencing a StorageClass (e.g., ",
+                "marks": []
+              },
+              {
+                "text": "storageClassName: fast-ssd",
+                "marks": ["code"]
+              },
+              {
+                "text": ")."
+              }
+            ],
+            [
+              {
+                "text": "The kube-controller-manager sees the unbound PVC and identifies its StorageClass."
+              }
+            ],
+            [
+              {
+                "text": "The external provisioner (CSI driver controller) receives a CreateVolume RPC call with the requested parameters."
+              }
+            ],
+            [
+              {
+                "text": "The provisioner calls the cloud/storage API to create the backing disk (e.g., AWS EBS CreateVolume)."
+              }
+            ],
+            [
+              {
+                "text": "The provisioner creates a PV object in Kubernetes with the volume handle and binding information."
+              }
+            ],
+            [
+              {
+                "text": "The control plane binds the PV to the PVC. The PVC moves from Pending to Bound."
+              }
+            ],
+            [
+              {
+                "text": "The pod can now be scheduled. The kubelet calls the CSI NodeStageVolume and NodePublishVolume RPCs to attach and mount the disk."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "When the PVC is deleted with reclaimPolicy: Delete, the same provisioner is called with a DeleteVolume RPC, which deletes the backing disk entirely. With reclaimPolicy: Retain, the PV and disk persist; an admin must manually clean up and re-provision if the storage is to be reused."
+            }
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "warning",
+          "runs": [
+            {
+              "text": "reclaimPolicy: Delete is the default for dynamically provisioned volumes. In production, consider Retain for databases and other stateful workloads — accidental PVC deletion should not result in immediate data destruction."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Dynamic provisioning means you write a PVC, and Kubernetes automatically creates the disk, the PV, and the binding for you — no admin involvement needed. When you delete the PVC, the disk is also deleted (unless you configured Retain)."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "k8s-ch04-c006",
+      "order": 6,
+      "title": "CSI — The Container Storage Interface",
+      "teaser": "CSI (Container Storage Interface) is the standard plugin API that decouples Kubernetes from any specific storage backend. Every major storage vendor — AWS, GCP, Azure, Ceph, Portworx — ships a CSI driver that Kubernetes calls via a defined RPC interface.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Before CSI (introduced in Kubernetes 1.9, GA in 1.13), storage plugins were compiled into the Kubernetes binary — the \"in-tree\" plugins. Adding a new storage system required a code change to Kubernetes itself, a PR review, and a wait for the next release. CSI broke this dependency."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "CSI defines a gRPC API between Kubernetes and the storage driver. The driver runs as a pod in the cluster (typically a DaemonSet on each node plus a Deployment for the controller). Kubernetes makes three categories of calls:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Controller RPCs",
+                "marks": ["bold"]
+              },
+              {
+                "text": " (run in the controller pod): CreateVolume, DeleteVolume, ControllerPublishVolume (attach disk to node), ControllerUnpublishVolume (detach), CreateSnapshot, DeleteSnapshot."
+              }
+            ],
+            [
+              {
+                "text": "Node RPCs",
+                "marks": ["bold"]
+              },
+              {
+                "text": " (run on the node DaemonSet): NodeStageVolume (mount to a staging path), NodePublishVolume (bind-mount to the pod's volume path), NodeUnpublishVolume, NodeUnstageVolume."
+              }
+            ],
+            [
+              {
+                "text": "Identity RPCs",
+                "marks": ["bold"]
+              },
+              {
+                "text": " GetPluginInfo, GetPluginCapabilities, Probe — used by Kubernetes to discover what the driver supports."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Named drivers in widespread production use:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "ebs.csi.aws.com",
+                "marks": ["code"]
+              },
+              {
+                "text": " — AWS Elastic Block Store. Block storage, RWO only. Supports gp2, gp3, io1, io2 volume types. Cannot cross AZs."
+              }
+            ],
+            [
+              {
+                "text": "pd.csi.storage.gke.io",
+                "marks": ["code"]
+              },
+              {
+                "text": " — Google Persistent Disk. pd-standard, pd-ssd, pd-extreme. Also AZ-bound for RWO; Multi-write mode for RWX on pd-ssd."
+              }
+            ],
+            [
+              {
+                "text": "disk.csi.azure.com",
+                "marks": ["code"]
+              },
+              {
+                "text": " — Azure Managed Disks. Equivalent to EBS; AZ-bound, RWO."
+              }
+            ],
+            [
+              {
+                "text": "file.csi.azure.com",
+                "marks": ["code"]
+              },
+              {
+                "text": " — Azure Files (SMB/NFS). Supports RWX across multiple pods."
+              }
+            ],
+            [
+              {
+                "text": "rbd.csi.ceph.com",
+                "marks": ["code"]
+              },
+              {
+                "text": " — Ceph RBD. Block storage with RWO or ROX modes."
+              }
+            ],
+            [
+              {
+                "text": "cephfs.csi.ceph.com",
+                "marks": ["code"]
+              },
+              {
+                "text": " — CephFS. Distributed filesystem with RWX support."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "info",
+          "runs": [
+            {
+              "text": "In-tree volume plugins (kubernetes.io/aws-ebs, kubernetes.io/gce-pd) are being removed starting Kubernetes 1.26+. Migrated by CSI migration feature gates, which redirect in-tree PV operations transparently to the CSI driver. New clusters should always use CSI drivers directly."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "CSI is the standardized plug socket between Kubernetes and any storage system. The cloud vendor ships a CSI driver (a pod that runs in your cluster), and Kubernetes calls it via a fixed RPC interface to create, attach, and mount disks — without knowing anything about how the underlying storage actually works."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "k8s-ch04-c007",
+      "order": 7,
+      "title": "Access Modes — How Pods Share a Volume",
+      "teaser": "Access modes declare the allowed read/write relationships between a volume and the nodes that mount it. Choosing the wrong access mode is a common source of pod scheduling failures and data corruption in multi-pod workloads.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Access modes are a capability negotiation: the PV declares what it supports; the PVC requests what it needs. The binding only succeeds if the PV supports the requested mode. Note that a PV may support multiple modes but is only ever bound under one mode at a time."
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "ReadWriteOnce (RWO)",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — the volume can be mounted read-write by pods on a single node. Multiple pods on the same node can all mount it. This is the most common mode for block devices (EBS, Azure Disk, GCE PD). A volume in RWO mode cannot be mounted on two different nodes simultaneously."
+              }
+            ],
+            [
+              {
+                "text": "ReadWriteMany (RWX)",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — the volume can be mounted read-write by pods on multiple nodes simultaneously. Requires a distributed filesystem backend: NFS, CephFS, Azure Files, GlusterFS. Block devices (EBS, Azure Disk) do not support RWX."
+              }
+            ],
+            [
+              {
+                "text": "ReadOnlyMany (ROX)",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — the volume can be mounted read-only by pods on multiple nodes. Useful for distributing shared static content (configuration, assets) across many pods."
+              }
+            ],
+            [
+              {
+                "text": "ReadWriteOncePod (RWOP)",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — introduced in Kubernetes 1.22 (GA in 1.29). The volume can be mounted read-write by exactly one pod cluster-wide — stricter than RWO, which allows multiple pods on the same node. Essential for databases with strict single-writer guarantees."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Access mode compatibility by common backend:"
+            }
+          ]
+        },
+        {
+          "type": "code",
+          "lang": "text",
+          "text": "Backend          RWO   ROX   RWX   RWOP\n────────────     ───   ───   ───   ────\nAWS EBS           ✓     -     -     ✓\nGCE PD            ✓     ✓     -     ✓\nAzure Disk        ✓     -     -     ✓\nAzure Files       ✓     ✓     ✓     ✓\nNFS               ✓     ✓     ✓     -\nCephFS            ✓     ✓     ✓     -\nCeph RBD          ✓     ✓     -     ✓\nhostPath          ✓     -     -     -"
+        },
+        {
+          "type": "callout",
+          "variant": "warning",
+          "runs": [
+            {
+              "text": "A common mistake: creating a Deployment with replicas > 1 backed by a PVC with RWO. If the pod replicas land on different nodes, only one will successfully mount the volume; the others will stay in ContainerCreating. Use RWX or restructure the workload as a StatefulSet with per-pod PVCs."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Access modes are a contract: RWO means one node at a time can write; RWX means many nodes can write simultaneously; ROX means many can read; RWOP means exactly one pod anywhere in the cluster can write. Block disks (EBS, Azure Disk) only do RWO/RWOP — shared filesystems are needed for RWX."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "k8s-ch04-c008",
+      "order": 8,
+      "title": "Reclaim Policies — What Happens When a PVC Is Deleted",
+      "teaser": "The reclaim policy decides whether the data on a PV survives after the PVC claiming it is deleted. Getting this wrong in production means either accidental data destruction (Delete) or a growing pile of orphaned expensive cloud disks (Retain without cleanup).",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The reclaim policy is set on the PV (inherited from the StorageClass for dynamically provisioned volumes). It governs the PV lifecycle after the bound PVC is deleted."
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Delete",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — when the PVC is deleted, the PV object and the underlying storage resource (the cloud disk, the NFS export, the Ceph image) are deleted. This is the default for dynamically provisioned PVs. It is convenient for ephemeral test environments and developer workspaces where storage is disposable."
+              }
+            ],
+            [
+              {
+                "text": "Retain",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — when the PVC is deleted, the PV moves to the Released state. The data is preserved. The PV cannot be automatically rebound to a new PVC; an administrator must manually reclaim it (clear the claimRef, optionally clean the data, then the PV returns to Available). Use Retain for production databases."
+              }
+            ],
+            [
+              {
+                "text": "Recycle",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — deprecated. Performed a basic scrub (rm -rf) on the volume and made it available again. Removed in Kubernetes 1.23 for most volume types. Do not use."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Changing the reclaim policy on an existing dynamically provisioned PV:"
+            }
+          ]
+        },
+        {
+          "type": "code",
+          "lang": "bash",
+          "text": "# Change a PV's reclaim policy from Delete to Retain\nkubectl patch pv pv-postgres-data \\\n  -p '{\"spec\":{\"persistentVolumeReclaimPolicy\":\"Retain\"}}'"
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Manual reclamation workflow for a Released PV with Retain policy:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Delete the PV object: ",
+                "marks": []
+              },
+              {
+                "text": "kubectl delete pv <name>",
+                "marks": ["code"]
+              },
+              {
+                "text": " (the underlying storage is NOT deleted because the Retain policy governs)."
+              }
+            ],
+            [
+              {
+                "text": "If the data should be cleaned, manually wipe or delete the backing resource via the cloud console or API."
+              }
+            ],
+            [
+              {
+                "text": "To reuse the storage for a new PVC, create a new PV manifest referencing the same volume handle, with no claimRef set."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "info",
+          "runs": [
+            {
+              "text": "The reclaim policy on a StorageClass only applies to PVs dynamically provisioned by that class. Manually created PVs have their reclaim policy set in the PV spec itself and it takes precedence."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Reclaim policy is the cleanup rule: Delete means \"when the claim is gone, destroy the data too\"; Retain means \"keep the data safe even after the claim is deleted — a human must decide what to do with it.\" Default for cloud disks is Delete — change it to Retain for anything you care about."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "k8s-ch04-c009",
+      "order": 9,
+      "title": "StatefulSets — Stable Identity for Stateful Workloads",
+      "teaser": "A StatefulSet is the Kubernetes workload API for applications that need stable network identity, stable storage, and ordered deployment and termination — clustered databases, message brokers, and distributed consensus systems.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "A Deployment creates pods that are interchangeable: they get random names, any pod can die and be replaced by any replica, and they share a single PVC if storage is needed. A "
+            },
+            {
+              "text": "StatefulSet",
+              "marks": ["bold"]
+            },
+            {
+              "text": " rejects all three of those assumptions. Its pods have:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Stable, unique names",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — pod-0, pod-1, pod-2, ... These names are persistent across rescheduling. If pod-1 is killed and rescheduled on a different node, the new pod is still named pod-1."
+              }
+            ],
+            [
+              {
+                "text": "Stable storage",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — each pod gets its own PVC (via volumeClaimTemplates). When pod-1 is rescheduled, it reattaches to its own PVC — not a new one and not another pod's PVC."
+              }
+            ],
+            [
+              {
+                "text": "Ordered, graceful deployment",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — pods start in order: 0 must be Running and Ready before 1 starts, and 1 before 2. This ensures primary election in distributed databases proceeds safely."
+              }
+            ],
+            [
+              {
+                "text": "Ordered, graceful termination",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — pods terminate in reverse order: N-1 terminates before N-2, down to 0. Prevents split-brain scenarios in consensus systems."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "code",
+          "lang": "yaml",
+          "text": "apiVersion: apps/v1\nkind: StatefulSet\nmetadata:\n  name: postgres\n  namespace: production\nspec:\n  serviceName: postgres-headless\n  replicas: 3\n  selector:\n    matchLabels:\n      app: postgres\n  template:\n    metadata:\n      labels:\n        app: postgres\n    spec:\n      containers:\n        - name: postgres\n          image: postgres:16\n          ports:\n            - containerPort: 5432\n          env:\n            - name: PGDATA\n              value: /var/lib/postgresql/data/pgdata\n          volumeMounts:\n            - name: data\n              mountPath: /var/lib/postgresql/data\n  volumeClaimTemplates:\n    - metadata:\n        name: data\n      spec:\n        accessModes: [\"ReadWriteOnce\"]\n        storageClassName: fast-ssd\n        resources:\n          requests:\n            storage: 50Gi"
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The volumeClaimTemplates field is what distinguishes StatefulSets from Deployments for storage. Each replica gets its own PVC: data-postgres-0, data-postgres-1, data-postgres-2. These PVCs are not deleted when the StatefulSet is deleted — they must be cleaned up manually, by design."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "A StatefulSet is a Deployment that takes identity seriously: each pod has a permanent name and its own private disk. Pod-1 always comes back as pod-1, always with its own data. That guarantee is what databases need — they can't be interchangeable replicas sharing a disk."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "k8s-ch04-c010",
+      "order": 10,
+      "title": "Stable Pod Naming and Headless Services",
+      "teaser": "StatefulSet pods get deterministic DNS names via a headless service — pod-0.svc.namespace.svc.cluster.local. This lets cluster members address each other by name, enabling replication setup, leader election, and peer discovery without external service discovery.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "A regular Kubernetes Service gets a single ClusterIP that load-balances across all matching pods. A "
+            },
+            {
+              "text": "headless service",
+              "marks": ["bold"]
+            },
+            {
+              "text": " (clusterIP: None) has no ClusterIP. Instead, DNS queries for the service return A records for each individual pod IP — and each pod gets a stable DNS hostname."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "StatefulSet pod DNS naming format:"
+            }
+          ]
+        },
+        {
+          "type": "code",
+          "lang": "text",
+          "text": "StatefulSet: postgres\nHeadless Service: postgres-headless\nNamespace: production\n\nPod DNS names:\n  postgres-0.postgres-headless.production.svc.cluster.local\n  postgres-1.postgres-headless.production.svc.cluster.local\n  postgres-2.postgres-headless.production.svc.cluster.local\n\nService DNS (returns all pod IPs):\n  postgres-headless.production.svc.cluster.local\n\nPod naming pattern:\n  <statefulset-name>-<ordinal>.<service-name>.<namespace>.svc.cluster.local"
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The headless service definition:"
+            }
+          ]
+        },
+        {
+          "type": "code",
+          "lang": "yaml",
+          "text": "apiVersion: v1\nkind: Service\nmetadata:\n  name: postgres-headless\n  namespace: production\n  labels:\n    app: postgres\nspec:\n  clusterIP: None        # headless\n  selector:\n    app: postgres\n  ports:\n    - name: postgres\n      port: 5432"
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "How this enables distributed database operation:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "The primary (postgres-0) is always reachable at a predictable hostname, so replicas can point their replication connection at it without an external coordinator."
+              }
+            ],
+            [
+              {
+                "text": "Each replica knows its own ordinal via the ",
+                "marks": []
+              },
+              {
+                "text": "HOSTNAME",
+                "marks": ["code"]
+              },
+              {
+                "text": " environment variable (e.g. postgres-2), allowing startup scripts to differentiate primary init from replica init."
+              }
+            ],
+            [
+              {
+                "text": "When a pod is rescheduled, it keeps its ordinal name and re-attaches to its own PVC — the database instance resumes from its own data."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "info",
+          "runs": [
+            {
+              "text": "The spec.serviceName field in the StatefulSet manifest must match the name of the headless service. This is required — without it, the pod DNS records are not created."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "A headless service gives each StatefulSet pod its own DNS name: postgres-0.postgres-headless.production.svc.cluster.local. That name stays the same even if the pod moves to a different node. Databases use these names to find each other — replica points at primary by name, not by IP."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "k8s-ch04-c011",
+      "order": 11,
+      "title": "StatefulSet Ordering Guarantees and Topology",
+      "teaser": "StatefulSets provide strict ordering semantics for both scale-out and scale-in operations. Understanding the ordering guarantees — and when to relax them with podManagementPolicy — is essential for tuning deploy speed versus operational safety.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The default pod management policy for a StatefulSet is "
+            },
+            {
+              "text": "OrderedReady",
+              "marks": ["code"]
+            },
+            {
+              "text": ": pods are created and deleted one at a time in strict order. The alternative is "
+            },
+            {
+              "text": "Parallel",
+              "marks": ["code"]
+            },
+            {
+              "text": ": all pods are started or stopped simultaneously, without waiting for readiness."
+            }
+          ]
+        },
+        {
+          "type": "code",
+          "lang": "text",
+          "text": "Scale-out (OrderedReady):\n\n  [pod-0] ──Running+Ready──▶ [pod-1] ──Running+Ready──▶ [pod-2]\n\n  Each pod must pass readiness probe before the next is created.\n  Safe for leader election and replication setup.\n\nScale-in (OrderedReady):\n\n  [pod-2] ──Terminated──▶ [pod-1] ──Terminated──▶ (pod-0 untouched)\n\n  Highest ordinal terminates first. In reverse order. One at a time.\n  Prevents the primary (pod-0) from being removed while replicas exist.\n\nRolling Update:\n\n  [pod-2] updated ──▶ [pod-1] updated ──▶ [pod-0] updated\n\n  Starts from the highest ordinal. Allows a canary on pod-2\n  before touching the primary at pod-0."
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The updateStrategy controls rolling update behavior:"
+            }
+          ]
+        },
+        {
+          "type": "code",
+          "lang": "yaml",
+          "text": "updateStrategy:\n  type: RollingUpdate\n  rollingUpdate:\n    partition: 1      # Only update pods with ordinal >= 1\n                      # pod-0 stays on old version (canary/partition pattern)"
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Setting partition: 1 creates a staged rollout: pods 1 and 2 get the new version while pod-0 (the primary) stays on the old version. Once the replicas are validated, set partition: 0 to complete the rollout."
+            }
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "info",
+          "runs": [
+            {
+              "text": "Use podManagementPolicy: Parallel for StatefulSets that do not require strict ordering — for example, sharded caches where each shard is independent. This dramatically speeds up scale-out from, say, 0 to 10 pods, where OrderedReady would wait for each pod sequentially."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "StatefulSets start pods 0, 1, 2 in strict order and stop them in reverse — 2, 1, 0. This protects distributed databases: the primary comes up first and goes down last. You can speed this up with Parallel management, but then you lose the ordering guarantee."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "k8s-ch04-c012",
+      "order": 12,
+      "title": "Volume Snapshots — Backup and Clone via CSI",
+      "teaser": "VolumeSnapshot is a Kubernetes API (backed by CSI) that enables crash-consistent point-in-time snapshots of PVCs. Snapshots power backup pipelines, database cloning for test environments, and fast rollback after bad migrations.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Volume snapshots were introduced as a CRD-based API (alpha in 1.12, GA in 1.20). They require the CSI driver to implement the snapshot RPCs (CreateSnapshot, DeleteSnapshot, ListSnapshots) and the "
+            },
+            {
+              "text": "external-snapshotter",
+              "marks": ["code"]
+            },
+            {
+              "text": " sidecar controller to be deployed in the cluster."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The three CRDs involved:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "VolumeSnapshotClass",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — cluster-scoped template defining which CSI driver handles snapshots and driver-specific parameters. Analogous to StorageClass for provisioning."
+              }
+            ],
+            [
+              {
+                "text": "VolumeSnapshot",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — namespace-scoped user request to snapshot a specific PVC. Analogous to PVC for volumes."
+              }
+            ],
+            [
+              {
+                "text": "VolumeSnapshotContent",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — cluster-scoped representation of the actual snapshot on the storage system. Analogous to PV for volumes. Created automatically when a VolumeSnapshot is taken."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "code",
+          "lang": "yaml",
+          "text": "# 1. Snapshot class\napiVersion: snapshot.storage.k8s.io/v1\nkind: VolumeSnapshotClass\nmetadata:\n  name: ebs-snapshot-class\n  annotations:\n    snapshot.storage.kubernetes.io/is-default-class: \"true\"\ndriver: ebs.csi.aws.com\ndeletionPolicy: Delete\n---\n# 2. Take a snapshot of postgres-data PVC\napiVersion: snapshot.storage.k8s.io/v1\nkind: VolumeSnapshot\nmetadata:\n  name: postgres-snapshot-20260520\n  namespace: production\nspec:\n  volumeSnapshotClassName: ebs-snapshot-class\n  source:\n    persistentVolumeClaimName: data-postgres-0\n---\n# 3. Restore snapshot into a new PVC\napiVersion: v1\nkind: PersistentVolumeClaim\nmetadata:\n  name: postgres-restored\n  namespace: staging\nspec:\n  storageClassName: fast-ssd\n  dataSource:\n    name: postgres-snapshot-20260520\n    kind: VolumeSnapshot\n    apiGroup: snapshot.storage.k8s.io\n  accessModes:\n    - ReadWriteOnce\n  resources:\n    requests:\n      storage: 50Gi"
+        },
+        {
+          "type": "callout",
+          "variant": "info",
+          "runs": [
+            {
+              "text": "Volume snapshots are crash-consistent, not application-consistent. For PostgreSQL or MySQL, this means you need to either freeze writes (CHECKPOINT), use a pre-snapshot hook to quiesce the database, or rely on the database's own WAL-based recovery to bring the snapshot to a consistent state after restore."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "A VolumeSnapshot is a point-in-time copy of a PVC's data, taken via the CSI driver. You create a VolumeSnapshot, and a VolumeSnapshotContent appears (like PVC creates a PV). You can then create a new PVC from the snapshot — useful for cloning a production database into staging."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "k8s-ch04-c013",
+      "order": 13,
+      "title": "Volume Expansion — Online Resize Without Downtime",
+      "teaser": "When allowVolumeExpansion is enabled on the StorageClass, you can grow a PVC by editing its requested storage size. The CSI driver resizes the backing disk and the filesystem online, with no pod restart required on most modern backends.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Volume expansion was introduced in Kubernetes 1.11 (alpha) and became stable in 1.24. It solves a painful operational problem: the disk a database is running on is filling up. Historically this required: scale down, take snapshot, delete PVC, create new larger PVC, restore, scale up. With online expansion, the process is a single kubectl command."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Requirements for online volume expansion:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "The StorageClass must have ",
+                "marks": []
+              },
+              {
+                "text": "allowVolumeExpansion: true",
+                "marks": ["code"]
+              },
+              {
+                "text": "."
+              }
+            ],
+            [
+              {
+                "text": "The CSI driver must implement the ControllerExpandVolume and NodeExpandVolume RPCs."
+              }
+            ],
+            [
+              {
+                "text": "The volume must be in use (mounted by a running pod) for online filesystem expansion. If the pod is not running, the disk is resized but the filesystem expansion happens when the pod next starts."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Expanding a PVC:"
+            }
+          ]
+        },
+        {
+          "type": "code",
+          "lang": "bash",
+          "text": "# Edit the PVC to request more storage (increase only — reduction is not supported)\nkubectl patch pvc data-postgres-0 -n production \\\n  -p '{\"spec\":{\"resources\":{\"requests\":{\"storage\":\"100Gi\"}}}}'   # was 50Gi\n\n# Watch the expansion status\nkubectl get pvc data-postgres-0 -n production -w\n# NAME              STATUS   VOLUME       CAPACITY   ACCESS MODES\n# data-postgres-0   Bound    pv-abc123    50Gi       RWO      <- before\n# data-postgres-0   Bound    pv-abc123    100Gi      RWO      <- after expansion"
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The expansion happens in two phases:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "ControllerExpandVolume",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — the CSI controller resizes the backing cloud disk (EBS ModifyVolume, Azure Disk resize). This is visible as the ",
+                "marks": []
+              },
+              {
+                "text": "capacity",
+                "marks": ["code"]
+              },
+              {
+                "text": " field on the PV updating."
+              }
+            ],
+            [
+              {
+                "text": "NodeExpandVolume",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — the CSI node plugin runs ",
+                "marks": []
+              },
+              {
+                "text": "resize2fs",
+                "marks": ["code"]
+              },
+              {
+                "text": " (or equivalent) to expand the filesystem to use the new disk space. This requires the volume to be mounted on a node."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "warning",
+          "runs": [
+            {
+              "text": "Volume shrinking (reducing storage size) is not supported by Kubernetes or most CSI drivers. Attempting to decrease the storage request in a PVC spec will be rejected by the API server. Plan disk sizing conservatively — you can grow, but you cannot shrink."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Volume expansion means you edit the PVC's size field, and Kubernetes asks the CSI driver to first resize the underlying cloud disk and then expand the filesystem inside the running pod. No restart, no downtime. You can only go up — shrinking is not supported."
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

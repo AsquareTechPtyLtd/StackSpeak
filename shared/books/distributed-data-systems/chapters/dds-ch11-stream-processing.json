@@ -1,0 +1,1675 @@
+{
+  "chapterId": "dds-ch11-stream-processing",
+  "shardIndex": 11,
+  "cards": [
+    {
+      "id": "dds-ch11-c001",
+      "order": 1,
+      "title": "Event Streams",
+      "teaser": "A stream is an unbounded sequence of events arriving continuously over time — fundamentally different from a batch dataset you load once, process, and discard. The difference is not just technical; it inverts the architecture.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "In batch processing — MapReduce, Spark, Hive — you work with a bounded input: a finite dataset that exists completely on disk before the job begins. You read it, transform it, and write the result. The dataset is the starting point."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Streams invert this. The data arrives "
+            },
+            {
+              "text": "continuously",
+              "marks": ["italic"]
+            },
+            {
+              "text": ", without a defined end. A web server emits a click event every time a user interacts. A sensor emits a temperature reading every second. A payment system emits a transaction event for every purchase. These are not snapshots — they are the living record of what is happening, right now, and will continue happening indefinitely."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The unbounded nature has deep architectural consequences:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "You cannot wait for all the data to arrive before starting.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " The processing must be ongoing, not one-shot."
+              }
+            ],
+            [
+              {
+                "text": "You cannot sort the entire dataset",
+                "marks": ["bold"]
+              },
+              {
+                "text": " in the traditional sense — there is no end boundary to sort against."
+              }
+            ],
+            [
+              {
+                "text": "State must be managed incrementally.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Aggregations, joins, and windows must be computed as events arrive and updated as new data comes in."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Stream processing also inverts the relationship to time that batch systems assume. A batch job can look up any past record at will. A stream processor must make decisions "
+            },
+            {
+              "text": "now",
+              "marks": ["italic"]
+            },
+            {
+              "text": ", with incomplete information about the future, and — crucially — with uncertainty about whether the past has been fully captured yet. Kleppmann describes this as \"data in motion\" versus \"data at rest.\" The engineering challenge is that data in motion is fundamentally harder to reason about than data at rest."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Streams also invert the request-response model. In an API, a client requests data and a server responds. In a stream, producers emit events and consumers react to them — the data flows toward the consumers, not in response to them. This decoupling is what makes stream architectures so compositional: you can attach new consumers to an existing stream without modifying anything upstream."
+            }
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "info",
+          "runs": [
+            {
+              "text": "Kleppmann's framing: a stream is \"like a database table that is continuously being updated.\" Each event is an insert. The stream processor is a long-running query over that table — one that evaluates continuously rather than once."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "A batch system processes a pile of data that already exists. A stream system processes data that keeps arriving, forever, without a pause. Everything else about stream processing — windowing, watermarks, exactly-once guarantees — follows from that one difference."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "dds-ch11-c002",
+      "order": 2,
+      "title": "Message Brokers",
+      "teaser": "The traditional message broker — RabbitMQ, ActiveMQ, IBM MQ — is a point-to-point intermediary: producers send messages, the broker holds them briefly, consumers acknowledge receipt, and the broker deletes them. Durability is transient; the broker is a post office, not a library.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The traditional message broker model is defined by AMQP (Advanced Message Queuing Protocol), implemented by RabbitMQ, and the Java Messaging Service (JMS) API, implemented by ActiveMQ and IBM MQ. Both are built around the same fundamental idea: a queue that decouples producers from consumers."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "How traditional brokers work:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Producers publish messages to a named queue or exchange.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " In AMQP, a producer publishes to an exchange; the exchange routes to queues based on binding rules (direct, topic, fanout)."
+              }
+            ],
+            [
+              {
+                "text": "The broker stores messages until they are consumed.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Storage is ephemeral by design — the goal is to buffer messages long enough to survive a consumer crash, not to preserve a permanent record."
+              }
+            ],
+            [
+              {
+                "text": "Consumers subscribe to a queue and receive messages.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " The broker pushes messages to available consumers, or consumers poll."
+              }
+            ],
+            [
+              {
+                "text": "Acknowledgements control deletion.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " When a consumer processes a message and acknowledges it (ack), the broker deletes it. If the consumer fails before acking, the broker redelivers to another consumer. This is the core reliability mechanism."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The limitations of this model for stream processing are significant:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Messages are deleted after consumption.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " You cannot replay history. A new consumer joining today cannot see what happened yesterday."
+              }
+            ],
+            [
+              {
+                "text": "No ordering guarantees across queues.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Multiple competing consumers can process messages out of order because different consumers race to claim messages."
+              }
+            ],
+            [
+              {
+                "text": "Fan-out is limited.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " To deliver the same message to multiple consumers, you typically need a separate queue per consumer — the exchange/binding model provides routing but at the cost of duplication."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "info",
+          "runs": [
+            {
+              "text": "RabbitMQ is an excellent tool for task queues, work distribution, and RPC-over-messaging — use cases where ephemeral delivery is the right model. Where it struggles is streaming, replay, and large fan-out, which is precisely what log-based brokers are designed for."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "A traditional message broker is like a to-do list: you add a task, someone picks it up, marks it done, and it disappears. That's great for distributing work. It's bad if you ever need to look at what the task said after it was completed — because it's gone."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "dds-ch11-c003",
+      "order": 3,
+      "title": "Log-Based Message Brokers",
+      "teaser": "Kafka, Apache Pulsar, and Amazon Kinesis treat the message broker as a durable, append-only log — every message is written to disk and kept for a configurable retention period, regardless of whether it has been consumed. The broker becomes a database with a streaming interface.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The central insight of the Kafka model — developed at LinkedIn and open-sourced in 2011 — is that "
+            },
+            {
+              "text": "messages should not be deleted after they are read",
+              "marks": ["bold"]
+            },
+            {
+              "text": ". Instead, messages are written to an ordered, append-only log and retained for a configurable period (days, weeks, or indefinitely via compaction). Consumers read from the log at their own pace by tracking their position (offset) in the log."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "This changes the broker's role fundamentally. In a traditional broker, the broker is responsible for delivery — it must track which consumers have seen which messages. In the log-based model, consumers are responsible for tracking their own position. The broker is simply a durable ordered store; delivery tracking is consumer state, not broker state."
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Replay is first-class.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " A new consumer can start from the beginning of the log and replay the entire history. A broken consumer can reset its offset and reprocess from the point of failure."
+              }
+            ],
+            [
+              {
+                "text": "Fan-out is free.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Multiple consumer groups can read the same log independently. Adding a new consumer does not affect other consumers — each has its own offset pointer."
+              }
+            ],
+            [
+              {
+                "text": "The broker as source of truth.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Because the log is complete and durable, the Kafka log can serve as the system of record — the \"log is the database\" thesis popularized by Jay Kreps in his 2013 essay \"The Log: What every software engineer should know about real-time data's unifying abstraction.\""
+              }
+            ]
+          ]
+        },
+        {
+          "type": "code",
+          "language": "text",
+          "text": "Producer  ──► Topic (Partition 0)  ──► [msg0][msg1][msg2][msg3]...\n                                           ▲              ▲\n                                       Consumer A      Consumer B\n                                       offset=1         offset=3\n\nEach consumer group has its own offset per partition.\nMessages are NOT deleted when read — they age out after retention.\n"
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Apache Pulsar extends this model with tiered storage (offloading cold segments to object storage like S3) and decoupled compute/storage via Apache BookKeeper. Amazon Kinesis follows the same log-based model with managed infrastructure. The core abstraction — durable, ordered, replayable log — is consistent across all three."
+            }
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "info",
+          "runs": [
+            {
+              "text": "Kleppmann's key observation: once you have a durable log, the stream processor is just a long-running transformation over that log. The boundary between \"messaging\" and \"batch processing\" dissolves — both are just consumers reading from an ordered log at different speeds."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "A Kafka topic is like a permanent journal. Every message is written in order and stays there. Any consumer can read it, re-read it, or start from the beginning. The broker doesn't care whether anyone has read it — it's the consumers' job to remember where they left off."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "dds-ch11-c004",
+      "order": 4,
+      "title": "Partitioned Logs & Offsets",
+      "teaser": "A Kafka topic is divided into partitions — each partition is an independent ordered log. Ordering is guaranteed only within a partition, not across them. An offset is a consumer's position within a single partition: the index of the next message to read.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Scalability in the log-based model comes from partitioning. A single partition is a single ordered sequence of messages written to a single broker. To scale beyond a single node's throughput, a topic is split into multiple partitions, each of which is an independent ordered log assigned to a different broker."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Producers write messages to a partition, either explicitly (by specifying a partition key) or via round-robin. The partition key determines which partition receives the message — and therefore which messages are ordered relative to each other. All messages with the same key (e.g., the same user ID, the same order ID) go to the same partition and are therefore ordered relative to each other. Messages with different keys may be in different partitions and have no ordering guarantee between them."
+            }
+          ]
+        },
+        {
+          "type": "code",
+          "language": "text",
+          "text": "Topic: user-events (3 partitions)\n\nPartition 0: [user:alice, t=1][user:alice, t=3][user:alice, t=7]...\n              offset 0          offset 1          offset 2\n\nPartition 1: [user:bob,   t=2][user:bob,   t=5]...\n              offset 0          offset 1\n\nPartition 2: [user:carol, t=4][user:carol, t=6]...\n              offset 0          offset 1\n\nAlice's events are ordered within Partition 0.\nNo ordering guarantee between alice and bob's events."
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "An "
+            },
+            {
+              "text": "offset",
+              "marks": ["bold"]
+            },
+            {
+              "text": " is simply a sequential integer identifying a message's position within a partition. It is monotonically increasing. A consumer that has processed up to offset 1,000 in partition 0 stores that number (in Kafka's internal __consumer_offsets topic, or an external store) so that after a restart it can resume from offset 1,001 rather than reprocessing from the beginning."
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Throughput scales with partition count.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " More partitions means more parallelism — up to one consumer per partition per consumer group."
+              }
+            ],
+            [
+              {
+                "text": "Partition count is a permanent decision.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Kafka does not re-partition automatically. Increasing partitions later is operationally disruptive because it reshuffles which keys land in which partitions, breaking the ordering guarantee for consumers that relied on key affinity."
+              }
+            ],
+            [
+              {
+                "text": "Total ordering requires a single partition.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " If you need globally ordered messages across all keys, you need one partition — which eliminates parallelism. This is an explicit design trade-off."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "warning",
+          "runs": [
+            {
+              "text": "Partition skew is a common production problem. If 20% of your events have the same key, 20% of load goes to one partition while the others are idle. Choose partition keys with high cardinality to distribute load evenly — user IDs or session IDs are usually better choices than region codes or product categories."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Think of a partitioned topic as a set of parallel conveyor belts. Items on the same belt are in order; items across different belts have no ordering relationship. An offset is your bookmark on one specific belt — it tells you exactly where you stopped reading."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "dds-ch11-c005",
+      "order": 5,
+      "title": "Consumer Groups",
+      "teaser": "A consumer group is a named set of consumers that collectively read a topic. Kafka assigns each partition to exactly one consumer within the group at a time — giving you parallelism without duplication. Different groups each get their own independent copy of every message.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Consumer groups solve two distinct problems at once: load distribution within a single application, and fan-out across multiple applications."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Within a group, partitions are assigned exclusively: a partition is owned by exactly one consumer at a time. If a group has 4 consumers and a topic has 8 partitions, each consumer owns 2 partitions. If one consumer crashes, Kafka triggers a "
+            },
+            {
+              "text": "group rebalance"
+            },
+            {
+              "text": " — reassigning the dead consumer's partitions to surviving members. This provides load distribution and fault tolerance with no coordination required from the application."
+            }
+          ]
+        },
+        {
+          "type": "code",
+          "language": "text",
+          "text": "Topic: orders (4 partitions)\n\nConsumer Group A (analytics service):\n  Consumer A1 ← Partition 0, Partition 1\n  Consumer A2 ← Partition 2, Partition 3\n\nConsumer Group B (notifications service):\n  Consumer B1 ← Partition 0, Partition 1, Partition 2, Partition 3\n\nGroup A and Group B each receive ALL messages independently.\nWithin each group, each partition has exactly ONE owner at a time."
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Parallelism is bounded by partition count.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Adding more consumers to a group than partitions produces idle consumers — you cannot parallelize beyond one consumer per partition."
+              }
+            ],
+            [
+              {
+                "text": "Rebalance is a brief pause.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " During a group rebalance, all consumers in the group stop processing while assignments are redistributed. Kafka's cooperative rebalancing protocol (introduced in 2.4) reduces this pause by only revoking partitions that need to move."
+              }
+            ],
+            [
+              {
+                "text": "Offset commits are per consumer group.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Each group maintains its own offset for each partition. Group A's position in partition 0 is independent of Group B's position. Adding a new consumer group to an existing topic has zero impact on existing groups."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The consumer group model elegantly unifies two messaging patterns that traditional brokers handle differently: the "
+            },
+            {
+              "text": "competing consumers",
+              "marks": ["italic"]
+            },
+            {
+              "text": " pattern (multiple workers sharing load — handled by a single group), and the "
+            },
+            {
+              "text": "pub/sub",
+              "marks": ["italic"]
+            },
+            {
+              "text": " pattern (multiple independent subscribers each getting every message — handled by multiple groups)."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "A consumer group is a team reading a stream together. Each team member gets their own partitions to read — no duplication, no fighting over messages. Different teams (groups) can each read the entire stream independently, as if they were the only reader."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "dds-ch11-c006",
+      "order": 6,
+      "title": "Change Data Capture",
+      "teaser": "Change data capture (CDC) turns a database's write-ahead log into a stream — every INSERT, UPDATE, and DELETE becomes an event that downstream systems can consume. Debezium and Maxwell treat the database as the source of truth and the changelog as its streaming interface.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Most systems have a database at their core: the canonical, mutable store of current state. The challenge is getting changes from that database to other systems — search indexes, caches, analytics pipelines, data warehouses — without coupling them tightly to the database schema or creating a consistency nightmare."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The naive approach is dual writes: on every database write, also update Elasticsearch, update the cache, publish a Kafka message. This is fragile — a failure in any step leaves systems inconsistent, and you cannot guarantee the order of operations across multiple stores."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "CDC takes a different approach: "
+            },
+            {
+              "text": "make the database the single writer, and derive all other writes from its log",
+              "marks": ["bold"]
+            },
+            {
+              "text": ". Every relational database maintains a write-ahead log (WAL) — a sequential record of every change, written before the change is committed. CDC tools read this log and publish changes as a stream."
+            }
+          ]
+        },
+        {
+          "type": "code",
+          "language": "text",
+          "text": "PostgreSQL / MySQL\n    │\n    │  WAL / binlog (CDC source)\n    ▼\n Debezium connector (runs on Kafka Connect)\n    │\n    │  Change events published to Kafka\n    │  {op: \"u\", before: {price: 10}, after: {price: 12}, ts_ms: 1716000000000}\n    ▼\n Kafka topic: inventory.products\n    ├─► Elasticsearch (full-text search)\n    ├─► Redis cache (invalidation)\n    └─► Snowflake (analytics warehouse)\n\nAll downstream systems derive from the same ordered changelog."
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Debezium (Red Hat, open-source) supports PostgreSQL, MySQL, MongoDB, SQL Server, Oracle, and Cassandra. Maxwell (Zendesk) provides MySQL CDC with JSON output. Both work by connecting to the database's replication protocol — Debezium uses PostgreSQL's logical decoding or MySQL's binlog replication slot."
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Initial snapshot.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Debezium can perform an initial consistent snapshot of the entire table before switching to streaming, so new consumers can reconstruct current state without waiting for a replay of all history."
+              }
+            ],
+            [
+              {
+                "text": "Schema evolution.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " CDC events capture the schema at the time of the change. Debezium tracks schema history in a dedicated Kafka topic, so consumers can decode events correctly even after schema migrations."
+              }
+            ],
+            [
+              {
+                "text": "Outbox pattern.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " A common CDC pattern: write to both your business table and an \"outbox\" table in the same transaction; CDC picks up the outbox table and publishes events. This eliminates dual-write races entirely."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "info",
+          "runs": [
+            {
+              "text": "Kleppmann describes CDC as the bridge between the \"database as source of truth\" world and the \"stream as source of truth\" world. The database remains the writer; the log becomes the broadcast channel. This is architecturally cleaner than dual writes and more decoupled than direct database queries."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "CDC is like wiretapping your database's internal journal. Instead of other systems polling the database to detect changes, they subscribe to a stream of every insert, update, and delete as it happens. The database doesn't need to know about the other systems at all."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "dds-ch11-c007",
+      "order": 7,
+      "title": "Event Sourcing",
+      "teaser": "Event sourcing stores the history of state changes as the primary record — not the current state. Current state is a derived view, reconstructed by replaying the event log. CQRS (Command Query Responsibility Segregation) is the natural architectural partner.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Traditional systems store the "
+            },
+            {
+              "text": "current state",
+              "marks": ["italic"]
+            },
+            {
+              "text": " of each entity. An orders table has one row per order reflecting the latest status. To update, you overwrite the row. History is lost unless you build an audit log on the side."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Event sourcing stores the "
+            },
+            {
+              "text": "history",
+              "marks": ["italic"]
+            },
+            {
+              "text": " as the primary record. An order's event log might contain: OrderPlaced, PaymentAuthorized, ItemShipped, OrderDelivered. Current state — \"order is delivered\" — is computed by replaying these events in order. There is no mutable \"orders\" row; the row is a derived view of the event stream."
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Complete audit history.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Every state transition is captured. You can answer \"what was the state of this order at 2:00 PM on Tuesday?\" trivially by replaying up to that timestamp."
+              }
+            ],
+            [
+              {
+                "text": "Temporal queries.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Because history is complete, you can project the event log into any view — current state, state at a past time, or a completely new projection that didn't exist at write time."
+              }
+            ],
+            [
+              {
+                "text": "Reliability via replay.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " If a derived view (a read-model database) is corrupted or a new projection is needed, replay the event log to rebuild it from scratch."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Event sourcing differs from CDC in a crucial way: in CDC, the database schema drives the events — they reflect table changes. In event sourcing, the events are "
+            },
+            {
+              "text": "domain-modeled intentionally",
+              "marks": ["italic"]
+            },
+            {
+              "text": " — PaymentAuthorized, not \"payment row updated with status='authorized'\". The event log is the domain language of the system, not an artifact of a relational schema."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "CQRS (Command Query Responsibility Segregation) pairs naturally with event sourcing. Commands (writes) append events to the log. Queries read from one or more "
+            },
+            {
+              "text": "projections",
+              "marks": ["italic"]
+            },
+            {
+              "text": " — materialized views built from the event stream optimized for specific query patterns. The write model and read models are separate, scaled and optimized independently."
+            }
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "warning",
+          "runs": [
+            {
+              "text": "Event sourcing is not the right tool for every domain. The operational cost is real: schema evolution in an event log (changing past event shapes) requires versioning strategies. Eventual consistency between the event log and read projections must be designed for explicitly. Start with domains where history is genuinely valuable — financial systems, audit-heavy workflows — not CRUD-heavy domains where the current-state model is simpler."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Event sourcing is like a bank statement versus a bank balance. A balance tells you where you are. A statement tells you every transaction that got you here — and you can recompute the balance from it at any time. Event sourcing stores the statement; current state is derived from it."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "dds-ch11-c008",
+      "order": 8,
+      "title": "Processing Time vs Event Time",
+      "teaser": "Processing time is when the stream processor saw the event. Event time is when the event actually happened. The gap between them can be milliseconds — or days. Building correct stream aggregations requires using event time, which means accepting that events arrive late, always.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Consider a mobile app that tracks user sessions. The user opens the app at 9:00 AM, taps through several screens, then enters a tunnel with no connectivity. The app buffers events locally. At 9:45 AM, when they exit the tunnel, the buffered events are uploaded. The stream processor receives them at 9:45 AM — but they all carry event timestamps of 9:00–9:05 AM."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "If you build a \"events per minute\" aggregation using "
+            },
+            {
+              "text": "processing time",
+              "marks": ["bold"]
+            },
+            {
+              "text": " — the time at which the processor received the event — those 9:00 AM events inflate the 9:45 AM window and leave the 9:00 AM window undercounted. The result is wrong."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Using "
+            },
+            {
+              "text": "event time",
+              "marks": ["bold"]
+            },
+            {
+              "text": " — the timestamp embedded in the event payload, representing when the event occurred — those events correctly land in the 9:00 AM window. But now you have a different problem: how long do you wait for late events before emitting results? The 9:00 AM window might receive events until 9:45 AM."
+            }
+          ]
+        },
+        {
+          "type": "comparison",
+          "items": [
+            {
+              "label": "Processing Time",
+              "description": "When the system received the event. Simple — no lateness handling needed. Wrong for anything that depends on when events actually happened. Useful for latency monitoring (how fast is the pipeline?) but not for business metrics."
+            },
+            {
+              "label": "Event Time",
+              "description": "When the event actually occurred, per the embedded timestamp. Correct for business logic. Requires handling late events, out-of-order delivery, and the watermark mechanism to know when a time window can be considered complete."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The sources of the event-time gap are numerous: network delays, mobile offline buffering, clock skew between producer machines (NTP desynchronization can introduce seconds of skew), retry storms that deliver old events, and message broker backpressure that delays fast-moving events. Lateness is not an edge case — it is the normal operating condition of a distributed system."
+            }
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "info",
+          "runs": [
+            {
+              "text": "Kleppmann's precise framing: \"Event time is a property of the data; processing time is a property of the infrastructure.\" Mixing the two — treating infrastructure arrival time as if it were data time — is a category error that produces subtly wrong results that are hard to detect."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Event time is when something happened; processing time is when your code found out about it. They're usually close, but never the same, and sometimes hours apart. Any aggregation that says \"how many events happened at 9 AM\" must use event time, not processing time — otherwise you're measuring when events arrived, not when they occurred."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "dds-ch11-c009",
+      "order": 9,
+      "title": "Watermarks",
+      "teaser": "A watermark is the stream processor's best guess that \"we have seen all events with event time less than T.\" It tells the processor when a time window can be safely closed and results emitted. Watermarks trade completeness against latency — there is no free lunch.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Using event time creates a fundamental dilemma: you need to close time windows to emit results, but because events arrive late, you can never be fully certain that no late events remain. Waiting forever for completeness means infinite latency. Closing early means late events are dropped or produce incorrect results."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "A "
+            },
+            {
+              "text": "watermark",
+              "marks": ["bold"]
+            },
+            {
+              "text": " is a heuristic that cuts through this dilemma. The stream processor tracks the maximum event time seen across all incoming events, applies a "
+            },
+            {
+              "text": "lag estimate",
+              "marks": ["italic"]
+            },
+            {
+              "text": " (e.g., \"events are typically no more than 5 minutes late\"), and declares: watermark = max_event_time_seen − 5 minutes. This watermark advances monotonically. When the watermark passes T, the processor treats the window [0, T] as complete."
+            }
+          ]
+        },
+        {
+          "type": "code",
+          "language": "text",
+          "text": "Event stream (arrival order):\n  t=10:03  t=10:01  t=10:07  t=09:58  t=10:05  ...\n\nMax event time seen: 10:07\nConfigured lag:       5 min\nCurrent watermark:   10:02  (= 10:07 − 5min)\n\n┌──────────────────────────────────────────────────┐\n│ Window [10:00, 10:05]                            │\n│   Events seen: t=10:01, t=10:03                  │\n│   Watermark (10:02) < window end (10:05)         │\n│   → Window still OPEN, waiting                  │\n└──────────────────────────────────────────────────┘\n\nLater...\nMax event time seen: 10:12 → Watermark = 10:07\n→ Watermark (10:07) > window end (10:05)\n→ Window [10:00, 10:05] CLOSED, results emitted"
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Perfect watermarks are impossible.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " A watermark is a heuristic. Events that arrive later than the estimated lag are \"late data\" — they arrive after the watermark has passed their window."
+              }
+            ],
+            [
+              {
+                "text": "Aggressive watermarks (small lag) produce low latency but drop late events.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " A 0-second lag emits results immediately but misses any out-of-order event."
+              }
+            ],
+            [
+              {
+                "text": "Conservative watermarks (large lag) capture more late events but delay results.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " A 1-hour lag captures almost everything but produces hourly-delayed analytics."
+              }
+            ],
+            [
+              {
+                "text": "Allowed lateness.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Apache Flink and Spark Structured Streaming allow you to specify an \"allowed lateness\" duration: events arriving after the watermark but within this window trigger a result update rather than being dropped. The tradeoff is state must be held longer."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "info",
+          "runs": [
+            {
+              "text": "Google's Dataflow paper (Akidau et al., 2015) — which became the Apache Beam model — defines watermarks formally as a lower bound on event time progress. The paper's central insight: the question \"when in processing time is it OK to emit a result for a given event time window?\" is exactly the question watermarks answer."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "A watermark is the processor saying \"I'm confident enough that I've seen all events before time T — let's call that window done.\" It's never perfectly right, but without it you'd wait forever. The lag you set is the knob between \"fast but drops some late events\" and \"slow but catches everything.\""
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "dds-ch11-c010",
+      "order": 10,
+      "title": "Tumbling Windows",
+      "teaser": "A tumbling window divides a stream into fixed-size, non-overlapping time buckets aligned to clock boundaries. Every event belongs to exactly one window. \"Count requests per minute\" is a tumbling window with a 1-minute size.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Windowing is the mechanism that makes aggregations over unbounded streams tractable. Instead of computing a single aggregate over infinite data, you compute aggregates over finite slices of time. Tumbling windows are the simplest and most common kind."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "A "
+            },
+            {
+              "text": "tumbling window",
+              "marks": ["bold"]
+            },
+            {
+              "text": " has a fixed duration (say, 5 minutes) and advances by that same duration. Windows never overlap. Each window is independent — events in the 10:00–10:05 window have no relationship to events in the 10:05–10:10 window."
+            }
+          ]
+        },
+        {
+          "type": "code",
+          "language": "text",
+          "text": "Event stream:  ─────────────────────────────────────────────►\n\n                [10:00 ──── 10:05) [10:05 ──── 10:10) [10:10 ──── 10:15)\n                  Window 1           Window 2           Window 3\n\nEvents fall into exactly one window based on event time.\nNo event spans two windows; no event is counted twice.\n\nResult: count(W1)=142, count(W2)=187, count(W3)=103"
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "In Flink (Java DSL):"
+            }
+          ]
+        },
+        {
+          "type": "code",
+          "language": "java",
+          "text": "stream\n    .keyBy(event -> event.userId)\n    .window(TumblingEventTimeWindows.of(Time.minutes(5)))\n    .aggregate(new CountAggregator());"
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "In ksqlDB (SQL-like streaming query):"
+            }
+          ]
+        },
+        {
+          "type": "code",
+          "language": "sql",
+          "text": "SELECT userId, COUNT(*) AS event_count\nFROM clicks\nWINDOW TUMBLING (SIZE 5 MINUTES)\nGROUP BY userId\nEMIT CHANGES;"
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Best for: periodic summaries.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Hourly billing aggregations, per-minute rate metrics, daily active users — any metric where each period is independent."
+              }
+            ],
+            [
+              {
+                "text": "Limitation: edge effects.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " An activity that spans a window boundary (e.g., a 6-minute user session spanning 10:03–10:09) is split across two windows. Tumbling windows are poor at capturing user-centric behavior that doesn't align to clock boundaries."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "info",
+          "runs": [
+            {
+              "text": "Tumbling windows with event time and watermarks are the baseline streaming aggregate in Flink, Spark Structured Streaming, and Beam. When in doubt about which window type to use, start with tumbling — and only move to hopping, sliding, or session windows when the domain semantics require it."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "A tumbling window is like cutting a film reel into equal-length segments. Each frame belongs to exactly one segment. You can analyze each segment independently. The boundary between segments is fixed and never moves."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "dds-ch11-c011",
+      "order": 11,
+      "title": "Hopping & Sliding Windows",
+      "teaser": "Hopping windows are fixed-size windows that advance by a step smaller than the window — events can appear in multiple windows simultaneously, enabling rolling averages. Sliding windows carry this to the extreme: they emit for every possible duration, making any point-in-time query possible.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Tumbling windows are non-overlapping: an event belongs to exactly one window. Hopping and sliding windows relax this constraint — the same event can contribute to multiple windows simultaneously."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "A "
+            },
+            {
+              "text": "hopping window",
+              "marks": ["bold"]
+            },
+            {
+              "text": " has two parameters: size (the window duration) and hop (the advance interval). A 10-minute window with a 1-minute hop produces 10 overlapping windows at any given moment — each window covers the last 10 minutes of data, but a new one starts every minute. This is the standard \"rolling average\" pattern."
+            }
+          ]
+        },
+        {
+          "type": "code",
+          "language": "text",
+          "text": "Hopping window: size=10min, hop=5min\n\n[10:00 ──────────────────── 10:10)\n          [10:05 ──────────────────── 10:15)\n                    [10:10 ──────────────────── 10:20)\n\nAn event at 10:07 appears in ALL three windows above.\nEach hop advances 5min; each window spans 10min.\nResult: smooth rolling metric updated every 5 minutes."
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "A "
+            },
+            {
+              "text": "sliding window",
+              "marks": ["bold"]
+            },
+            {
+              "text": " (in some frameworks) takes this to the limit: a window is implicitly created for every pair of events within a given duration of each other. Unlike hopping (which has discrete hop steps), a sliding window continuously tracks the count/aggregate for any interval [t, t+size] as t varies continuously. Semantically this is equivalent to a hopping window with hop=0, or one window per event. ksqlDB uses \"sliding\" to mean a specific variant; Apache Beam calls this a \"sliding window\"; Flink calls it a \"sliding window\" as well."
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Hopping use cases:",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Rolling 5-minute averages updated every 30 seconds, moving-average rate limiting, trending topic detection updated continuously."
+              }
+            ],
+            [
+              {
+                "text": "State amplification.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Hopping windows with small hops create high state overhead: each event is stored in (size/hop) windows simultaneously. A 1-hour window with a 1-minute hop requires each event to be maintained in 60 window buckets. Plan state store capacity accordingly."
+              }
+            ],
+            [
+              {
+                "text": "Tumbling is a special case.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " A hopping window where hop = size is a tumbling window."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "info",
+          "runs": [
+            {
+              "text": "The naming of \"sliding\" vs \"hopping\" is inconsistent across frameworks. Flink, Beam, Kafka Streams, and ksqlDB each use slightly different terminology. Always check the framework's docs: what matters is the parameters — the window size and the advance interval. If size > advance, it's overlapping (hopping/sliding); if size = advance, it's tumbling."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "A hopping window is a rolling window that advances in steps smaller than its size. \"Show me the count over the last hour, updated every 10 minutes\" — that's a hopping window. Each event appears in multiple overlapping windows, which is exactly what you need for smooth, continuously-updating aggregates."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "dds-ch11-c012",
+      "order": 12,
+      "title": "Session Windows",
+      "teaser": "A session window groups events by activity, not by clock. A window opens on the first event and extends as long as events keep arriving within a gap timeout. Inactive users get short windows; active sessions grow as long as they remain active. No fixed size: the data defines the shape.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Both tumbling and hopping windows are driven by the clock — the boundaries are determined by time, not by what the data contains. Session windows invert this: the data drives the boundaries."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "A "
+            },
+            {
+              "text": "session window",
+              "marks": ["bold"]
+            },
+            {
+              "text": " opens when an event arrives and stays open as long as events continue to arrive within a configurable "
+            },
+            {
+              "text": "gap timeout",
+              "marks": ["italic"]
+            },
+            {
+              "text": " (e.g., 30 minutes). If no event arrives for 30 minutes, the window closes and the session is complete. The next event starts a new session. Sessions are defined per key — each user has their own independent session window."
+            }
+          ]
+        },
+        {
+          "type": "code",
+          "language": "text",
+          "text": "User: alice    Gap timeout: 30 min\n\nEvents (event time):\n  10:00 ─ click\n  10:05 ─ click\n  10:20 ─ click   ← gap from last: 15min < 30min → same session\n  ...silence...\n  11:10 ─ click   ← gap from last: 50min > 30min → NEW SESSION\n\nSession 1: [10:00, 10:20], duration=20min, events=3\nSession 2: [11:10, ...], duration=ongoing\n\nEach user gets independently sized windows.\nBusiness metric: \"average session duration = 35 min\""
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Session windows are uniquely powerful for user behavior analytics, where \"a session\" is a natural business concept. They are considerably harder to implement than time-based windows because:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Merging is required.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Out-of-order events may arrive that bridge two previously separate session windows, requiring them to be merged into one. Stream processors maintain per-key state to handle this."
+              }
+            ],
+            [
+              {
+                "text": "State grows with active sessions.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " A system with one million concurrent users, each with an active session, requires one million in-flight window states. RocksDB-backed state in Flink handles this via spillable state that persists to disk."
+              }
+            ],
+            [
+              {
+                "text": "Closing condition is event-time based.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " The session ends when the watermark passes (last_event_time + gap_timeout). This is a watermark trigger, not a calendar trigger."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "info",
+          "runs": [
+            {
+              "text": "Session windows are the right choice when you are measuring user-driven activity: web sessions, mobile app usage, gameplay sessions, support ticket interaction sequences. For infrastructure metrics and periodic business reporting, tumbling or hopping windows are simpler and cheaper."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "A session window is like measuring how long someone is actively at their desk: the timer starts when they sit down, pauses if they leave for more than X minutes, and stops when they've been away long enough. It's not based on the clock — it's based on their behavior."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "dds-ch11-c013",
+      "order": 13,
+      "title": "Exactly-Once Semantics & Idempotence",
+      "teaser": "\"Exactly-once\" is a misnomer. In a distributed system, messages can always be redelivered. What systems like Kafka and Flink actually provide is \"effectively-once\": operations are idempotent, so duplicate deliveries produce the same result as a single delivery. The semantic guarantee is in the effect, not the count.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "In distributed messaging, there are three delivery guarantees:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "At-most-once:",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Fire and forget. Messages may be lost. No redelivery. Simple but unsafe for important data."
+              }
+            ],
+            [
+              {
+                "text": "At-least-once:",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Messages are retried until acknowledged. No loss, but duplicates are possible. This is the default for Kafka consumers that commit offsets after processing."
+              }
+            ],
+            [
+              {
+                "text": "Exactly-once:",
+                "marks": ["bold"]
+              },
+              {
+                "text": " The holy grail — every message is processed once and only once. In practice, this is implemented by making duplicates harmless, not by preventing them."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The fundamental difficulty: in a distributed system, a producer cannot know whether its last write succeeded if the network failed before the acknowledgement arrived. It must retry. Any retry creates the possibility of duplication. You cannot prevent retries — you can only make their effects idempotent."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Kafka implements \"exactly-once\" via two mechanisms:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Idempotent producers.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Each producer is assigned a producer ID (PID) and sequences messages with a monotonically increasing sequence number. The broker deduplicates retries by rejecting messages with a sequence number it has already seen from a given PID. Enabled with "
+              },
+              {
+                "text": "enable.idempotence=true",
+                "marks": ["code"]
+              },
+              {
+                "text": "."
+              }
+            ],
+            [
+              {
+                "text": "Transactions.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Kafka transactions allow a producer to atomically write to multiple partitions and commit consumer offsets in a single atomic operation. Either all writes and the offset commit happen, or none do. This enables exactly-once processing in read-process-write pipelines: read from topic A, transform, write to topic B, and commit the source offset — all atomically."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Apache Flink's exactly-once guarantees use "
+            },
+            {
+              "text": "distributed snapshots",
+              "marks": ["italic"]
+            },
+            {
+              "text": " (Chandy-Lamport checkpointing). Barriers are injected into the stream and propagate through the operator graph. When all operators have processed up to a barrier, a consistent checkpoint is taken. On failure, the system restores to the last checkpoint and replays. Any idempotent or transactional sink ensures the replayed events produce the same result."
+            }
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "warning",
+          "runs": [
+            {
+              "text": "Exactly-once is only meaningful end-to-end: from source to sink. Kafka exactly-once between topics does not help if the downstream database write is not idempotent. The guarantee chain must hold at every step. A common mistake is enabling Kafka transactions while writing to a non-idempotent HTTP API, leaving duplicates possible at the boundary."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Exactly-once doesn't mean \"the message is sent exactly once\" — you can't stop retries in a distributed system. It means \"processing the message twice has the same effect as processing it once.\" You get there by making operations idempotent (same input = same result, always) or transactional (all or nothing). The guarantee is in the effect, not the count."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "dds-ch11-c014",
+      "order": 14,
+      "title": "Stream-Stream Joins (Windowed)",
+      "teaser": "Joining two event streams requires a time window: you buffer events from both streams and match pairs whose event times fall within the window. The result is complete only when the window closes — making latency, state size, and the watermark strategy inseparable design concerns.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "In a batch system, joining two tables is straightforward: both are fully materialized on disk, you scan and match. In a stream system, neither table is fully materialized — events from each stream arrive at different times, out of order, and you must produce join results in near-real-time."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "A "
+            },
+            {
+              "text": "stream-stream join",
+              "marks": ["bold"]
+            },
+            {
+              "text": " requires the processor to buffer events from both streams in a "
+            },
+            {
+              "text": "join window",
+              "marks": ["italic"]
+            },
+            {
+              "text": ": for any event in stream A, we match it with events in stream B that fall within a time interval [t-Δ, t+Δ]. Both sides are stored in state until the watermark advances past their eligibility window."
+            }
+          ]
+        },
+        {
+          "type": "code",
+          "language": "text",
+          "text": "Stream A: ad_impressions  {userId, adId, ts}\nStream B: ad_clicks        {userId, adId, ts}\n\nJoin condition: same userId AND same adId\n                AND |ts_A - ts_B| < 10 minutes\n\nA impression at t=10:00 can match a click between 09:50 and 10:10.\nState: buffer both streams; match pairs within the join window.\nEmit: (impression, click) matched pair when both events are available.\nExpire: events older than watermark minus join window are dropped."
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "State grows with join window size.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " A 10-minute join window means both sides of the stream must be buffered for 10 minutes. For high-throughput streams, this can mean gigabytes of state per operator."
+              }
+            ],
+            [
+              {
+                "text": "Cartesian explosion.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " If stream A has 100 events per key per window and stream B has 50 events per key, the join could produce up to 5,000 output records. Design join keys carefully."
+              }
+            ],
+            [
+              {
+                "text": "Flink implementation.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Apache Flink's "
+              },
+              {
+                "text": "CoProcessFunction",
+                "marks": ["code"]
+              },
+              {
+                "text": " and interval join handle stream-stream joins with efficient state eviction based on watermarks."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "info",
+          "runs": [
+            {
+              "text": "Kleppmann describes stream-stream joins as \"one of the most challenging operations in stream processing\" because both sides are moving and incomplete. Contrast with batch SQL joins, where both relations are fully materialized before the join begins — streams require reasoning about partial state and time."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Joining two streams is like matching wedding RSVPs that arrive by two different mail routes, neither in order. You hold recent arrivals from both sides in memory and match pairs that belong together. The join window defines how long you're willing to wait for the second half of a pair before giving up."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "dds-ch11-c015",
+      "order": 15,
+      "title": "Stream-Table Joins (Enrichment)",
+      "teaser": "A stream-table join enriches a stream of events with slowly-changing reference data — user profiles, product catalogs, account settings. The table is materialized in the processor's local state store; the stream looks up into it on every event. Materialize and ksqlDB make this a first-class primitive.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "A stream-table join is the most common streaming join in production systems. You have a high-throughput stream of events (clicks, purchases, sensor readings) and you need to enrich each event with reference data (the user's country, the product's category, the device's type) that changes slowly."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The key distinction from stream-stream joins is that "
+            },
+            {
+              "text": "one side is bounded and relatively stable"
+            },
+            {
+              "text": ". The \"table\" side is loaded into the processor's in-memory or RocksDB state store — not buffered in a time window. Each stream event performs a point lookup into the state store by join key."
+            }
+          ]
+        },
+        {
+          "type": "code",
+          "language": "text",
+          "text": "Stream: page_views   {userId, pageId, ts}\nTable:  user_profile {userId, country, tier}  ← CDC from database\n\nEnrichment: for each page_view, look up user_profile[userId]\n\nOutput: {userId, pageId, ts, country, tier}\n\nThe table is kept current via CDC (Debezium → Kafka → state store).\nNo window needed: lookup is point-in-time at event arrival."
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "How the table is built depends on the framework:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Kafka Streams / ksqlDB.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " A KTable is a changelog-backed materialized view of a compacted Kafka topic. The join of a KStream (stream) with a KTable (table) is the stream-table join primitive. The KTable is always the latest value for each key."
+              }
+            ],
+            [
+              {
+                "text": "Flink.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Flink's "
+              },
+              {
+                "text": "CoProcessFunction",
+                "marks": ["code"]
+              },
+              {
+                "text": " can implement stream-table joins. Flink SQL also supports "
+              },
+              {
+                "text": "temporal table joins",
+                "marks": ["code"]
+              },
+              {
+                "text": " — lookups against the table version valid at the event's event time, enabling point-in-time consistent enrichment."
+              }
+            ],
+            [
+              {
+                "text": "Materialize.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Materialize (built on Differential Dataflow) is purpose-built for this pattern: SQL queries over streams, with stream-table joins maintained incrementally as both sides update."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "info",
+          "runs": [
+            {
+              "text": "Temporal table joins — enriching with the version of the table that was valid at event time — are critical for correctness in financial and audit contexts. Without temporal joins, a late-arriving event might be enriched with the current table value rather than the value at the time of the event, producing incorrect historical records."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "A stream-table join is enrichment: every event in the stream gets extra fields looked up from a reference table. It's like annotating a list of orders with the customer's current address — but the \"current\" part is important, because the table can change, and you may need the value as of the event's time, not today's value."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "dds-ch11-c016",
+      "order": 16,
+      "title": "Table-Table Joins (Changelog Joins)",
+      "teaser": "A table-table join in a stream processor maintains the join continuously as both tables change. When either side updates, the join result is immediately recomputed and new output emitted. This is the streaming analog of a materialized view — Materialize and ksqlDB implement it natively.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "In a relational database, a join between two tables returns a snapshot of the current matching rows. If either table changes, you re-run the query to get the new answer. In a streaming system, both tables are represented as changelogs — streams of insert/update/delete events — and the join must stay current as either side changes."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "A "
+            },
+            {
+              "text": "table-table join",
+              "marks": ["bold"]
+            },
+            {
+              "text": " (or changelog join) treats both inputs as materialized views of their respective changelogs, and computes the join incrementally. When a row in Table A is updated, the join re-evaluates that row against the current state of Table B and emits a correction to the output."
+            }
+          ]
+        },
+        {
+          "type": "code",
+          "language": "text",
+          "text": "Table A (orders):  {orderId, customerId, amount}\n  ← CDC from orders database\n\nTable B (customers): {customerId, name, tier}\n  ← CDC from customers database\n\nTable-Table Join: orders JOIN customers ON customerId\n\nWhen order 42 is placed → join with customer record → emit enriched order\nWhen customer 7 upgrades tier → re-emit ALL of customer 7's active orders\n\nOutput is a continuously maintained materialized view of the joined state."
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "This is the most state-intensive of the three join types: both tables must be fully materialized in state stores (keyed by the join key), and updates to either side may trigger re-evaluation of many join rows."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "In Kafka Streams, this is a KTable-KTable join — both sides are compacted KTables, and the join is maintained as both sides receive updates. ksqlDB exposes this as standard SQL JOIN syntax with EMIT CHANGES semantics. Materialize's core value proposition is making complex table-table joins performant: it uses Differential Dataflow's incremental computation model to propagate only the delta of a change through the join, rather than recomputing the entire join on every update."
+            }
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "info",
+          "runs": [
+            {
+              "text": "Kleppmann's observation: a KTable in Kafka Streams is simply the current state of a KStream — the latest value per key. A table-table join in a stream processor is therefore equivalent to a SQL materialized view that auto-refreshes. The stream processor is incrementally computing what a database's query planner would recompute from scratch."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "A table-table join is a live materialized view: as either table changes, the join output updates automatically. It's what you'd get if a database materialized view refreshed instantaneously on every row change, instead of on a schedule. The stream processor handles the incremental re-evaluation so your query results are always current."
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
