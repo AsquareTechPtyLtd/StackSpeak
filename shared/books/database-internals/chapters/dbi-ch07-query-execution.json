@@ -1,0 +1,1178 @@
+{
+  "chapterId": "dbi-ch07-query-execution",
+  "shardIndex": 1,
+  "cards": [
+    {
+      "id": "dbi-ch07-c001",
+      "order": 1,
+      "title": "Query Lifecycle — From SQL Text to Result Rows",
+      "teaser": "A SQL string goes through five distinct phases before a single result row is returned. Understanding where each phase ends and the next begins is the prerequisite for diagnosing any query performance problem.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Every query a client submits passes through the same pipeline inside the engine:"
+            }
+          ]
+        },
+        {
+          "type": "code",
+          "language": "plaintext",
+          "text": "  SQL text\n     │\n     ▼\n ┌────────┐\n │ Parse  │  Tokenise + build AST. Catches syntax errors.\n └───┬────┘\n     │  AST\n     ▼\n ┌────────┐\n │  Bind  │  Resolve names → OIDs. Catches \"table not found\".\n └───┬────┘\n     │  Annotated AST\n     ▼\n ┌─────────────┐\n │  Plan/Opt   │  Enumerate join orders, pick access paths,\n │             │  estimate costs. Produces a plan tree.\n └──────┬──────┘\n        │  Plan tree\n        ▼\n ┌─────────────┐\n │   Execute   │  Walk the plan tree, fetch pages, apply\n │             │  predicates, materialise results.\n └──────┬──────┘\n        │  Rows\n        ▼\n    Client"
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Parse",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — lex the SQL string into tokens, construct an abstract syntax tree (AST). Syntax errors surface here. Postgres uses a Bison-generated LALR parser; MySQL uses a hand-written recursive descent parser since 8.0."
+              }
+            ],
+            [
+              {
+                "text": "Bind (Analyse)",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — walk the AST and resolve every name to a catalog object identifier (OID in Postgres). Catches semantic errors: unknown columns, type mismatches, missing permissions."
+              }
+            ],
+            [
+              {
+                "text": "Plan / Optimize",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — the optimizer rewrites the annotated AST into a physical plan tree. This phase is covered in chapter 8; what matters here is that its output is a tree of operator nodes the executor can walk."
+              }
+            ],
+            [
+              {
+                "text": "Execute",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — the subject of this chapter. The executor walks the plan tree, drives storage access, applies predicates, and streams rows back to the client."
+              }
+            ],
+            [
+              {
+                "text": "Return results",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — rows are serialized over the wire protocol (PostgreSQL Frontend/Backend Protocol, MySQL Client/Server Protocol). For large result sets this happens concurrently with execution via cursor-like buffering."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "info",
+          "runs": [
+            {
+              "text": "Prepared statements short-circuit the lifecycle: parse and bind happen once at PREPARE time; each EXECUTE call enters the pipeline at the Plan step (or at Execute if the plan is cached). This is why prepared statements eliminate per-query parse overhead in high-throughput OLTP."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "SQL goes through five stages: parse (build AST), bind (resolve names), plan/optimize (produce a plan tree), execute (run the plan), return results (send rows to the client). Prepared statements skip parse and bind on repeated executions."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "dbi-ch07-c002",
+      "order": 2,
+      "title": "Volcano Model — Pull-Based Execution",
+      "teaser": "Goetz Graefe's 1994 Volcano model is the dominant execution architecture in relational databases. Every operator exposes one interface: next(). Calling next() on the root pulls one row all the way through the tree.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Graefe's Volcano model (\"Volcano — An Extensible and Parallel Query Evaluation System\", IEEE TKDE 1994) gives every operator in the plan tree an identical three-method interface:"
+            }
+          ]
+        },
+        {
+          "type": "code",
+          "language": "pseudocode",
+          "text": "interface Iterator {\n    open()        // initialise state, recurse open() to children\n    next() → Row  // return next row; return EOF when exhausted\n    close()       // release resources, recurse close() to children\n}"
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "A query plan is a tree of Iterator nodes. The root is typically a Result or Gather node; leaves are table or index scans. Calling "
+            },
+            {
+              "text": "next()",
+              "marks": ["code"]
+            },
+            {
+              "text": " on the root triggers a chain of "
+            },
+            {
+              "text": "next()",
+              "marks": ["code"]
+            },
+            {
+              "text": " calls toward the leaves — the pull propagates downward until a scan returns a tuple, which then bubbles upward through each operator in the stack:"
+            }
+          ]
+        },
+        {
+          "type": "code",
+          "language": "plaintext",
+          "text": "Client calls root.next()\n\n  Sort.next()\n    └─► HashAgg.next()\n          └─► HashJoin.next()\n                ├─► SeqScan(orders).next()   ← leaf: reads a page\n                └─► SeqScan(customers).next() ← leaf: reads a page\n\n  Row bubbles back up: scan → join → agg → sort → client"
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Postgres implements Volcano almost exactly: every executor node has an "
+            },
+            {
+              "text": "ExecProcNode",
+              "marks": ["code"]
+            },
+            {
+              "text": " function pointer that is the "
+            },
+            {
+              "text": "next()",
+              "marks": ["code"]
+            },
+            {
+              "text": " call. The executor loop in "
+            },
+            {
+              "text": "execMain.c",
+              "marks": ["code"]
+            },
+            {
+              "text": " calls "
+            },
+            {
+              "text": "ExecProcNode(planstate)",
+              "marks": ["code"]
+            },
+            {
+              "text": " in a loop until "
+            },
+            {
+              "text": "TupIsNull",
+              "marks": ["code"]
+            },
+            {
+              "text": " returns true."
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Strengths:",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Simple to implement and compose. Adding a new operator requires only implementing the three-method interface. Operators are fully reusable across query types."
+              }
+            ],
+            [
+              {
+                "text": "Weakness:",
+                "marks": ["bold"]
+              },
+              {
+                "text": " One virtual function call per row. At millions of rows per second, virtual dispatch overhead and instruction-cache misses dominate. This is the core motivation for vectorised and compiled execution."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "info",
+          "runs": [
+            {
+              "text": "The Volcano paper introduced the model. Graefe's earlier EXODUS optimizer generator (1987) and later Cascades framework (1995) are separate contributions to the optimizer — Volcano is specifically about the execution model."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "In the Volcano model every operator implements open/next/close. Calling next() on the root pulls one row through the whole tree. The pull propagates down to scan leaves, rows bubble back up. Simple and composable, but one virtual call per row is expensive at scale."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "dbi-ch07-c003",
+      "order": 3,
+      "title": "Vectorised Execution — Batching to Kill Per-Row Overhead",
+      "teaser": "Peter Boncz's MonetDB/X100 (2005) showed that amortizing per-row function call overhead over batches of 1000+ rows — and processing each column as a tight array loop — yields order-of-magnitude throughput improvements over classic Volcano.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The insight of vectorised execution (Boncz, Zukowski, Nes: \"MonetDB/X100: Hyper-Pipelining Query Execution\", CIDR 2005) is that the Volcano iterator interface is not wrong — only the granularity is wrong. Instead of passing one row per "
+            },
+            {
+              "text": "next()",
+              "marks": ["code"]
+            },
+            {
+              "text": " call, pass a "
+            },
+            {
+              "text": "vector",
+              "marks": ["bold"]
+            },
+            {
+              "text": " — a batch of N rows stored in columnar arrays:"
+            }
+          ]
+        },
+        {
+          "type": "code",
+          "language": "pseudocode",
+          "text": "interface VectorIterator {\n    open()\n    next(batchSize: Int) → ColumnBatch  // returns up to N rows\n    close()\n}\n\n// ColumnBatch for a scan of (id INT, amount FLOAT):\n//   ids:     [ 1,  2,  3, ... , 1000 ]   // contiguous int array\n//   amounts: [ 9.5, 4.0, 12.1, ... ]      // contiguous float array\n//   len: 1000"
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Each operator applies its logic as a tight loop over the column array — no virtual dispatch per element, no tuple bookkeeping:"
+            }
+          ]
+        },
+        {
+          "type": "code",
+          "language": "pseudocode",
+          "text": "// Vectorised filter: WHERE amount > 10.0\nfor i in 0..batch.len:\n    selection[i] = (batch.amounts[i] > 10.0)  // branch-free comparison\nbatch.applySelection(selection)"
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Why is this dramatically faster than row-at-a-time?"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "CPU cache efficiency.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " A column array of 1000 int32 values is 4 KB — exactly one cache line's worth of data per iteration step on modern CPUs. Row-at-a-time scatters across many cache lines."
+              }
+            ],
+            [
+              {
+                "text": "SIMD auto-vectorisation.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Tight loops over homogeneous arrays are recognised by compilers (GCC, Clang) and hardware (AVX-512) for automatic SIMD vectorisation — processing 8 or 16 elements per clock cycle."
+              }
+            ],
+            [
+              {
+                "text": "Amortised function call overhead.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " One next() call per 1000 rows instead of 1000 next() calls per 1000 rows. The dispatch cost is negligible."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "DuckDB is the canonical modern example: every operator processes vectors of 2048 rows by default. ClickHouse uses block-based processing (vectors of 65536 rows). Both achieve 10–100× throughput versus Postgres's Volcano model on analytical queries over large tables."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Vectorised execution passes batches of 1000+ rows per next() call instead of one row at a time. Each operator loops over column arrays — CPU cache-friendly, SIMD-friendly, and function-call overhead is amortized. DuckDB uses 2048-row vectors; ClickHouse uses 65536-row blocks."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "dbi-ch07-c004",
+      "order": 4,
+      "title": "Compiled Execution — Generating Native Code from the Plan",
+      "teaser": "Instead of interpreting a plan tree at runtime, compiled execution translates the plan into native machine code — eliminating all interpreter overhead. HyPer (now Tableau Hyper) popularised LLVM-based JIT compilation for SQL.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Neumann's HyPer paper (\"Efficiently Compiling Efficient Query Plans for Modern Hardware\", VLDB 2011) made the argument that even vectorised execution leaves performance on the table. The root cause: data still passes through shared operator interfaces. Compiled execution fuses operators into a single, tight, branch-free loop:"
+            }
+          ]
+        },
+        {
+          "type": "code",
+          "language": "plaintext",
+          "text": "Plan tree (interpreted):\n  Aggregate\n    └─ Filter (amount > 10)\n         └─ SeqScan (orders)\n\n  → three separate next() calls per row\n\nCompiled to native code:\n  for page in orders.pages:\n    for row in page.rows:\n      if row.amount > 10.0:        // filter fused\n        agg.accumulate(row.amount) // agg fused\n\n  → single tight loop, no interpreter overhead, no per-row dispatch"
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The compilation pipeline in a system like HyPer or SingleStore works as follows:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "numbered",
+          "items": [
+            [
+              {
+                "text": "Plan tree → LLVM IR.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Each operator contributes IR fragments that represent its logic (predicate evaluation, hash table lookup, aggregate accumulation)."
+              }
+            ],
+            [
+              {
+                "text": "LLVM optimises the IR.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Standard compiler passes (inlining, constant folding, dead code elimination) run over the combined IR — treating the whole pipeline as a single compilation unit."
+              }
+            ],
+            [
+              {
+                "text": "LLVM emits native code.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " The resulting machine code is loaded and called directly, with no interpreter loop."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "SingleStore (MemSQL) uses a two-phase approach: for short queries it uses LLVM JIT; for long compilation times it falls back to C++ code generation + compilation via a background thread, swapping to native code once ready. MySQL HeatWave uses a similar model."
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Strengths:",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Eliminates all interpreter overhead; enables cross-operator optimisation (constant folding across predicate + scan fusion); best throughput for CPU-bound queries."
+              }
+            ],
+            [
+              {
+                "text": "Weaknesses:",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Compilation latency (10–200ms for complex queries) makes it unsuitable for OLTP queries on small data. Systems therefore hybridise: compile for long-running queries, interpret for short ones."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "info",
+          "runs": [
+            {
+              "text": "Postgres added JIT compilation (LLVM-based) in version 11 (2018), but only for expression evaluation — not full operator fusion. Full pipeline compilation remains the domain of specialised analytical engines like HyPer, DuckDB (partial), and SingleStore."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Compiled execution translates the plan tree into native machine code at query time. Operators are fused into a single tight loop — no interpreter overhead, no per-row dispatch, LLVM optimises across operator boundaries. Cost: compilation latency makes it unsuitable for tiny OLTP queries."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "dbi-ch07-c005",
+      "order": 5,
+      "title": "SeqScan vs IndexScan — Access Path Operators",
+      "teaser": "Every query plan begins with one or more table access operators. SeqScan reads every page of the heap; IndexScan follows an index to find qualifying rows. The right choice depends on selectivity — how much of the table survives the predicate.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The two fundamental leaf operators in a plan tree are the access path operators — they are the only operators that touch storage directly:"
+            }
+          ]
+        },
+        {
+          "type": "code",
+          "language": "plaintext",
+          "text": "SeqScan (orders)\n  predicate: amount > 10.0\n  ── reads every page in the heap file, left to right\n  ── applies predicate row-by-row\n  ── returns matching rows in heap order\n\nIndexScan (orders) using idx_amount\n  index cond: amount > 10.0\n  ── walks B-tree leaf pages for keys > 10.0\n  ── follows heap TIDs (Tuple IDs) to fetch matching rows\n  ── returns rows in index key order"
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "SeqScan",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — reads the entire heap file sequentially. I/O is sequential (efficient for spinning disks and large reads). Cost is proportional to table size, not selectivity. Postgres requests read-ahead for SeqScans via posix_fadvise(POSIX_FADV_SEQUENTIAL)."
+              }
+            ],
+            [
+              {
+                "text": "IndexScan",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — traverses the B-tree to find matching keys, then fetches only those heap pages. Each heap fetch is a random I/O. Cost is proportional to selectivity × heap pages accessed. For highly selective predicates (< ~5% of rows) this is faster. For broad predicates it produces excessive random I/O — slower than SeqScan."
+              }
+            ],
+            [
+              {
+                "text": "Bitmap Index Scan",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — Postgres-specific hybrid. The index scan phase builds a bitmap of matching heap page offsets. A second \"Bitmap Heap Scan\" phase reads each marked page exactly once, in sequential order. Eliminates duplicate random I/Os when selectivity is moderate (5–20%)."
+              }
+            ],
+            [
+              {
+                "text": "Index-Only Scan",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — if all projected columns are covered by the index, no heap fetch is needed at all. Postgres Index-Only Scan still consults the visibility map to handle uncommitted rows from concurrent transactions."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "warning",
+          "runs": [
+            {
+              "text": "The optimizer chooses between access paths based on estimated selectivity from table statistics. Wrong statistics (stale pg_statistic, skewed data distributions) cause the optimizer to pick IndexScan when SeqScan would be faster, or vice versa — this is the most common source of plan regressions after data bulk-loads."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "SeqScan reads every heap page sequentially — cost proportional to table size. IndexScan navigates the B-tree then does random heap fetches — cost proportional to rows matched. Use IndexScan for highly selective predicates (few rows), SeqScan for broad ones. Postgres Bitmap Scan is a hybrid for moderate selectivity."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "dbi-ch07-c006",
+      "order": 6,
+      "title": "Filter and Project Operators",
+      "teaser": "Filter and Project are the two cheapest operators in any plan tree. Filter discards rows that fail the WHERE predicate. Project discards columns not in the SELECT list. Both are commonly fused into adjacent operators to avoid materializing intermediate results.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Filter and Project implement the relational algebra's selection (σ) and projection (π) operations:"
+            }
+          ]
+        },
+        {
+          "type": "code",
+          "language": "pseudocode",
+          "text": "// Filter (σ predicate)\nFilter.next():\n    loop:\n        row = child.next()\n        if row == EOF: return EOF\n        if evaluate(predicate, row): return row\n        // else: discard and continue\n\n// Project (π column_list)\nProject.next():\n    row = child.next()\n    if row == EOF: return EOF\n    return row.extract(column_list)"
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "In practice, both operators are almost always "
+            },
+            {
+              "text": "fused",
+              "marks": ["bold"]
+            },
+            {
+              "text": " directly into their parent or child:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "SeqScan with predicate.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Postgres applies the filter inside the scan node — it never surfaces a separate Filter node if the predicate can be evaluated while reading the tuple. The EXPLAIN output shows \"Filter:\" as an annotation on the scan node, not a separate node."
+              }
+            ],
+            [
+              {
+                "text": "Late materialisation (column stores).",
+                "marks": ["bold"]
+              },
+              {
+                "text": " In columnar engines like DuckDB, projection means only reading the relevant column files at all — columns not in the SELECT list are never fetched from storage. This can cut I/O by 10× on wide tables where queries touch only 2–3 of 50 columns."
+              }
+            ],
+            [
+              {
+                "text": "Expression evaluation.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Project is also responsible for computing derived columns: arithmetic expressions, function calls (UPPER, DATE_TRUNC), CASE WHEN expressions. These are evaluated as the row passes through the node."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "info",
+          "runs": [
+            {
+              "text": "Predicate pushdown is an optimizer transformation that moves Filter nodes as far down the plan tree as possible — ideally into the scan operator — so that fewer rows travel up through expensive operators like joins and aggregates. It is one of the highest-ROI rewrites an optimizer performs."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Filter discards rows failing the WHERE predicate; Project discards unneeded columns. Both are trivial on their own but powerful in aggregate — especially when fused into scan nodes so rejected rows never travel up the plan tree. In column stores, projection means never reading the column file at all."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "dbi-ch07-c007",
+      "order": 7,
+      "title": "Sort Operator — In-Memory and External Merge Sort",
+      "teaser": "Sorting is required for ORDER BY, Sort-Merge Join, and Sort-based aggregation. When data fits in the sort buffer it uses quicksort. When it doesn't — the common case for ORDER BY on large tables — it falls back to external merge sort, reading and writing temporary files.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The Sort operator is a "
+            },
+            {
+              "text": "blocking",
+              "marks": ["bold"]
+            },
+            {
+              "text": " operator: it must consume its entire input before returning the first row. This breaks the otherwise streaming nature of the plan tree."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "When the input fits in the memory budget ("
+            },
+            {
+              "text": "work_mem",
+              "marks": ["code"]
+            },
+            {
+              "text": " in Postgres), the operator buffers all tuples and runs in-memory quicksort. When it doesn't, it runs "
+            },
+            {
+              "text": "external merge sort",
+              "marks": ["bold"]
+            },
+            {
+              "text": ":"
+            }
+          ]
+        },
+        {
+          "type": "code",
+          "language": "plaintext",
+          "text": "Phase 1 — Run generation:\n  Read input chunks into memory (each chunk ≤ work_mem)\n  Sort each chunk → write sorted \"run\" to temp file\n  Result: K sorted runs on disk\n\n  Optimisation: replacement selection produces runs ~2× work_mem\n  using a priority queue (tournament tree)\n\nPhase 2 — K-way merge:\n  Open all K run files simultaneously\n  Use a tournament tree (min-heap) of size K to merge\n  Emit the globally smallest tuple on each step\n  One sequential write pass over all data\n\n  If K is too large → multi-pass merge (merge in groups)\n  Goal: minimise number of passes over data"
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Postgres sort implementation",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — uses quicksort for in-memory, external merge sort with replacement selection (\"heapsort run generation\") for disk-spilling cases. Controlled by work_mem (default 4 MB — far too low for most analytical queries)."
+              }
+            ],
+            [
+              {
+                "text": "Tournament tree (replacement selection)",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — each run is generated by maintaining a min-heap of size work_mem / row_size. When a row is output from the heap, the next input row is inserted (if it is ≥ the last output) or deferred to the next run. Expected run length: 2 × available memory, halving the number of runs and merge passes."
+              }
+            ],
+            [
+              {
+                "text": "Top-N sort",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — ORDER BY … LIMIT N can be implemented with a bounded max-heap of N elements: scan input once, maintain the N smallest. O(n log N) time, O(N) space. Postgres uses this automatically when LIMIT is present."
+              }
+            ]
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Sort is a blocking operator — it must see all input before returning row 1. Fits in memory: quicksort. Exceeds work_mem: external merge sort — generate sorted runs via replacement selection, then K-way merge. Adding LIMIT N enables a bounded heap instead: O(n log N), O(N) space."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "dbi-ch07-c008",
+      "order": 8,
+      "title": "Aggregate Operator — Hash Agg vs Sort Agg",
+      "teaser": "GROUP BY can be implemented two ways: sort the input by group key and scan for group boundaries (Sort Agg), or maintain an in-memory hash table of per-group accumulators (Hash Agg). The right choice depends on data size, cardinality, and whether the input is already sorted.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Both aggregate strategies share the same goal: partition input rows into groups and apply the aggregate function (SUM, COUNT, AVG, MAX) to each group. They differ in how they identify group membership:"
+            }
+          ]
+        },
+        {
+          "type": "code",
+          "language": "plaintext",
+          "text": "Sort Aggregate:\n  input must be sorted on GROUP BY key(s)\n  scan input:\n    if current row's key ≠ last row's key:\n      emit previous group's result\n      start new group accumulator\n    else:\n      update current accumulator\n  emit final group\n  Memory: O(1) — only current group state\n\nHash Aggregate:\n  hash_table = {}\n  for row in input:\n    key = row.group_by_columns\n    if key not in hash_table:\n      hash_table[key] = new_accumulator()\n    hash_table[key].update(row)\n  emit all (key, accumulator.result) pairs\n  Memory: O(distinct groups) — full hash table"
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Sort Agg advantages.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " O(1) memory — only the current group's accumulator is live. Naturally produces output sorted by group key (useful for subsequent ORDER BY or merge joins). Optimal when input is already sorted (e.g., from an index scan on the group key — Postgres will sometimes plan GroupAggregate + IndexScan to avoid a sort entirely)."
+              }
+            ],
+            [
+              {
+                "text": "Hash Agg advantages.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " No sort required. Single pass over input. Dominant strategy when cardinality is moderate and the hash table fits in work_mem. DuckDB, ClickHouse, and Redshift default to hash agg for GROUP BY."
+              }
+            ],
+            [
+              {
+                "text": "Hash Agg spilling.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " If the hash table exceeds memory, modern engines (Postgres 13+, DuckDB) partition the input by hash and process each partition separately — the same trick as Grace hash join. Older systems would fail with \"out of memory\" or fall back silently to Sort Agg."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "info",
+          "runs": [
+            {
+              "text": "Postgres uses \"HashAggregate\" and \"GroupAggregate\" as distinct node types in EXPLAIN output. GroupAggregate is Sort Agg — it requires sorted input. HashAggregate builds the hash table. The planner compares estimated costs and memory constraints to choose."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "GROUP BY has two implementations. Sort Agg: requires sorted input, O(1) memory, scan for group boundary changes. Hash Agg: one pass over input, O(distinct groups) memory for the hash table, no sort required. Hash Agg wins unless the input is already sorted or cardinality is too high to fit in memory."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "dbi-ch07-c009",
+      "order": 9,
+      "title": "Hash Join — Build Phase and Probe Phase",
+      "teaser": "Hash join is the dominant join algorithm for equi-joins when neither input is sorted. It runs in two phases: build a hash table on the smaller (\"inner\") relation, then probe that table for each row of the larger (\"outer\") relation.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Hash join requires an equi-join predicate (r.key = s.key). It partitions the join into two distinct phases:"
+            }
+          ]
+        },
+        {
+          "type": "code",
+          "language": "plaintext",
+          "text": "Phase 1 — Build:\n  for row in inner_relation (smaller):\n    bucket = hash(row.join_key) % num_buckets\n    hash_table[bucket].append(row)\n\nPhase 2 — Probe:\n  for row in outer_relation (larger):\n    bucket = hash(row.join_key) % num_buckets\n    for candidate in hash_table[bucket]:\n      if candidate.join_key == row.join_key:\n        emit (row, candidate)   // match found\n\nComplexity: O(|inner|) build + O(|outer|) probe\nMemory:     O(|inner|) — the hash table"
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The optimizer always places the smaller relation on the build side. If the inner hash table fits in "
+            },
+            {
+              "text": "work_mem",
+              "marks": ["code"]
+            },
+            {
+              "text": ", this is a simple in-memory hash join — one of the fastest join algorithms available."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "When the inner relation is too large to fit in memory, engines use "
+            },
+            {
+              "text": "Grace hash join",
+              "marks": ["bold"]
+            },
+            {
+              "text": " (or hybrid hash join in Postgres):"
+            }
+          ]
+        },
+        {
+          "type": "code",
+          "language": "plaintext",
+          "text": "Grace Hash Join:\n  Partition both relations by hash(join_key) into K batches:\n    inner_batch_i, outer_batch_i  (matching keys → same batch)\n  For i in 0..K:\n    load inner_batch_i into hash table\n    probe with outer_batch_i\n    emit matches\n\n  Guarantees: inner_batch_i fits in work_mem\n  Cost: 3 × (|inner| + |outer|)   (write + read both sides)"
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Hybrid hash join (Postgres).",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Keeps the first partition entirely in memory (no I/O for it), spills only the overflow partitions. Reduces I/O relative to pure Grace when the inner relation is only slightly larger than work_mem."
+              }
+            ],
+            [
+              {
+                "text": "Bloom filter optimisation.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Before probing, insert all inner keys into a Bloom filter. For each outer row, check the filter first — if the key is definitely absent, skip the hash table lookup entirely. Cuts CPU cost dramatically for low-selectivity joins (many outer rows have no match)."
+              }
+            ]
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Hash join builds a hash table on the smaller relation, then probes it for every row of the larger one. O(n) time, O(inner) memory. When inner doesn't fit in memory, Grace hash join first partitions both sides so each partition does fit. Postgres uses hybrid hash join to keep the first partition in memory."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "dbi-ch07-c010",
+      "order": 10,
+      "title": "Sort-Merge Join — Merging Two Sorted Streams",
+      "teaser": "Sort-Merge Join is optimal when both inputs are already sorted on the join key — it merges them in a single pass with no hash table. It shines after index scans or when the join key matches a preceding ORDER BY.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Sort-Merge Join runs in (up to) two phases: an optional sort phase for each input that is not already ordered, followed by the merge phase:"
+            }
+          ]
+        },
+        {
+          "type": "code",
+          "language": "plaintext",
+          "text": "Inputs: R sorted on R.key, S sorted on S.key\n\nMerge phase:\n  r = R.next()\n  s = S.next()\n  while r ≠ EOF and s ≠ EOF:\n    if r.key < s.key:\n      r = R.next()\n    elif r.key > s.key:\n      s = S.next()\n    else:  // r.key == s.key\n      // emit all matching pairs (handle duplicates)\n      mark = s                  // remember start of matching group\n      while s.key == r.key:\n        emit(r, s)\n        s = S.next()\n      r = R.next()\n      s = mark                  // rewind S to re-scan the matching group"
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Cost when inputs are already sorted.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " O(|R| + |S|) — a single sequential pass over both relations. No random I/O, no hash table. Memory: only enough for the current matching group (O(duplicate_count) at worst for large groups of equal keys)."
+              }
+            ],
+            [
+              {
+                "text": "Cost when sort is needed.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Add O(n log n) sort cost for each unsorted input. If both inputs need sorting, total cost is higher than hash join for large unsorted relations. The optimizer prefers SMJ over hash join only when sorting is free (input already sorted) or when hash join would spill."
+              }
+            ],
+            [
+              {
+                "text": "Duplicate key handling.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " The \"mark/restore\" step above is critical for correctness when the same key appears in multiple rows of S. Postgres's merge join node stores the mark position and restores the inner scan to re-emit all matching inner rows for each outer row with the same key."
+              }
+            ],
+            [
+              {
+                "text": "When the optimizer picks Sort-Merge Join.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Postgres chooses Merge Join when both inputs have ordered paths available (index scans), or when an explicit ORDER BY on the join key makes the sort free. It is also preferred for inequality joins on ranges where hash join cannot apply."
+              }
+            ]
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Sort-Merge Join advances two pointers through sorted inputs in lockstep, emitting pairs where keys match. Cost: O(n + m) if both are already sorted. If not, add sort cost. Optimal when inputs come from index scans already in key order. Mark/restore handles duplicate keys in the inner relation."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "dbi-ch07-c011",
+      "order": 11,
+      "title": "Nested Loop Join — The Brute-Force Baseline",
+      "teaser": "Nested Loop Join iterates the outer relation once and, for each outer row, scans the inner relation for matching rows. Quadratic cost makes it impractical for large unsorted inputs, but it becomes highly efficient when the inner relation has a usable index.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Nested Loop Join is the simplest join algorithm and the fallback when no equi-join predicate exists:"
+            }
+          ]
+        },
+        {
+          "type": "code",
+          "language": "pseudocode",
+          "text": "// Basic Nested Loop Join\nfor outer_row in outer_relation:\n    for inner_row in inner_relation:\n        if predicate(outer_row, inner_row):\n            emit(outer_row, inner_row)\n\n// Cost: O(|outer| × |inner|) — quadratic\n\n// Index Nested Loop Join\nfor outer_row in outer_relation:\n    for inner_row in index_lookup(inner_relation, outer_row.key):\n        emit(outer_row, inner_row)\n\n// Cost: O(|outer| × log|inner|) — log-linear when index is selective"
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "When NLJ wins.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Index NLJ is the preferred algorithm for OLTP joins: a small outer relation (few rows from the driving table) and a well-indexed inner relation. Example: joining an order row (outer = 1 row) against the customers table using a primary key index (inner = 1 B-tree lookup). Total cost: O(1)."
+              }
+            ],
+            [
+              {
+                "text": "When NLJ loses.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " For large, unindexed inner relations, each outer row triggers a full scan — O(|outer| × |inner|) I/O. On a 1M × 1M join, that is 10^12 comparisons. The optimizer will always prefer hash join or sort-merge join in this case."
+              }
+            ],
+            [
+              {
+                "text": "Block Nested Loop Join (BNLJ).",
+                "marks": ["bold"]
+              },
+              {
+                "text": " MySQL traditionally used BNLJ before hash join was added in 8.0. BNLJ reads a block of outer rows into a join buffer, then scans the inner relation once per block instead of once per row. Cost: O(|outer| / block_size × |inner|) — reduces I/O by the block factor."
+              }
+            ],
+            [
+              {
+                "text": "Non-equi joins.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " NLJ is the only general algorithm that handles arbitrary join predicates (r.a < s.b, r.start OVERLAPS s.range). Hash join and Sort-Merge Join require equi-join predicates. Postgres generates NLJ nodes for range predicates and cross joins (CROSS JOIN = NLJ with no predicate)."
+              }
+            ]
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Nested Loop Join: for each outer row, scan the inner relation. O(n × m) without an index — catastrophic for large tables. With an index on the inner side: O(n × log m) — fast for OLTP where the outer relation is tiny. The only algorithm that handles non-equi join predicates."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "dbi-ch07-c012",
+      "order": 12,
+      "title": "Pipelining — Streaming Rows Without Materializing Intermediates",
+      "teaser": "Pipelining is the property that operators stream rows between each other without materializing a full intermediate result set. Most plan operators are pipelined — only blocking operators (Sort, Hash Join build phase, Hash Agg) break the pipeline and require full materialisation.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Consider a plan tree: SeqScan → Filter → Project → Limit 10. In a pipelined execution, the first row passing all filters is returned to the client after reading just a handful of pages — no intermediate table is built:"
+            }
+          ]
+        },
+        {
+          "type": "code",
+          "language": "plaintext",
+          "text": "Pipelined plan (Limit 10):\n  ┌─ Limit(10) ─────────────────── returns after 10 rows\n  │    └─ Project ──────────────── drops columns on the fly\n  │         └─ Filter ──────────── discards non-matching on the fly\n  │              └─ SeqScan ─────── reads pages lazily\n  │\n  Time to first row: time to find first match\n  Memory: O(1)\n\nBlocking plan (Sort → Limit 10):\n  ┌─ Limit(10)\n  │    └─ Sort ─────────────────── must read ALL input first\n  │         └─ SeqScan\n  │\n  Time to first row: time to sort entire table\n  Memory: O(n)"
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Pipeline-breakers.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Sort (must see all input before emitting), Hash Join build phase (must read entire inner relation), Hash Aggregate (must read all input before emitting any group). These nodes are materialisation points — data accumulates in memory or spills to disk before output begins."
+              }
+            ],
+            [
+              {
+                "text": "Pipelined operators.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Filter, Project, Nested Loop Join (probe side), Merge Join, Limit, Window (with ROWS frame). These forward rows as they arrive — memory footprint is O(1) regardless of input size."
+              }
+            ],
+            [
+              {
+                "text": "Implications for EXPLAIN ANALYZE.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " In Postgres EXPLAIN ANALYZE output, a Sort node shows \"actual rows\" equal to its input size — it must materialise everything. A Filter node shows far fewer \"actual rows\" than \"rows removed by filter\" — it streams and discards. Understanding which nodes break the pipeline explains why some queries return the first row quickly and others sit silent until done."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "info",
+          "runs": [
+            {
+              "text": "Vectorised and compiled engines are also pipelined within a pipeline segment. DuckDB calls these segments \"pipelines\" — each pipeline runs until it hits a pipeline-breaker (a hash table build or a sort). The pipeline segments run sequentially; within a segment, data flows through operators without materialisation."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Pipelining means operators pass rows between each other row-by-row (or batch-by-batch) without writing intermediate results to memory or disk. Filter, Project, and NLJ probe are pipelined. Sort, Hash Join build, and Hash Agg are pipeline-breakers — they must accumulate all input before producing output."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "dbi-ch07-c013",
+      "order": 13,
+      "title": "Push vs Pull Execution — The Architectural Choice",
+      "teaser": "The Volcano model is pull-based: the consumer asks the producer for the next row. Push-based (or producer-driven) models invert control: the producer sends rows to the consumer when ready. Modern vectorised engines often use push semantics within pipeline segments for better CPU branch prediction and cache behaviour.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The choice between pull and push execution is fundamentally about who controls the flow of data:"
+            }
+          ]
+        },
+        {
+          "type": "code",
+          "language": "plaintext",
+          "text": "Pull (Volcano) — consumer-driven:\n  root.next()\n    └─► filter.next()\n          └─► scan.next()  ← scan returns when asked\n\n  Control flow: top-down  (consumer calls into producer)\n  Data flow:    bottom-up (row bubbles up through the call stack)\n\nPush — producer-driven:\n  scan.run()\n    → pushes batch to filter\n      → filter applies predicate\n        → pushes filtered batch to root\n\n  Control flow: bottom-up (producer drives iteration)\n  Data flow:    bottom-up (same direction as control)"
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Pull advantages.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Simple control flow. Easy to implement LIMIT — the consumer simply stops calling next(). Easy to pause and resume (cursors). Each operator is independently testable. Volcano's simplicity is why Postgres, MySQL, and SQLite all use it."
+              }
+            ],
+            [
+              {
+                "text": "Push advantages.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " The producer drives a tight inner loop — no virtual dispatch overhead on the consumer side. Each operator function is called once per batch, not once per row. CPU branch predictor can learn the steady-state call pattern. Better instruction cache utilisation because the same tight loop runs for the entire batch."
+              }
+            ],
+            [
+              {
+                "text": "Hybrid approach (DuckDB).",
+                "marks": ["bold"]
+              },
+              {
+                "text": " DuckDB uses a push model within pipeline segments but pull across pipeline boundaries. The scan operator drives the inner loop, pushing vectors through Filter → Project → partial Aggregate. At a pipeline-breaker (full Hash Agg or Sort), the next segment begins with pull semantics."
+              }
+            ],
+            [
+              {
+                "text": "Morsel-driven parallelism.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Leis et al.'s \"Morsel-Driven Parallelism\" (SIGMOD 2014, HyPer) pushes this further: work is divided into morsels (small chunks of input), each dispatched to a thread in a push fashion. Threads push morsels through the pipeline until a pipeline-breaker materialises the result."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "info",
+          "runs": [
+            {
+              "text": "The pull vs push distinction matters most for OLAP workloads where a single query scans hundreds of millions of rows and operator overhead compounds. For OLTP queries touching tens to thousands of rows, Volcano pull is fast enough and its simplicity is a significant engineering advantage."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Pull (Volcano): the consumer calls next() to get rows — control flows top-down. Push: the scan drives the loop, pushing batches through each operator in turn — better CPU branch prediction and cache behaviour. DuckDB uses push within pipeline segments, pull across pipeline boundaries."
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

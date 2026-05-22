@@ -1,0 +1,869 @@
+{
+  "chapterId": "dbi-ch06-indexing",
+  "shardIndex": 1,
+  "cards": [
+    {
+      "id": "dbi-ch06-c001",
+      "order": 1,
+      "title": "Primary Index — One Per Table",
+      "teaser": "A primary index does not merely point to data — it organises the data itself. Every table has exactly one primary index; it defines the canonical ordering of rows on disk and the key by which every other index ultimately routes.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "A "
+            },
+            {
+              "text": "primary index",
+              "marks": ["bold"]
+            },
+            {
+              "text": " is the index that determines the physical or logical ordering of the table's rows. It is structurally inseparable from the table: the rows "
+            },
+            {
+              "text": "are",
+              "marks": ["italic"]
+            },
+            {
+              "text": " the leaf pages of the primary index, not a separate heap that the index points into. Because only one ordering of rows can exist at a time, only one primary index is permitted per table."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "In InnoDB, the primary key is implemented as a clustered B+ tree. Every secondary index carries the primary key value as its row pointer rather than a physical page address. When a secondary index lookup resolves, the engine performs a second B+ tree traversal — a \"bookmark lookup\" — down the primary index to retrieve the full row."
+            }
+          ]
+        },
+        {
+          "type": "code",
+          "language": "sql",
+          "text": "-- InnoDB: primary key becomes the clustered index.\nCREATE TABLE orders (\n    order_id  BIGINT       NOT NULL,\n    customer  VARCHAR(64)  NOT NULL,\n    total     DECIMAL(10,2),\n    PRIMARY KEY (order_id)         -- this IS the primary index\n);\n\n-- Postgres: no built-in clustered primary index.\n-- CLUSTER aligns heap pages to an index once; future writes drift.\nCREATE TABLE orders (\n    order_id  BIGINT PRIMARY KEY,  -- creates a B-tree index on order_id\n    customer  VARCHAR(64),\n    total     NUMERIC(10,2)\n);\nCLUSTER orders USING orders_pkey; -- one-time physical sort"
+        },
+        {
+          "type": "callout",
+          "variant": "info",
+          "runs": [
+            {
+              "text": "If you do not declare a primary key in InnoDB, MySQL synthesises a hidden 6-byte rowid and uses that as the clustered index key. Queries can never exploit this key, but every secondary index still pays the cost of carrying it."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "dbi-ch06-c002",
+      "order": 2,
+      "title": "Secondary Index — Map to Row Location",
+      "teaser": "A secondary index is a separate B-tree whose leaf entries carry the indexed key alongside a pointer back to the row — a heap TID in Postgres, or the clustered-index key in InnoDB. It answers \"where is row X?\" but almost never fetches X itself.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Every index beyond the primary is a "
+            },
+            {
+              "text": "secondary index",
+              "marks": ["bold"]
+            },
+            {
+              "text": ". Its leaf nodes do not contain full rows — they contain a tuple "
+            },
+            {
+              "text": "(indexed_key, row_pointer)",
+              "marks": ["code"]
+            },
+            {
+              "text": ". The engine uses the row pointer to fetch the actual row from the table storage in a second I/O — the "
+            },
+            {
+              "text": "heap lookup",
+              "marks": ["bold"]
+            },
+            {
+              "text": " or \"table access by rowid\"."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The nature of the row pointer differs by engine:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Postgres heap TID.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " A physical (block, offset) pair pointing directly to the 8 KB heap page. Fast to resolve but becomes stale when autovacuum moves rows or VACUUM FULL rewrites the table."
+              }
+            ],
+            [
+              {
+                "text": "InnoDB clustered-key pointer.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " The primary key value. Stable across row movements (InnoDB never physically moves rows within a page), but requires a second B+ tree descent on every secondary lookup."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "code",
+          "language": "sql",
+          "text": "-- Postgres: secondary index on a heap table\nCREATE INDEX idx_orders_customer\n    ON orders (customer);\n\n-- The index leaf stores: (customer_value, heap_tid)\n-- Lookup: traverse B-tree → find TID → fetch heap page\n\n-- InnoDB: secondary index on clustered table\nCREATE INDEX idx_orders_customer\n    ON orders (customer);\n\n-- The index leaf stores: (customer_value, order_id)\n-- Lookup: traverse B-tree → find order_id → descend primary B-tree"
+        },
+        {
+          "type": "callout",
+          "variant": "warning",
+          "runs": [
+            {
+              "text": "A table with N secondary indexes multiplies every write by N+1: the table itself plus all indexes. This is the index maintenance tax every read optimisation ultimately pays."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "dbi-ch06-c003",
+      "order": 3,
+      "title": "Clustered Index — Data and Index Are One",
+      "teaser": "In a clustered index, the leaf pages of the B+ tree hold the actual row data. There is no separate heap. Rows are physically stored in key order, which makes range scans on the clustering key extraordinarily fast — and makes choosing the wrong clustering key extraordinarily expensive to undo.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "A "
+            },
+            {
+              "text": "clustered index",
+              "marks": ["bold"]
+            },
+            {
+              "text": " collapses the index structure and the row storage into a single B+ tree. Internal nodes act as routing pages; leaf nodes hold the complete row. The engine never follows a pointer from index leaf to a separate table file — the leaf "
+            },
+            {
+              "text": "is",
+              "marks": ["italic"]
+            },
+            {
+              "text": " the row."
+            }
+          ]
+        },
+        {
+          "type": "code",
+          "language": "plaintext",
+          "text": "Clustered B+ tree (InnoDB PRIMARY KEY):\n\n  Internal pages:\n  ┌──────────────────────────────────┐\n  │  ptr │ 1000 │ ptr │ 5000 │ ptr  │   (routing only)\n  └──────────────────────────────────┘\n\n  Leaf pages (full rows stored here):\n  ┌────────────────────────────────────────┐\n  │ id=100, cust='Alice', total=42.00, ... │\n  │ id=200, cust='Bob',   total=99.50, ... │\n  └────────────────────────────────────────┘\n  Next leaf →\n  ┌────────────────────────────────────────┐\n  │ id=1000, cust='Carol', total=7.25, ... │\n  └────────────────────────────────────────┘"
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "InnoDB uses the primary key as the clustered index unconditionally. SQL Server's "
+            },
+            {
+              "text": "CREATE CLUSTERED INDEX",
+              "marks": ["code"]
+            },
+            {
+              "text": " offers explicit control. Postgres does not natively support a persistent clustered index — "
+            },
+            {
+              "text": "CLUSTER",
+              "marks": ["code"]
+            },
+            {
+              "text": " performs a one-time physical sort that future writes immediately violate."
+            }
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "warning",
+          "runs": [
+            {
+              "text": "Choosing a wide or random clustering key — like a UUID — causes page splits and half-empty pages on every insert, inflating the table by 50% or more. Sequential surrogate keys (BIGINT AUTO_INCREMENT, ULIDs) cluster gracefully."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "dbi-ch06-c004",
+      "order": 4,
+      "title": "Non-Clustered (Heap) Index — Separate Structure, Separate File",
+      "teaser": "A non-clustered index is a B-tree that lives alongside but apart from the table heap. Its leaf nodes carry row pointers, not rows. Postgres's default index type is non-clustered; every lookup ends with a heap fetch unless a covering index intervenes.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "In the "
+            },
+            {
+              "text": "non-clustered",
+              "marks": ["bold"]
+            },
+            {
+              "text": " model, the table is a "
+            },
+            {
+              "text": "heap",
+              "marks": ["bold"]
+            },
+            {
+              "text": " — an unordered pile of 8 KB pages in which rows are inserted wherever free space exists. The index is an entirely separate on-disk structure (also a B+ tree) whose leaf entries point back to heap tuples via physical tuple identifiers (TID = block number + line-pointer offset)."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "This architecture offers one important advantage: "
+            },
+            {
+              "text": "multiple non-clustered indexes can coexist without interfering with each other",
+              "marks": ["bold"]
+            },
+            {
+              "text": ". No single index owns the row layout. Inserts append to the heap regardless of how many indexes are maintained."
+            }
+          ]
+        },
+        {
+          "type": "code",
+          "language": "sql",
+          "text": "-- Postgres: all indexes are non-clustered by default\nCREATE INDEX idx_email ON users (email);\n-- index leaf: (email_value, (block=47, offset=3))\n\n-- Query plan:\n-- Index Scan using idx_email on users\n--   Index Cond: (email = 'alice@example.com')\n--   (Heap Fetches: 1)   ← the second I/O\n\nEXPLAIN SELECT * FROM users WHERE email = 'alice@example.com';"
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The cost of the heap fetch dominates for high-selectivity queries on large tables: the relevant rows may scatter across dozens of heap pages. The planner may prefer a sequential scan when selectivity is low enough that random heap I/Os exceed the cost of reading every page in order."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "dbi-ch06-c005",
+      "order": 5,
+      "title": "Covering Index — Killing the Heap Lookup",
+      "teaser": "A covering index stores every column a query needs directly in the index leaf, so the engine never touches the table heap. Index-only scans on Postgres and covering index scans on InnoDB are the single most impactful read optimisation available without changing the query.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "A "
+            },
+            {
+              "text": "covering index",
+              "marks": ["bold"]
+            },
+            {
+              "text": " is any index that includes all columns referenced by a query — in the SELECT list, the WHERE clause, the JOIN predicate, and the ORDER BY. When the engine can satisfy the entire query from index pages alone, it never issues the heap lookup. The resulting plan is an "
+            },
+            {
+              "text": "index-only scan",
+              "marks": ["bold"]
+            },
+            {
+              "text": "."
+            }
+          ]
+        },
+        {
+          "type": "code",
+          "language": "sql",
+          "text": "-- The query we want to accelerate:\nSELECT order_id, total\nFROM   orders\nWHERE  customer = 'Alice';\n\n-- Without covering index: index scan + heap fetch for every row\nCREATE INDEX idx_orders_customer ON orders (customer);\n\n-- With covering index: heap fetch eliminated\nCREATE INDEX idx_orders_customer_total\n    ON orders (customer, total);      -- total is \"included\" in the leaf\n\n-- Postgres 11+ INCLUDE syntax: non-key payload columns\nCREATE INDEX idx_orders_cov\n    ON orders (customer) INCLUDE (total, order_id);\n-- INCLUDE columns are in leaf pages but NOT in internal routing nodes\n-- They cannot be used for range predicates but eliminate heap fetches\n\n-- InnoDB: any secondary index implicitly includes the primary key\n-- so (customer) already covers queries that also need order_id"
+        },
+        {
+          "type": "callout",
+          "variant": "info",
+          "runs": [
+            {
+              "text": "In Postgres, even a perfect covering index must consult the visibility map before skipping the heap. If a heap page has not been marked \"all-visible\" by VACUUM, the engine must fetch the page to check row visibility — partially defeating the index-only scan."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "dbi-ch06-c006",
+      "order": 6,
+      "title": "Composite Index — Leftmost Prefix, Column Order Rules",
+      "teaser": "A multi-column index is a single B-tree sorted by all its columns in sequence. The single most common indexing mistake is adding the right columns in the wrong order. The leftmost-prefix rule governs which query shapes the index can serve.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "A "
+            },
+            {
+              "text": "composite index",
+              "marks": ["bold"]
+            },
+            {
+              "text": " on "
+            },
+            {
+              "text": "(a, b, c)",
+              "marks": ["code"]
+            },
+            {
+              "text": " is sorted first by "
+            },
+            {
+              "text": "a",
+              "marks": ["code"]
+            },
+            {
+              "text": ", then by "
+            },
+            {
+              "text": "b",
+              "marks": ["code"]
+            },
+            {
+              "text": " within each "
+            },
+            {
+              "text": "a",
+              "marks": ["code"]
+            },
+            {
+              "text": " value, then by "
+            },
+            {
+              "text": "c",
+              "marks": ["code"]
+            },
+            {
+              "text": " within each "
+            },
+            {
+              "text": "(a, b)",
+              "marks": ["code"]
+            },
+            {
+              "text": " pair. This means the B-tree can be entered at a contiguous range for any "
+            },
+            {
+              "text": "leftmost prefix",
+              "marks": ["bold"]
+            },
+            {
+              "text": " of the key — but not for suffixes or arbitrary subsets."
+            }
+          ]
+        },
+        {
+          "type": "code",
+          "language": "sql",
+          "text": "CREATE INDEX idx_log ON events (tenant_id, created_at, severity);\n\n-- USABLE (leftmost prefix present):\nWHERE tenant_id = 5                          -- prefix (a)\nWHERE tenant_id = 5 AND created_at > '2024'  -- prefix (a, b)\nWHERE tenant_id = 5 AND created_at = '2024-01-01' AND severity = 'ERROR' -- (a,b,c)\n\n-- NOT FULLY USABLE (gap in prefix):\nWHERE created_at > '2024'                    -- skips a; full index scan\nWHERE tenant_id = 5 AND severity = 'ERROR'   -- b skipped; only a is used\n\n-- Range break: once a range predicate appears, later columns cannot use the index\nWHERE tenant_id = 5 AND created_at > '2024' AND severity = 'ERROR'\n-- severity is NOT filtered by the index; filtered in memory after the range scan"
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Practical column ordering heuristics: put equality predicates first, then range predicates, then ORDER BY / GROUP BY columns. High-cardinality columns early narrow the scan range fastest, but the access pattern of the dominant query should override cardinality when they conflict."
+            }
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "info",
+          "runs": [
+            {
+              "text": "Some engines (Postgres 9.2+, MySQL 8.0 index skip scan) can partially work around the leftmost-prefix limit by performing an \"index skip scan\" that synthesises the missing leading-column values from the index statistics. This is a planner optimisation, not a change to the index structure."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "dbi-ch06-c007",
+      "order": 7,
+      "title": "Partial Index — Index Only the Rows You Query",
+      "teaser": "A partial index includes only the rows matching a static WHERE predicate. The result is a smaller B-tree that takes less space, is faster to scan, and is cheaper to maintain — with the caveat that it only accelerates queries whose WHERE clause implies the index predicate.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Most real workloads query a small, predictable subset of rows — orders that are not yet shipped, users that are active, jobs that are in the queue. A "
+            },
+            {
+              "text": "partial index",
+              "marks": ["bold"]
+            },
+            {
+              "text": " encodes that fact at index-creation time: only rows that satisfy a static "
+            },
+            {
+              "text": "WHERE",
+              "marks": ["code"]
+            },
+            {
+              "text": " clause are included. Every other row is invisible to — and uncounted by — the index."
+            }
+          ]
+        },
+        {
+          "type": "code",
+          "language": "sql",
+          "text": "-- Postgres: partial index on unprocessed jobs only\nCREATE INDEX idx_jobs_pending\n    ON jobs (created_at)\n    WHERE status = 'pending';   -- only ~2% of the table\n\n-- The planner uses this index only when the query implies status='pending':\nSELECT * FROM jobs WHERE status = 'pending' ORDER BY created_at;\n-- ✓ planner picks idx_jobs_pending\n\nSELECT * FROM jobs WHERE status = 'done' ORDER BY created_at;\n-- ✗ index not applicable\n\n-- SQL Server equivalent: a \"filtered index\"\nCREATE INDEX idx_orders_open\n    ON orders (order_date)\n    WHERE shipped_date IS NULL;  -- filtered index syntax\n\n-- Unique partial index: enforce uniqueness only within a subset\nCREATE UNIQUE INDEX idx_active_email\n    ON users (email)\n    WHERE deleted_at IS NULL;"
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Partial indexes are especially powerful for soft-delete patterns: a unique index on "
+            },
+            {
+              "text": "(email) WHERE deleted_at IS NULL",
+              "marks": ["code"]
+            },
+            {
+              "text": " allows the same email to be re-registered after a soft delete without violating uniqueness — a constraint no table-wide unique index can express."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "dbi-ch06-c008",
+      "order": 8,
+      "title": "Expression (Functional) Index — Index What You Compute",
+      "teaser": "An expression index stores the result of an arbitrary function applied to column values rather than the raw column values. Queries that use the same expression in a WHERE clause can use the index — but only if the planner can prove the expressions are identical.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Case-insensitive email lookups, URL normalisation, JSON field extraction, date truncation — these all apply a transformation before comparison. Without an "
+            },
+            {
+              "text": "expression index",
+              "marks": ["bold"]
+            },
+            {
+              "text": " the engine must compute the function for every row on every query. With one, the computed values are materialised in the index leaf at write time and are immediately available at query time."
+            }
+          ]
+        },
+        {
+          "type": "code",
+          "language": "sql",
+          "text": "-- Postgres: case-insensitive user lookup\nCREATE INDEX idx_users_lower_email\n    ON users (LOWER(email));\n\n-- Query must use the same expression to benefit:\nSELECT * FROM users WHERE LOWER(email) = 'alice@example.com';  -- ✓ uses index\nSELECT * FROM users WHERE email = 'alice@example.com';          -- ✗ full scan\n\n-- Expression index on JSONB field\nCREATE INDEX idx_events_type\n    ON events ((payload->>'event_type'));\n\nSELECT * FROM events WHERE payload->>'event_type' = 'purchase';  -- ✓\n\n-- Computed column as a cleaner alternative (SQL Server / Postgres generated column)\nALTER TABLE users ADD COLUMN email_lower TEXT\n    GENERATED ALWAYS AS (LOWER(email)) STORED;\nCREATE INDEX idx_email_lower ON users (email_lower);"
+        },
+        {
+          "type": "callout",
+          "variant": "warning",
+          "runs": [
+            {
+              "text": "The function must be immutable — it must return the same result for the same inputs regardless of time, session, or configuration. Using a volatile or stable function in an expression index produces incorrect results or errors at creation time."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "dbi-ch06-c009",
+      "order": 9,
+      "title": "Inverted Index — Terms Point to Documents",
+      "teaser": "Full-text search inverts the normal index relationship: instead of mapping documents to their contents, an inverted index maps each term to the list of documents that contain it. This is the data structure behind every search engine, from Postgres tsvector to Elasticsearch.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "A conventional B-tree answers \"what columns does row 42 have?\". An "
+            },
+            {
+              "text": "inverted index",
+              "marks": ["bold"]
+            },
+            {
+              "text": " answers the opposite question: \"which rows contain the term 'database'?\". The structure is a mapping from "
+            },
+            {
+              "text": "term → posting list",
+              "marks": ["code"]
+            },
+            {
+              "text": ", where a posting list is a sorted array of document IDs (plus optional position and frequency data for ranked retrieval)."
+            }
+          ]
+        },
+        {
+          "type": "code",
+          "language": "plaintext",
+          "text": "Inverted index structure:\n\n  term         →  posting list (doc_id, position, ...)\n  ─────────────────────────────────────────────────────\n  \"acid\"       →  [42, 107, 831]\n  \"b-tree\"     →  [3, 42, 60, 200]\n  \"database\"   →  [3, 7, 42, 60, 107, 200, 831, ...]\n  \"lsm\"        →  [60, 200]\n\n  Query: \"b-tree\" AND \"lsm\"  →  intersect([3,42,60,200], [60,200])  =  [60, 200]"
+        },
+        {
+          "type": "code",
+          "language": "sql",
+          "text": "-- Postgres full-text search with GIN inverted index\nCREATE INDEX idx_articles_fts\n    ON articles USING GIN (to_tsvector('english', body));\n\nSELECT title\nFROM   articles\nWHERE  to_tsvector('english', body) @@ to_tsquery('english', 'b-tree & lsm');\n\n-- GIN = Generalised Inverted Index; also used for JSONB, arrays, hstore\nCREATE INDEX idx_tags ON posts USING GIN (tags);  -- tags is text[]\nSELECT * FROM posts WHERE tags @> '{postgres,indexing}';"
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Construction cost is high: every insert must tokenise the document, locate the posting list for each term, and append the new document ID. Updates require removing the old posting entries and adding new ones. Elasticsearch and Lucene amortise this by collecting writes in an in-memory buffer and flushing immutable "
+            },
+            {
+              "text": "segments",
+              "marks": ["bold"]
+            },
+            {
+              "text": " — an LSM-tree-inspired approach applied to inverted index maintenance."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "dbi-ch06-c010",
+      "order": 10,
+      "title": "Bitmap Index — One Bit Per Row Per Value",
+      "teaser": "A bitmap index represents each distinct value as a bit vector with one bit per row. Queries combine predicates with bitwise AND / OR / NOT in nanoseconds. This makes bitmap indexes devastating for low-cardinality columns in analytical workloads — and nearly useless for OLTP.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "A "
+            },
+            {
+              "text": "bitmap index",
+              "marks": ["bold"]
+            },
+            {
+              "text": " stores one compressed bit vector per distinct value in the indexed column. Each bit corresponds to one row; a set bit means the row has that value. For a column "
+            },
+            {
+              "text": "status",
+              "marks": ["code"]
+            },
+            {
+              "text": " with three values, the index has three bit vectors:"
+            }
+          ]
+        },
+        {
+          "type": "code",
+          "language": "plaintext",
+          "text": "status column (12 rows):\n  row:     1  2  3  4  5  6  7  8  9 10 11 12\n  value:   A  B  A  C  A  B  C  A  B  C  A  B\n\nBitmap index:\n  A:  1  0  1  0  1  0  0  1  0  0  1  0\n  B:  0  1  0  0  0  1  0  0  1  0  0  1\n  C:  0  0  0  1  0  0  1  0  0  1  0  0\n\nQuery: status IN ('A', 'C')\n  A OR C:  1  0  1  1  1  0  1  1  0  1  1  0\n  → rows 1,3,4,5,7,8,10,11 match (bitwise OR in one pass)"
+        },
+        {
+          "type": "code",
+          "language": "sql",
+          "text": "-- Oracle: native bitmap index syntax\nCREATE BITMAP INDEX idx_orders_status ON orders (status);\n\n-- Postgres: no native CREATE BITMAP INDEX.\n-- The planner synthesises bitmap operations dynamically:\n-- BitmapOr( BitmapScan(idx_status_a), BitmapScan(idx_status_c) )\n-- This is a query-time bitmap built from standard B-tree indexes, not a stored bitmap index."
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The cardinality threshold matters: bitmap indexes shine when a column has fewer than ~100 distinct values in a table of millions of rows. At high cardinality (e.g., a UUID column) every bit vector is nearly sparse and the space and maintenance overhead exceeds a B-tree."
+            }
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "warning",
+          "runs": [
+            {
+              "text": "Bitmap indexes are catastrophic for concurrent OLTP writes. Updating a bit vector for a value requires locking the entire bitmap for that value — serialising all writers that produce rows with the same value. Oracle's bitmap indexes are intentionally designed for read-heavy data warehouses where concurrent DML is rare."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "dbi-ch06-c011",
+      "order": 11,
+      "title": "Hash Index — O(1) Lookups, No Range Scans",
+      "teaser": "A hash index maps key values to bucket slots via a hash function. Point lookups are O(1) — no tree traversal, no level comparisons. The price: hash indexes are completely blind to order and cannot serve range, prefix, or sorting queries.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "A "
+            },
+            {
+              "text": "hash index",
+              "marks": ["bold"]
+            },
+            {
+              "text": " applies a hash function to the indexed key to compute a bucket number, then stores "
+            },
+            {
+              "text": "(key, row_pointer)",
+              "marks": ["code"]
+            },
+            {
+              "text": " pairs within that bucket. Lookups hash the search key, jump directly to the bucket, and scan only the (usually small) bucket — O(1) expected time regardless of table size."
+            }
+          ]
+        },
+        {
+          "type": "code",
+          "language": "sql",
+          "text": "-- Postgres: explicit hash index (WAL-logged since Postgres 10)\nCREATE INDEX idx_sessions_token\n    ON sessions USING HASH (session_token);\n\n-- Only usable for equality:\nSELECT * FROM sessions WHERE session_token = 'abc123';  -- ✓ hash lookup\nSELECT * FROM sessions WHERE session_token > 'abc';     -- ✗ seq scan; no range support\nSELECT * FROM sessions ORDER BY session_token;          -- ✗ no ordering information\n\n-- MySQL MEMORY engine: hash indexes are the default\nCREATE TABLE cache (k VARCHAR(64) PRIMARY KEY) ENGINE=MEMORY;\n-- PRIMARY KEY on MEMORY is a hash, not a B-tree"
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Historically, Postgres hash indexes were not WAL-logged and did not survive crashes; Postgres 10 (2017) fixed this. Despite the fix, the Postgres documentation still recommends B-tree for most use cases because B-tree equality lookups are only marginally slower than hash, while B-tree additionally supports ranges and sorting that hash cannot serve."
+            }
+          ]
+        },
+        {
+          "type": "code",
+          "language": "plaintext",
+          "text": "Index type comparison for point lookup vs range:\n\n  Index type  │ Equality  │ Range  │ Ordering │ Cardinality fit\n  ────────────┼───────────┼────────┼──────────┼─────────────────\n  B-tree      │ O(log N)  │  ✓     │  ✓       │ any\n  Hash        │ O(1)      │  ✗     │  ✗       │ high\n  Bitmap      │ O(1) AND  │  ✗*    │  ✗       │ low (<100 vals)\n  GIN/inverted│ O(log N)  │  ✗     │  ✗       │ text / arrays"
+        }
+      ]
+    },
+    {
+      "id": "dbi-ch06-c012",
+      "order": 12,
+      "title": "Index-Only Scan — When the Index Is Enough",
+      "teaser": "An index-only scan satisfies a query entirely from index pages without touching the table heap. It is the most efficient access path available: fewer I/Os, less buffer pool pressure, and lower CPU — but it requires the index to cover every column the query references.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "An "
+            },
+            {
+              "text": "index-only scan",
+              "marks": ["bold"]
+            },
+            {
+              "text": " (Postgres) or a "
+            },
+            {
+              "text": "covering index scan",
+              "marks": ["bold"]
+            },
+            {
+              "text": " (MySQL/InnoDB terminology) occurs when the query planner determines that the index contains all data required to answer the query. No heap pages are read. In I/O-bound workloads this can reduce query latency by an order of magnitude."
+            }
+          ]
+        },
+        {
+          "type": "code",
+          "language": "sql",
+          "text": "-- Setup\nCREATE INDEX idx_cov ON orders (customer_id) INCLUDE (total, status);\n\n-- Query that qualifies:\nSELECT total, status\nFROM   orders\nWHERE  customer_id = 42;\n\n-- EXPLAIN output (Postgres):\n-- Index Only Scan using idx_cov on orders\n--   Index Cond: (customer_id = 42)\n--   Heap Fetches: 0     ← the heap was never read\n\n-- When it FAILS despite a covering index:\n-- Postgres must check the visibility map; if the heap page\n-- has not been vacuumed and flagged \"all-visible\", Heap Fetches > 0\nSELECT * FROM pg_stat_user_indexes\nWHERE  indexrelname = 'idx_cov';\n-- Look at: idx_scan, idx_tup_fetch (heap fetches). Run VACUUM to reduce them."
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Conditions for a true index-only scan:",
+                "marks": ["bold"]
+              },
+              {
+                "text": " the index must contain every column in SELECT, WHERE, JOIN, and ORDER BY; and (Postgres only) the heap page must be marked all-visible in the visibility map."
+              }
+            ],
+            [
+              {
+                "text": "InnoDB caveat:",
+                "marks": ["bold"]
+              },
+              {
+                "text": " every secondary index implicitly includes the primary key, so queries that need only the primary key alongside indexed columns often get index-only behaviour for free."
+              }
+            ],
+            [
+              {
+                "text": "Maintenance interaction:",
+                "marks": ["bold"]
+              },
+              {
+                "text": " frequent writes on a table delay VACUUM, keeping heap pages non-all-visible and defeating index-only scans. Aggressive autovacuum settings are the operational countermeasure."
+              }
+            ]
+          ]
+        }
+      ]
+    },
+    {
+      "id": "dbi-ch06-c013",
+      "order": 13,
+      "title": "Index Maintenance Cost — The Write Tax",
+      "teaser": "Every index is a second (or third, or fourth) copy of part of the table's data, kept sorted and consistent. Every INSERT, UPDATE, or DELETE must update every index. This write amplification is the fundamental tension in index design: reads get cheaper; writes get more expensive.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Indexes are not free. A table with "
+            },
+            {
+              "text": "k",
+              "marks": ["italic"]
+            },
+            {
+              "text": " indexes requires at least "
+            },
+            {
+              "text": "k+1",
+              "marks": ["italic"]
+            },
+            {
+              "text": " B-tree mutations per row written — one for the table (or clustered index) and one per secondary index. Each mutation may trigger a page split, a WAL record, and a buffer pool eviction. The aggregate cost grows superlinearly as indexes become fragmented."
+            }
+          ]
+        },
+        {
+          "type": "code",
+          "language": "plaintext",
+          "text": "Write amplification example (5 secondary indexes):\n\n  INSERT one row:\n    1. Write row to heap (or clustered leaf page)\n    2. Insert into idx_customer_id     (B-tree insert + possible split)\n    3. Insert into idx_status          (B-tree insert)\n    4. Insert into idx_created_at      (B-tree insert + possible split)\n    5. Insert into idx_customer_status (composite B-tree insert)\n    6. Update idx_fts GIN posting list (inverted index maintenance)\n\n  Total dirty pages dirtied: 6–15 depending on splits and GIN pending list\n  Total WAL bytes: proportional to pages dirtied"
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "UPDATE amplification.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " In Postgres, UPDATE is modelled as DELETE + INSERT (MVCC). Every index entry for the old version is marked dead; every index entry for the new version is inserted fresh. A row update that touches one column still invalidates all index entries pointing to that row."
+              }
+            ],
+            [
+              {
+                "text": "Bloat.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Dead index entries from deleted or updated rows accumulate until VACUUM reclaims them. An unvacuumed table with high UPDATE rate can have indexes 3–5x larger than the live data they cover."
+              }
+            ],
+            [
+              {
+                "text": "Hot updates (Postgres HOT).",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Heap-Only Tuple updates: if an UPDATE does not change any indexed column and the new tuple fits on the same page, Postgres skips all index updates and uses an in-page forwarding chain. HOT can eliminate most index write overhead for narrow updates."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "info",
+          "runs": [
+            {
+              "text": "Index consolidation is the most effective operational lever: drop unused indexes. pg_stat_user_indexes.idx_scan = 0 identifies candidates. Every removed index saves write amplification, buffer pool pressure, and VACUUM work."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "dbi-ch06-c014",
+      "order": 14,
+      "title": "Adaptive Indexing and Database Cracking",
+      "teaser": "Database cracking (Idreos et al., 2007) is a column-store research idea in which an index emerges organically from query traffic. Rather than pre-building indexes, the engine partially sorts a column the first time a range query touches it — the index grows incrementally, shaped entirely by access patterns.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Traditional indexing requires an administrator to predict which queries will run and build indexes in advance. "
+            },
+            {
+              "text": "Database cracking",
+              "marks": ["bold"]
+            },
+            {
+              "text": " turns this model upside down. On the first query "
+            },
+            {
+              "text": "SELECT ... WHERE age BETWEEN 20 AND 30",
+              "marks": ["code"]
+            },
+            {
+              "text": ", the engine physically rearranges the column array so that all values in [20, 30] are contiguous — a partial sort performed as a side effect of answering the query. Subsequent queries on overlapping ranges find a progressively more sorted column and progressively shorter scans."
+            }
+          ]
+        },
+        {
+          "type": "code",
+          "language": "plaintext",
+          "text": "Database cracking — column age, queries arrive over time:\n\n  Initial state: [55, 22, 31, 19, 28, 44, 25, 38, 17, 29]\n\n  Query 1: WHERE age BETWEEN 20 AND 30\n    → crack at 20 and 30: [19,17 | 22,28,25,29 | 55,31,44,38]\n    → answer from middle partition; store partition boundaries in cracker index\n\n  Query 2: WHERE age BETWEEN 25 AND 35\n    → crack [22,28,25,29] at 25 and [31,44,38] at 35\n    → [19,17 | 22 | 25,28,29 | 31 | 44,38,55]\n    → cracker index now has 4 partition boundaries\n\n  After N queries: column approaches sorted order; scans shrink toward O(log N) + result size"
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Cracking is inherently a "
+            },
+            {
+              "text": "column-store",
+              "marks": ["bold"]
+            },
+            {
+              "text": " technique — physically reordering rows in a row store would invalidate all other indexes. MonetDB pioneered column cracking; later work extended it to concurrent workloads (stochastic cracking), hybrid row/column stores, and partial cracking strategies that trade index quality for lower per-query overhead."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Production relevance is growing: DuckDB's adaptive zone maps and Snowflake's automatic clustering borrow from the same principle — let the access pattern drive the physical layout rather than requiring the DBA to anticipate it. The common thread with cracking is "
+            },
+            {
+              "text": "deferred physical organisation",
+              "marks": ["bold"]
+            },
+            {
+              "text": ": pay the sort cost incrementally, amortised across the queries that benefit."
+            }
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "info",
+          "runs": [
+            {
+              "text": "Adaptive indexing is not yet available in mainstream row-store RDBMS (Postgres, MySQL, SQL Server). It is a research trajectory, not a current operational tool. Understanding it contextualises the gap between static index design (\"predict and build\") and emerging systems that self-organise."
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
