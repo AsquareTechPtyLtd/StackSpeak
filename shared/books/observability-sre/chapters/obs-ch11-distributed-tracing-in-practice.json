@@ -1,0 +1,1683 @@
+{
+  "chapterId": "obs-ch11-distributed-tracing-in-practice",
+  "shardIndex": 11,
+  "cards": [
+    {
+      "id": "obs-ch11-c001",
+      "order": 1,
+      "title": "What Distributed Tracing Actually Is",
+      "teaser": "A distributed trace is a causally-linked record of everything that happened during a single request — across every service it touched, every queue it crossed, and every database it hit. Without it, you have logs from 12 services and no way to connect them.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "When a request enters a microservices system, it fans out. The API gateway calls the auth service, which calls the user store. The API gateway also calls the product service, which calls the inventory service and a downstream pricing engine. Each hop produces its own logs and metrics, but none of those signals know they belong to the same original request."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Distributed tracing solves this by giving every request a globally unique "
+            },
+            {
+              "text": "TraceId",
+              "marks": ["code"]
+            },
+            {
+              "text": " at its entry point and propagating that identifier through every downstream call. Each unit of work within the trace — a service handler, a database query, an outbound HTTP call — becomes a "
+            },
+            {
+              "text": "span",
+              "marks": ["bold"]
+            },
+            {
+              "text": ". Each span records its own "
+            },
+            {
+              "text": "SpanId",
+              "marks": ["code"]
+            },
+            {
+              "text": ", the "
+            },
+            {
+              "text": "ParentSpanId",
+              "marks": ["code"]
+            },
+            {
+              "text": " it was started from, its start time, its end time, and any attributes (tags) you chose to attach."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The result is a "
+            },
+            {
+              "text": "trace tree",
+              "marks": ["bold"]
+            },
+            {
+              "text": " — a directed acyclic graph of spans that reconstructs the causality of a request end-to-end:"
+            }
+          ]
+        },
+        {
+          "type": "code",
+          "lang": "text",
+          "code": "Trace: d4e8f2a1b3c7  (total: 312 ms)\n├── [0 ms]   api-gateway          /checkout         (312 ms)\n│   ├── [2 ms]   auth-service     /validate-token   (18 ms)\n│   ├── [21 ms]  cart-service     /get-cart         (95 ms)\n│   │   └── [23 ms]  redis        GET cart:u891     (4 ms)\n│   └── [117 ms] order-service    /create-order    (193 ms)\n│       ├── [118 ms] postgres     INSERT orders     (41 ms)\n│       └── [160 ms] payment-svc  /charge           (148 ms)"
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "This tree is the core artifact that backends like "
+            },
+            {
+              "text": "Jaeger",
+              "marks": ["bold"]
+            },
+            {
+              "text": ", "
+            },
+            {
+              "text": "Grafana Tempo",
+              "marks": ["bold"]
+            },
+            {
+              "text": ", "
+            },
+            {
+              "text": "Datadog APM",
+              "marks": ["bold"]
+            },
+            {
+              "text": ", and "
+            },
+            {
+              "text": "Honeycomb",
+              "marks": ["bold"]
+            },
+            {
+              "text": " render in their UI. It answers questions that no single service's logs can: \"Which service was the bottleneck?\" and \"What called what and in what order?\""
+            }
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "info",
+          "runs": [
+            {
+              "text": "Spans have a parent-child relationship: the api-gateway span is the root (no parent); auth-service's span has api-gateway as its parent. This parent-child chain is how the trace tree is reconstructed from individual span records emitted independently by each service."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "A trace follows one request through every service it visits, recording each step as a span. Stitch the spans together by their parent-child links and you get a timeline showing exactly what happened, in what order, and how long each piece took."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "obs-ch11-c002",
+      "order": 2,
+      "title": "Trace Context Propagation",
+      "teaser": "A trace is only as complete as its propagation — if one service fails to forward the TraceId and SpanId to the next service, the trace breaks. Context propagation is the mechanism that keeps the chain intact across every hop.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "When Service A calls Service B, it must pass two pieces of information so that Service B can create a child span correctly:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "TraceId",
+                "marks": ["code"]
+              },
+              {
+                "text": " — the globally unique identifier for the entire request. Service B must use the same TraceId for its own spans so they are grouped under one trace."
+              }
+            ],
+            [
+              {
+                "text": "SpanId",
+                "marks": ["code"]
+              },
+              {
+                "text": " (of the current span in Service A) — this becomes the "
+              },
+              {
+                "text": "ParentSpanId",
+                "marks": ["code"]
+              },
+              {
+                "text": " for the span Service B creates. This is what establishes the parent-child relationship."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "For HTTP calls, this propagation happens via request headers. The OpenTelemetry SDK and most tracing libraries automatically inject these headers on outbound requests and extract them on inbound requests — so application code does not need to manage this manually if instrumentation is in place."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Propagation is not limited to HTTP. The same context must travel through:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Message queues (Kafka, RabbitMQ)",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — trace context is encoded in message headers."
+              }
+            ],
+            [
+              {
+                "text": "gRPC",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — trace context travels in gRPC metadata."
+              }
+            ],
+            [
+              {
+                "text": "Async jobs and cron triggers",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — trace context must be serialized alongside the job payload, or a new root trace must be started."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "warning",
+          "runs": [
+            {
+              "text": "Every uninstrumented hop is a trace break. If a request passes through a legacy service, a third-party proxy, or a queue consumer that strips headers, the downstream trace becomes a separate root trace with no visible connection to the upstream request. Track these break points and instrument them or document them explicitly."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Context propagation is just passing the trace ID and current span ID along with every outbound call, so the next service knows which trace to join and which span to call its parent. Without it, every service sees only its own fragment of the story."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "obs-ch11-c003",
+      "order": 3,
+      "title": "W3C Trace Context — The Standard",
+      "teaser": "W3C Trace Context (RFC 7451) is the IETF-standardized HTTP header format for propagating trace identifiers. It replaced a zoo of proprietary formats (X-B3-TraceId, X-Amzn-Trace-Id, Datadog's own headers) with a single interoperable standard.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Before W3C Trace Context, every tracing vendor invented its own header format. Zipkin used "
+            },
+            {
+              "text": "X-B3-TraceId",
+              "marks": ["code"]
+            },
+            {
+              "text": " and "
+            },
+            {
+              "text": "X-B3-SpanId",
+              "marks": ["code"]
+            },
+            {
+              "text": ". AWS used "
+            },
+            {
+              "text": "X-Amzn-Trace-Id",
+              "marks": ["code"]
+            },
+            {
+              "text": ". Datadog used "
+            },
+            {
+              "text": "x-datadog-trace-id",
+              "marks": ["code"]
+            },
+            {
+              "text": ". Crossing a service boundary that used a different vendor meant the trace broke. The W3C Trace Context specification, finalized in 2021, defines a single interoperable format."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The standard defines two HTTP headers:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "traceparent",
+                "marks": ["code"]
+              },
+              {
+                "text": " — carries the version, TraceId, SpanId (called \"parent-id\" in the spec), and trace flags. This is the primary propagation header."
+              }
+            ],
+            [
+              {
+                "text": "tracestate",
+                "marks": ["code"]
+              },
+              {
+                "text": " — a vendor-specific key-value list for additional context. Allows vendors to carry their own metadata alongside the standard fields without polluting the "
+              },
+              {
+                "text": "traceparent",
+                "marks": ["code"]
+              },
+              {
+                "text": "."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The "
+            },
+            {
+              "text": "traceparent",
+              "marks": ["code"]
+            },
+            {
+              "text": " header format is:"
+            }
+          ]
+        },
+        {
+          "type": "code",
+          "lang": "text",
+          "code": "traceparent: 00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01\n             ^^ ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ ^^^^^^^^^^^^^^^^ ^^\n             |  TraceId (128-bit, 32 hex chars)  SpanId (64-bit)  flags\n             version=00                          16 hex chars     01=sampled"
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Breaking down the real example above:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Version: ",
+                "marks": ["bold"]
+              },
+              {
+                "text": "00",
+                "marks": ["code"]
+              },
+              {
+                "text": " — the only currently defined version."
+              }
+            ],
+            [
+              {
+                "text": "TraceId: ",
+                "marks": ["bold"]
+              },
+              {
+                "text": "4bf92f3577b34da6a3ce929d0e0e4736",
+                "marks": ["code"]
+              },
+              {
+                "text": " — 128-bit (32 hex chars), globally unique, generated at the entry point."
+              }
+            ],
+            [
+              {
+                "text": "Parent-id (SpanId): ",
+                "marks": ["bold"]
+              },
+              {
+                "text": "00f067aa0ba902b7",
+                "marks": ["code"]
+              },
+              {
+                "text": " — 64-bit (16 hex chars), the span in the calling service."
+              }
+            ],
+            [
+              {
+                "text": "Flags: ",
+                "marks": ["bold"]
+              },
+              {
+                "text": "01",
+                "marks": ["code"]
+              },
+              {
+                "text": " — the sampled bit. "
+              },
+              {
+                "text": "01",
+                "marks": ["code"]
+              },
+              {
+                "text": " means this trace is sampled (record it); "
+              },
+              {
+                "text": "00",
+                "marks": ["code"]
+              },
+              {
+                "text": " means not sampled."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "info",
+          "runs": [
+            {
+              "text": "OpenTelemetry's default propagator is W3C Trace Context. Jaeger, Grafana Tempo, and Honeycomb all support it natively. Datadog APM supports it alongside its own header format. If you are starting a new system today, use W3C Trace Context exclusively — do not introduce B3 or other legacy formats."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The W3C traceparent header is a single, standardized string that carries the trace ID, the calling span ID, and a sampled flag. Any service that reads it knows exactly which trace it belongs to and who called it — regardless of which tracing vendor either side uses."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "obs-ch11-c004",
+      "order": 4,
+      "title": "Baggage — Propagating User Context",
+      "teaser": "Baggage is the companion to Trace Context: it lets you attach arbitrary key-value pairs to the trace context and propagate them transparently across all service boundaries, without requiring every service to know about every piece of context.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Trace context (traceparent) propagates observability infrastructure data: the IDs needed to link spans into a tree. "
+            },
+            {
+              "text": "Baggage",
+              "marks": ["bold"]
+            },
+            {
+              "text": " propagates "
+            },
+            {
+              "text": "application-level context",
+              "marks": ["italic"]
+            },
+            {
+              "text": " that you want available throughout a trace — user ID, tenant ID, feature flag state, A/B test bucket, or request region."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The W3C Baggage specification defines the "
+            },
+            {
+              "text": "baggage",
+              "marks": ["code"]
+            },
+            {
+              "text": " HTTP header:"
+            }
+          ]
+        },
+        {
+          "type": "code",
+          "lang": "text",
+          "code": "baggage: userId=u891,tenantId=acme-corp,region=us-east-1,abBucket=variant-b"
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Any service that receives this header can read the values without needing to know the full call chain. The key use case: you want every span in a trace — from API gateway to the deepest database query — to be tagged with the user ID and tenant ID. Without baggage, you would have to explicitly pass those values through every function call and service interface."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Practical baggage use cases:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Tenant ID in SaaS systems",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — attach once at the API gateway, available in every downstream span without re-passing."
+              }
+            ],
+            [
+              {
+                "text": "A/B test or feature flag state",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — allows filtering traces by experiment bucket to compare latency across variants."
+              }
+            ],
+            [
+              {
+                "text": "Canary request marker",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — tag canary traffic so it can be identified in the trace backend."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "warning",
+          "runs": [
+            {
+              "text": "Baggage is propagated to every downstream service, including third parties. Never put PII, secrets, or sensitive business data in baggage. It is not encrypted, it is not access-controlled — it rides in HTTP headers in plain text. Use opaque identifiers (user IDs, session tokens) rather than raw personal data."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Baggage is a key-value store that travels alongside the trace context. Set it once at the edge, and every downstream service — without any extra wiring — can read the user ID, tenant, or any other context you attached."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "obs-ch11-c005",
+      "order": 5,
+      "title": "Head Sampling — Decide at the Front Door",
+      "teaser": "Head sampling makes the keep-or-drop decision at the very start of a trace, before any span data has been collected. It is simple, cheap, and consistent — but it discards the rare, slow, and broken traces you actually care about.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "In a high-throughput system producing millions of requests per minute, you cannot afford to store every trace. Sampling is how you reduce volume while keeping signal. "
+            },
+            {
+              "text": "Head sampling",
+              "marks": ["bold"]
+            },
+            {
+              "text": " is the simplest approach: at the moment the root span is created — usually at the API gateway or load balancer — a coin-flip decision is made: sample this trace (record everything) or drop it (record nothing)."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The sampled bit is encoded in the "
+            },
+            {
+              "text": "traceparent",
+              "marks": ["code"]
+            },
+            {
+              "text": " flags field and propagated downstream. Every service in the trace respects this decision — they either all record or all drop. This consistency is head sampling's great strength: a trace is never a partial record."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Head sampling variants:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Always-on sampling",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — sample every trace. Used in development and for very low-traffic services. Not viable at scale."
+              }
+            ],
+            [
+              {
+                "text": "Probabilistic head sampling",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — sample N% of traces uniformly. Simple, predictable storage cost, but blindly applies the same rate regardless of trace content."
+              }
+            ],
+            [
+              {
+                "text": "Rate-limited head sampling",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — accept at most N traces per second. Useful when storage budget is the binding constraint rather than a percentage."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The fundamental problem with head sampling: you decide before you know anything about the trace. A trace that is going to fail, take 10x longer than normal, or touch a rare code path looks identical to a healthy trace at its start. At 1% sampling, 99% of those rare traces will be discarded — they will never appear in Jaeger or Tempo."
+            }
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "warning",
+          "runs": [
+            {
+              "text": "Head sampling optimizes for known-good traffic. If 1% of your requests error and you sample at 1%, statistically you will have almost no error traces to analyze. This is not a failure of implementation — it is a structural limitation of head sampling. Tail sampling exists to address it."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Head sampling rolls the dice when the request arrives and commits to that decision for the whole trace. It is cheap and simple, but it has no way to prefer the broken or slow traces you need most — those look exactly like healthy ones at the start."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "obs-ch11-c006",
+      "order": 6,
+      "title": "Tail Sampling — Decide After You See the Whole Trace",
+      "teaser": "Tail sampling buffers all spans until a trace is complete, then decides whether to keep it based on what actually happened. It is the only approach that can guarantee you keep every error trace, every slow trace, and every outlier — at the cost of infrastructure complexity.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Tail sampling inverts the head sampling model. Instead of deciding immediately, spans are streamed to a "
+            },
+            {
+              "text": "tail sampling processor",
+              "marks": ["bold"]
+            },
+            {
+              "text": " (typically a fleet of OpenTelemetry Collectors or a dedicated component), which buffers them in memory. When the trace is complete — determined by a configurable wait window after the last span — the processor evaluates the full trace against a set of policies and makes the keep-or-drop decision."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Common tail sampling policies:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Always keep errors",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — any trace containing a span with an error status code or exception is kept unconditionally."
+              }
+            ],
+            [
+              {
+                "text": "Latency threshold",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — keep any trace whose root span duration exceeds, e.g., 2 seconds. Captures slow outliers that never appear under probabilistic head sampling."
+              }
+            ],
+            [
+              {
+                "text": "Probabilistic floor",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — sample N% of traces that do not match any other policy. Provides a random baseline of healthy traffic for statistical analysis."
+              }
+            ],
+            [
+              {
+                "text": "Attribute match",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — keep all traces for a specific customer, endpoint, or span attribute. Useful for debugging a specific tenant."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Implementation challenges that head sampling does not have:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Routing consistency",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — all spans for a given TraceId must reach the same collector instance, or the buffer is split. This requires sticky routing by TraceId (e.g., consistent hashing) in the collector layer."
+              }
+            ],
+            [
+              {
+                "text": "Memory pressure",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — buffering complete traces for millions of concurrent requests requires significant RAM in the collector fleet."
+              }
+            ],
+            [
+              {
+                "text": "Trace completeness windows",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — the collector must wait long enough for all spans to arrive. For async workflows, this window can be tens of seconds."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "info",
+          "runs": [
+            {
+              "text": "Honeycomb popularized the term and practice of tail sampling and built their platform around high-cardinality trace analysis. The OpenTelemetry Collector has a tail_sampling processor that implements configurable policy chains. Grafana Tempo supports trace-based queries that approximate tail sampling at query time."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Tail sampling works like a video replay buffer: it records everything, waits for the full trace to arrive, and then decides whether to keep it based on what actually happened — errors, slow latency, specific attributes. You only pay the storage cost for traces worth keeping."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "obs-ch11-c007",
+      "order": 7,
+      "title": "Probabilistic and Rate-Limiting Sampling",
+      "teaser": "Probabilistic sampling keeps a fixed percentage of traces; rate-limiting sampling keeps a fixed count per second. Both are forms of head sampling and share head sampling's blindness to trace content — but they serve different optimization targets.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "These two sampling strategies are the workhorses of production tracing systems because they are simple to reason about and produce predictable costs. Both are typically applied at the head."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Probabilistic sampling"
+            },
+            {
+              "text": " (also called \"fractional\" sampling) keeps traces with probability p. At p=0.01, roughly 1 in 100 requests is traced end-to-end.",
+              "marks": []
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Storage cost is proportional to traffic volume.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " If traffic doubles, storage doubles. This can be a surprise when a viral event sends traffic through the roof."
+              }
+            ],
+            [
+              {
+                "text": "Statistical validity.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " At 1% sampling and 100 RPS, you get ~1 trace/second — enough for latency percentile estimation. At 0.1 RPS, 1% sampling gives you almost nothing."
+              }
+            ],
+            [
+              {
+                "text": "Consistent sampling.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Use the TraceId to seed the sampling decision (e.g., keep if "
+              },
+              {
+                "text": "fnv(traceId) % 100 < rate",
+                "marks": ["code"]
+              },
+              {
+                "text": ") so that all services in a trace make the same decision even if they compute it independently."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Rate-limiting sampling",
+              "marks": ["bold"]
+            },
+            {
+              "text": " keeps at most N traces per second, regardless of traffic volume. Under high load, the effective sampling rate drops; under low load, it rises up to 100%."
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Bounded storage cost.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Storage grows at a fixed rate, not proportional to traffic spikes. Useful when trace storage is a hard budget item."
+              }
+            ],
+            [
+              {
+                "text": "Undersampling during incidents.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Traffic spikes often accompany incidents. At high traffic, the effective rate drops — precisely when you most want more traces. This is the rate-limiting strategy's primary weakness."
+              }
+            ],
+            [
+              {
+                "text": "Implementation.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Typically implemented as a token bucket: replenish N tokens per second, consume one per sampled trace. When the bucket is empty, traces are dropped."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "info",
+          "runs": [
+            {
+              "text": "OpenTelemetry's SDK includes both a TraceIdRatioBased sampler (probabilistic) and a ParentBased wrapper that respects the upstream sampling decision. The Jaeger agent and Grafana Alloy both support per-service sampling rate configuration."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Probabilistic sampling keeps a percentage — storage grows with traffic. Rate-limiting sampling keeps a count per second — storage stays bounded. Both are blind to what is actually in the trace, which is their shared limitation."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "obs-ch11-c008",
+      "order": 8,
+      "title": "Adaptive Sampling — Dynamic Rate During Anomalies",
+      "teaser": "Adaptive sampling adjusts the sampling rate automatically in response to what the system is doing — sampling more aggressively during errors, latency spikes, or anomalies, and relaxing back down during normal operation.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The problem with static sampling rates: you set them based on normal-traffic assumptions, but the moments you most need traces are abnormal. An incident that triples error rate is exactly when you want more traces, not the same fraction of a larger noisy pile."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Adaptive sampling solves this by treating the sampling rate as a feedback-controlled variable. A control loop monitors a signal — error rate, p99 latency, anomaly score — and adjusts the sampling rate up when the signal indicates something interesting and down when conditions normalize."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Adaptive sampling strategies in practice:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Error-rate adaptive",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — sample at 1% normally; when error rate exceeds 5%, automatically raise to 20% or 100%. Implemented in Datadog APM's \"Intelligent Sampler\" and in Honeycomb's dynamic sampling."
+              }
+            ],
+            [
+              {
+                "text": "Latency-percentile adaptive",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — when p99 latency exceeds a threshold, increase sampling for the affected endpoint. Captures the slow traces that static sampling would miss."
+              }
+            ],
+            [
+              {
+                "text": "Novelty-based adaptive",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — sample more from trace patterns not seen recently (new endpoints, new service combinations). Ensures coverage of rare but important code paths."
+              }
+            ],
+            [
+              {
+                "text": "Dynamic sampling in Honeycomb",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — Honeycomb's Refinery proxy implements rule-based dynamic sampling where you express policies like \"keep 100% of traces for status=500, keep 1% of status=200, keep 10% of traces over 2 seconds.\""
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The challenge with adaptive sampling is coordination: if sampling decisions are made per-collector-instance without coordination, different instances will use different rates, and your aggregate statistics will be inconsistent. Centralized rate computation (with local caching) is the standard pattern."
+            }
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "info",
+          "runs": [
+            {
+              "text": "Adaptive sampling is essentially a form of tail sampling with a feedback loop. Honeycomb Refinery, OpenTelemetry Collector's probabilistic_sampler with dynamic configuration, and Datadog APM's adaptive sampler all implement variants of this pattern."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Adaptive sampling watches what the system is doing and turns the sampling rate up when things go wrong and back down when they normalize. It gives you full trace coverage exactly when you need it and baseline coverage the rest of the time."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "obs-ch11-c009",
+      "order": 9,
+      "title": "Span Tagging — Making Traces Searchable",
+      "teaser": "A span without attributes is a timestamp and a name. Span attributes (tags) are the metadata that make a trace searchable, filterable, and analytically useful — they are what allow you to ask \"show me all traces for userId=891 that hit the payment service.\"",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Every span can carry an arbitrary set of key-value attributes, also called tags. In OpenTelemetry, these are called "
+            },
+            {
+              "text": "span attributes",
+              "marks": ["bold"]
+            },
+            {
+              "text": ". In Jaeger and Zipkin, they are called "
+            },
+            {
+              "text": "tags",
+              "marks": ["bold"]
+            },
+            {
+              "text": ". The concept is identical: structured metadata attached to a span that the tracing backend can index and query against."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "OpenTelemetry defines a rich set of "
+            },
+            {
+              "text": "semantic conventions",
+              "marks": ["bold"]
+            },
+            {
+              "text": " — standardized attribute names for common span types. Using conventions ensures portability across backends:"
+            }
+          ]
+        },
+        {
+          "type": "code",
+          "lang": "text",
+          "code": "# HTTP server span attributes (OTel semantic conventions)\nhttp.method          = \"POST\"\nhttp.route           = \"/api/v1/orders\"\nhttp.status_code     = 201\nhttp.request_content_length = 348\n\n# Database span attributes\ndb.system            = \"postgresql\"\ndb.name              = \"orders_db\"\ndb.statement         = \"INSERT INTO orders ...\"\ndb.operation         = \"INSERT\"\n\n# Custom business attributes\napp.order.id         = \"ord-7749\"\napp.user.id          = \"u891\"\napp.tenant.id        = \"acme-corp\""
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Attribute design principles:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Use low cardinality for indexed attributes.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Attributes like "
+              },
+              {
+                "text": "http.status_code",
+                "marks": ["code"]
+              },
+              {
+                "text": " (5 values) are cheap to index. "
+              },
+              {
+                "text": "user.id",
+                "marks": ["code"]
+              },
+              {
+                "text": " (millions of values) is high-cardinality and must be indexed by a backend designed for it (Honeycomb, Jaeger with a scalable backend)."
+              }
+            ],
+            [
+              {
+                "text": "Attach business context.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Order IDs, customer tiers, feature flags — attributes that link technical performance to business outcomes are the highest-value tags."
+              }
+            ],
+            [
+              {
+                "text": "Follow semantic conventions.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Do not invent "
+              },
+              {
+                "text": "http.code",
+                "marks": ["code"]
+              },
+              {
+                "text": " when "
+              },
+              {
+                "text": "http.status_code",
+                "marks": ["code"]
+              },
+              {
+                "text": " already exists. Backends build dashboards and alerts on convention names."
+              }
+            ],
+            [
+              {
+                "text": "Do not log PII in attributes.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Span attributes are stored in the tracing backend and may persist for weeks. Use user IDs, not names or email addresses."
+              }
+            ]
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Span attributes are the searchable labels you attach to a span. They turn a trace from a timing diagram into a queryable record: find all traces where the user was in the free tier, the endpoint was /checkout, and latency exceeded 1 second."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "obs-ch11-c010",
+      "order": 10,
+      "title": "Trace-to-Log Correlation",
+      "teaser": "Trace-to-log correlation injects the TraceId and SpanId into every log record emitted during a trace. This allows you to jump from a problematic span in Jaeger directly to the log lines that service emitted during that exact span — without grepping across services.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Logs and traces are complementary signals. Traces give you the structure — what called what, when, and how long. Logs give you the content — the raw messages, the SQL queries, the exception stack traces, the debug output. Correlation connects them."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Implementation is straightforward: at every log statement, pull the current "
+            },
+            {
+              "text": "TraceId",
+              "marks": ["code"]
+            },
+            {
+              "text": " and "
+            },
+            {
+              "text": "SpanId",
+              "marks": ["code"]
+            },
+            {
+              "text": " from the thread-local or context-local span context and add them as structured log fields. In OpenTelemetry terms, this is done by the "
+            },
+            {
+              "text": "Log Bridge API",
+              "marks": ["bold"]
+            },
+            {
+              "text": " or by manual MDC (Mapped Diagnostic Context) injection in frameworks like Logback and Log4j2."
+            }
+          ]
+        },
+        {
+          "type": "code",
+          "lang": "json",
+          "code": "{\n  \"timestamp\": \"2026-05-23T14:22:01.331Z\",\n  \"level\": \"ERROR\",\n  \"message\": \"Payment gateway timeout after 5000ms\",\n  \"service\": \"payment-svc\",\n  \"trace_id\": \"4bf92f3577b34da6a3ce929d0e0e4736\",\n  \"span_id\": \"a2fb4a1d1a96d312\",\n  \"user_id\": \"u891\",\n  \"order_id\": \"ord-7749\"\n}"
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "With this structure in place, the workflow becomes:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Open the trace in Jaeger or Tempo.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Identify the slow or erroring span."
+              }
+            ],
+            [
+              {
+                "text": "Click the trace ID link.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Grafana, Datadog APM, and Honeycomb all support direct links from a span to the corresponding logs in the log store (Loki, Elasticsearch, Datadog Logs) via the shared trace ID."
+              }
+            ],
+            [
+              {
+                "text": "Read the log lines.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " The full exception message, SQL query, or external API response body — the details that traces don't carry."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "info",
+          "runs": [
+            {
+              "text": "Grafana's Explore view supports trace-to-logs linking natively when Tempo (traces) and Loki (logs) share the same trace_id field name. Datadog APM similarly links traces to Datadog Logs. The prerequisite is consistent trace_id field naming across both pipelines."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Trace-to-log correlation puts the trace ID and span ID in every log line. Once both live in structured logs and the trace backend, you can click from a slow span directly to the exact log lines that service wrote during that span — no grepping, no time-range guessing."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "obs-ch11-c011",
+      "order": 11,
+      "title": "Trace-to-Metric Correlation — Exemplars",
+      "teaser": "Exemplars embed a sampled TraceId directly inside a metric data point — a histogram bucket, a counter observation. They create a bridge from an aggregate metric anomaly directly to a concrete trace that caused it.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Metrics and traces normally live in separate systems with no direct linkage. You see p99 latency spike in Grafana but you cannot go from that metric data point to the trace that caused the spike. "
+            },
+            {
+              "text": "Exemplars",
+              "marks": ["bold"]
+            },
+            {
+              "text": " solve this."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "An exemplar is a metadata annotation on a metric sample that records the TraceId (and optionally SpanId) of a specific request that contributed to that measurement. The OpenMetrics and OpenTelemetry specifications both define exemplars on histograms and summaries."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "How exemplars work in Prometheus / OpenTelemetry:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "The instrumentation library records histogram observations.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " For each bucket update, if the current request is sampled, it attaches the TraceId as an exemplar on that bucket."
+              }
+            ],
+            [
+              {
+                "text": "Prometheus scrapes the exemplar alongside the metric.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " The Prometheus remote write protocol supports exemplar forwarding to Grafana Mimir or Thanos."
+              }
+            ],
+            [
+              {
+                "text": "Grafana renders the exemplar as a diamond overlay on the metric chart.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Clicking the diamond opens the corresponding trace in Tempo."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "code",
+          "lang": "text",
+          "code": "# Prometheus text format with exemplar (OpenMetrics)\nhttp_request_duration_seconds_bucket{le=\"0.5\"} 24054 # {trace_id=\"4bf92f3577b34da6a3ce929d0e0e4736\"} 0.32 1716480121.331\nhttp_request_duration_seconds_bucket{le=\"1.0\"} 33444 # {trace_id=\"a3ce929d0e0e47364bf92f3577b34da6\"} 0.97 1716480121.890\nhttp_request_duration_seconds_bucket{le=\"+Inf\"} 33450 # {trace_id=\"e4736a3ce929d0e04bf92f3577b34da6\"} 5.21 1716480119.112"
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The metric anomaly → trace workflow:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "p99 latency alert fires in Grafana.",
+                "marks": ["bold"]
+              }
+            ],
+            [
+              {
+                "text": "Click an exemplar diamond on the histogram panel.",
+                "marks": ["bold"]
+              }
+            ],
+            [
+              {
+                "text": "Grafana opens the linked trace in Tempo.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " The trace shows which span in which service caused the outlier latency."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "info",
+          "runs": [
+            {
+              "text": "Exemplars require OpenMetrics format (not classic Prometheus format) and a backend that stores them. Grafana Mimir, Thanos, and VictoriaMetrics all support exemplar storage. Datadog APM and Honeycomb implement equivalent trace-to-metric linking through their own correlation mechanisms."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "An exemplar is a trace ID embedded directly in a metric data point. When you see a p99 latency spike in your metric chart, the exemplar lets you click directly to the trace of an actual slow request — closing the loop from aggregate anomaly to concrete evidence."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "obs-ch11-c012",
+      "order": 12,
+      "title": "Trace Analysis — Finding the Slow Service",
+      "teaser": "A trace tree is the answer key for the question \"which service is responsible for this request's latency.\" Reading it correctly — distinguishing sequential from parallel spans, identifying the critical path, and spotting fanout — is the core trace analysis skill.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The trace tree view in Jaeger, Tempo, Datadog APM, or Honeycomb shows each span as a horizontal bar on a timeline. Reading it correctly requires understanding a few structural patterns."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Critical path analysis"
+            },
+            {
+              "text": ": The total trace duration is determined by the longest sequential chain of spans, not the sum of all spans. Parallel child spans do not add to the parent's duration — the parent waits for the slowest child.",
+              "marks": []
+            }
+          ]
+        },
+        {
+          "type": "code",
+          "lang": "text",
+          "code": "# Sequential calls: total = sum\napi-gateway [==================================] 400 ms\n  auth-svc   [==]                               20 ms\n  cart-svc        [==========================]  280 ms  <-- bottleneck\n  notify-svc                              [==]  20 ms\n\n# Parallel calls: total = max\napi-gateway [============]  120 ms\n  svc-A     [=======]       70 ms\n  svc-B     [============]  120 ms  <-- critical path\n  svc-C     [====]          40 ms"
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Common patterns to recognize in trace analysis:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "N+1 query pattern",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — a parent span that shows dozens of tiny sequential database spans underneath it. Each span is fast, but the aggregate is slow. The fix is batching."
+              }
+            ],
+            [
+              {
+                "text": "Chatty synchronous fanout",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — a service that calls 8 downstream services sequentially when they could be parallelized. The trace shows 8 sequential child spans where 8 parallel ones would be 8x faster."
+              }
+            ],
+            [
+              {
+                "text": "Deep span nesting",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — a request that passes through 12 layers before reaching a datastore. Each layer adds overhead; the trace reveals where layers can be collapsed."
+              }
+            ],
+            [
+              {
+                "text": "Span gaps",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — white space between a parent span and its first child span indicates time spent in the parent service itself (deserialization, connection pool wait, queue depth)."
+              }
+            ],
+            [
+              {
+                "text": "Trace cardinality breakdowns",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — in Honeycomb and Datadog APM, you can group traces by span attributes (e.g., by db.table, by http.route) to find which table or endpoint accounts for the most latency at aggregate."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "info",
+          "runs": [
+            {
+              "text": "Jaeger UI shows the critical path highlighted in the flame graph view. Grafana Tempo supports TraceQL — a query language for filtering and aggregating across span attributes — enabling aggregate trace analysis at scale, not just single-trace inspection."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Reading a trace tree is like reading a recipe timeline: parallel steps don't add to the total time, only sequential ones do. Find the longest sequential chain — that is the critical path — and the slowest span on that chain is your bottleneck."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "obs-ch11-c013",
+      "order": 13,
+      "title": "Putting It Together — A Production Tracing Stack",
+      "teaser": "A production tracing stack combines instrumentation, propagation, sampling, storage, and correlation into a coherent system. Each layer has specific choices; getting them wrong at one layer limits what is possible at every layer above it.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Distributed tracing is not a single product — it is a pipeline of components that must be designed together. Here is how the layers fit:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Instrumentation",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — OpenTelemetry SDKs in each service, auto-instrumentation for frameworks (Spring, FastAPI, Express), manual spans for business-critical operations. This is where span attributes are attached."
+              }
+            ],
+            [
+              {
+                "text": "Propagation",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — W3C Trace Context (traceparent / tracestate) for HTTP; OTel propagators for gRPC and Kafka. Every hop must forward context or the trace breaks."
+              }
+            ],
+            [
+              {
+                "text": "Sampling",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — head sampling (probabilistic or rate-limited) at the SDK level for cost control; tail sampling in the OpenTelemetry Collector for policy-based retention; adaptive sampling for anomaly coverage."
+              }
+            ],
+            [
+              {
+                "text": "Collection and export",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — OpenTelemetry Collector deployed as a sidecar or daemonset, receiving spans via OTLP and forwarding to the backend. Decouples services from the backend choice."
+              }
+            ],
+            [
+              {
+                "text": "Backend storage",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — Jaeger (open source, Cassandra or Elasticsearch backend), Grafana Tempo (object-storage-native, integrates with Loki and Prometheus), Datadog APM (SaaS, fully managed), Honeycomb (SaaS, high-cardinality-native)."
+              }
+            ],
+            [
+              {
+                "text": "Correlation",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — trace IDs in logs (trace-to-log), exemplars in metrics (trace-to-metric), shared dashboards in Grafana that link all three."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The most common production failure is treating tracing as an afterthought — adding it to a few services only, using inconsistent attribute names, and not establishing trace-to-log correlation. The result is a tracing system that has data but cannot answer the questions it was built to answer."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Design principles for a durable production tracing system:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Instrument everything, sample intelligently.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Gaps in instrumentation create blind spots you cannot sample your way out of."
+              }
+            ],
+            [
+              {
+                "text": "Standardize attribute names from day one.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Retrofitting semantic conventions across 40 services is expensive. Use OTel conventions from the first service."
+              }
+            ],
+            [
+              {
+                "text": "Treat the collector fleet as infrastructure.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Size it for your peak traffic plus 30%, add autoscaling, monitor its own health (collector drop rate is a critical SLI)."
+              }
+            ],
+            [
+              {
+                "text": "Build correlation from day one.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Inject trace IDs into logs and exemplars into metrics before you launch. It is trivial to add at instrumentation time; painful to retrofit after the fact."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "info",
+          "runs": [
+            {
+              "text": "The OpenTelemetry Collector's tail_sampling processor, combined with W3C Trace Context propagation and OTel semantic conventions for span attributes, gives you a vendor-neutral, policy-driven production tracing stack that can route to Jaeger, Tempo, Datadog, or Honeycomb by changing a single exporter configuration."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "A production tracing stack has six layers: instrumentation (create spans), propagation (pass context), sampling (reduce volume), collection (route spans), storage (query them), and correlation (link to logs and metrics). A gap at any layer limits the whole system above it."
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
