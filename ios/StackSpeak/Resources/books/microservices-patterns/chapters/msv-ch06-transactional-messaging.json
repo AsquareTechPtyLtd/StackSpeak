@@ -1,0 +1,1664 @@
+{
+  "chapterId": "msv-ch06-transactional-messaging",
+  "shardIndex": 6,
+  "cards": [
+    {
+      "id": "msv-ch06-c001",
+      "order": 1,
+      "title": "The Dual-Write Problem",
+      "teaser": "Every service that must update its database AND publish a message faces an atomic impossibility: no single transaction can span two different resource managers. This is the dual-write problem, and ignoring it is the most common source of data inconsistency in distributed systems.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Consider an order service. When a customer places an order, the service must do two things: write the order to its PostgreSQL database and publish an "
+            },
+            {
+              "text": "OrderCreated",
+              "marks": ["code"]
+            },
+            {
+              "text": " event to Kafka so downstream services (inventory, shipping, billing) can react. The naive implementation does both sequentially."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Two failure scenarios expose the problem:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "DB write succeeds, message publish fails.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " The order exists in the database but downstream services never hear about it. The system is inconsistent — the order is in a ghost state."
+              }
+            ],
+            [
+              {
+                "text": "DB write fails after message is published.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Downstream services act on an order that does not exist. Inventory is decremented for a phantom purchase."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The root cause: a relational database and a message broker are two separate resource managers. A standard ACID transaction covers only one. Two-phase commit (2PC) across both is theoretically possible but prohibitively expensive, fragile, and unsupported by most modern brokers including Kafka."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The dual-write problem cannot be solved by careful ordering or try/catch blocks — it requires an architectural pattern that eliminates the two-resource atomicity requirement entirely. That pattern is the outbox."
+            }
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "warning",
+          "runs": [
+            {
+              "text": "Every microservice tutorial that does database.save() followed by broker.publish() in sequence is teaching you code that will silently corrupt data under real failure conditions. The dual-write problem is not an edge case — it is the default outcome of naive async event publishing."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "You need to update your database and send a message, but you can only make one of them atomic. If anything fails between the two operations, your database and your message broker will permanently disagree about what happened. That disagreement is the dual-write problem."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "msv-ch06-c002",
+      "order": 2,
+      "title": "The Outbox Pattern",
+      "teaser": "The outbox pattern eliminates the dual-write problem by making the message part of the database transaction. An outbox table inside the service's own database stores events. A separate relay process delivers them to the broker — atomically within the DB, eventually to the world.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The insight behind the outbox: if you cannot atomically write to two systems, only write to one. Specifically, write to the database — which you already trust — and let a second process carry those writes to the broker."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The outbox table schema looks like this:"
+            }
+          ]
+        },
+        {
+          "type": "code",
+          "language": "sql",
+          "text": "CREATE TABLE outbox_events (\n  id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),\n  aggregate_id  TEXT        NOT NULL,\n  aggregate_type TEXT       NOT NULL,\n  event_type    TEXT        NOT NULL,\n  payload       JSONB       NOT NULL,\n  created_at    TIMESTAMPTZ NOT NULL DEFAULT now(),\n  published_at  TIMESTAMPTZ          -- NULL until relayed\n);"
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The application writes both the domain record and the outbox row in the same database transaction:"
+            }
+          ]
+        },
+        {
+          "type": "code",
+          "language": "sql",
+          "text": "BEGIN;\n  INSERT INTO orders (id, customer_id, total)\n    VALUES ($1, $2, $3);\n  INSERT INTO outbox_events (aggregate_id, aggregate_type, event_type, payload)\n    VALUES ($1, 'Order', 'OrderCreated', $4);\nCOMMIT;"
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The flow looks like this:"
+            }
+          ]
+        },
+        {
+          "type": "code",
+          "language": "text",
+          "text": "  [Service]                [PostgreSQL]              [Kafka]\n      |                        |                        |\n      |--- BEGIN TRANSACTION ->|                        |\n      |--- INSERT orders ------>|                        |\n      |--- INSERT outbox_events->|                       |\n      |--- COMMIT ------------->|                        |\n      |                        |                        |\n      |              [Outbox Relay Process]              |\n      |                        |                        |\n      |             SELECT unpublished rows              |\n      |                        |--- rows --------------->|\n      |                        |       publish to Kafka  |\n      |                        |<-- ack ----------------||\n      |             UPDATE published_at                  |"
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Atomicity is guaranteed by the database transaction. If the commit fails, neither the order row nor the outbox row exists. If the commit succeeds, the relay will eventually deliver the event — even if the relay crashes mid-flight and restarts."
+            }
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "info",
+          "runs": [
+            {
+              "text": "The outbox pattern trades true exactly-once delivery for at-least-once delivery with deterministic recovery. The relay may publish a message more than once (if it crashes after publishing but before marking the row as published), so consumers must be idempotent. This is an acceptable trade-off — true exactly-once across distributed systems is impossible in the general case."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Instead of writing to the database and the message broker separately, write a \"to-send\" note inside the database transaction. A separate process reads those notes and delivers them to the broker. Now your database transaction is the only thing that needs to succeed atomically."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "msv-ch06-c003",
+      "order": 3,
+      "title": "The Outbox Poller",
+      "teaser": "The outbox poller is the relay process that reads unpublished rows from the outbox table and forwards them to the message broker. Its design determines throughput, latency, and delivery guarantees for the entire async messaging pipeline.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The poller is a simple loop, but its details matter significantly for correctness and performance. A production-grade poller pseudocode:"
+            }
+          ]
+        },
+        {
+          "type": "code",
+          "language": "python",
+          "text": "def poll_outbox():\n    while True:\n        # Lock rows to prevent competing pollers from double-publishing\n        rows = db.query(\"\"\"\n            SELECT id, aggregate_id, event_type, payload\n            FROM outbox_events\n            WHERE published_at IS NULL\n            ORDER BY created_at\n            LIMIT 100\n            FOR UPDATE SKIP LOCKED\n        \"\"\")\n\n        for row in rows:\n            try:\n                kafka.produce(\n                    topic=topic_for(row.event_type),\n                    key=row.aggregate_id,   # partition by entity ID\n                    value=row.payload\n                )\n                kafka.flush()  # wait for broker ack\n                db.execute(\n                    \"UPDATE outbox_events SET published_at = now() WHERE id = %s\",\n                    row.id\n                )\n            except Exception as e:\n                log.error(\"publish failed\", row_id=row.id, error=e)\n                # leave published_at NULL — will retry next poll\n\n        time.sleep(POLL_INTERVAL_SECONDS)"
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Key design decisions in the poller:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "FOR UPDATE SKIP LOCKED",
+                "marks": ["code"]
+              },
+              {
+                "text": " — allows multiple poller instances to run in parallel without processing the same row twice. PostgreSQL skips rows already locked by another session."
+              }
+            ],
+            [
+              {
+                "text": "Partition key.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Using "
+              },
+              {
+                "text": "aggregate_id",
+                "marks": ["code"]
+              },
+              {
+                "text": " as the Kafka message key ensures all events for the same entity land on the same partition, preserving ordering."
+              }
+            ],
+            [
+              {
+                "text": "Batch size and poll interval.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Tune to match your event volume. A 100ms poll interval with batch size 100 handles ~1,000 events/second with minimal latency."
+              }
+            ],
+            [
+              {
+                "text": "Outbox table cleanup.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Published rows accumulate. Schedule a periodic DELETE on rows older than your retention window (e.g., 7 days) to prevent table bloat."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "warning",
+          "runs": [
+            {
+              "text": "The poller introduces latency proportional to the poll interval. For most use cases, sub-second latency is acceptable. If you need sub-millisecond event delivery, consider transaction log tailing (CDC) instead, which reads events as they are committed."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The outbox poller is a background worker that periodically reads unsent events from the database table and pushes them to the message broker. It marks each event as sent only after the broker confirms receipt, so crashes during delivery are safe to retry."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "msv-ch06-c004",
+      "order": 4,
+      "title": "Transaction Log Tailing and CDC",
+      "teaser": "Change Data Capture (CDC) tools like Debezium read directly from the database's transaction log — the WAL in PostgreSQL, the binlog in MySQL. This eliminates polling latency, reduces database load, and captures every committed change with sub-second delivery.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Every SQL database maintains a write-ahead log (WAL) or binary log: an append-only record of every committed change, used for replication and crash recovery. CDC tools tap into this log as a real-time event stream."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Debezium is the dominant open-source CDC platform. It runs as a Kafka Connect connector, reads the database changelog, and produces structured events to Kafka topics with millisecond latency. A Debezium connector configuration for PostgreSQL:"
+            }
+          ]
+        },
+        {
+          "type": "code",
+          "language": "json",
+          "text": "{\n  \"name\": \"order-service-outbox-connector\",\n  \"config\": {\n    \"connector.class\": \"io.debezium.connector.postgresql.PostgresConnector\",\n    \"database.hostname\": \"postgres\",\n    \"database.port\": \"5432\",\n    \"database.user\": \"debezium\",\n    \"database.dbname\": \"orders\",\n    \"table.include.list\": \"public.outbox_events\",\n    \"transforms\": \"outbox\",\n    \"transforms.outbox.type\": \"io.debezium.transforms.outbox.EventRouter\",\n    \"transforms.outbox.route.by.field\": \"event_type\",\n    \"transforms.outbox.table.field.event.key\": \"aggregate_id\"\n  }\n}"
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "How CDC tailing differs from polling:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "No polling latency.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Events arrive within milliseconds of the database commit — driven by the WAL stream, not a timer."
+              }
+            ],
+            [
+              {
+                "text": "No additional database load.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Reading from the WAL replica slot is a low-overhead streaming read, not a query against the primary tables."
+              }
+            ],
+            [
+              {
+                "text": "Exactly the committed state.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " CDC sees only rows that were committed — rolled-back transactions are invisible, eliminating a subtle correctness risk of polling-based approaches."
+              }
+            ],
+            [
+              {
+                "text": "Operational complexity.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " CDC requires a running Kafka Connect cluster, replication slot management, and careful monitoring of WAL lag. It is significantly more complex to operate than a simple poller."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The Debezium outbox event router transform is specifically designed for the outbox pattern: it reads from the "
+            },
+            {
+              "text": "outbox_events",
+              "marks": ["code"]
+            },
+            {
+              "text": " table and routes each row to a Kafka topic named after the event type, using the aggregate ID as the partition key — the same semantics as a hand-written poller, delivered at WAL speed."
+            }
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "info",
+          "runs": [
+            {
+              "text": "Debezium is a CNCF-incubating project backed by Red Hat. It supports PostgreSQL (via logical replication slots), MySQL (via binlog), MongoDB, SQL Server, and Oracle. The PostgreSQL connector requires wal_level = logical in postgresql.conf."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Every database keeps a running log of every change it commits, used for replication and recovery. CDC tools like Debezium read this log directly — like subscribing to the database's own internal changelog — and forward the events to Kafka in near real time, without polling."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "msv-ch06-c005",
+      "order": 5,
+      "title": "The Polling Publisher Pattern",
+      "teaser": "Before CDC became mainstream, the polling publisher was the standard outbox relay: a simple scheduler queries the outbox table on a fixed interval and publishes unpublished rows. It remains the right choice when operational simplicity matters more than sub-second latency.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The polling publisher is the simpler alternative to CDC. A background thread or scheduled job runs a SELECT query every N milliseconds, publishes found rows, and marks them as published. It requires no additional infrastructure beyond the database and broker already in use."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Polling publisher vs CDC — the trade-off table:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Latency.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Polling: bounded by poll interval (typically 100ms-5s). CDC: sub-100ms, driven by WAL commit."
+              }
+            ],
+            [
+              {
+                "text": "Operational complexity.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Polling: a single background thread or cron job, no additional infrastructure. CDC: Kafka Connect cluster, replication slot monitoring, schema registry."
+              }
+            ],
+            [
+              {
+                "text": "Database impact.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Polling: adds SELECT queries to the primary; manageable with correct indexing on "
+              },
+              {
+                "text": "(published_at, created_at)",
+                "marks": ["code"]
+              },
+              {
+                "text": ". CDC: reads from WAL replica slot, minimal impact on query path."
+              }
+            ],
+            [
+              {
+                "text": "Correctness on rollback.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Polling: safe — rolled-back transactions never insert outbox rows. CDC: also safe — WAL only exposes committed changes."
+              }
+            ],
+            [
+              {
+                "text": "Scale ceiling.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Polling: adequate to ~10,000 events/second with batching. CDC: scales to hundreds of thousands of events/second."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The polling publisher is the right starting point for most teams. It is easy to understand, easy to debug, and requires no infrastructure investment. If latency or volume requirements grow beyond what polling can deliver, migrating to CDC is a straightforward swap: the outbox table schema is unchanged; only the relay mechanism changes."
+            }
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "info",
+          "runs": [
+            {
+              "text": "Add a composite index on (published_at, created_at) to the outbox table before going to production. Without it, the SELECT WHERE published_at IS NULL query will perform a full table scan as the table grows, and polling latency will degrade non-linearly."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The polling publisher is the simple version of the outbox relay: check the outbox table every second, send whatever you find, mark it done. CDC is faster and scales higher but requires more infrastructure. Start with polling; upgrade to CDC when you need to."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "msv-ch06-c006",
+      "order": 6,
+      "title": "Message Deduplication",
+      "teaser": "At-least-once delivery guarantees that every message is delivered, but not that it is delivered exactly once. Deduplication — at the broker or the application — prevents double processing when the same message arrives multiple times.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "At-least-once delivery is the practical default in distributed messaging. The outbox poller, Debezium, and Kafka itself all guarantee at-least-once: if a delivery attempt fails, it retries. The consequence is that consumers must handle duplicate messages."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Three approaches to deduplication:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Broker-side deduplication.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Kafka's idempotent producer (enabled with "
+              },
+              {
+                "text": "enable.idempotence=true",
+                "marks": ["code"]
+              },
+              {
+                "text": ") assigns sequence numbers to messages per producer session. The broker rejects duplicates from the same producer epoch. This prevents producer-level duplicates but does not help when the relay crashes after publish and retries with a new producer session."
+              }
+            ],
+            [
+              {
+                "text": "Application-side deduplication.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " The consumer stores a record of every message ID it has processed, typically in a "
+              },
+              {
+                "text": "processed_messages",
+                "marks": ["code"]
+              },
+              {
+                "text": " table. Before processing, it checks: \"have I seen this ID before?\" If yes, skip. This is the most reliable approach but requires storage and a database lookup per message."
+              }
+            ],
+            [
+              {
+                "text": "Bloom filter deduplication.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " A probabilistic data structure that answers \"have I seen this ID?\" with zero false negatives and a configurable false-positive rate. A Bloom filter with 10 million entries and 1% false-positive rate fits in ~12 MB of memory. When the filter says yes, verify with a DB lookup; when it says no, skip the lookup entirely. Reduces database round-trips by 99%+ for low-duplicate workloads."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The message ID that enables deduplication must come from the producer side — the "
+            },
+            {
+              "text": "id",
+              "marks": ["code"]
+            },
+            {
+              "text": " column of the outbox table is the natural choice. It is a UUID assigned at transaction time, stable across retries, and unique per event."
+            }
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "info",
+          "runs": [
+            {
+              "text": "Kafka Streams and the Kafka Transactions API (EOS — exactly-once semantics) provide broker-managed deduplication for the consume-transform-produce pattern. EOS is appropriate for stream processing pipelines but adds significant complexity. For simple event-driven microservices, application-side deduplication is the pragmatic choice."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "When messages can arrive more than once, you need a way to recognize duplicates and ignore them. The simplest way is to track every message ID you have already processed and skip any you have seen before. Bloom filters make this fast by filtering obvious non-duplicates without touching the database."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "msv-ch06-c007",
+      "order": 7,
+      "title": "The Idempotent Receiver",
+      "teaser": "An idempotent receiver is a consumer designed to produce the same outcome regardless of how many times it receives the same message. Idempotency is the correct response to at-least-once delivery — it makes duplicates safe rather than trying to eliminate them.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Deduplication and idempotency solve the same problem from opposite sides. Deduplication tries to prevent a message from being processed twice. Idempotency designs the processing logic so that processing the same message twice does not matter."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Idempotent operations are naturally idempotent:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Upserts.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " "
+              },
+              {
+                "text": "INSERT INTO inventory ... ON CONFLICT (product_id) DO UPDATE SET quantity = EXCLUDED.quantity",
+                "marks": ["code"]
+              },
+              {
+                "text": " is idempotent: running it twice leaves the table in the same state as running it once."
+              }
+            ],
+            [
+              {
+                "text": "Set membership.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Adding an element to a set twice is the same as adding it once."
+              }
+            ],
+            [
+              {
+                "text": "Absolute updates.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Setting a field to a specific value ("
+              },
+              {
+                "text": "status = 'SHIPPED'",
+                "marks": ["code"]
+              },
+              {
+                "text": ") is idempotent. Incrementing a counter ("
+              },
+              {
+                "text": "shipped_count = shipped_count + 1",
+                "marks": ["code"]
+              },
+              {
+                "text": ") is not."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Non-idempotent operations that require explicit deduplication:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Charging a payment card — a duplicate message must never result in a duplicate charge."
+              }
+            ],
+            [
+              {
+                "text": "Sending an email notification — sending the same notification twice is a UX failure."
+              }
+            ],
+            [
+              {
+                "text": "Incrementing counters — requires deduplication to ensure exactly-once semantics."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The preferred implementation: combine idempotent operations with a lightweight deduplication check as a safety net. The idempotent operation handles most cases; the deduplication check catches true duplicates for operations that cannot be made naturally idempotent."
+            }
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "info",
+          "runs": [
+            {
+              "text": "Design for idempotency first, deduplication second. Idempotency is a property of your business logic; deduplication is infrastructure plumbing. A system that only relies on deduplication infrastructure will fail when that infrastructure has bugs — a system with idempotent business logic is safe even then."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "An idempotent receiver is designed so that receiving the same message ten times has the exact same effect as receiving it once. Some operations are naturally idempotent (set this field to this value); others need an explicit duplicate check. Design the logic to be idempotent wherever possible so that duplicate messages are harmless rather than dangerous."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "msv-ch06-c008",
+      "order": 8,
+      "title": "Exactly-Once-Effectively Semantics",
+      "teaser": "True exactly-once delivery across distributed systems is impossible in the general case — proven by the two generals problem and FLP impossibility. The practical answer is exactly-once-effectively: at-least-once delivery combined with idempotent consumers, which achieves the same observable outcome.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The impossibility argument is straightforward: to guarantee exactly-once delivery, the producer needs confirmation from the consumer that the message was received and processed. But any acknowledgement can be lost. If the producer retries on timeout, and the consumer processed the first delivery before the network failed, the consumer will process it twice. The only way to prevent retries is to accept the risk of zero delivery."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The three delivery guarantees:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "At-most-once.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Fire and forget. No retries. Messages may be lost but never duplicated. Acceptable for high-volume telemetry where occasional loss is tolerable."
+              }
+            ],
+            [
+              {
+                "text": "At-least-once.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Retry on failure. Messages are never lost but may be duplicated. Requires idempotent consumers. The correct choice for most business-critical events."
+              }
+            ],
+            [
+              {
+                "text": "Exactly-once (broker scope).",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Kafka's EOS guarantees exactly-once within the Kafka cluster for the consume-transform-produce pattern. This does not extend to side effects outside Kafka (database writes, HTTP calls, emails)."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Exactly-once-effectively (sometimes called effective exactly-once) is the practical synthesis: use at-least-once delivery to guarantee no loss, and make consumers idempotent to guarantee the observable outcome is indistinguishable from exactly-once. The message may be delivered twice; the effect is applied once."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "This is the pattern used by every major event-driven system at scale — Stripe's payment processing, Airbnb's reservation system, and LinkedIn's activity feed all rely on at-least-once delivery with idempotent processing rather than attempting true exactly-once."
+            }
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "warning",
+          "runs": [
+            {
+              "text": "Kafka's \"exactly-once semantics\" (EOS) is a specific technical guarantee scoped to the broker's internal consume-transform-produce pipeline. When marketers or documentation use the phrase to mean exactly-once across all system components including databases and external APIs, they are overstating what EOS delivers. Read the fine print."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "True exactly-once delivery is impossible: you cannot guarantee a message was processed exactly once without an acknowledgement that can itself be lost. The practical solution is at-least-once delivery (so nothing is ever lost) combined with idempotent processing (so duplicates are harmless). The result looks like exactly-once from the outside."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "msv-ch06-c009",
+      "order": 9,
+      "title": "Idempotency Keys",
+      "teaser": "An idempotency key is a client-supplied identifier that uniquely identifies a request. The server uses it to detect and suppress duplicate requests — returning the original response without re-executing the operation. Stripe pioneered this pattern for payment APIs; it is now a standard in any API where retries are expected.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "When a client sends a payment request and the network times out before the response arrives, the client faces a dilemma: retry and risk a duplicate charge, or give up and risk a missed charge. Idempotency keys resolve this dilemma."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The Stripe idempotency key pattern works like this:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "numbered",
+          "items": [
+            [
+              {
+                "text": "The client generates a unique key (UUID or hash of the request content) before sending the request."
+              }
+            ],
+            [
+              {
+                "text": "The client sends the request with the key in the "
+              },
+              {
+                "text": "Idempotency-Key: <uuid>",
+                "marks": ["code"]
+              },
+              {
+                "text": " header."
+              }
+            ],
+            [
+              {
+                "text": "The server processes the request and stores the result, keyed by the idempotency key."
+              }
+            ],
+            [
+              {
+                "text": "If the client retries (with the same key), the server returns the stored result without re-processing."
+              }
+            ],
+            [
+              {
+                "text": "The stored result expires after a configured window (Stripe uses 24 hours)."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Server-side implementation stores idempotency records:"
+            }
+          ]
+        },
+        {
+          "type": "code",
+          "language": "sql",
+          "text": "CREATE TABLE idempotency_keys (\n  key           TEXT PRIMARY KEY,\n  request_hash  TEXT        NOT NULL,\n  response_body JSONB       NOT NULL,\n  http_status   INTEGER     NOT NULL,\n  created_at    TIMESTAMPTZ NOT NULL DEFAULT now(),\n  expires_at    TIMESTAMPTZ NOT NULL\n);"
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Idempotency keys apply at the API layer, not the message layer — they protect against duplicate HTTP requests from clients. The outbox pattern and idempotent receivers protect against duplicate internal message deliveries. Both are needed in a complete system."
+            }
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "info",
+          "runs": [
+            {
+              "text": "Stripe's idempotency key documentation (stripe.com/docs/idempotent-requests) is the canonical reference for this pattern. Stripe enforces that the request body must match across retries with the same key — a mismatched body returns a 422 error, preventing accidental key reuse across different operations."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "An idempotency key is a unique ID you attach to a request so the server can remember \"I already did this one.\" If the network dies and you retry, the server sees the same key, finds its stored answer, and returns it without charging your card again. Safe retries without duplicate effects."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "msv-ch06-c010",
+      "order": 10,
+      "title": "Message Ordering Guarantees",
+      "teaser": "Kafka guarantees ordering within a partition but not across partitions. The partition key determines which messages are ordered relative to each other — and choosing it incorrectly destroys ordering guarantees that downstream consumers depend on.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Kafka's ordering model: messages within a single partition are strictly ordered by offset. Messages across different partitions have no ordering relationship. A topic with 10 partitions provides 10 independent ordered streams."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The partition key drives ordering. Using "
+            },
+            {
+              "text": "aggregate_id",
+              "marks": ["code"]
+            },
+            {
+              "text": " (e.g., "
+            },
+            {
+              "text": "order_id",
+              "marks": ["code"]
+            },
+            {
+              "text": ") as the partition key guarantees that all events for the same order land on the same partition, in commit order. Consumer groups see all events for a given order in sequence — "
+            },
+            {
+              "text": "OrderCreated",
+              "marks": ["code"]
+            },
+            {
+              "text": " always before "
+            },
+            {
+              "text": "OrderShipped",
+              "marks": ["code"]
+            },
+            {
+              "text": "."
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Intra-entity ordering.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Use the entity ID (order ID, customer ID) as the partition key. All events for the same entity are ordered. Multiple consumers can process different entities in parallel — they land on different partitions."
+              }
+            ],
+            [
+              {
+                "text": "Cross-entity ordering.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Not guaranteed by Kafka. If you need strict ordering across entities (rare), use a single partition — but this eliminates parallelism and caps throughput."
+              }
+            ],
+            [
+              {
+                "text": "Ordering and consumer groups.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " A consumer group with more consumers than partitions means some consumers are idle. To maximize parallelism without breaking ordering, number of consumers should equal number of partitions — each consumer owns one partition."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Common ordering mistakes:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Using a random partition key.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Events for the same entity scatter across partitions, breaking intra-entity ordering."
+              }
+            ],
+            [
+              {
+                "text": "Using a null key.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Kafka assigns null-key messages to partitions in round-robin, destroying ordering."
+              }
+            ],
+            [
+              {
+                "text": "Retrying on a different partition.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " If a producer retries a failed send to a different partition (e.g., due to partition leader failure), the message may arrive out of order relative to earlier messages that succeeded."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "info",
+          "runs": [
+            {
+              "text": "Set max.in.flight.requests.per.connection=1 on the Kafka producer if strict per-partition ordering is required and retries are enabled. With higher values, a retry of a failed batch can arrive after a later batch that succeeded — violating ordering despite both landing on the same partition."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Kafka keeps messages in order only within a single partition. The partition key decides which messages share a partition. Use the entity ID as the key so all events for the same order always arrive in the right sequence. Mix up the key and you mix up the order."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "msv-ch06-c011",
+      "order": 11,
+      "title": "The Inbox Pattern",
+      "teaser": "The inbox pattern is the symmetric counterpart to the outbox: instead of writing events to an outbox on the send side, the consumer writes incoming messages to an inbox table before processing them. This provides deduplication and exactly-once-effectively processing on the receive side.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The outbox pattern solves reliability on the producer side. The inbox pattern solves it on the consumer side. Together they form a complete transactional messaging solution."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The inbox flow:"
+            }
+          ]
+        },
+        {
+          "type": "code",
+          "language": "text",
+          "text": "  [Kafka Consumer]         [Consumer DB]           [Business Logic]\n        |                       |                         |\n  Receive message               |                         |\n        |                       |                         |\n        |--- BEGIN TRANSACTION ->|                         |\n        |--- INSERT inbox_events (message_id, payload) --->|\n        |        (ON CONFLICT DO NOTHING)                  |\n        |--- Execute business logic ------------------->   |\n        |--- INSERT/UPDATE domain tables -------------->   |\n        |--- COMMIT -------->|                             |\n        |                    |                             |\n  Commit Kafka offset        |                             |"
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The "
+            },
+            {
+              "text": "ON CONFLICT DO NOTHING",
+              "marks": ["code"]
+            },
+            {
+              "text": " on the inbox insert is the deduplication mechanism. The message ID (from the outbox row's UUID) serves as the unique key. If the same message arrives a second time, the INSERT is silently rejected and the transaction produces no effect — because business logic is inside the same transaction."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The inbox table schema:"
+            }
+          ]
+        },
+        {
+          "type": "code",
+          "language": "sql",
+          "text": "CREATE TABLE inbox_events (\n  message_id    UUID PRIMARY KEY,  -- from producer outbox id\n  event_type    TEXT        NOT NULL,\n  payload       JSONB       NOT NULL,\n  received_at   TIMESTAMPTZ NOT NULL DEFAULT now(),\n  processed_at  TIMESTAMPTZ\n);"
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The inbox pattern requires that the Kafka consumer commit its offset only after the database transaction commits. This means using manual offset commits ("
+            },
+            {
+              "text": "enable.auto.commit=false",
+              "marks": ["code"]
+            },
+            {
+              "text": ") and calling "
+            },
+            {
+              "text": "consumer.commitSync()",
+              "marks": ["code"]
+            },
+            {
+              "text": " after the transaction. If the process crashes after the DB commit but before the Kafka offset commit, the message will be re-delivered — which is safe because the inbox deduplication handles it."
+            }
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "info",
+          "runs": [
+            {
+              "text": "The inbox pattern adds a database write on every message received. For high-volume consumers, this can become a bottleneck. A common optimization: use the inbox only for critical operations (payments, state transitions) and rely on natural idempotency for high-volume, low-stakes operations (analytics events, telemetry)."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The inbox pattern is like a \"received\" stamp: before processing a message, write its ID to a table in the same transaction as your business logic. If the same message arrives again, the duplicate write fails silently and nothing happens. Deduplication built into the transaction."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "msv-ch06-c012",
+      "order": 12,
+      "title": "Distributed Tracing Across Async Boundaries",
+      "teaser": "Distributed tracing breaks at async message boundaries unless trace context is explicitly propagated through message headers. Without it, a request's journey through event-driven services becomes invisible — you can observe each service in isolation but cannot follow a single transaction end to end.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "In synchronous HTTP calls, trace context propagates automatically via headers like "
+            },
+            {
+              "text": "traceparent",
+              "marks": ["code"]
+            },
+            {
+              "text": " (W3C Trace Context standard) or "
+            },
+            {
+              "text": "X-B3-TraceId",
+              "marks": ["code"]
+            },
+            {
+              "text": " (Zipkin B3). Async message brokers have no such built-in mechanism — the producer and consumer are decoupled in time, and context must be explicitly injected into message metadata."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The propagation pattern:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "numbered",
+          "items": [
+            [
+              {
+                "text": "Producer side:",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Inject the current trace context into Kafka message headers using the OpenTelemetry propagation API: "
+              },
+              {
+                "text": "propagator.inject(context, kafkaHeaders)",
+                "marks": ["code"]
+              },
+              {
+                "text": ". The outbox row should also store the trace context if CDC is used, so the relay can restore it."
+              }
+            ],
+            [
+              {
+                "text": "Consumer side:",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Extract trace context from message headers before processing: "
+              },
+              {
+                "text": "context = propagator.extract(kafkaHeaders)",
+                "marks": ["code"]
+              },
+              {
+                "text": ". Start a new span as a child of the extracted context."
+              }
+            ],
+            [
+              {
+                "text": "Span naming.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Follow OpenTelemetry semantic conventions: producer span named "
+              },
+              {
+                "text": "<topic> publish",
+                "marks": ["code"]
+              },
+              {
+                "text": "; consumer span named "
+              },
+              {
+                "text": "<topic> process",
+                "marks": ["code"]
+              },
+              {
+                "text": ". This surfaces correctly in Jaeger, Zipkin, and Datadog APM."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The outbox pattern complicates trace propagation: the span that produces the outbox row belongs to the request handling the HTTP call; the span that publishes to Kafka belongs to the relay process — a different service, a different time. The relay should extract the trace context stored in the outbox row and use it as the parent for its publish span, creating a linked trace that shows the full causal chain."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Add a "
+            },
+            {
+              "text": "trace_context",
+              "marks": ["code"]
+            },
+            {
+              "text": " JSONB column to the outbox table to store the W3C "
+            },
+            {
+              "text": "traceparent",
+              "marks": ["code"]
+            },
+            {
+              "text": " and "
+            },
+            {
+              "text": "tracestate",
+              "marks": ["code"]
+            },
+            {
+              "text": " values at write time. The relay reads and injects them into Kafka headers at publish time."
+            }
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "info",
+          "runs": [
+            {
+              "text": "OpenTelemetry provides instrumentation libraries for Kafka in Java, Python, Go, and Node.js that handle injection and extraction automatically when configured. If your Kafka client library is not instrumented, the W3C traceparent header (format: 00-<trace-id>-<parent-id>-<flags>) is simple enough to implement manually."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "When a service publishes a message instead of making an HTTP call, trace context does not automatically travel with it. You have to manually pack the trace ID into the message headers at send time and unpack it at receive time. Without this, your tracing tools see two unrelated requests instead of one connected transaction."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "msv-ch06-c013",
+      "order": 13,
+      "title": "Failure Modes in Transactional Messaging",
+      "teaser": "The outbox pattern eliminates the dual-write problem but introduces its own failure modes: broker unavailability, consumer crashes mid-process, and retry storms. Understanding each failure mode — and its recovery path — is what separates a correct transactional messaging implementation from a fragile one.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The outbox pattern creates three distinct failure zones, each with different symptoms and recovery strategies:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Broker down (Kafka unavailable).",
+                "marks": ["bold"]
+              },
+              {
+                "text": " The application continues accepting requests and writing to the outbox table normally — the database is the primary write path. The outbox relay fails to publish, leaves rows with "
+              },
+              {
+                "text": "published_at IS NULL",
+                "marks": ["code"]
+              },
+              {
+                "text": ", and retries with backoff. When the broker recovers, the relay drains the backlog. The outbox table acts as a durable queue that absorbs broker downtime. Monitor outbox lag: a growing "
+              },
+              {
+                "text": "COUNT(published_at IS NULL)",
+                "marks": ["code"]
+              },
+              {
+                "text": " is the early warning signal."
+              }
+            ],
+            [
+              {
+                "text": "Consumer crashed mid-process.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " If using manual Kafka offset commits, a consumer crash after processing but before committing the offset causes the message to be re-delivered to the restarted consumer. The inbox pattern or idempotent business logic handles this safely. If using auto-commit, the inverse risk exists: offset committed before processing completes means a crash loses the message silently — always use manual commit for business-critical consumers."
+              }
+            ],
+            [
+              {
+                "text": "Retry storms.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " If a consumer fails on a message, retry logic re-delivers the message repeatedly. If many consumers fail simultaneously (e.g., a shared downstream dependency goes down), they all retry at the same interval — creating a thundering herd that overwhelms the recovering dependency. Mitigate with exponential backoff and jitter. Cap max retries and route failed messages to a dead-letter topic (DLT) for manual inspection."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Dead-letter topic (DLT) pattern: when a message exceeds its retry limit, publish it to a "
+            },
+            {
+              "text": "<original-topic>.DLT",
+              "marks": ["code"]
+            },
+            {
+              "text": " topic. Alert on DLT growth. Provide a reprocessing mechanism to replay DLT messages back to the original topic once the root cause is fixed. Never silently discard messages that exceed retry limits."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The relay poller's own failure mode deserves attention: if the relay crashes between publishing a message and marking it "
+            },
+            {
+              "text": "published_at",
+              "marks": ["code"]
+            },
+            {
+              "text": ", it will republish on restart. This is the source of duplicates in the outbox pattern — and why idempotent consumers are non-optional."
+            }
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "warning",
+          "runs": [
+            {
+              "text": "Do not treat DLT messages as unimportant. Every message in the DLT represents a real business event that the system failed to process. A DLT that grows without being drained means real orders, payments, or notifications are being lost. Alert immediately on DLT growth and investigate before the next release cycle."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Three things go wrong in transactional messaging: the broker is unreachable (outbox buffers it safely), the consumer crashes halfway through processing (idempotency and manual offset commits save you), and retry loops swarm a struggling dependency (exponential backoff and dead-letter topics prevent the storm from making things worse)."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "msv-ch06-c014",
+      "order": 14,
+      "title": "Outbox vs CDC — Choosing the Right Relay",
+      "teaser": "The polling publisher and CDC are two relay strategies for the same outbox table. The choice is not about correctness — both are correct — but about the operational investment your team can sustain relative to the latency and throughput you require.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Teams often treat polling vs CDC as a one-time architectural decision. In practice, it is a tradeoff that can be re-evaluated as requirements evolve. The outbox table schema is identical for both approaches — only the relay changes."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Decision framework:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Start with polling",
+                "marks": ["bold"]
+              },
+              {
+                "text": " if your team has fewer than 10 engineers, event volume is below 1,000/second, and acceptable latency is under 5 seconds. The polling publisher is a background thread — no new infrastructure, no new operational skills required."
+              }
+            ],
+            [
+              {
+                "text": "Migrate to CDC",
+                "marks": ["bold"]
+              },
+              {
+                "text": " when latency requirements drop below 500ms, event volume exceeds the polling ceiling, or the SELECT load on the primary database becomes measurable. Debezium with Kafka Connect is the production standard."
+              }
+            ],
+            [
+              {
+                "text": "Consider managed CDC",
+                "marks": ["bold"]
+              },
+              {
+                "text": " (AWS DMS, Confluent's managed Debezium, Striim) if your team lacks Kafka Connect operational expertise. The latency and throughput are the same; the operational burden shifts to the vendor."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "One nuance: CDC via logical replication slots in PostgreSQL requires careful WAL lag monitoring. An idle replication slot holds WAL segments on disk indefinitely — if the Debezium connector goes down and is not restarted promptly, the PostgreSQL data directory can fill up and crash the database. Set "
+            },
+            {
+              "text": "max_slot_wal_keep_size",
+              "marks": ["code"]
+            },
+            {
+              "text": " in "
+            },
+            {
+              "text": "postgresql.conf",
+              "marks": ["code"]
+            },
+            {
+              "text": " to cap WAL accumulation, and alert on replication slot lag."
+            }
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "info",
+          "runs": [
+            {
+              "text": "An unmonitored idle replication slot is one of the most dangerous operational hazards in PostgreSQL. It silently accumulates WAL segments until the disk fills and the database crashes. This has caused production outages at multiple organizations. Always set max_slot_wal_keep_size and monitor slot lag in production."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Both polling and CDC deliver from the same outbox table — they just differ in how they read it. Polling is a simple loop that is easy to run and debug. CDC is a sophisticated stream that is faster and scales higher but needs more operational care. Start simple, upgrade when the numbers demand it."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "msv-ch06-c015",
+      "order": 15,
+      "title": "Transactional Messaging at Scale",
+      "teaser": "At high event volumes, the outbox table, the relay, and the consumer commit rate each become independent bottlenecks. Scaling transactional messaging requires understanding which component is the constraint and applying targeted techniques — sharding the outbox, parallel relay workers, and consumer group scaling.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The outbox pattern has three potential throughput ceilings:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Outbox write throughput.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Bounded by the database's INSERT rate on the outbox table. At high volume, the outbox table can become a hot spot. Shard by inserting into "
+              },
+              {
+                "text": "outbox_events_<shard_key % N>",
+                "marks": ["code"]
+              },
+              {
+                "text": " tables and run parallel relay workers per shard."
+              }
+            ],
+            [
+              {
+                "text": "Relay publish throughput.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " A single relay thread with synchronous Kafka flushes per message caps at roughly 10,000 messages/second. Use async produce with batching ("
+              },
+              {
+                "text": "linger.ms",
+                "marks": ["code"]
+              },
+              {
+                "text": " and "
+              },
+              {
+                "text": "batch.size",
+                "marks": ["code"]
+              },
+              {
+                "text": ") to batch multiple outbox rows into a single Kafka produce request. Run multiple relay worker instances — "
+              },
+              {
+                "text": "FOR UPDATE SKIP LOCKED",
+                "marks": ["code"]
+              },
+              {
+                "text": " prevents conflicts."
+              }
+            ],
+            [
+              {
+                "text": "Consumer processing throughput.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " A single consumer processes one message at a time within a partition. Scale horizontally by adding partitions and consumers together (1:1 ratio per consumer group). Consumers processing independent aggregates can be parallelized freely — only ordering within a partition constrains concurrency."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "A key metric to track: "
+            },
+            {
+              "text": "consumer group lag",
+              "marks": ["bold"]
+            },
+            {
+              "text": " — the number of messages in the topic that have not yet been consumed. Growing lag means consumers are slower than producers. Reducing lag requires either faster consumers (optimization, parallelism) or slowing producers (backpressure, rate limiting)."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Kafka's "
+            },
+            {
+              "text": "kafka-consumer-groups.sh --describe",
+              "marks": ["code"]
+            },
+            {
+              "text": " and Confluent Control Center both expose consumer lag per partition. Alert when lag exceeds a threshold proportional to your acceptable processing latency."
+            }
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "info",
+          "runs": [
+            {
+              "text": "LinkedIn, which operates one of the largest Kafka deployments in the world, processes trillions of messages per day. Their architecture uses thousands of partitions across hundreds of topics, with consumer groups scaled dynamically based on lag metrics. Consumer lag is their primary capacity signal — not CPU or memory."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "At high volume, the outbox pattern has three places that can back up: the database table where events are written, the relay worker that forwards them to Kafka, and the consumers reading them. Each is scaled independently — shard the table, parallelize the relay, add consumer instances. Consumer lag is the number that tells you whether your consumers are keeping up."
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
