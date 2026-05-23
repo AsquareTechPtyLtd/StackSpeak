@@ -1,0 +1,1268 @@
+{
+  "chapterId": "sec-ch06-ssrf-and-idor",
+  "shardIndex": 6,
+  "cards": [
+    {
+      "id": "sec-ch06-c001",
+      "order": 1,
+      "title": "SSRF Overview",
+      "teaser": "Server-Side Request Forgery tricks a server into fetching an attacker-controlled URL on the attacker's behalf — using the server's identity, network position, and implicit trust to reach targets the attacker cannot reach directly.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Server-Side Request Forgery (SSRF) is a class of vulnerability where an attacker can supply a URL — or a piece of data that is used to construct a URL — that the server will then fetch. The server sends the request, not the attacker's browser, so the resulting traffic originates from the server's IP address and carries any credentials or tokens the server uses when making outbound requests."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The threat model hinges on three asymmetries:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Network position.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " The server may be inside a VPC, corporate network, or cloud environment. Internal services that reject requests from the internet will accept them from the server."
+              }
+            ],
+            [
+              {
+                "text": "Implicit trust.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Cloud metadata endpoints (169.254.169.254), databases, and internal APIs often trust traffic from the application tier without requiring additional authentication."
+              }
+            ],
+            [
+              {
+                "text": "Credential exposure.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Responses returned to the attacker — or exfiltrated via side-channels — can carry secrets: IAM credentials, API keys, internal service tokens."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "SSRF appears wherever a server fetches a user-supplied URL: webhook configuration, image import by URL, PDF generators that fetch remote assets, document parsers, translation proxies, and URL-preview features. The attack surface has grown dramatically as web apps integrate third-party services and cloud infrastructure."
+            }
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "warning",
+          "runs": [
+            {
+              "text": "SSRF is listed as OWASP A10:2021. It was added as a standalone category (previously buried in XXE) specifically because cloud deployments have made the internal metadata endpoint a near-universal high-value target."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "SSRF makes the server your puppet: you tell it where to fetch data, and it goes there using its own credentials and network access — reaching places you never could from the outside."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "sec-ch06-c002",
+      "order": 2,
+      "title": "Basic SSRF",
+      "teaser": "In basic SSRF the attacker supplies a URL and receives the response directly — allowing them to read internal service responses, probe the internal network, and exfiltrate secrets in a single round-trip.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Basic (or reflective) SSRF is the simplest form: the server fetches the attacker's URL and returns the response body to the attacker. A classic entry point is a webhook or URL-import feature:"
+            }
+          ]
+        },
+        {
+          "type": "code",
+          "lang": "http",
+          "code": "POST /api/import-image HTTP/1.1\nHost: app.example.com\n\n{\"url\": \"http://169.254.169.254/latest/meta-data/iam/security-credentials/ec2-role\"}"
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "If the server fetches the URL and stores or returns the response, the attacker receives the IAM credentials for the EC2 instance role. From there they can call the AWS API with those credentials."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Basic SSRF can also target internal services. In a typical microservices VPC, services on port 8080 or 9200 (Elasticsearch) may be reachable from the application server but blocked from the internet:"
+            }
+          ]
+        },
+        {
+          "type": "code",
+          "lang": "http",
+          "code": "{\"url\": \"http://internal-search.vpc.local:9200/_cat/indices\"}"
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The attacker can enumerate internal network topology by trying RFC1918 address ranges, common service ports, and internal hostnames — treating the vulnerable server as a port scanner inside the perimeter."
+            }
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "info",
+          "runs": [
+            {
+              "text": "Basic SSRF is only possible when the application returns (or stores accessibly) the fetched content. When there is no response body returned to the attacker, the attack becomes blind SSRF — covered in the next card."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Basic SSRF: you give the server a URL, the server fetches it, you get the response — which could be cloud credentials, internal API data, or a map of the internal network."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "sec-ch06-c003",
+      "order": 3,
+      "title": "Blind SSRF",
+      "teaser": "Blind SSRF exists when the server makes the attacker-controlled request but returns nothing — no response body, no error detail. Detection relies on out-of-band signals: DNS lookups, time delays, and callback services like Burp Collaborator.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Many SSRF-vulnerable endpoints do not return the fetched response to the user. A webhook tester, an SEO crawler, or a \"check my SSL certificate\" feature may fetch your URL, use it internally, and return only a status code. This is blind SSRF: the exploit channel exists but the attacker has no direct read path."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Detection techniques for blind SSRF:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Out-of-band DNS callback.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Submit a URL pointing to an attacker-controlled domain (e.g., using Burp Collaborator or interactsh). If the DNS lookup for that domain appears in the attacker's logs, the server made the request — even if the HTTP response body was discarded."
+              }
+            ],
+            [
+              {
+                "text": "HTTP callback.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " The attacker runs an HTTP listener. A request arriving at that listener confirms SSRF, and the server's IP in the request confirms its internal network position."
+              }
+            ],
+            [
+              {
+                "text": "Time-based inference.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Internal hosts that exist respond quickly; hosts that do not exist cause timeouts. By measuring response latency the attacker can distinguish open ports from closed ones even without a response body."
+              }
+            ],
+            [
+              {
+                "text": "Error-message leakage.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Some applications return different error messages depending on whether the remote host was unreachable, refused the connection, or returned a non-2xx status — each reveals information about the internal network."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Blind SSRF is harder to exploit for immediate data exfiltration but is still dangerous: it can be chained with protocol tricks (gopher://, file://, dict://) or used as a pivot to reach internal endpoints that accept commands rather than merely returning data."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Blind SSRF is like sending a letter through someone else's mail slot without knowing what they did with it — you infer the server made your request by watching your own DNS logs or measuring response timing, not by reading what came back."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "sec-ch06-c004",
+      "order": 4,
+      "title": "Cloud Metadata Theft — IMDSv1 vs IMDSv2",
+      "teaser": "The cloud Instance Metadata Service is SSRF's most valuable target. IMDSv1 requires no authentication; a single GET to 169.254.169.254 yields IAM credentials. IMDSv2 requires a session token obtained via PUT — breaking the one-step SSRF chain. The Capital One 2019 breach is the canonical example.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Every major cloud provider exposes an Instance Metadata Service (IMDS) at a link-local address accessible only from within the instance:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "AWS:",
+                "marks": ["bold"]
+              },
+              {
+                "text": " 169.254.169.254"
+              }
+            ],
+            [
+              {
+                "text": "GCP:",
+                "marks": ["bold"]
+              },
+              {
+                "text": " metadata.google.internal / 169.254.169.254"
+              }
+            ],
+            [
+              {
+                "text": "Azure:",
+                "marks": ["bold"]
+              },
+              {
+                "text": " 169.254.169.254 (with required Metadata: true header)"
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "IMDSv1 (AWS legacy): a simple unauthenticated GET request returns temporary IAM credentials for the instance's attached role:"
+            }
+          ]
+        },
+        {
+          "type": "code",
+          "lang": "bash",
+          "code": "# IMDSv1 — one request, no token required\ncurl http://169.254.169.254/latest/meta-data/iam/security-credentials/\n# returns the role name, then:\ncurl http://169.254.169.254/latest/meta-data/iam/security-credentials/<role-name>\n# returns AccessKeyId, SecretAccessKey, Token"
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "IMDSv2 (AWS, 2019 onwards): requires a session-oriented token obtained via a PUT request with a TTL header. Standard HTTP libraries used in SSRF attacks typically follow only GET redirects, not PUT — breaking the single-step attack:"
+            }
+          ]
+        },
+        {
+          "type": "code",
+          "lang": "bash",
+          "code": "# IMDSv2 — requires PUT first\nTOKEN=$(curl -s -X PUT \\\n  -H \"X-aws-ec2-metadata-token-ttl-seconds: 21600\" \\\n  http://169.254.169.254/latest/api/token)\n\ncurl -H \"X-aws-ec2-metadata-token: $TOKEN\" \\\n  http://169.254.169.254/latest/meta-data/iam/security-credentials/"
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The Capital One breach (July 2019) is the canonical IMDSv1 SSRF case. The attacker exploited a misconfigured WAF running on an EC2 instance to issue a request to the metadata endpoint. The WAF's IAM role had permissions to read S3 buckets. The attacker retrieved temporary credentials via IMDSv1 and exfiltrated over 100 million credit application records. The estimated cost was over $150 million in fines and remediation."
+            }
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "warning",
+          "runs": [
+            {
+              "text": "AWS now allows account-level enforcement of IMDSv2 via the \"metadata-options\" setting and Organization SCPs. Any new EC2 instance should have HttpTokens set to \"required\". IMDSv1 is still the default for backward compatibility — it must be explicitly disabled."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "IMDSv1: ask the metadata service for credentials, get credentials. IMDSv2: first prove you are legitimately on the instance by completing a PUT handshake — SSRF attacks using simple GETs cannot complete it. Capital One's 2019 breach showed exactly what happens when IMDSv1 meets a server-side fetch vulnerability."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "sec-ch06-c005",
+      "order": 5,
+      "title": "SSRF Defenses",
+      "teaser": "Effective SSRF defense requires multiple layers: a strict URL allowlist, blocking RFC1918 and metadata IP ranges at the DNS/HTTP level, and using a dedicated egress proxy with network-level isolation for any service that must fetch external URLs.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "No single control defeats SSRF — attackers use DNS rebinding, URL parsers differences, and protocol smuggling to bypass individual controls. Defense in depth is required."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Layer 1 — URL allowlist (most effective for known destinations):"
+            }
+          ]
+        },
+        {
+          "type": "code",
+          "lang": "python",
+          "code": "import ipaddress, urllib.parse, socket\n\nALLOWED_HOSTS = {\"api.trusted-partner.com\", \"cdn.example.com\"}\n\ndef is_safe_url(url: str) -> bool:\n    parsed = urllib.parse.urlparse(url)\n    if parsed.scheme not in (\"http\", \"https\"):\n        return False  # Block file://, gopher://, dict://, etc.\n    host = parsed.hostname\n    if host not in ALLOWED_HOSTS:\n        return False  # Allowlist-only policy\n    return True"
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Layer 2 — block RFC1918 and metadata IPs after DNS resolution (resolves before fetching to prevent DNS rebinding):"
+            }
+          ]
+        },
+        {
+          "type": "code",
+          "lang": "python",
+          "code": "BLOCKED_NETWORKS = [\n    ipaddress.ip_network(\"10.0.0.0/8\"),\n    ipaddress.ip_network(\"172.16.0.0/12\"),\n    ipaddress.ip_network(\"192.168.0.0/16\"),\n    ipaddress.ip_network(\"169.254.0.0/16\"),  # link-local / IMDS\n    ipaddress.ip_network(\"127.0.0.0/8\"),      # loopback\n    ipaddress.ip_network(\"::1/128\"),           # IPv6 loopback\n    ipaddress.ip_network(\"fd00::/8\"),          # IPv6 ULA\n]\n\ndef resolve_and_check(hostname: str) -> bool:\n    try:\n        addr = socket.getaddrinfo(hostname, None)[0][4][0]\n        ip = ipaddress.ip_address(addr)\n        for network in BLOCKED_NETWORKS:\n            if ip in network:\n                return False  # Blocked\n        return True\n    except Exception:\n        return False"
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Layer 3 — network egress isolation: route all outbound HTTP from the application through a dedicated proxy or separate network segment with firewall rules that explicitly deny RFC1918 ranges. This provides defense even when application-layer validation is bypassed."
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Enforce IMDSv2 on all EC2 instances (HttpTokens: required)."
+              }
+            ],
+            [
+              {
+                "text": "Disable IMDSv1 at the AWS account level via an SCP."
+              }
+            ],
+            [
+              {
+                "text": "Reject non-http/https schemes (file://, gopher://, dict://, ldap://) at the URL parser level."
+              }
+            ],
+            [
+              {
+                "text": "Validate the resolved IP after DNS lookup, not just the hostname — prevents DNS rebinding attacks."
+              }
+            ]
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Defend against SSRF in three layers: only allow URLs that go to known-good destinations (allowlist), then block private and metadata IPs after resolving the hostname, then put the fetch code in a network cage that cannot reach the internal network at all."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "sec-ch06-c006",
+      "order": 6,
+      "title": "Insecure Direct Object Reference (IDOR)",
+      "teaser": "IDOR occurs when an application exposes internal identifiers — database row IDs, filenames, account numbers — and fails to verify that the authenticated user is authorized to access the referenced object. Changing an ID in the URL is all it takes.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "An Insecure Direct Object Reference happens when the application maps a user-controllable parameter directly to an internal object without checking authorization. The URL or request parameter is the pointer; the missing check is what makes it vulnerable."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "A classic example — banking application:"
+            }
+          ]
+        },
+        {
+          "type": "code",
+          "lang": "http",
+          "code": "GET /api/accounts/10482/transactions HTTP/1.1\nAuthorization: Bearer <user-a-token>\n\n# Change 10482 to 10483 — another user's account\nGET /api/accounts/10483/transactions HTTP/1.1\nAuthorization: Bearer <user-a-token>"
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "If the second request returns transactions belonging to a different user, the application has IDOR. The token is valid — authentication succeeded. The authorization check is what is missing."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "A real-world case: Facebook's Graph API exposed object IDs that could be used to access photos, posts, and user data across accounts. Researchers discovered they could enumerate IDs sequentially or via other API responses and retrieve content from any Facebook account. Facebook paid multiple bug bounty rewards in the $10,000–$40,000 range for IDOR reports between 2013 and 2021, and Graph API permissions were progressively tightened as a result."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The root cause pattern in code:"
+            }
+          ]
+        },
+        {
+          "type": "code",
+          "lang": "python",
+          "code": "# VULNERABLE — no authorization check\n@app.get(\"/accounts/{account_id}/transactions\")\ndef get_transactions(account_id: int, user=Depends(get_current_user)):\n    return db.query(Transaction).filter_by(account_id=account_id).all()\n\n# SECURE — verify ownership before returning data\n@app.get(\"/accounts/{account_id}/transactions\")\ndef get_transactions(account_id: int, user=Depends(get_current_user)):\n    account = db.get(Account, account_id)\n    if account.owner_id != user.id:\n        raise HTTPException(status_code=403, detail=\"Forbidden\")\n    return db.query(Transaction).filter_by(account_id=account_id).all()"
+        },
+        {
+          "type": "callout",
+          "variant": "warning",
+          "runs": [
+            {
+              "text": "IDOR is trivially testable: authenticate as user A, find a resource ID, log in as user B, access that ID. Automated scanners largely miss IDOR because the logic is business-context-dependent — it requires knowing which user should own which resource."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "IDOR is what happens when the server hands you a number (\"your account is 10482\"), you change it to 10483, and the server hands you someone else's data because it never checked whether 10483 belongs to you."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "sec-ch06-c007",
+      "order": 7,
+      "title": "Horizontal vs Vertical IDOR",
+      "teaser": "Horizontal IDOR lets a user access another user's data at the same privilege level. Vertical IDOR lets a lower-privileged user access data or actions belonging to a higher-privileged role. Both are broken access control — but the impact and detection differ.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The two axes of IDOR map to the two axes of access control failure:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Horizontal IDOR",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — user A accesses user B's data without elevated privilege. Both users have the same role. The violation is lateral: accessing a peer's resource. Example: reading another customer's order history by changing an order ID in the URL."
+              }
+            ],
+            [
+              {
+                "text": "Vertical IDOR",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — a regular user accesses a resource or action that should require admin or a higher role. The violation is vertical: escalating privilege by referencing an admin-tier object. Example: a customer accessing ",
+                "marks": []
+              },
+              {
+                "text": "/admin/reports/revenue",
+                "marks": ["code"]
+              },
+              {
+                "text": " by directly entering the URL, with no role check on the endpoint."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Vertical IDOR overlaps with Broken Function Level Authorization (BFLA) when the reference is to a function rather than a data object — but the taxonomy is less important than the defense, which is identical in both cases: verify that the requesting identity is authorized to access that specific object or function."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "A real banking example: a mobile banking app stores the account tier (\"STANDARD\" vs \"PREMIUM\") as a parameter sent in the request body. Changing \"STANDARD\" to \"PREMIUM\" in an intercepted request grants premium features without payment — a vertical IDOR where the object is the user's own account record and the field is a privilege flag."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Testing approach:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Horizontal:",
+                "marks": ["bold"]
+              },
+              {
+                "text": " create two accounts, capture all IDs associated with account A, attempt to access each using account B's session."
+              }
+            ],
+            [
+              {
+                "text": "Vertical:",
+                "marks": ["bold"]
+              },
+              {
+                "text": " capture all URLs and parameters visible as an admin, replay each with a low-privilege or unauthenticated session."
+              }
+            ]
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Horizontal IDOR: you access your neighbor's file on the same shelf. Vertical IDOR: you access the vault behind the counter that only managers are supposed to reach. In both cases, the lock was missing — the difference is which shelf you were not supposed to reach."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "sec-ch06-c008",
+      "order": 8,
+      "title": "Mass Assignment",
+      "teaser": "Mass assignment binds all incoming request fields to a model object without filtering — allowing attackers to set fields the application never intended to expose, such as admin flags, role fields, or balance values.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Mass assignment (also called over-posting or auto-binding) occurs when a framework automatically maps HTTP request parameters to a model's properties. It is a feature that becomes a vulnerability when the mapping is unrestricted."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "A canonical example in a Rails-style framework:"
+            }
+          ]
+        },
+        {
+          "type": "code",
+          "lang": "ruby",
+          "code": "# VULNERABLE — params[:user] binds every submitted field\ndef update\n  @user = User.find(params[:id])\n  @user.update_attributes(params[:user])  # mass assignment\nend\n\n# Attacker POST body:\n# user[email]=attacker@evil.com&user[is_admin]=true&user[balance]=99999"
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The famous 2012 GitHub mass assignment incident: Egor Homakov discovered that GitHub's Rails application used mass assignment on user public keys. He submitted a forged pull request to the Rails repository by assigning an SSH key to another user's account, demonstrating a privilege escalation via mass assignment. GitHub patched within hours and the incident led Rails to add strong parameters (require/permit) as a framework-level control."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The fix is an explicit allowlist of fields that can be set by user input:"
+            }
+          ]
+        },
+        {
+          "type": "code",
+          "lang": "python",
+          "code": "# FastAPI / Pydantic pattern — explicit input schema\nclass UserUpdateInput(BaseModel):\n    email: str\n    display_name: str\n    # is_admin, role, balance are NOT in this model\n    # They cannot be set via this endpoint regardless of what the client sends\n\n@app.patch(\"/users/{user_id}\")\ndef update_user(user_id: int, body: UserUpdateInput, ...):\n    ..."
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "In frameworks without strict input schema binding (PHP, early Rails), the defense is an explicit list of permitted fields, blocking fields, or a separate DTO layer that never includes sensitive properties."
+            }
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "info",
+          "runs": [
+            {
+              "text": "Mass assignment is listed as part of OWASP API3:2023 (Broken Object Property Level Authorization). BOPLA is the broader category — mass assignment is its most dangerous sub-pattern because it allows writing sensitive fields, not just reading them."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Mass assignment is when the framework says \"I'll set every field you send\" and the attacker sends fields the developer forgot to protect — like is_admin=true. The fix is to name exactly which fields the user is allowed to set, and ignore everything else."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "sec-ch06-c009",
+      "order": 9,
+      "title": "Broken Function Level Authorization (BFLA)",
+      "teaser": "BFLA occurs when admin-tier or privileged API endpoints are accessible by lower-privileged users — usually because the application checks authentication but not authorization, or because the function-level check was simply never added.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Broken Function Level Authorization (OWASP API5:2023) describes the failure to enforce what functions a given role can invoke — as opposed to which data objects it can access (IDOR). The canonical scenario: a REST API has user-facing endpoints at "
+            },
+            {
+              "text": "/api/v1/users",
+              "marks": ["code"]
+            },
+            {
+              "text": " and admin endpoints at "
+            },
+            {
+              "text": "/api/v1/admin/users",
+              "marks": ["code"]
+            },
+            {
+              "text": ". The admin prefix was intended to signal a different trust zone — but the code checks only that the request is authenticated, not that the caller is an admin."
+            }
+          ]
+        },
+        {
+          "type": "code",
+          "lang": "python",
+          "code": "# VULNERABLE — only checks authentication, not role\n@app.delete(\"/api/v1/admin/users/{user_id}\")\ndef delete_user(user_id: int, user=Depends(get_current_user)):\n    # 'user' is authenticated but may not be admin\n    db.delete(User, user_id)\n    return {\"status\": \"deleted\"}\n\n# SECURE — check role at the function level\n@app.delete(\"/api/v1/admin/users/{user_id}\")\ndef delete_user(user_id: int, user=Depends(require_role(\"admin\"))):\n    db.delete(User, user_id)\n    return {\"status\": \"deleted\"}"
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "BFLA is particularly common in:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Mobile app backends",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — admin functions are assumed to be hidden because the mobile UI does not expose them. API clients ignore that assumption."
+              }
+            ],
+            [
+              {
+                "text": "Internal tools promoted to public APIs",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — internal tools often have no authorization because everyone on the internal network is trusted. When the same API is exposed externally, the trust assumption does not travel with it."
+              }
+            ],
+            [
+              {
+                "text": "HTTP method confusion",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — a GET handler has authorization checks; a POST or DELETE handler for the same resource does not. Changing the method bypasses the check."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "warning",
+          "runs": [
+            {
+              "text": "Security through obscurity (hiding admin endpoints) is not access control. Attackers discover hidden endpoints through JavaScript bundle analysis, Swagger/OpenAPI spec exposure, Google dorking of API documentation, and brute-forcing common admin URL patterns."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "BFLA is when the admin-only \"delete user\" button has no lock on the door — any authenticated user who finds the URL can press it. Authentication says \"I know who you are.\" Authorization says \"I know what you are allowed to do.\" BFLA skips the second step."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "sec-ch06-c010",
+      "order": 10,
+      "title": "Broken Object Property Level Authorization (BOPLA)",
+      "teaser": "BOPLA exposes fields the user should not see or modify — returning an admin flag in a user profile response, or allowing a write to a computed field. It is the property-level dimension of IDOR, covering both over-exposure and over-permission.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "BOPLA (OWASP API3:2023) covers two failure modes at the property level:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Excessive data exposure",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — the API returns more fields than the client needs. A "
+              },
+              {
+                "text": "GET /users/me",
+                "marks": ["code"]
+              },
+              {
+                "text": " response includes ",
+                "marks": []
+              },
+              {
+                "text": "is_admin: false",
+                "marks": ["code"]
+              },
+              {
+                "text": ", ",
+                "marks": []
+              },
+              {
+                "text": "stripe_customer_id",
+                "marks": ["code"]
+              },
+              {
+                "text": ", and ",
+                "marks": []
+              },
+              {
+                "text": "internal_notes",
+                "marks": ["code"]
+              },
+              {
+                "text": " because the serializer dumps the entire database row."
+              }
+            ],
+            [
+              {
+                "text": "Mass assignment (write-side)",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — a PATCH endpoint accepts fields that should be immutable or system-controlled: ",
+                "marks": []
+              },
+              {
+                "text": "created_at",
+                "marks": ["code"]
+              },
+              {
+                "text": ", ",
+                "marks": []
+              },
+              {
+                "text": "account_balance",
+                "marks": ["code"]
+              },
+              {
+                "text": ", ",
+                "marks": []
+              },
+              {
+                "text": "subscription_tier",
+                "marks": ["code"]
+              },
+              {
+                "text": "."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Excessive data exposure was previously its own OWASP API category (API3:2019). It was merged into BOPLA in the 2023 revision because the root cause is identical: the serialization layer has no concept of caller context — what fields are appropriate for this caller to see or modify."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Defense pattern — use separate read and write schemas per caller role:"
+            }
+          ]
+        },
+        {
+          "type": "code",
+          "lang": "python",
+          "code": "# Separate read schemas by role\nclass UserPublicResponse(BaseModel):   # returned to the user themselves\n    id: int\n    email: str\n    display_name: str\n    # NOT included: is_admin, stripe_customer_id, internal_notes\n\nclass UserAdminResponse(UserPublicResponse):  # returned to admins only\n    is_admin: bool\n    internal_notes: str\n    stripe_customer_id: str\n\n@app.get(\"/users/{user_id}\")\ndef get_user(user_id: int, caller=Depends(get_current_user)):\n    user = db.get(User, user_id)\n    if caller.is_admin:\n        return UserAdminResponse.from_orm(user)\n    return UserPublicResponse.from_orm(user)"
+        },
+        {
+          "type": "callout",
+          "variant": "info",
+          "runs": [
+            {
+              "text": "A common discovery method: call an API endpoint in an authenticated mobile session, then examine the full JSON response with a proxy. Developers routinely return entire ORM objects and filter the display client-side — the sensitive fields are in the wire format even if the app does not display them."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "BOPLA: the server is too generous — it either shows you fields you should not see (over-exposure) or lets you set fields you should not touch (over-permission). The fix is separate schemas that define exactly what each caller can read or write."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "sec-ch06-c011",
+      "order": 11,
+      "title": "Authorization Patterns — RBAC, ABAC, ReBAC",
+      "teaser": "Role-Based Access Control, Attribute-Based Access Control, and Relationship-Based Access Control (Zanzibar-style) are the three dominant authorization architectures. Each handles a different level of policy complexity — and choosing the wrong one is a recurring source of access-control bugs.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Three authorization models cover the vast majority of web application policy requirements:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "RBAC — Role-Based Access Control.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Permissions are attached to roles; users are assigned roles. A user is an admin, editor, or viewer — the role determines what they can do. Simple to implement and reason about. Breaks down when policies need to be per-resource (\"editor of document X but viewer of document Y\") because the number of roles explodes."
+              }
+            ],
+            [
+              {
+                "text": "ABAC — Attribute-Based Access Control.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Policies are rules evaluated against attributes of the subject (user), resource, environment, and action. Example: \"allow read if user.department == resource.department AND time is 09:00-17:00.\" Highly flexible but complex to audit and debug. AWS IAM policies are ABAC."
+              }
+            ],
+            [
+              {
+                "text": "ReBAC — Relationship-Based Access Control.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Permissions are derived from a graph of relationships between users and objects. \"User A can read document D because A is a member of group G, and G is a viewer of folder F, and D is in F.\" Google's Zanzibar paper (2019) describes the system behind Google Drive, Docs, and Calendar. Open-source implementations include SpiceDB and OpenFGA."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Choosing the right model:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Use RBAC",
+                "marks": ["bold"]
+              },
+              {
+                "text": " when roles are coarse-grained and resource-level permissions are not needed. Most internal tools, dashboards, and CMSes."
+              }
+            ],
+            [
+              {
+                "text": "Use ABAC",
+                "marks": ["bold"]
+              },
+              {
+                "text": " when you need dynamic, context-sensitive rules that RBAC cannot express. Multi-tenant SaaS with complex data residency or time-based policies."
+              }
+            ],
+            [
+              {
+                "text": "Use ReBAC",
+                "marks": ["bold"]
+              },
+              {
+                "text": " when sharing is a core product feature — collaborative documents, shared folders, team-based permissions. Google Docs, Figma, Notion all require Zanzibar-style evaluation."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "info",
+          "runs": [
+            {
+              "text": "The Google Zanzibar paper (\"Zanzibar: Google's Consistent, Global Authorization System,\" USENIX ATC 2019) is the canonical reference for ReBAC at scale. It describes evaluating trillions of authorization checks per second with consistent latency across globally replicated data."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "RBAC says \"your title decides your access.\" ABAC says \"a policy rule evaluates your attributes to decide your access.\" ReBAC says \"your relationship to this specific object decides your access.\" Google Drive uses ReBAC — whether you can edit a file depends on a chain of sharing relationships, not just your account type."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "sec-ch06-c012",
+      "order": 12,
+      "title": "Centralized vs Scattered Authorization",
+      "teaser": "The single largest architectural source of access-control bugs is scattered authorization logic — checks sprinkled across controllers, services, and queries rather than enforced in one place. Centralized enforcement surfaces missing checks and makes policy auditable.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "When authorization logic is scattered across the codebase, adding a new endpoint means remembering to add a check. Forgetting is the default failure mode: IDOR, BFLA, and BOPLA are all the result of an authorization check that was not added because there was no forcing function that required it."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The scattered pattern:"
+            }
+          ]
+        },
+        {
+          "type": "code",
+          "lang": "python",
+          "code": "# Scattered — each endpoint is responsible for its own check\n# Some do it, some don't\n@app.get(\"/documents/{doc_id}\")\ndef get_doc(doc_id: int, user=Depends(get_current_user)):\n    doc = db.get(Document, doc_id)\n    if doc.owner_id != user.id:        # check present\n        raise HTTPException(403)\n    return doc\n\n@app.patch(\"/documents/{doc_id}\")\ndef update_doc(doc_id: int, body: ..., user=Depends(get_current_user)):\n    doc = db.get(Document, doc_id)\n    # MISSING CHECK — developer forgot to add it\n    doc.update(body)\n    return doc"
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The centralized pattern — an authorization service or middleware layer that every data access path goes through:"
+            }
+          ]
+        },
+        {
+          "type": "code",
+          "lang": "python",
+          "code": "# Centralized — authorization enforced via a policy layer\nfrom authz import require_permission  # checks policy engine\n\n@app.get(\"/documents/{doc_id}\")\n@require_permission(\"document:read\")   # decorator enforces at routing layer\ndef get_doc(doc_id: int, user=Depends(get_current_user)):\n    return db.get(Document, doc_id)\n\n@app.patch(\"/documents/{doc_id}\")\n@require_permission(\"document:write\")  # same pattern, no manual check needed\ndef update_doc(doc_id: int, body: ..., user=Depends(get_current_user)):\n    ..."
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Centralized authorization unlocks several security properties that are impossible with scattered checks:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Auditability:",
+                "marks": ["bold"]
+              },
+              {
+                "text": " all authorization decisions are logged in one place. \"Who accessed what, when\" is answerable."
+              }
+            ],
+            [
+              {
+                "text": "Policy consistency:",
+                "marks": ["bold"]
+              },
+              {
+                "text": " changing a policy rule propagates to all consumers of that rule automatically."
+              }
+            ],
+            [
+              {
+                "text": "Testability:",
+                "marks": ["bold"]
+              },
+              {
+                "text": " the authorization layer can be tested in isolation with policy unit tests, independent of HTTP layer."
+              }
+            ],
+            [
+              {
+                "text": "Fail-secure defaults:",
+                "marks": ["bold"]
+              },
+              {
+                "text": " a policy engine that denies by default means a missing policy rule results in a 403, not in data leakage."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "warning",
+          "runs": [
+            {
+              "text": "Authorization logic in the data layer (repository pattern, scoped queries) is a strong complement to middleware-level checks — it prevents bypasses through code paths that skip the middleware. Defense in depth applies to authorization architecture, not just network security."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Scattered authorization is like having a different lock brand on every door installed by whoever happened to build that room — some doors end up without locks because nobody was in charge of the locks. Centralized authorization is a single security desk that every door reports to: one place to audit, one place to fix, and a default of locked-until-approved."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "sec-ch06-c013",
+      "order": 13,
+      "title": "SSRF and IDOR in Practice — A Combined Attack",
+      "teaser": "Real-world breaches rarely involve a single vulnerability class. SSRF and IDOR chain together naturally: SSRF reaches an internal service that lacks authorization checks (IDOR), extracting data the attacker could never access directly. Understanding the chain shapes the defense.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The Capital One 2019 breach illustrates the full chain:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Initial vector:",
+                "marks": ["bold"]
+              },
+              {
+                "text": " The attacker exploited a misconfigured WAF (running as an EC2 instance with an overprivileged IAM role) to issue an SSRF request to the IMDSv1 endpoint."
+              }
+            ],
+            [
+              {
+                "text": "Credential theft:",
+                "marks": ["bold"]
+              },
+              {
+                "text": " The metadata endpoint returned temporary IAM credentials for the EC2 role — unauthenticated because IMDSv1 requires no token."
+              }
+            ],
+            [
+              {
+                "text": "Privilege escalation:",
+                "marks": ["bold"]
+              },
+              {
+                "text": " The IAM role had S3 ListBuckets and GetObject permissions. These were intended for legitimate application function — they became an attack surface when credentials were stolen."
+              }
+            ],
+            [
+              {
+                "text": "Data exfiltration:",
+                "marks": ["bold"]
+              },
+              {
+                "text": " The attacker listed hundreds of S3 buckets and downloaded their contents — credit application data for over 100 million individuals across the US and Canada."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Each defense layer that was absent:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "IMDSv2 was not enforced",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — would have broken the credential theft step."
+              }
+            ],
+            [
+              {
+                "text": "IAM role was over-permissioned",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — least privilege would have limited what the stolen credentials could access."
+              }
+            ],
+            [
+              {
+                "text": "No egress filtering on the WAF instance",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — a network-level block on RFC1918/link-local ranges would have stopped the SSRF request."
+              }
+            ],
+            [
+              {
+                "text": "No anomaly detection on S3 access patterns",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — a bulk ListBuckets from an EC2 WAF instance is anomalous and should have triggered an alert."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "info",
+          "runs": [
+            {
+              "text": "Defense-in-depth means an attacker must defeat multiple independent controls to complete the chain. In Capital One's case, each missing layer independently would have stopped or significantly degraded the attack. Security is not one lock — it is a sequence of locked doors, each of which must fail for the attack to succeed."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "SSRF and IDOR chain like this: SSRF gets you inside the network, IDOR (or an overprivileged role) lets you walk out with data once you are inside. Capital One's breach was SSRF to credential theft to unrestricted S3 access — each step exploited a missing check at a different layer."
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
