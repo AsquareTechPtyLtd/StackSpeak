@@ -1,0 +1,1576 @@
+{
+  "chapterId": "msv-ch10-service-mesh",
+  "shardIndex": 10,
+  "cards": [
+    {
+      "id": "msv-ch10-c001",
+      "order": 1,
+      "title": "The Service Mesh Problem",
+      "teaser": "Every microservice needs retries, timeouts, mTLS, tracing, and circuit breaking — but duplicating that logic in every service in every language is the fastest way to turn 50 microservices into 50 inconsistent failure modes.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "When a monolith is decomposed into microservices, a class of concerns that once lived in a single codebase becomes a distributed problem. Every service must now handle:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Reliability: ",
+                "marks": ["bold"]
+              },
+              {
+                "text": "retries with backoff, timeouts, circuit breaking, bulkheads."
+              }
+            ],
+            [
+              {
+                "text": "Security: ",
+                "marks": ["bold"]
+              },
+              {
+                "text": "mutual TLS, certificate rotation, authorization policies."
+              }
+            ],
+            [
+              {
+                "text": "Observability: ",
+                "marks": ["bold"]
+              },
+              {
+                "text": "distributed traces, per-call metrics, access logs."
+              }
+            ],
+            [
+              {
+                "text": "Traffic control: ",
+                "marks": ["bold"]
+              },
+              {
+                "text": "canary releases, traffic mirroring, weighted routing."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The naive solution is a shared library — one retry library, one tracing SDK. But shared libraries have critical weaknesses in a polyglot microservice environment: they must be implemented per language (Go, Java, Python, Rust), they must be upgraded in every service simultaneously, and they still require application developers to configure them correctly. The library approach pushes cross-cutting concerns "
+            },
+            {
+              "text": "into",
+              "marks": ["italic"]
+            },
+            {
+              "text": " application code, where they accumulate inconsistencies across teams and versions."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The service mesh answers this problem by extracting these concerns entirely from application code and pushing them into the infrastructure layer. Application code connects to localhost; the mesh handles everything else."
+            }
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "warning",
+          "runs": [
+            {
+              "text": "A service mesh is not free: it adds latency (sub-millisecond per hop, but measurable), operational complexity, and a new class of infrastructure to debug. The value proposition holds when cross-cutting concerns are genuinely scattered — a system with three services usually does not need one."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Every service needs retries, TLS, and tracing. Putting that logic into every service means writing and maintaining it dozens of times across multiple languages. A service mesh moves it out of your code entirely and makes the network infrastructure handle it."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "msv-ch10-c002",
+      "order": 2,
+      "title": "The Sidecar Proxy Pattern",
+      "teaser": "Every service pod gets an Envoy sidecar injected alongside it. All traffic in and out of the service passes through the proxy — which means the mesh can intercept, inspect, encrypt, retry, and observe every byte without the application knowing.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The sidecar proxy pattern is the architectural foundation of most service meshes. Each application container runs with a co-located proxy container in the same Kubernetes pod. The proxy is injected automatically by a mutating admission webhook — developers do not modify their deployment manifests to opt in."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The sidecar intercepts all inbound and outbound traffic using iptables rules (or eBPF hooks in newer meshes) that redirect packets before they reach the application. From the application's perspective, it is making a plain HTTP/gRPC call to a peer. The sidecar transparently:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Terminates and originates mTLS connections between sidecars."
+              }
+            ],
+            [
+              {
+                "text": "Applies retry policies, timeout budgets, and circuit-breaker thresholds."
+              }
+            ],
+            [
+              {
+                "text": "Emits Prometheus metrics (request rate, error rate, p50/p99 latencies)."
+              }
+            ],
+            [
+              {
+                "text": "Propagates and samples distributed traces (Zipkin/Jaeger B3 headers or W3C Trace Context)."
+              }
+            ],
+            [
+              {
+                "text": "Enforces authorization policies from the control plane."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The dominant sidecar is "
+            },
+            {
+              "text": "Envoy Proxy",
+              "marks": ["bold"]
+            },
+            {
+              "text": ", originally built at Lyft and donated to the CNCF. Envoy is written in C++ and is designed for high-throughput L7 proxying. Both Istio and AWS App Mesh use Envoy as their data-plane proxy. Linkerd uses its own Rust-based micro-proxy (the linkerd2-proxy) for a smaller resource footprint."
+            }
+          ]
+        },
+        {
+          "type": "code",
+          "language": "text",
+          "code": "Sidecar Topology — single pod\n\n+------------------------------+\n|  Kubernetes Pod              |\n|                              |\n|  +----------+   localhost   +-----------+\n|  |  App     | <-----------> |  Envoy    |\n|  |  :8080   |               |  sidecar  |\n|  +----------+               +-----------+\n|                                   |      |\n+-----------------------------------|------+\n                              mTLS  |  iptables\n                              +-----+  redirect\n                              v\n                         peer sidecar"
+        },
+        {
+          "type": "callout",
+          "variant": "info",
+          "runs": [
+            {
+              "text": "The sidecar adds roughly 0.2-0.5 ms of latency per call under typical load — negligible for most workloads, but measurable in latency-sensitive paths. Benchmark your p99 latency before and after mesh adoption."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "A sidecar proxy sits next to every service like a personal traffic cop. Every packet goes through the proxy, not directly to the service. The proxy handles TLS, retries, and metrics on the application's behalf, invisibly."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "msv-ch10-c003",
+      "order": 3,
+      "title": "The Mesh Data Plane",
+      "teaser": "The data plane is the collection of all sidecars running across every pod — it is the L7 hot path where actual packets flow, policies are enforced, and telemetry is emitted. Every millisecond of latency and every dropped connection happens here.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The "
+            },
+            {
+              "text": "data plane",
+              "marks": ["bold"]
+            },
+            {
+              "text": " encompasses all of the sidecar proxies deployed across the cluster. It is the layer that touches live traffic — the hot path. Every HTTP request, gRPC call, and TCP connection passes through two data-plane proxies: one on the sending side and one on the receiving side."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Key data-plane responsibilities:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Protocol parsing (L7): ",
+                "marks": ["bold"]
+              },
+              {
+                "text": "Envoy understands HTTP/1.1, HTTP/2, gRPC, and TCP. This allows the proxy to make per-request routing decisions — something a L4 load balancer cannot do."
+              }
+            ],
+            [
+              {
+                "text": "Load balancing: ",
+                "marks": ["bold"]
+              },
+              {
+                "text": "round-robin, least-request, consistent hashing per upstream cluster."
+              }
+            ],
+            [
+              {
+                "text": "Health checking: ",
+                "marks": ["bold"]
+              },
+              {
+                "text": "active (periodic probe) and passive (outlier detection based on error responses)."
+              }
+            ],
+            [
+              {
+                "text": "TLS termination and origination: ",
+                "marks": ["bold"]
+              },
+              {
+                "text": "each sidecar holds a workload certificate; all inter-sidecar traffic is encrypted even if the application sends plaintext to localhost."
+              }
+            ],
+            [
+              {
+                "text": "Stats emission: ",
+                "marks": ["bold"]
+              },
+              {
+                "text": "Envoy emits thousands of counters, gauges, and histograms per upstream cluster. The mesh aggregates these into the standard RED metrics (Rate, Errors, Duration)."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The data plane is stateless with respect to configuration — it holds no authoritative state. Its current behavior is entirely determined by the xDS configuration pushed from the control plane. Restart a sidecar and it reconnects to the control plane and receives its current config within seconds."
+            }
+          ]
+        },
+        {
+          "type": "code",
+          "language": "text",
+          "code": "Data Plane — cluster view\n\n  [Service A]      [Service B]      [Service C]\n  +--------+       +--------+       +--------+\n  | App  A |       | App  B |       | App  C |\n  | Envoy  | <---> | Envoy  | <---> | Envoy  |\n  +--------+  mTLS +--------+  mTLS +--------+\n       |                |                |\n       +---- xDS config (from control plane) ----+"
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The data plane is every sidecar proxy running in every pod — together they form the actual network fabric that carries traffic. They enforce rules but don't decide what those rules are; that is the control plane's job."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "msv-ch10-c004",
+      "order": 4,
+      "title": "The Mesh Control Plane",
+      "teaser": "The control plane is the brain of the mesh — it distributes routing rules, certificates, and policy to every sidecar without touching a single packet of live traffic. Istio calls it Pilot; Linkerd calls it the Destination controller.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The "
+            },
+            {
+              "text": "control plane",
+              "marks": ["bold"]
+            },
+            {
+              "text": " sits out of the data path. It watches Kubernetes resources (Services, Endpoints, custom CRDs like Istio's VirtualService), computes the desired configuration for each sidecar, and pushes that configuration to sidecars via the "
+            },
+            {
+              "text": "xDS API",
+              "marks": ["bold"]
+            },
+            {
+              "text": " — a gRPC streaming protocol defined by Envoy."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "xDS is an acronym for a family of discovery services:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "LDS (Listener Discovery Service): ",
+                "marks": ["bold"]
+              },
+              {
+                "text": "defines what ports Envoy listens on."
+              }
+            ],
+            [
+              {
+                "text": "RDS (Route Discovery Service): ",
+                "marks": ["bold"]
+              },
+              {
+                "text": "defines how incoming requests are matched and forwarded."
+              }
+            ],
+            [
+              {
+                "text": "CDS (Cluster Discovery Service): ",
+                "marks": ["bold"]
+              },
+              {
+                "text": "defines upstream service clusters (connection pools, health checks, TLS config)."
+              }
+            ],
+            [
+              {
+                "text": "EDS (Endpoint Discovery Service): ",
+                "marks": ["bold"]
+              },
+              {
+                "text": "defines the individual pod IP:port pairs backing a cluster."
+              }
+            ],
+            [
+              {
+                "text": "SDS (Secret Discovery Service): ",
+                "marks": ["bold"]
+              },
+              {
+                "text": "delivers TLS certificates and keys securely without writing them to disk."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "In Istio, the control plane is a single binary called "
+            },
+            {
+              "text": "istiod",
+              "marks": ["code"]
+            },
+            {
+              "text": " (previously split into Pilot, Citadel, and Galley). It serves as the xDS server, the certificate authority, and the configuration validator. In Linkerd, the equivalent is the "
+            },
+            {
+              "text": "destination",
+              "marks": ["code"]
+            },
+            {
+              "text": " controller, with identity handled by a separate "
+            },
+            {
+              "text": "identity",
+              "marks": ["code"]
+            },
+            {
+              "text": " component."
+            }
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "info",
+          "runs": [
+            {
+              "text": "The control plane is on the management path, not the data path. If istiod goes down, existing sidecars continue to enforce the last configuration they received — live traffic is not interrupted, but configuration updates and certificate rotations will pause."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The control plane is the manager that tells every proxy what rules to follow. It never touches real traffic — it just keeps each sidecar's configuration up to date. If the control plane goes down, the proxies keep running on the last config they got."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "msv-ch10-c005",
+      "order": 5,
+      "title": "Mutual TLS (mTLS) and SPIFFE/SPIRE",
+      "teaser": "mTLS gives every service a cryptographic identity — not just an IP address. Both sides of every call present a certificate proving who they are. The mesh rotates certificates automatically so developers never handle private keys.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Conventional TLS proves that a "
+            },
+            {
+              "text": "server",
+              "marks": ["italic"]
+            },
+            {
+              "text": " is who it claims to be (the browser trusts the website). Mutual TLS (mTLS) extends this: both the client "
+            },
+            {
+              "text": "and",
+              "marks": ["italic"]
+            },
+            {
+              "text": " the server present certificates, so each side can cryptographically verify the other's identity. In a service mesh, every sidecar-to-sidecar connection is mTLS — the entire cluster traffic is authenticated and encrypted without a single line of application TLS code."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Service identity is established using the "
+            },
+            {
+              "text": "SPIFFE",
+              "marks": ["bold"]
+            },
+            {
+              "text": " (Secure Production Identity Framework for Everyone) standard. A SPIFFE Verifiable Identity Document (SVID) is an X.509 certificate whose Subject Alternative Name (SAN) encodes a SPIFFE URI:"
+            }
+          ]
+        },
+        {
+          "type": "code",
+          "language": "text",
+          "code": "spiffe://cluster.local/ns/payments/sa/checkout-service"
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "This URI encodes the Kubernetes namespace ("
+            },
+            {
+              "text": "payments",
+              "marks": ["code"]
+            },
+            {
+              "text": ") and service account ("
+            },
+            {
+              "text": "checkout-service",
+              "marks": ["code"]
+            },
+            {
+              "text": "). Authorization policies can then be written against these identities rather than IP addresses, which are ephemeral in Kubernetes."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "SPIRE (SPIFFE Runtime Environment) is the reference implementation of SPIFFE. Istio uses its own built-in CA (embedded in istiod) or can delegate to an external CA. Linkerd uses its own trust anchor infrastructure. Key behaviors of mesh-managed mTLS:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Automatic certificate issuance: ",
+                "marks": ["bold"]
+              },
+              {
+                "text": "When a new pod starts, its sidecar requests a certificate from the control plane CA using a Kubernetes service account token as proof of identity."
+              }
+            ],
+            [
+              {
+                "text": "Short-lived certificates: ",
+                "marks": ["bold"]
+              },
+              {
+                "text": "Istio default is 24-hour certificates. Rotation happens automatically before expiry — no human action required."
+              }
+            ],
+            [
+              {
+                "text": "STRICT vs PERMISSIVE mode: ",
+                "marks": ["bold"]
+              },
+              {
+                "text": "PERMISSIVE accepts both plain text and mTLS (for migration); STRICT rejects plain text entirely (the security-complete state)."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "info",
+          "runs": [
+            {
+              "text": "mTLS in a mesh solves the perimeter security fallacy: once an attacker is inside the cluster network, plain-text inter-service calls expose everything. With mTLS, compromising one pod does not grant the ability to call arbitrary services — every connection requires a valid SPIFFE identity."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "mTLS means both sides of every service call show their ID card. The mesh issues each service a certificate with a cryptographic identity — not just an IP address — and rotates it automatically. You get encrypted, authenticated traffic between every service without writing any TLS code."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "msv-ch10-c006",
+      "order": 6,
+      "title": "Traffic Shaping — Canary, Mirror, Weighted Routing",
+      "teaser": "A service mesh lets you send 5% of traffic to a new version while 95% goes to the stable version — no code changes, no feature flags, just declarative YAML. Mirroring sends a copy of production traffic to a shadow deployment for zero-risk testing.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Traffic shaping is one of the highest-value mesh capabilities. Without a mesh, canary deployments require load balancer configuration changes, custom Nginx config, or feature flag systems. With a mesh, they are a YAML change:"
+            }
+          ]
+        },
+        {
+          "type": "code",
+          "language": "yaml",
+          "code": "# Istio VirtualService — canary routing: 5% to v2, 95% to v1\napiVersion: networking.istio.io/v1beta1\nkind: VirtualService\nmetadata:\n  name: checkout\n  namespace: payments\nspec:\n  hosts:\n    - checkout\n  http:\n    - route:\n        - destination:\n            host: checkout\n            subset: v1\n          weight: 95\n        - destination:\n            host: checkout\n            subset: v2\n          weight: 5"
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "A companion "
+            },
+            {
+              "text": "DestinationRule",
+              "marks": ["code"]
+            },
+            {
+              "text": " defines the "
+            },
+            {
+              "text": "v1",
+              "marks": ["code"]
+            },
+            {
+              "text": " and "
+            },
+            {
+              "text": "v2",
+              "marks": ["code"]
+            },
+            {
+              "text": " subsets by pod label ("
+            },
+            {
+              "text": "version: v1",
+              "marks": ["code"]
+            },
+            {
+              "text": " / "
+            },
+            {
+              "text": "version: v2",
+              "marks": ["code"]
+            },
+            {
+              "text": "). The mesh routes individual requests, not connections, giving true per-request granularity."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Three traffic shaping patterns:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Weighted routing (canary): ",
+                "marks": ["bold"]
+              },
+              {
+                "text": "Shift a percentage of traffic to a new version. Increase the percentage as confidence grows. Rollback is a weight change — not a deployment."
+              }
+            ],
+            [
+              {
+                "text": "Traffic mirroring (shadow): ",
+                "marks": ["bold"]
+              },
+              {
+                "text": "Send 100% of requests to v1 (live) and also send an async copy to v2 (shadow). The shadow response is ignored. Tests v2 with real production traffic — zero risk to users."
+              }
+            ],
+            [
+              {
+                "text": "Header-based routing: ",
+                "marks": ["bold"]
+              },
+              {
+                "text": "Route requests with a specific header (e.g., ",
+                "marks": []
+              },
+              {
+                "text": "x-canary: true",
+                "marks": ["code"]
+              },
+              {
+                "text": ") to v2, everything else to v1. Useful for internal testing with production services."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "info",
+          "runs": [
+            {
+              "text": "Traffic mirroring is particularly powerful for database-mutating services: the shadow service should either point to a shadow database or be built to handle duplicated mutations. Never mirror write traffic to the production database via a shadow path."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Traffic shaping lets you decide — in a config file — exactly what percentage of real requests goes to each version of a service. A canary sends 5% to the new version so you can watch metrics before committing. Mirroring sends a shadow copy to the new version so you can test it with real traffic without users ever seeing the result."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "msv-ch10-c007",
+      "order": 7,
+      "title": "Retries and Timeouts at the Mesh Layer",
+      "teaser": "When retries and timeouts live in application code, they are implemented inconsistently across services and languages. Moving them to the sidecar means one YAML change applies uniform retry behavior across an entire fleet — without a single code deploy.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Retries and timeouts are easy to implement incorrectly in application code: developers forget exponential backoff, retry on non-idempotent methods, ignore the downstream timeout budget, or hardcode values that should be tunable. When 30 services each implement retries differently, diagnosing cascading failures becomes an archaeology project."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The mesh sidecar centralizes these concerns. In Istio, retry and timeout policy lives in a "
+            },
+            {
+              "text": "VirtualService",
+              "marks": ["code"]
+            },
+            {
+              "text": ":"
+            }
+          ]
+        },
+        {
+          "type": "code",
+          "language": "yaml",
+          "code": "# Istio VirtualService — retry and timeout policy\napiVersion: networking.istio.io/v1beta1\nkind: VirtualService\nmetadata:\n  name: inventory\nspec:\n  hosts:\n    - inventory\n  http:\n    - timeout: 3s\n      retries:\n        attempts: 3\n        perTryTimeout: 1s\n        retryOn: gateway-error,connect-failure,retriable-4xx\n      route:\n        - destination:\n            host: inventory"
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Key design considerations:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Total timeout = attempts x perTryTimeout: ",
+                "marks": ["bold"]
+              },
+              {
+                "text": "With 3 attempts at 1s each, the sidecar caps the total call duration at 3s (the outer timeout). Always set perTryTimeout < timeout / attempts."
+              }
+            ],
+            [
+              {
+                "text": "retryOn semantics: ",
+                "marks": ["bold"]
+              },
+              {
+                "text": "Retry on connection failures and 503s, never on 400/401/404 — those indicate a client error, not a transient server error. Retrying non-idempotent POSTs requires application-level deduplication."
+              }
+            ],
+            [
+              {
+                "text": "Retry budget vs fixed count: ",
+                "marks": ["bold"]
+              },
+              {
+                "text": "Linkerd supports retry budgets — a percentage of requests that may be retried — which prevents retry storms better than fixed attempt counts under high error rates."
+              }
+            ],
+            [
+              {
+                "text": "Deadline propagation: ",
+                "marks": ["bold"]
+              },
+              {
+                "text": "Pass gRPC deadlines or HTTP timeout headers downstream so each service knows the remaining budget. Mesh timeouts are enforced per-hop; the total end-to-end budget must account for all hops."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "warning",
+          "runs": [
+            {
+              "text": "Removing retry logic from application code and adding it to the mesh only works if the application code does not also retry. Double-retrying (app + mesh) can multiply traffic by 9x under failure conditions. Audit application libraries for built-in retry logic before enabling mesh retries."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Retries and timeouts in each service mean 50 services each implement them differently. The mesh sidecar implements them once, applies them everywhere, and lets you tune them via config without redeploying any service. The trap: if the app also retries, you double-retry and make outages worse."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "msv-ch10-c008",
+      "order": 8,
+      "title": "Circuit Breaking in the Mesh",
+      "teaser": "Envoy's outlier detection ejects misbehaving upstream pods from the load-balancing pool automatically — no Hystrix, no Resilience4j, no code. When 5 consecutive 503s come from a single endpoint, the sidecar stops sending traffic there.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Traditional circuit breakers (Hystrix, Resilience4j) live in application code and track aggregate error rates per service. Envoy's "
+            },
+            {
+              "text": "outlier detection",
+              "marks": ["bold"]
+            },
+            {
+              "text": " is more granular: it tracks the error rate of each individual upstream endpoint (pod) and ejects unhealthy ones from the load-balancing pool, rather than tripping a circuit for the entire service."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Envoy also supports connection-level circuit breaking via "
+            },
+            {
+              "text": "connection pool limits",
+              "marks": ["bold"]
+            },
+            {
+              "text": " — the maximum number of concurrent connections and pending requests to an upstream cluster. Both are configured via Istio's "
+            },
+            {
+              "text": "DestinationRule",
+              "marks": ["code"]
+            },
+            {
+              "text": ":"
+            }
+          ]
+        },
+        {
+          "type": "code",
+          "language": "yaml",
+          "code": "# Istio DestinationRule — circuit breaking\napiVersion: networking.istio.io/v1beta1\nkind: DestinationRule\nmetadata:\n  name: inventory\nspec:\n  host: inventory\n  trafficPolicy:\n    connectionPool:\n      http:\n        http1MaxPendingRequests: 100\n        http2MaxRequests: 1000\n    outlierDetection:\n      consecutive5xxErrors: 5\n      interval: 10s\n      baseEjectionTime: 30s\n      maxEjectionPercent: 50"
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Reading the config: if a pod returns 5 consecutive 5xx errors within a 10-second evaluation window, it is ejected from the pool for 30 seconds (doubling on repeated ejections). At most 50% of endpoints can be ejected simultaneously — this prevents the circuit breaker from taking an entire service offline when the cluster is degraded."
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Advantage over code-level circuit breakers: ",
+                "marks": ["bold"]
+              },
+              {
+                "text": "Envoy detects per-pod misbehavior. A single bad pod in a 10-pod deployment is isolated without affecting the other 9 — something a service-level circuit breaker cannot distinguish."
+              }
+            ],
+            [
+              {
+                "text": "Gap: ",
+                "marks": ["bold"]
+              },
+              {
+                "text": "Envoy's circuit breaking is stateless across sidecars — each sidecar makes its own ejection decisions. There is no cluster-wide circuit breaker state. For service-wide protection, combine outlier detection with retry budgets and connection pool limits."
+              }
+            ]
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Instead of a code library watching error rates, the sidecar watches each individual upstream pod. If a specific pod starts returning errors, the sidecar stops sending requests to it — not to the whole service, just that one bad pod. It tries again later to see if the pod has recovered."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "msv-ch10-c009",
+      "order": 9,
+      "title": "Observability Without Code Changes",
+      "teaser": "Because every request passes through the sidecar, the mesh can emit the golden signals — latency, traffic, errors, saturation — for every service pair, without instrumenting a single line of application code. Distributed traces appear automatically.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "One of the most compelling mesh benefits is "
+            },
+            {
+              "text": "automatic observability",
+              "marks": ["bold"]
+            },
+            {
+              "text": " — the infrastructure layer instruments every call. Three signal types emerge from the sidecar without application code changes:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Metrics: ",
+                "marks": ["bold"]
+              },
+              {
+                "text": "Each Envoy sidecar exposes a /stats/prometheus endpoint with per-cluster, per-listener, and per-route metrics. Prometheus scrapes these to give request rates, error rates, and latency percentiles for every service-to-service call in the mesh — the complete RED metric set."
+              }
+            ],
+            [
+              {
+                "text": "Distributed traces: ",
+                "marks": ["bold"]
+              },
+              {
+                "text": "Envoy propagates trace context headers (B3, W3C Trace Context, Datadog) and samples spans for each hop. The application must propagate incoming trace headers to outgoing calls (one-line middleware in most frameworks), but does not need to create or report spans itself."
+              }
+            ],
+            [
+              {
+                "text": "Access logs: ",
+                "marks": ["bold"]
+              },
+              {
+                "text": "Envoy logs every request with method, path, status code, upstream cluster, duration, and bytes transferred. These are structured JSON and can feed any log aggregation pipeline (Loki, Elastic, Splunk)."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Standard mesh dashboards (e.g., Kiali for Istio, Linkerd Viz for Linkerd) visualize the service graph — a real-time topology of which services are talking to which, with error rates and latencies on every edge. This is derived entirely from sidecar telemetry, not code instrumentation."
+            }
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "info",
+          "runs": [
+            {
+              "text": "\"Automatic\" distributed tracing has a catch: headers must be propagated. If Service A receives a request with a B3 trace header and calls Service B without forwarding that header, the trace is broken into two disconnected spans. Add a one-line header-propagation middleware to every service — it is the only application change the mesh requires."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Since every request goes through the proxy, the proxy can measure everything: how many requests per second, how many failed, how slow they were. You get a dashboard of every service talking to every other service — error rates, latencies — and you never had to add a single metrics line to your application code."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "msv-ch10-c010",
+      "order": 10,
+      "title": "Istio — Full-Featured, Full-Complexity",
+      "teaser": "Istio is the most widely deployed service mesh, with the richest feature set — and the steepest learning curve. Its CRD surface alone (VirtualService, DestinationRule, AuthorizationPolicy, PeerAuthentication) is large enough to warrant a dedicated operator role.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Istio was open-sourced in 2017 by Google, IBM, and Lyft, and donated to the CNCF in 2022. It is the reference mesh for most enterprise Kubernetes deployments and the feature-richest option in the ecosystem. Its data plane proxy is Envoy; its control plane is "
+            },
+            {
+              "text": "istiod",
+              "marks": ["code"]
+            },
+            {
+              "text": ", a single binary that consolidates the CA, xDS server, and configuration validation."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Istio's primary Kubernetes CRDs:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "VirtualService: ",
+                "marks": ["bold"]
+              },
+              {
+                "text": "defines routing rules — which version, which weights, retries, timeouts, fault injection."
+              }
+            ],
+            [
+              {
+                "text": "DestinationRule: ",
+                "marks": ["bold"]
+              },
+              {
+                "text": "defines subsets (canary targets), connection pools, and outlier detection per upstream."
+              }
+            ],
+            [
+              {
+                "text": "AuthorizationPolicy: ",
+                "marks": ["bold"]
+              },
+              {
+                "text": "defines which services (by SPIFFE identity) may call which other services on which paths and methods."
+              }
+            ],
+            [
+              {
+                "text": "PeerAuthentication: ",
+                "marks": ["bold"]
+              },
+              {
+                "text": "sets STRICT or PERMISSIVE mTLS mode per namespace or workload."
+              }
+            ],
+            [
+              {
+                "text": "Gateway: ",
+                "marks": ["bold"]
+              },
+              {
+                "text": "configures the ingress/egress gateway (an Envoy at the cluster edge, not a sidecar)."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Strengths: the most complete feature set, large ecosystem, strong CNCF backing, Envoy's proven performance, and extensive documentation. Weaknesses: high operational complexity, significant resource overhead (each Envoy sidecar adds ~50 MB RAM and ~0.5 CPU in steady state), and a steep CRD learning curve. Istio was historically criticized for instability between versions; the post-1.0 releases (especially 1.14+) stabilized considerably."
+            }
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "warning",
+          "runs": [
+            {
+              "text": "Istio's sidecar injection uses a mutating webhook. Every pod restart in the cluster hits the webhook. If istiod is unavailable and the webhook is configured to fail-closed, new pod scheduling is blocked cluster-wide. Configure the webhook to fail-open during bootstrapping and test istiod HA before production use."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Istio is the Swiss Army knife of service meshes — it can do almost everything, but you need to learn a lot of new resource types to configure it, and it uses significant memory and CPU per sidecar. It is the right choice when you need every capability and have the operational maturity to run it."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "msv-ch10-c011",
+      "order": 11,
+      "title": "Linkerd — Lightweight Rust-Based Alternative",
+      "teaser": "Linkerd replaced its original Scala proxy with a purpose-built Rust micro-proxy (linkerd2-proxy) that uses 10x less memory than Envoy per sidecar. It trades Istio's breadth for operational simplicity and measurably lower overhead.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Linkerd was the first service mesh (v1 predates Istio), but the current version (Linkerd2, aka Linkerd) was a ground-up rewrite that debuted in 2018. Its data-plane proxy is the "
+            },
+            {
+              "text": "linkerd2-proxy",
+              "marks": ["code"]
+            },
+            {
+              "text": ", written in Rust using the Tokio async runtime and the hyper HTTP library. It is built exclusively for the service mesh use case — not a general-purpose proxy like Envoy."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Resource footprint comparison (approximate, production baselines vary):"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Linkerd proxy: ~10 MB RSS, ~0.05 vCPU idle."
+              }
+            ],
+            [
+              {
+                "text": "Envoy (Istio): ~50-70 MB RSS, ~0.1-0.3 vCPU idle."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Linkerd design philosophy:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Simplicity as a feature: ",
+                "marks": ["bold"]
+              },
+              {
+                "text": "Linkerd deliberately does not implement every Envoy filter. If a feature is not core to the mesh value proposition, it is not included."
+              }
+            ],
+            [
+              {
+                "text": "Automatic mTLS: ",
+                "marks": ["bold"]
+              },
+              {
+                "text": "mTLS is on by default with zero configuration — no PeerAuthentication CRDs required."
+              }
+            ],
+            [
+              {
+                "text": "Retry budgets: ",
+                "marks": ["bold"]
+              },
+              {
+                "text": "Instead of fixed retry counts, Linkerd uses retry budgets (a percentage of calls that may be retried), which prevent retry amplification under high error rates."
+              }
+            ],
+            [
+              {
+                "text": "No Envoy dependency: ",
+                "marks": ["bold"]
+              },
+              {
+                "text": "Linkerd's proxy has a smaller attack surface and does not carry Envoy's full L4/L7 feature surface that most mesh users never use."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Limitations vs Istio: no native support for TCP-level traffic shaping (weighted routing requires SMI or Gateway API), less extensive L7 routing features, smaller ecosystem. Linkerd is governed by Buoyant (its original creator) rather than a neutral CNCF SIG."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Linkerd chose to write its own tiny Rust proxy instead of using Envoy. The result is a sidecar that uses a fraction of the memory and CPU, with an installation experience that takes minutes rather than hours. You get the core mesh benefits — mTLS, retries, metrics — without learning Istio's full CRD vocabulary."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "msv-ch10-c012",
+      "order": 12,
+      "title": "Cilium Service Mesh — eBPF-Based, Sidecar-Less",
+      "teaser": "Cilium replaces the sidecar model entirely by running mesh logic in the Linux kernel via eBPF. No injected containers, no iptables redirect chains, sub-millisecond overhead. The tradeoff: requires a modern kernel (5.10+) and a Cilium CNI installation.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Cilium is a Kubernetes CNI plugin (network plugin) that has expanded into a full service mesh using "
+            },
+            {
+              "text": "eBPF",
+              "marks": ["bold"]
+            },
+            {
+              "text": " (extended Berkeley Packet Filter). eBPF allows programs to run in the Linux kernel at specific hook points — without modifying kernel source code and without the overhead of kernel module development. Cilium attaches eBPF programs to socket and networking hooks to implement L3-L7 policy, load balancing, and observability."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The Cilium mesh architecture replaces the sidecar:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "No sidecar injection: ",
+                "marks": ["bold"]
+              },
+              {
+                "text": "Mesh logic runs in the kernel as eBPF programs, not in a co-located userspace container. Pods have no proxy container."
+              }
+            ],
+            [
+              {
+                "text": "No iptables: ",
+                "marks": ["bold"]
+              },
+              {
+                "text": "Traditional meshes use iptables rules to redirect traffic to the sidecar. Cilium hooks directly into the socket layer, eliminating the packet-copying overhead of iptables."
+              }
+            ],
+            [
+              {
+                "text": "L7 policy: ",
+                "marks": ["bold"]
+              },
+              {
+                "text": "Cilium supports L7 HTTP policy (allow GET /api, deny POST /admin) via an Envoy instance that runs as a per-node DaemonSet rather than per-pod sidecar."
+              }
+            ],
+            [
+              {
+                "text": "Hubble: ",
+                "marks": ["bold"]
+              },
+              {
+                "text": "Cilium's built-in observability layer, providing flow-level visibility for all traffic in the cluster with a UI and Prometheus integration."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Requirements and tradeoffs: Cilium requires Linux kernel 5.10+ (5.15+ recommended for full feature set), which is standard in modern EKS, GKE, and AKS but may require node OS upgrades in older clusters. It also requires replacing the existing CNI — a significant operational change in an existing cluster. The payoff is measurably lower per-packet overhead and zero sidecar resource cost."
+            }
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "info",
+          "runs": [
+            {
+              "text": "Cilium's L7 features are implemented by routing traffic to a per-node Envoy DaemonSet (not a sidecar). For clusters with thousands of pods, this means one Envoy per node instead of one Envoy per pod — a significant resource saving at scale."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Instead of putting a proxy container next to every app container, Cilium runs mesh logic directly in the Linux kernel using eBPF. The kernel handles the traffic policy without an extra userspace process per pod. The result is lower overhead, but it requires a modern kernel and replacing the cluster's network plugin."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "msv-ch10-c013",
+      "order": 13,
+      "title": "Ambient Mesh — Istio's Sidecar-Less Mode",
+      "teaser": "Istio Ambient Mesh splits the sidecar into two layers: a node-level ztunnel that handles mTLS for every pod on the node, and optional per-service waypoint proxies for L7 features. Services get mesh security for free; L7 features are opt-in.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Istio Ambient Mesh, introduced in 2022 and reaching stable in Istio 1.24 (2024), is a redesign of Istio's data plane that eliminates the per-pod sidecar while preserving Istio's control plane and policy model. It is the Istio project's answer to eBPF-based meshes."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Ambient mesh introduces two new components:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "ztunnel (zero-trust tunnel): ",
+                "marks": ["bold"]
+              },
+              {
+                "text": "A per-node DaemonSet (not per-pod) that handles L4 mTLS for all pods on the node. It intercepts traffic at the node level using a custom cgroup-based traffic interception mechanism (not iptables redirect to a sidecar). Every pod on the node gets encrypted, authenticated inter-pod traffic with zero pod-level overhead."
+              }
+            ],
+            [
+              {
+                "text": "Waypoint proxy: ",
+                "marks": ["bold"]
+              },
+              {
+                "text": "A per-namespace (or per-service-account) Envoy deployment that handles L7 features: retries, timeouts, header-based routing, AuthorizationPolicy on HTTP methods, and fault injection. Waypoints are deployed only for services that need L7 features — L4-only services pay no L7 cost."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "code",
+          "language": "text",
+          "code": "Ambient Mesh topology\n\n  Node A                           Node B\n  +---------------------------+    +---------------------------+\n  | Pod A1     Pod A2         |    | Pod B1                    |\n  | (no proxy) (no proxy)     |    | (no proxy)                |\n  |         |         |       |    |         |                 |\n  |         v         v       |    |         v                 |\n  |    +----------+           |    |    +----------+           |\n  |    |  ztunnel | -------HBONE mTLS--> |  ztunnel |          |\n  |    +----------+           |    |    +----------+           |\n  +---------------------------+    +---------------------------+\n           |\n           | (L7 needed)\n           v\n  +--------------------+\n  | Waypoint proxy     |  <-- per namespace Envoy\n  | (retries, routing, |       for L7 features\n  | AuthzPolicy HTTP)  |\n  +--------------------+"
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "HBONE (HTTP-Based Overlay Network Encapsulation) is the tunnel protocol ztunnel uses to carry encrypted traffic between nodes. It wraps the original TCP connection in an HTTP/2 stream with mTLS."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Benefits over the sidecar model: no sidecar injection webhook, no per-pod proxy overhead, no need to restart pods to add mesh functionality, and lower total resource consumption for large clusters. The migration path from sidecar Istio to ambient is incremental — namespaces can move one at a time."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Ambient mesh is Istio without sidecars. A small ztunnel DaemonSet on each node handles encryption and authentication for all pods on that node. Only services that need fancy L7 routing get a waypoint proxy. Most services get secure traffic for free, without a proxy container sitting next to every app."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "msv-ch10-c014",
+      "order": 14,
+      "title": "Mesh Comparison — Istio vs Linkerd vs Cilium vs Ambient",
+      "teaser": "Choosing a mesh is a tradeoff between operational complexity, resource overhead, feature completeness, and infrastructure requirements. No single mesh is correct for every team.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "A direct comparison across the four major options as of 2024:"
+            }
+          ]
+        },
+        {
+          "type": "code",
+          "language": "text",
+          "code": "Mesh Comparison\n\nDimension          Istio (sidecar)  Linkerd      Cilium        Istio Ambient\n---------------------------------------------------------------------------\nProxy              Envoy            Rust proxy   eBPF+Envoy    ztunnel+Envoy\nSidecar required   Yes              Yes          No            No\nKernel req.        Standard         Standard     5.10+         Standard\nCNI replacement    No               No           Yes           No\nmTLS               Yes (CRD-config) Auto         Yes           Auto\nL7 routing         Full (CRD)       Limited      Via waypoint  Via waypoint\nRetry model        Count-based      Budget-based Count-based   Count-based\nSidecar RAM/pod    ~50-70 MB        ~10 MB       0 MB          0 MB\nL7 overhead        Per-pod proxy    Per-pod      Per-node Env  Per-ns proxy\nControl plane      istiod           destination  Cilium agent  istiod\nCNCF status        Graduated        Graduated    Graduated     (Istio proj)\nBest for           Full features,   Simplicity,  Low overhead, Istio users\n                   enterprise       low resource clusters 5.10+ without sidecars"
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Decision guidance:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Choose Istio (sidecar) ",
+                "marks": ["bold"]
+              },
+              {
+                "text": "when you need the full feature set — advanced L7 routing, fault injection, external CA integration, Envoy filters — and have the operational bandwidth to manage it."
+              }
+            ],
+            [
+              {
+                "text": "Choose Linkerd ",
+                "marks": ["bold"]
+              },
+              {
+                "text": "when operational simplicity and low resource overhead matter more than feature completeness, and your L7 routing needs are basic."
+              }
+            ],
+            [
+              {
+                "text": "Choose Cilium ",
+                "marks": ["bold"]
+              },
+              {
+                "text": "when you are running on a modern Linux kernel (5.10+), are willing to standardize on Cilium as your CNI, and want the lowest possible per-packet overhead at scale."
+              }
+            ],
+            [
+              {
+                "text": "Choose Istio Ambient ",
+                "marks": ["bold"]
+              },
+              {
+                "text": "when you want Istio's policy model and control plane without the sidecar tax — particularly in large clusters where sidecar resource costs are significant."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "info",
+          "runs": [
+            {
+              "text": "All four options are CNCF Graduated projects or part of one. For greenfield clusters, Cilium (CNI + mesh) and Istio Ambient are the most actively invested directions as of 2024. For brownfield clusters with existing Istio, the migration to Ambient is incremental and worth evaluating."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Istio does the most but requires the most RAM and learning. Linkerd does less but uses a fraction of the memory and is far simpler to operate. Cilium skips the sidecar entirely using Linux kernel magic but needs a modern kernel and CNI replacement. Ambient is Istio without sidecars — the best of both worlds if you are already in the Istio ecosystem."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "msv-ch10-c015",
+      "order": 15,
+      "title": "Service Mesh Adoption Strategy",
+      "teaser": "A service mesh is infrastructure — it needs the same gradual rollout strategy as any other foundational change. Start with observability only, add mTLS in PERMISSIVE mode, migrate to STRICT mode namespace by namespace.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Adopting a service mesh in a running cluster is a significant operational change. The recommended sequence minimizes risk:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Phase 1 — Observability only: ",
+                "marks": ["bold"]
+              },
+              {
+                "text": "Install the mesh control plane and inject sidecars in PERMISSIVE mTLS mode. Enable Prometheus scraping of sidecar metrics. Deploy Kiali or Linkerd Viz. Do not change any routing or security policy. Gain trust in the mesh by observing what it reports — does the service topology match your mental model? Do the error rates match what your application-level monitoring reports?"
+              }
+            ],
+            [
+              {
+                "text": "Phase 2 — mTLS in PERMISSIVE mode: ",
+                "marks": ["bold"]
+              },
+              {
+                "text": "PERMISSIVE mode accepts both plain-text and mTLS connections. Services that have been migrated to the mesh communicate over mTLS; services not yet in the mesh communicate over plain text. This allows incremental migration without breaking existing callers."
+              }
+            ],
+            [
+              {
+                "text": "Phase 3 — STRICT mode namespace by namespace: ",
+                "marks": ["bold"]
+              },
+              {
+                "text": "Once all services in a namespace are mesh-enrolled, switch to STRICT mode — reject plain-text connections. Verify that no non-mesh callers exist before switching. Use Kiali's graph to identify plain-text edges."
+              }
+            ],
+            [
+              {
+                "text": "Phase 4 — Traffic policy: ",
+                "marks": ["bold"]
+              },
+              {
+                "text": "Add retry policies, timeouts, and circuit-breaking configuration. Remove equivalent logic from application libraries incrementally, after verifying the mesh behavior matches the expected semantics."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Common pitfalls to avoid:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Do not enable mesh-level retries while application-level retries are still active — this compounds retry load under failure conditions."
+              }
+            ],
+            [
+              {
+                "text": "Do not skip the observability phase — the mesh's service graph will reveal call patterns and error rates you did not know existed."
+              }
+            ],
+            [
+              {
+                "text": "Do not inject sidecars into the kube-system namespace — mesh injection there can cause cluster bootstrapping issues."
+              }
+            ]
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Roll out the mesh in stages: first just watch the traffic without changing anything, then turn on encryption in a mode that still accepts plain text, then lock it down namespace by namespace once everything is enrolled. Never turn on mesh retries while your app code also retries."
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

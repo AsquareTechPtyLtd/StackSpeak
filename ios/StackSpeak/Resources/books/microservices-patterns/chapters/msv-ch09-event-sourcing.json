@@ -1,0 +1,1452 @@
+{
+  "chapterId": "msv-ch09-event-sourcing",
+  "shardIndex": 9,
+  "cards": [
+    {
+      "id": "msv-ch09-c001",
+      "order": 1,
+      "title": "Event Sourcing — State as a Log",
+      "teaser": "Instead of persisting the current state of an entity, event sourcing persists the sequence of events that caused the entity to reach that state. The current state is derived, not stored — recomputed whenever needed by replaying the log.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "In a conventional CRUD system, a database row holds the current value of an entity. When a user changes their email address, the row is updated and the old value is gone. Event sourcing inverts this design:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "State is never stored directly.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " There is no \"current value\" row to update."
+              }
+            ],
+            [
+              {
+                "text": "Every change is recorded as a named event",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — UserEmailChanged, OrderShipped, InventoryReserved — appended to an ordered log."
+              }
+            ],
+            [
+              {
+                "text": "Current state is computed",
+                "marks": ["bold"]
+              },
+              {
+                "text": " by replaying the event log through a pure fold function: start from an empty object and apply each event in sequence."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The shift sounds small but has profound consequences. The log is the single source of truth. Nothing is lost: yesterday's state, last year's state, the exact sequence of decisions — all recoverable from the same log. This is the core bet of event sourcing: immutable history is more valuable than a compact snapshot of now."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Event sourcing was popularized in the domain-driven design (DDD) community, particularly through Greg Young's work starting around 2010, and is most naturally applied to "
+            },
+            {
+              "text": "aggregates",
+              "marks": ["italic"]
+            },
+            {
+              "text": " — the consistency boundaries in a DDD model. Tools built specifically for this pattern include EventStoreDB (now marketed as Kurrent), and Marten (a .NET library that turns PostgreSQL into an event store)."
+            }
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "info",
+          "runs": [
+            {
+              "text": "Event sourcing is not a general persistence strategy — it is a domain modeling strategy. It shines when the history of changes is as important as the current state, when audit requirements are strong, or when multiple read models must be derived from the same facts."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Instead of saving what something is right now, event sourcing saves every change that ever happened to it. To find out the current state, you replay those changes from the beginning — like restoring a spreadsheet by re-entering every formula in order."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "msv-ch09-c002",
+      "order": 2,
+      "title": "The Event Log — Append-Only and Immutable",
+      "teaser": "The event log is the foundational data structure of event sourcing: an ordered, append-only sequence of immutable facts. Nothing is ever updated or deleted. Past events are as permanent as the past itself.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The event log has three defining properties that distinguish it from an ordinary database table or a message queue:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Append-only.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Events are only ever written to the end of the log. There is no UPDATE, no DELETE, no PATCH. The only write operation is an append."
+              }
+            ],
+            [
+              {
+                "text": "Immutable.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Once written, an event cannot be changed. If a mistake is recorded, the correction is a new event — not an edit to the old one."
+              }
+            ],
+            [
+              {
+                "text": "Ordered.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Events carry a sequence number or timestamp that establishes their causal order within a stream. Replay depends on this ordering being stable."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "In practice, the log is usually partitioned by "
+            },
+            {
+              "text": "aggregate stream",
+              "marks": ["italic"]
+            },
+            {
+              "text": ": one log stream per aggregate instance (e.g., one stream for Order-4821, another for Order-4822). EventStoreDB (Kurrent) calls these streams; Marten calls them aggregate streams. Each stream has its own sequence number starting at zero."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Optimistic concurrency control is implemented by asserting the expected stream version on write. If Order-4821's stream is at version 7 and two concurrent writers both try to append at version 7, one will succeed and the other will receive a concurrency conflict exception. This replaces row-level locking with a compare-and-swap operation at the log level."
+            }
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "warning",
+          "runs": [
+            {
+              "text": "Immutability is not just a technical constraint — it is a semantic claim about what happened. An event says \"this occurred.\" Allowing events to be mutated would be like allowing historical records to be rewritten. Some compliance frameworks (GDPR's right to erasure) create tension with immutability; strategies include storing personal data outside the event payload or using cryptographic erasure."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The event log is like a ledger in accounting — you can only add new lines, never erase old ones. If you made an error, you write a correction entry. The history is permanent, and that permanence is the point."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "msv-ch09-c003",
+      "order": 3,
+      "title": "Aggregate State from Events — Fold/Reduce Semantics",
+      "teaser": "Rebuilding aggregate state from an event log is a pure fold operation: apply each event in sequence to an accumulator, starting from an empty initial state. Every apply function is a pure function with no side effects.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The reconstruction of state follows the same pattern regardless of language or domain. In functional programming terms, it is a left fold over the event sequence:"
+            }
+          ]
+        },
+        {
+          "type": "code",
+          "lang": "typescript",
+          "text": "// Event types\ntype OrderEvent =\n  | { type: 'OrderPlaced';  orderId: string; items: Item[] }\n  | { type: 'ItemAdded';    item: Item }\n  | { type: 'OrderShipped'; trackingNumber: string }\n  | { type: 'OrderCancelled'; reason: string };\n\n// Aggregate state\ntype OrderState = {\n  id: string;\n  items: Item[];\n  status: 'pending' | 'shipped' | 'cancelled';\n  trackingNumber?: string;\n};\n\n// Apply function — pure, no side effects\nfunction apply(state: OrderState, event: OrderEvent): OrderState {\n  switch (event.type) {\n    case 'OrderPlaced':\n      return { id: event.orderId, items: event.items, status: 'pending' };\n    case 'ItemAdded':\n      return { ...state, items: [...state.items, event.item] };\n    case 'OrderShipped':\n      return { ...state, status: 'shipped', trackingNumber: event.trackingNumber };\n    case 'OrderCancelled':\n      return { ...state, status: 'cancelled' };\n  }\n}\n\n// Rebuild state by folding over event log\nfunction rehydrate(events: OrderEvent[]): OrderState {\n  return events.reduce(apply, {} as OrderState);\n}"
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Several invariants must hold for this pattern to work correctly:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "apply is a pure function.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Given the same state and event, it always returns the same new state. No I/O, no randomness, no external calls."
+              }
+            ],
+            [
+              {
+                "text": "Events are facts, not commands.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " PlaceOrder is a command (a request). OrderPlaced is an event (a fact that a command was processed successfully). Commands can be rejected; events cannot."
+              }
+            ],
+            [
+              {
+                "text": "Validation lives in command handlers.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Business rules are enforced before writing to the log. Once an event is in the log, it is assumed valid."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The ASCII diagram below shows the relationship between the log and aggregate state:"
+            }
+          ]
+        },
+        {
+          "type": "code",
+          "lang": "text",
+          "text": "Event Log (stream: Order-4821)\n┌──────────────────┐   ┌──────────────────┐   ┌──────────────────┐\n│ v0: OrderPlaced  │──▶│ v1: ItemAdded    │──▶│ v2: OrderShipped │\n│ orderId: 4821    │   │ item: {sku: A1}  │   │ tracking: TRK99  │\n└──────────────────┘   └──────────────────┘   └──────────────────┘\n         │                      │                      │\n         ▼                      ▼                      ▼\n  apply(∅, v0)         apply(s0, v1)          apply(s1, v2)\n         │                      │                      │\n         ▼                      ▼                      ▼\n  s0 = {id:4821,        s1 = {id:4821,         s2 = {id:4821,\n   items:[],             items:[A1],             items:[A1],\n   status:pending}       status:pending}         status:shipped,\n                                                 tracking:TRK99}\n                                                      ▲\n                                               Current State"
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Rebuilding state from events works exactly like summing a list of numbers: start at zero, add each number in order, and you get the current total. Replace numbers with events and addition with an apply function, and you have event sourcing's state reconstruction."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "msv-ch09-c004",
+      "order": 4,
+      "title": "Snapshots — Avoiding Full Replay from the Beginning",
+      "teaser": "Replaying thousands of events every time an aggregate is loaded is expensive. Snapshots are periodic state checkpoints that let replay start from a known point rather than from event zero.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "For long-lived aggregates — a bank account with years of transactions, an order that has been amended dozens of times — replaying every event from the beginning on every load is impractical. Snapshots solve this without abandoning the event sourcing model."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "A snapshot is a serialized copy of the aggregate state at a specific event version. The snapshot is stored alongside the event stream. When loading an aggregate, the system:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "numbered",
+          "items": [
+            [
+              {
+                "text": "Reads the most recent snapshot (e.g., state at version 150)."
+              }
+            ],
+            [
+              {
+                "text": "Reads only the events after the snapshot version (versions 151 onward)."
+              }
+            ],
+            [
+              {
+                "text": "Applies those delta events to the snapshot state."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Snapshot strategies vary by use case:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Every N events.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " After every 100 events, write a snapshot. Simple and predictable. Works well for aggregates with steady event rates."
+              }
+            ],
+            [
+              {
+                "text": "On aggregate load.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " If the delta from the last snapshot exceeds a threshold, write a new snapshot after loading. Amortizes snapshot cost across reads."
+              }
+            ],
+            [
+              {
+                "text": "Externally triggered.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " A maintenance job periodically snapshots all aggregates. Decouples snapshot creation from command handling."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Critically, snapshots are "
+            },
+            {
+              "text": "an optimization, not a replacement",
+              "marks": ["italic"]
+            },
+            {
+              "text": " for the event log. The log remains the source of truth. A snapshot can be discarded and reconstructed from events at any time. This separation is what keeps the model trustworthy: the snapshot is a cache, and like any cache, it is disposable."
+            }
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "info",
+          "runs": [
+            {
+              "text": "Marten (the .NET event sourcing library) has built-in snapshot support that can be configured inline-aggregation style — snapshots are written automatically after a configurable number of events. EventStoreDB (Kurrent) leaves snapshotting to the application layer, treating it as a derived stream."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "A snapshot is like a save point in a video game. Instead of replaying every event from the very beginning, you load the last save and replay only what happened since then. The save point is optional — you could reconstruct everything without it — but it is much faster."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "msv-ch09-c005",
+      "order": 5,
+      "title": "Projections — Derived Read Models from Events",
+      "teaser": "A projection is a process that consumes an event stream and builds a read-optimized view of the data. Projections are how event-sourced systems answer queries without replaying aggregates on every read.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "An event-sourced write model is not queryable in a useful way: to answer \"show me all pending orders in region EU\" you would have to load every Order aggregate and replay its events. Projections solve this by materializing purpose-built read models from the event stream."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "A projection subscribes to one or more event streams, handles each event type as it arrives, and writes to a read store (SQL table, document store, search index, in-memory cache). The read store is a "
+            },
+            {
+              "text": "derived artifact",
+              "marks": ["italic"]
+            },
+            {
+              "text": " — it can be rebuilt at any time by re-processing the event log from the beginning."
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Inline projections",
+                "marks": ["bold"]
+              },
+              {
+                "text": " run synchronously in the command handler's transaction (same database). Fast consistency; limited scale."
+              }
+            ],
+            [
+              {
+                "text": "Async projections",
+                "marks": ["bold"]
+              },
+              {
+                "text": " consume events from a subscription (e.g., EventStoreDB's catch-up subscriptions or Kafka topics) and update a separate store. Eventual consistency; independently scalable."
+              }
+            ],
+            [
+              {
+                "text": "Ad-hoc projections",
+                "marks": ["bold"]
+              },
+              {
+                "text": " are built on demand by replaying the entire event history through a new handler — useful for analytics queries or feature development."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "One event stream can feed multiple projections simultaneously. A ShipmentCreated event might update a \"shipments by status\" dashboard, an \"orders awaiting delivery\" list, and a customer notification projection — all independently, without coupling."
+            }
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "info",
+          "runs": [
+            {
+              "text": "Projections are a superpower of event sourcing: because the log is permanent, you can create projections that did not exist when the events were written. New business requirements are addressed by building new projections over historical data, not by migrating existing data."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "A projection is a purpose-built summary built from the event history. The event log is the raw data; projections are the reports. You can have as many reports as you need, each shaped differently, all derived from the same original facts."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "msv-ch09-c006",
+      "order": 6,
+      "title": "Temporal Queries — \"What Was the State at Time T?\"",
+      "teaser": "Because the event log is immutable and ordered, any past state of the system can be reconstructed. Temporal queries — asking what state looked like at a specific point in time — are a first-class capability in event-sourced systems.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "In a conventional CRUD system, yesterday's state of an order is simply gone unless a separate audit table was maintained. In an event-sourced system, every historical state is recoverable by replaying events up to a specific point."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Temporal queries can be expressed in two ways:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "By event version.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Replay events 0 through N to recover state at version N. Deterministic and independent of wall-clock time."
+              }
+            ],
+            [
+              {
+                "text": "By timestamp.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Filter events whose recorded timestamp is before or equal to the target time, then replay. Requires accurate event timestamps and care around clock skew."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Temporal queries are valuable in several scenarios:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Debugging production incidents.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Replay an aggregate's state at the exact moment an anomaly occurred to understand what the system \"saw\" when it made a decision."
+              }
+            ],
+            [
+              {
+                "text": "Regulatory compliance.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Show regulators the exact state of a customer account at a specific date — a requirement in financial services and insurance."
+              }
+            ],
+            [
+              {
+                "text": "Event replay for testing.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Reproduce a bug by seeding a test environment with real production events up to the point of failure."
+              }
+            ],
+            [
+              {
+                "text": "Time-travel debugging.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Compare state at two different points in time to understand the delta introduced by a specific event."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "warning",
+          "runs": [
+            {
+              "text": "Temporal queries are only as accurate as the events that were recorded. If a domain change happened outside the event-sourced system (a direct database update, a batch import), the event log will not reflect it. Consistency of the log as the single source of truth is a prerequisite for reliable temporal queries."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "A temporal query is like rewinding a video to a specific frame. Because every event is stored in order, you can reconstruct exactly what the system looked like at any moment in the past — something impossible if you only store the current state."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "msv-ch09-c007",
+      "order": 7,
+      "title": "The Audit Log — Free by Construction",
+      "teaser": "In conventional systems, audit logging is a retrofit — triggers, application-level logging, or a separate audit table bolted on after the fact. In event-sourced systems, the audit log is the primary data structure, not an afterthought.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Most enterprise applications eventually require an audit log: who changed what, when, and (ideally) why. In CRUD systems this requirement arrives late, is implemented inconsistently, and is frequently incomplete. The common implementation is database triggers that write to an audit table — a system parallel to the main data store that must be maintained separately and is often missing crucial context."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Event sourcing eliminates this problem structurally. The event log "
+            },
+            {
+              "text": "is",
+              "marks": ["italic"]
+            },
+            {
+              "text": " the audit log, not a copy of it. Every event records:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "What happened",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — the event type (OrderCancelled, PaymentRefunded)."
+              }
+            ],
+            [
+              {
+                "text": "When it happened",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — the event timestamp."
+              }
+            ],
+            [
+              {
+                "text": "The data that changed",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — the event payload (new values, delta, reason)."
+              }
+            ],
+            [
+              {
+                "text": "Who caused it",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — event metadata (userId, correlationId, causationId from the originating command)."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The audit trail is complete because there is no mechanism in the system to bypass it. To change state, you must write an event. Unlike a CRUD system where a developer can UPDATE a row directly and leave no trace, in an event-sourced system the log is the only path to state change."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "This property is particularly compelling in regulated industries — banking, healthcare, insurance — where immutable, complete audit trails are a compliance requirement. Event sourcing satisfies these requirements by construction rather than by configuration."
+            }
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "info",
+          "runs": [
+            {
+              "text": "Pattern: enrich every event with a metadata envelope containing userId, tenantId, correlationId, causationId, and timestamp. This is stored separately from the event payload and enables cross-service audit queries (e.g., \"show all changes caused by this HTTP request\" via correlationId) without polluting domain event schemas."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "In most systems, the audit log is a second system you have to build and maintain alongside the real system. With event sourcing, the audit log and the real system are the same thing — you get the audit log for free, and it is guaranteed to be complete."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "msv-ch09-c008",
+      "order": 8,
+      "title": "Event Schema Evolution — Changing Events Without Breaking Replay",
+      "teaser": "The event log is permanent; the world is not. Business requirements change, bugs are fixed, and new data is needed. Evolving event schemas without corrupting historical replay is one of the most practically challenging aspects of event sourcing.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "In a conventional database, a schema migration changes the structure of data in place. In an event store, historical events cannot be changed — only new events can be appended. This creates a versioning challenge: the apply function must handle events from multiple eras of the schema."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Schema evolution scenarios, from least to most disruptive:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Adding an optional field.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Safe. Old events simply will not have the field. The apply function must treat it as absent/null/default. Backward compatible."
+              }
+            ],
+            [
+              {
+                "text": "Renaming a field.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Requires the apply function to handle both the old name and the new name for older events. Or handle via upcasting (see next card)."
+              }
+            ],
+            [
+              {
+                "text": "Removing a required field.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Breaking. Historical events will still contain the field. New code must ignore it gracefully without throwing deserialization errors."
+              }
+            ],
+            [
+              {
+                "text": "Changing the semantic meaning of a field.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Most dangerous. The field exists in old and new events but means something different. Requires a new event type rather than a schema change."
+              }
+            ],
+            [
+              {
+                "text": "Splitting or merging event types.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Requires versioned events (v1, v2) or upcasting to transform old events to the new shape during replay."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Practical strategies for safe evolution:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Prefer additive changes.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " New fields, new event types. Never remove or rename existing fields in-place."
+              }
+            ],
+            [
+              {
+                "text": "Use tolerant reader pattern.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Deserializers ignore unknown fields rather than failing. Makes adding fields non-breaking."
+              }
+            ],
+            [
+              {
+                "text": "Introduce event versions explicitly.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Include a version field in every event. When the schema changes, bump the version and handle each version in the apply function."
+              }
+            ]
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Evolving event schemas is hard because you cannot rewrite old events — they are permanent. You have to make your new code flexible enough to handle all past versions of an event, the same way a library has to stay backward compatible."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "msv-ch09-c009",
+      "order": 9,
+      "title": "Upcasting — Transforming Old Events During Replay",
+      "teaser": "Upcasting is the practice of transforming events from an old schema version into the current schema version at read time. It keeps the apply function clean by normalizing all events to the current shape before they are processed.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Without upcasting, the apply function accumulates version-specific branches:"
+            }
+          ]
+        },
+        {
+          "type": "code",
+          "lang": "typescript",
+          "text": "// Without upcasting — messy apply function\nfunction apply(state: State, event: AnyEvent): State {\n  if (event.type === 'CustomerRegistered') {\n    // v1: had 'name' field\n    // v2: split into 'firstName' + 'lastName'\n    const firstName = (event as any).firstName ?? (event as any).name?.split(' ')[0];\n    const lastName  = (event as any).lastName  ?? (event as any).name?.split(' ')[1];\n    return { ...state, firstName, lastName };\n  }\n  // ... more version-specific branches\n}"
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Upcasting moves the version-handling logic out of the apply function into a separate transformation pipeline that runs during deserialization:"
+            }
+          ]
+        },
+        {
+          "type": "code",
+          "lang": "typescript",
+          "text": "// Upcaster registry\nconst upcasters: Record<string, (raw: any) => any> = {\n  'CustomerRegistered@v1': (e) => ({\n    ...e,\n    type: 'CustomerRegistered',\n    version: 2,\n    firstName: e.name?.split(' ')[0] ?? '',\n    lastName:  e.name?.split(' ')[1] ?? '',\n    name: undefined,   // remove legacy field\n  }),\n};\n\nfunction deserialize(raw: any): DomainEvent {\n  const key = `${raw.type}@v${raw.version ?? 1}`;\n  const upcast = upcasters[key];\n  return upcast ? upcast(raw) : raw;\n}\n\n// apply function is now clean — always sees current schema\nfunction apply(state: State, event: CustomerRegistered): State {\n  return { ...state, firstName: event.firstName, lastName: event.lastName };\n}"
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Upcasters chain: a v1 event passes through the v1→v2 upcaster, then the v2→v3 upcaster, arriving at the apply function in the current version. This keeps each upcaster simple (it only transforms one version delta) and keeps the apply function focused on current business logic."
+            }
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "info",
+          "runs": [
+            {
+              "text": "Marten has a built-in upcaster API. EventStoreDB (Kurrent) supports event transformation via its custom deserializer hooks. In both cases, upcasters are registered at application startup and run transparently during event stream reads."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "An upcaster is like a translation layer between old and new versions of a document format. Before the rest of the system sees an old event, the upcaster quietly updates it to the current format — so the rest of the code never has to think about old formats."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "msv-ch09-c010",
+      "order": 10,
+      "title": "Event Versioning — Multiple Versions Coexisting",
+      "teaser": "In a long-running event-sourced system, multiple versions of \"the same\" event inevitably coexist in the log. Explicit versioning — naming conventions, version fields, or type hierarchies — makes this manageable rather than a source of hidden bugs.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Event versioning is distinct from upcasting. Upcasting transforms events at read time; versioning is the naming and typing strategy that makes different versions distinguishable in the first place. Without explicit versioning, schema changes produce events that look the same but behave differently — the most dangerous category of bug."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Common versioning strategies:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Version in type name.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " CustomerRegisteredV1, CustomerRegisteredV2. Simple, self-documenting. Downside: event type proliferation and long switch statements."
+              }
+            ],
+            [
+              {
+                "text": "Version field in payload.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Every event carries a ",
+                "marks": []
+              },
+              {
+                "text": "schemaVersion: number",
+                "marks": ["code"]
+              },
+              {
+                "text": " field. A single event type name, version-aware deserialization. Works well with upcasting pipelines."
+              }
+            ],
+            [
+              {
+                "text": "Semantic versioning via content type.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Store the event type as a URI: application/vnd.myapp.customer-registered+json;version=2. Verbose but explicit."
+              }
+            ],
+            [
+              {
+                "text": "Weak schema (tolerant reader).",
+                "marks": ["bold"]
+              },
+              {
+                "text": " No explicit version field; rely on optional field handling and additive-only schema changes. Simpler but limits evolution options over time."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The team must agree on a versioning strategy before the first event is written to production. Retrofitting a versioning strategy to an existing event store is painful: every event in the log effectively becomes \"v0\" with unknown schema, and upcasters must handle the ambiguity."
+            }
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "warning",
+          "runs": [
+            {
+              "text": "Never change the meaning of an existing event type. If OrderShipped used to mean \"left the warehouse\" and now means \"delivered to customer,\" introduce a new event type. Using the same name for semantically different events corrupts historical replay and makes audits unreliable."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Event versioning is giving each generation of an event a clear label so the system knows which rules to apply. Without labels, you have no way to tell a version-1 event from a version-2 event, and the same code has to guess — which it will eventually get wrong."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "msv-ch09-c011",
+      "order": 11,
+      "title": "Event Storming — Modeling with Events First",
+      "teaser": "Event Storming, invented by Alberto Brandolini, is a collaborative workshop technique that discovers domain events before code is written. It produces the event vocabulary that event-sourced systems directly encode.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Alberto Brandolini introduced Event Storming in 2013 as a way to model complex business domains quickly, with domain experts and developers in the same room. The process:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "numbered",
+          "items": [
+            [
+              {
+                "text": "Place orange sticky notes on a long horizontal timeline, each naming a domain event in past tense: OrderPlaced, PaymentFailed, ItemShipped."
+              }
+            ],
+            [
+              {
+                "text": "Add blue stickies for commands (what causes each event): PlaceOrder, AttemptPayment, ShipItem."
+              }
+            ],
+            [
+              {
+                "text": "Add yellow stickies for aggregates (which entity owns each event)."
+              }
+            ],
+            [
+              {
+                "text": "Add pink stickies for external systems, purple for policies (\"when X happens, do Y\"), green for read models (information needed to make a decision)."
+              }
+            ],
+            [
+              {
+                "text": "Identify boundaries and hotspots — places where the domain is unclear, contentious, or where multiple models collide."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The connection to event sourcing is direct: the orange stickies from an Event Storming session map almost directly to the domain events stored in the event log. Event Storming surfaces the event vocabulary before implementation begins, which prevents the naming chaos that plagues systems where event names are invented ad-hoc during development."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Event Storming also reveals aggregate boundaries (which events belong together) and bounded contexts (where event names mean different things). These insights feed directly into the partitioning strategy of the event log — which events live in which streams."
+            }
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "info",
+          "runs": [
+            {
+              "text": "Brandolini's book \"Introducing EventStorming\" (Leanpub, 2021) covers the full technique. For teams building event-sourced systems, running an Event Storming session before writing any event schemas is a high-leverage investment — it forces domain clarity that saves weeks of rework."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Event Storming is a workshop where a room full of people stick orange notes on a wall, each one naming something that happened in the business. By the end you have the vocabulary of your domain mapped out — and those orange notes become the events in your event store."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "msv-ch09-c012",
+      "order": 12,
+      "title": "ES with CQRS — The Natural Pairing",
+      "teaser": "Event sourcing and CQRS (Command Query Responsibility Segregation) are independent patterns, but they are near-universally paired in practice. Events are the mechanism by which the write model publishes changes that the read model consumes.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "CQRS separates the write path (commands that change state) from the read path (queries that return data). Event sourcing provides the natural bridge between the two sides: events are published from the write model and consumed by the read model."
+            }
+          ]
+        },
+        {
+          "type": "code",
+          "lang": "text",
+          "text": "COMMAND SIDE (Write Model)                    QUERY SIDE (Read Model)\n\n  HTTP Request\n      │\n      ▼\n  Command Handler\n  (validate, enforce)\n      │\n      ▼\n  Load Aggregate           Published events\n  (replay from log)  ─────────────────────▶  Projection Handler\n      │                                            │\n      ▼                                            ▼\n  Apply business logic                      Update Read Store\n      │                                      (SQL, Redis, ES)\n      ▼                                            │\n  Append events                                    ▼\n  to Event Store                           HTTP Query Response"
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The pairing works because:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "The write model does not need to be queryable.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " It only needs to enforce business rules and produce correct events. This allows the aggregate to be a rich domain object, not a flat query-friendly DTO."
+              }
+            ],
+            [
+              {
+                "text": "The read model does not need to understand business rules.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " It only needs to handle each event type and update its store. This allows projections to be optimized purely for query performance."
+              }
+            ],
+            [
+              {
+                "text": "Projections can be rebuilt.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Because events are persistent, read models can be discarded and rebuilt from scratch whenever the read schema needs to change — without touching the write model."
+              }
+            ],
+            [
+              {
+                "text": "Scale independently.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Read replicas of the projection store can be scaled horizontally without affecting the event store's write path."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "warning",
+          "runs": [
+            {
+              "text": "The trade-off is eventual consistency: after a command succeeds, the read model update is asynchronous. Queries immediately after a command may return stale data. The system must be designed so that the UI and API communicate this clearly, or use synchronous inline projections for cases where strong consistency is required."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "CQRS separates the \"change things\" side from the \"read things\" side. Event sourcing gives CQRS its plumbing: the events written by the change side are exactly what the read side needs to stay up to date. Each side is simple on its own; together they handle complex domains cleanly."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "msv-ch09-c013",
+      "order": 13,
+      "title": "When Event Sourcing Fits — And When It Does Not",
+      "teaser": "Event sourcing is a powerful pattern with a real cost in complexity. It fits domains where history matters, audit requirements are strong, or multiple read models must be maintained — not every system benefits from carrying those costs.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Event sourcing is not a default architectural choice. It introduces complexity — upcasting, schema evolution, projection lag, event versioning, event store operations — that only pays for itself in domains where its benefits are genuinely needed."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Signals that event sourcing is a strong fit:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Strong audit requirements.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Financial transactions, healthcare records, insurance claims, compliance domains — any area where regulators require immutable, complete change history."
+              }
+            ],
+            [
+              {
+                "text": "Complex state evolution.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Aggregates that go through many state transitions and where understanding the sequence of decisions is as important as the current state."
+              }
+            ],
+            [
+              {
+                "text": "Multiple read models needed.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " When the same business data must be presented in many shapes (dashboards, reports, customer-facing views, ML feature stores), projections over a single event log are more maintainable than multiple synchronized databases."
+              }
+            ],
+            [
+              {
+                "text": "Event-driven integration.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " When other services in the ecosystem are event-driven consumers, the event store doubles as a reliable event publication mechanism."
+              }
+            ],
+            [
+              {
+                "text": "Domain driven by events conceptually.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Domains where business users naturally think in terms of things that happened (trades executed, claims filed, shipments dispatched) rather than things that are."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Signals that event sourcing is the wrong choice:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Simple CRUD with no history requirement.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " A product catalog, a user preference store, a CMS. The overhead of events provides no benefit."
+              }
+            ],
+            [
+              {
+                "text": "Team unfamiliar with the pattern.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Event sourcing requires a mindset shift. A team that adopts it without understanding upcasting, projection lag, and schema evolution will struggle with operational issues they are not equipped to debug."
+              }
+            ],
+            [
+              {
+                "text": "Reporting-heavy workloads.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " If the primary use case is complex ad-hoc queries over the full dataset, a traditional relational database with a well-designed schema will outperform a projection-based read model."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "info",
+          "runs": [
+            {
+              "text": "Greg Young's advice: if you do not have a compelling reason to use event sourcing, do not use it. The pattern is powerful where it fits, but the complexity cost is real. Start with a simple domain model and introduce event sourcing where specific problems — audit, multi-model reads, temporal queries — justify the investment."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Event sourcing earns its keep when the history of what happened is as valuable as what is true right now. For a simple product catalog where only the current price matters, it is overkill. For a trading system where every price change must be reconstructible for regulators, it is the right tool."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "msv-ch09-c014",
+      "order": 14,
+      "title": "Tools of the Trade — EventStoreDB, Marten, and Kurrent",
+      "teaser": "Event-sourced systems need purpose-built infrastructure. EventStoreDB (now rebranded as Kurrent) is the canonical dedicated event store; Marten provides event sourcing on top of PostgreSQL for teams that want to minimize operational footprint.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Choosing an event store is one of the most consequential infrastructure decisions in an event-sourced system. The three most significant options in the .NET/polyglot ecosystem are:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "EventStoreDB / Kurrent.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " The original purpose-built event store, created by Greg Young. Now commercially maintained and rebranded as Kurrent. Features: append-only streams, optimistic concurrency, catch-up subscriptions, persistent subscriptions, projections engine, clustering. Strong consistency guarantees per stream. Client libraries for .NET, Java, Go, Python, Node.js. Best choice when you want infrastructure purpose-built for event sourcing."
+              }
+            ],
+            [
+              {
+                "text": "Marten.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " A .NET library that turns PostgreSQL into a document database and event store. Events are stored in a JSONB column. Supports aggregate streams, snapshots, inline and async projections, upcasters. No additional infrastructure beyond PostgreSQL. Best choice when you are already running PostgreSQL and want to minimize operational complexity."
+              }
+            ],
+            [
+              {
+                "text": "Kafka (as an event log).",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Kafka is designed for high-throughput event streaming, not aggregate-per-stream event sourcing. It lacks per-stream optimistic concurrency and random-read access by aggregate ID. It is an excellent projection feed — consuming events written by an event store and routing them to downstream services — but a poor aggregate event store."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "For teams in the JVM ecosystem, Axon Framework provides event sourcing and CQRS infrastructure with pluggable event stores (its own Axon Server, or MongoDB/RDBMS backends). In the Golang ecosystem, EventStoreDB's gRPC client is the most commonly used."
+            }
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "warning",
+          "runs": [
+            {
+              "text": "Avoid using a general-purpose relational database as an event store unless you use a library like Marten that is explicitly designed for it. Hand-rolled event tables without optimistic concurrency, efficient stream reads, and subscription support accumulate operational problems quickly."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "EventStoreDB (Kurrent) is the dedicated tool built from the ground up for event sourcing. Marten lets you do event sourcing using PostgreSQL as the engine. Kafka works great for distributing events between services but is not a substitute for a true per-aggregate event store."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "msv-ch09-c015",
+      "order": 15,
+      "title": "Putting It Together — A Complete Event Sourcing Flow",
+      "teaser": "Seeing the full lifecycle — command in, events written, projections updated, read model served — as one connected flow reveals how the moving parts of event sourcing compose into a coherent system.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "A complete event-sourced request flow, from API call to query response:"
+            }
+          ]
+        },
+        {
+          "type": "code",
+          "lang": "text",
+          "text": "1. CLIENT sends POST /orders/4821/ship\n\n2. COMMAND HANDLER receives ShipOrder command\n   a. Load stream \"Order-4821\" from event store\n   b. Replay events → rehydrate OrderAggregate (or load snapshot + delta)\n   c. Validate: is order in shippable state? Does tracking number exist?\n   d. Call aggregate.ship(trackingNumber)\n   e. Aggregate produces OrderShipped event\n   f. Append OrderShipped to stream \"Order-4821\" at expected version N+1\n      (optimistic concurrency check — fails if concurrent writer won)\n\n3. EVENT STORE stores:\n   { type: 'OrderShipped', version: N+1,\n     payload: { trackingNumber: 'TRK99' },\n     meta: { userId: 'u-42', correlationId: 'req-abc' } }\n\n4. PROJECTION HANDLER receives OrderShipped via catch-up subscription\n   a. Updates 'orders_summary' table: status = 'shipped', trackingNumber = 'TRK99'\n   b. Updates 'pending_orders' read model: removes Order-4821\n   c. Emits ShipmentNotification event for the notification service\n\n5. CLIENT sends GET /orders/4821\n   → reads from 'orders_summary' table (fast, query-optimized)\n   → returns { id: 4821, status: 'shipped', tracking: 'TRK99' }"
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The gap between steps 3 and 5 is the eventual consistency window. In most production systems with a healthy projection consumer, this is measured in milliseconds to tens of milliseconds. For cases that require read-your-own-writes consistency, two options exist:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Inline projection",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — update the read model synchronously within the command handler's transaction."
+              }
+            ],
+            [
+              {
+                "text": "Client-side optimistic update",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — the client assumes the command succeeded and updates its local view immediately, reconciling on next fetch."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "info",
+          "runs": [
+            {
+              "text": "The full flow above maps directly to the CQRS pattern discussed in the previous card. The command side ends at step 3; the query side starts at step 5. The event store is the durable, reliable handoff point between them."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "A complete event sourcing flow has three acts: the command side validates and appends an event; the event store persists it permanently; the projection side reads the event and updates the queryable view. Commands write facts; projections turn facts into answers."
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

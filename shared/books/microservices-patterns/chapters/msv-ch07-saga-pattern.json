@@ -1,0 +1,1602 @@
+{
+  "chapterId": "msv-ch07-saga-pattern",
+  "shardIndex": 7,
+  "cards": [
+    {
+      "id": "msv-ch07-c001",
+      "order": 1,
+      "title": "The Distributed Transaction Problem",
+      "teaser": "Two-phase commit was built for a world of monoliths and shared databases. In microservices, each service owns its own data store — and 2PC's synchronous locking model turns a routine order placement into a distributed deadlock waiting to happen.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "In a monolith, updating multiple tables is trivial: wrap them in a single ACID transaction and commit. Every database you read about guarantees this. The problem begins when you split that monolith into services, each with its own database — as the database-per-service pattern demands."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Two-Phase Commit (2PC) is the classical answer to multi-resource transactions. A coordinator asks all participants to prepare (phase 1), waits for votes, then issues a global commit or rollback (phase 2). It works on paper. In microservices it breaks down for structural reasons:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Synchronous blocking.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " During the prepare phase, all participants hold locks. If the Order Service, Inventory Service, and Payment Service all lock rows simultaneously, availability degrades multiplicatively."
+              }
+            ],
+            [
+              {
+                "text": "Coordinator as SPOF.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " If the coordinator crashes between phases, participants are stuck in a prepared state indefinitely. Recovery requires manual intervention or a blocking protocol."
+              }
+            ],
+            [
+              {
+                "text": "Heterogeneous stores.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " 2PC requires XA support. MongoDB, Cassandra, Elasticsearch, and most message brokers do not implement XA. A system that uses diverse stores simply cannot use 2PC."
+              }
+            ],
+            [
+              {
+                "text": "Network partitions.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " The CAP theorem guarantees that under partition, you cannot have both consistency and availability. 2PC chooses consistency — which means it becomes unavailable precisely when the system is under stress."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Chris Richardson, in "
+            },
+            {
+              "text": "Microservices Patterns",
+              "marks": ["italic"]
+            },
+            {
+              "text": " (2018), states the situation plainly: \"The solution is to use the Saga pattern.\" Sagas replace distributed locks with a sequence of local transactions and compensating actions, trading isolation for availability."
+            }
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "warning",
+          "runs": [
+            {
+              "text": "The distributed transaction problem is not a tools problem. No middleware will make 2PC safe and highly available across heterogeneous microservices. The architecture must be changed, not the tooling."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "2PC works when all your data lives in one database system. In microservices each service owns a separate database, often a different type entirely. 2PC requires all participants to hold locks simultaneously — that turns every cross-service write into a potential deadlock or availability outage."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "msv-ch07-c002",
+      "order": 2,
+      "title": "Saga Overview",
+      "teaser": "A saga is a sequence of local transactions, each isolated within a single service. If any step fails, the saga runs compensating transactions in reverse to undo the work already done — restoring business consistency without distributed locks.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The term \"saga\" originates in the 1987 paper by Hector Garcia-Molina and Kenneth Salem, which proposed splitting a long-lived database transaction into a sequence of shorter sub-transactions, each of which could be compensated if needed. In the microservices context, the idea maps naturally: each sub-transaction is a local operation on a single service's database."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "A saga for an e-commerce order might look like:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "numbered",
+          "items": [
+            [
+              {
+                "text": "Order Service",
+                "marks": ["bold"]
+              },
+              {
+                "text": " creates an order in PENDING state."
+              }
+            ],
+            [
+              {
+                "text": "Customer Service",
+                "marks": ["bold"]
+              },
+              {
+                "text": " reserves credit for the order amount."
+              }
+            ],
+            [
+              {
+                "text": "Inventory Service",
+                "marks": ["bold"]
+              },
+              {
+                "text": " reserves the items."
+              }
+            ],
+            [
+              {
+                "text": "Payment Service",
+                "marks": ["bold"]
+              },
+              {
+                "text": " charges the customer."
+              }
+            ],
+            [
+              {
+                "text": "Order Service",
+                "marks": ["bold"]
+              },
+              {
+                "text": " marks the order APPROVED."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "If step 3 (inventory reservation) fails, the saga must undo step 2 (release the credit reservation) and mark the order REJECTED. This undoing is done via "
+            },
+            {
+              "text": "compensating transactions",
+              "marks": ["bold"]
+            },
+            {
+              "text": " — not rollback."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The key properties of a saga:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Each step is a local, atomic transaction — no cross-service locks."
+              }
+            ],
+            [
+              {
+                "text": "Steps communicate via events or commands (message-driven)."
+              }
+            ],
+            [
+              {
+                "text": "On failure, compensating transactions undo completed steps."
+              }
+            ],
+            [
+              {
+                "text": "Sagas are ACD: Atomic (eventually), Consistent, Durable — but not Isolated."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "info",
+          "runs": [
+            {
+              "text": "Sagas sacrifice the I in ACID. Intermediate states are visible to concurrent sagas. This is the central trade-off, and it must be handled explicitly — not ignored."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "A saga is a chain of smaller transactions, one per service. If the chain breaks halfway, you run the chain in reverse with undo operations. No global lock is held at any point — each step commits immediately and either the next step runs, or you start undoing."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "msv-ch07-c003",
+      "order": 3,
+      "title": "Choreography Sagas",
+      "teaser": "In a choreography saga there is no conductor — each service reacts to events published by the previous step and publishes its own events in response. The saga emerges from the collective behavior of participants, not from a central brain.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Choreography is the simplest saga implementation to start with. Each service subscribes to a topic and, upon receiving an event, performs its local transaction and emits a new event. The flow is implicit in the event names and the subscriptions."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Choreography sequence diagram for the Create Order saga:"
+            }
+          ]
+        },
+        {
+          "type": "code",
+          "lang": "text",
+          "code": "OrderService      CustomerService     InventoryService    PaymentService\n     |                  |                    |                   |\n  [create order]        |                    |                   |\n     |--OrderCreated--->|                    |                   |\n     |              [reserve credit]         |                   |\n     |                  |--CreditReserved--->|                   |\n     |                  |              [reserve items]           |\n     |                  |                    |--ItemsReserved--->|\n     |                  |                    |             [charge card]\n     |                  |                    |                   |\n     |<--OrderApproved(from PaymentSvc)------|-------------------|\n  [mark APPROVED]       |                    |                   |\n     |                  |                    |                   |\n\n--- FAILURE PATH (Inventory out of stock) ---\n\nOrderService      CustomerService     InventoryService\n     |                  |                    |\n     |--OrderCreated--->|                    |\n     |              [reserve credit]         |\n     |                  |--CreditReserved--->|\n     |                  |           [out of stock]\n     |                  |<--ItemsReserveFailed|\n     |              [release credit]         |\n     |<--CreditReleased--|                   |\n  [mark REJECTED]        |                   |"
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Choreography advantages:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Simple to implement",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — no orchestrator service to build or operate."
+              }
+            ],
+            [
+              {
+                "text": "Loose coupling",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — services only know about the events they publish and consume, not about each other directly."
+              }
+            ],
+            [
+              {
+                "text": "Natural for short sagas",
+                "marks": ["bold"]
+              },
+              {
+                "text": " with 2-3 participants and a linear happy path."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Choreography disadvantages:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Hard to visualize",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — the overall saga flow exists nowhere in the code; you must trace events across services."
+              }
+            ],
+            [
+              {
+                "text": "Risk of cyclic dependencies",
+                "marks": ["bold"]
+              },
+              {
+                "text": " as services subscribe to each other's events."
+              }
+            ],
+            [
+              {
+                "text": "Testing is complex",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — requires all participants running to test the saga end-to-end."
+              }
+            ]
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Choreography is like a relay race where each runner decides on their own when to pass the baton, based on what they see. There is no coach directing every handoff — the race happens because each runner knows their cue."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "msv-ch07-c004",
+      "order": 4,
+      "title": "Orchestration Sagas",
+      "teaser": "In an orchestration saga, a dedicated orchestrator service drives every step — it sends commands to participants, receives replies, and decides what happens next. The saga's logic is centralized, visible, and testable in one place.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The orchestrator is a service (or a workflow object within a service) that implements the saga as an explicit state machine. It tells each participant what to do, waits for the result, and transitions to the next state accordingly."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Orchestration sequence diagram for the Create Order saga:"
+            }
+          ]
+        },
+        {
+          "type": "code",
+          "lang": "text",
+          "code": "OrderService       CreateOrderSaga       CustomerSvc   InventorySvc  PaymentSvc\n(initiates)        (orchestrator)             |              |            |\n     |--create saga-->|                       |              |            |\n     |                |--ReserveCredit------->|              |            |\n     |                |<--CreditReserved------|              |            |\n     |                |--ReserveItems----------------------->|            |\n     |                |<--ItemsReserved-----------------------|           |\n     |                |--ChargeCard---------------------------------------->|\n     |                |<--CardCharged--------------------------------------|  |\n     |                |--ApproveOrder->|                                  |\n     |<--OrderApproved-|               |                                  |\n\n--- FAILURE PATH (Card declined) ---\n\n                  CreateOrderSaga     CustomerSvc   InventorySvc  PaymentSvc\n                       |                   |              |            |\n                       |--ChargeCard---------------------------------------->|\n                       |<--CardDeclined------------------------------------|  |\n                       |--ReleaseItems----------------------->|            |\n                       |<--ItemsReleased-----------------------|           |\n                       |--ReleaseCredit--->|                               |\n                       |<--CreditReleased--|                               |\n                       |--RejectOrder->|"
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The orchestrator maintains explicit saga state. It knows which step is current, what has completed, and what must be compensated if a failure occurs. This is a "
+            },
+            {
+              "text": "saga state machine",
+              "marks": ["bold"]
+            },
+            {
+              "text": " — states like PENDING_CREDIT, CREDIT_RESERVED, ITEMS_RESERVED, PAYMENT_PENDING, APPROVED, COMPENSATING, REJECTED."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Orchestration advantages:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Centralized logic",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — the full flow is in one place, readable and debuggable."
+              }
+            ],
+            [
+              {
+                "text": "Easier to handle complex flows",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — branches, retries, timeouts, and parallel steps are natural to express."
+              }
+            ],
+            [
+              {
+                "text": "Testability",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — the orchestrator can be unit-tested by mocking participant responses."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Orchestration disadvantages:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Domain logic gravitates to the orchestrator",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — it can become a smart orchestrator that knows too much about participants."
+              }
+            ],
+            [
+              {
+                "text": "More infrastructure to build and operate",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — the orchestrator must be reliable, persistent, and recoverable."
+              }
+            ]
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Orchestration is like a conductor directing an orchestra — the conductor tells each section when to play, listens for the result, and decides what comes next. Every decision flows through the conductor, so the entire score is legible in one place."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "msv-ch07-c005",
+      "order": 5,
+      "title": "Choreography vs Orchestration",
+      "teaser": "The choice between choreography and orchestration is a visibility vs coupling trade-off. Choreography is simpler to start but harder to reason about at scale. Orchestration is more explicit but introduces a new service to build, operate, and keep reliable.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Neither approach is universally superior. The right choice depends on saga complexity, team size, and operational maturity. Here is a direct comparison:"
+            }
+          ]
+        },
+        {
+          "type": "code",
+          "lang": "text",
+          "code": "Dimension              Choreography               Orchestration\n--------------------------------------------------------------------\nFlow visibility        Implicit (trace events)    Explicit (state machine)\nCoupling               Event-based, loose         Command-based, slightly tighter\nSimplicity             High for short sagas       Higher learning curve\nTestability            Hard (distributed)         Easier (mock participants)\nComplex flows          Awkward (cyclic events)    Natural (branches, retries)\nDebugging              Distributed log tracing    Inspect orchestrator state\nScalability            High (no bottleneck)       Orchestrator can be hot path\nNew participant        Subscribe to events        Register with orchestrator\nTool support           Minimal                    Temporal, Step Functions, Camunda\nRecommended for        2-3 steps, linear          4+ steps, branching, long-running"
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Richardson's guidance: start with choreography for simple sagas. As soon as a saga has more than three participants, conditional branches, or a non-trivial compensation sequence, switch to orchestration. The visibility gain is worth the orchestrator overhead."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The visibility trade-off deserves emphasis. With choreography, answering the question \"where is order #12345 in the saga right now?\" requires querying logs across multiple services. With orchestration, the answer is a single database query on the orchestrator's state table. In production, at 3 AM, that difference is enormous."
+            }
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "info",
+          "runs": [
+            {
+              "text": "Industry practice (as of 2024-2026) has shifted strongly toward orchestration for production sagas. The availability of Temporal, AWS Step Functions, and Camunda makes the operational overhead manageable, while the visibility and testability benefits are immediate."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Choreography is a jazz improvisation: every musician reacts to the others, no score in front of them. It works beautifully for a quartet but becomes chaos at 20 musicians. Orchestration is a symphony: the conductor holds the score and everyone follows it. Pick the right form for the ensemble size."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "msv-ch07-c006",
+      "order": 6,
+      "title": "Compensating Transactions",
+      "teaser": "A compensating transaction semantically reverses a completed local transaction. It is not a database rollback — the original transaction already committed. It is a new business operation that undoes the business effect of the step that succeeded.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "This is one of the most commonly misunderstood aspects of sagas. When a saga step commits and later must be undone, you cannot issue a SQL ROLLBACK — that transaction is long gone. You must write a compensation transaction that achieves the inverse business outcome."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Examples from the Create Order saga:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Forward: ReserveCredit",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — decrement customer.availableCredit by $100."
+              }
+            ],
+            [
+              {
+                "text": "Compensation: ReleaseCredit",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — increment customer.availableCredit by $100."
+              }
+            ],
+            [
+              {
+                "text": "Forward: ReserveItems",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — decrement inventory.available by quantity."
+              }
+            ],
+            [
+              {
+                "text": "Compensation: ReleaseItems",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — increment inventory.available by quantity."
+              }
+            ],
+            [
+              {
+                "text": "Forward: ChargeCard",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — call payment gateway, capture funds."
+              }
+            ],
+            [
+              {
+                "text": "Compensation: RefundCard",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — call payment gateway, issue refund. (Possibly delayed by gateway processing time.)"
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Critical properties compensating transactions must have:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Idempotent",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — the compensation may be retried; running it twice must not double-release the credit."
+              }
+            ],
+            [
+              {
+                "text": "Always succeeds (eventually)",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — if a compensation fails, the saga is stuck. Compensations must retry with backoff and must succeed. For external systems (card gateways), this may require manual intervention queues."
+              }
+            ],
+            [
+              {
+                "text": "Not necessarily immediate",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — a card refund may take 3-5 business days. The compensation commits immediately in the saga but the business effect is delayed. Design compensations to model the real-world timing."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "warning",
+          "runs": [
+            {
+              "text": "Not every step is compensatable. A step that sends an email or fires a missile cannot be semantically reversed. Steps that trigger irreversible side effects should be placed after the pivot transaction (see Pivot Transactions card) — after the saga has committed to proceeding."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "A compensating transaction is not an undo button — it is a new business action that achieves the reverse outcome. Releasing a credit reservation is not rolling back the reservation; it is a new database write that logically cancels the effect of the previous one."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "msv-ch07-c007",
+      "order": 7,
+      "title": "The Saga State Machine",
+      "teaser": "Every orchestration saga instance is a state machine. The orchestrator persists the current state and handles transitions — to the next happy-path step, to compensation steps, or to a terminal state. Making this state machine explicit is what separates reliable sagas from fragile ones.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The saga state machine models the full lifecycle of a saga instance — every state it can be in, every event that triggers a transition, and every action taken on transition. For the Create Order saga:"
+            }
+          ]
+        },
+        {
+          "type": "code",
+          "lang": "text",
+          "code": "States:\n  PENDING_CREDIT_RESERVATION\n  PENDING_ITEM_RESERVATION\n  PENDING_PAYMENT\n  APPROVED                         (terminal - success)\n  REJECTED                         (terminal - failure)\n  COMPENSATING_PAYMENT\n  COMPENSATING_ITEMS\n  COMPENSATING_CREDIT\n\nTransitions:\n  PENDING_CREDIT_RESERVATION\n    --CreditReserved--> PENDING_ITEM_RESERVATION  [send ReserveItems]\n    --CreditDenied-->   COMPENSATING_CREDIT       [send ReleaseCredit]\n\n  PENDING_ITEM_RESERVATION\n    --ItemsReserved-->  PENDING_PAYMENT           [send ChargeCard]\n    --ItemsUnavail-->   COMPENSATING_ITEMS        [send ReleaseItems]\n\n  PENDING_PAYMENT\n    --CardCharged-->    APPROVED                  [send ApproveOrder]\n    --CardDeclined-->   COMPENSATING_PAYMENT      [send RefundCard (noop if not charged)]\n\n  COMPENSATING_PAYMENT\n    --PaymentCompensated--> COMPENSATING_ITEMS    [send ReleaseItems]\n\n  COMPENSATING_ITEMS\n    --ItemsReleased-->  COMPENSATING_CREDIT       [send ReleaseCredit]\n\n  COMPENSATING_CREDIT\n    --CreditReleased--> REJECTED                  [send RejectOrder]"
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The orchestrator persists the current state in a durable store after every transition. This means:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Crash recovery is safe",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — on restart, the orchestrator reads persisted state and continues from where it left off."
+              }
+            ],
+            [
+              {
+                "text": "Every in-flight saga instance is observable",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — support teams can query the state table to see exactly where order #12345 is stuck."
+              }
+            ],
+            [
+              {
+                "text": "Timeouts are implementable",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — a scheduler can scan for saga instances stuck in a state for more than N minutes and trigger a compensation or alert."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Frameworks like Temporal and AWS Step Functions provide the state machine execution engine as infrastructure, so the developer only writes the transition logic."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The saga state machine is a diagram of every possible state the saga can be in, and every event that moves it from one state to another. Persisting it to a database after every transition is what makes the saga survivable across crashes."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "msv-ch07-c008",
+      "order": 8,
+      "title": "Saga Participant",
+      "teaser": "A saga participant is a service that takes part in a saga by implementing exactly two things: a command handler that performs a local atomic transaction, and a compensation handler that semantically reverses it. These two halves must always be deployed together.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Each participant in a saga is responsible for its own step and its own undo. In Richardson's formulation, a participant provides:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "A command handler",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — receives a command (ReserveCredit), executes a local transaction, persists the result, and replies with a success or failure event."
+              }
+            ],
+            [
+              {
+                "text": "A compensation handler",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — receives a compensating command (ReleaseCredit), executes the reversal locally, and replies with a confirmation event."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The participant's command handler must be implemented with the Transactional Outbox pattern (or equivalent): the local database write and the outbound event publication must be atomic. If the service crashes after writing to its database but before publishing the event, the orchestrator will never hear back, and the saga stalls."
+            }
+          ]
+        },
+        {
+          "type": "code",
+          "lang": "text",
+          "code": "// Pseudocode: CustomerService command handler\nfun handleReserveCredit(cmd: ReserveCredit): CreditReservedEvent {\n    db.transaction {\n        val customer = db.findCustomer(cmd.customerId)\n        if (customer.availableCredit < cmd.amount) {\n            db.insert(OutboxEvent(CreditDenied(cmd.orderId)))\n            return\n        }\n        customer.availableCredit -= cmd.amount\n        db.save(customer)\n        db.insert(OutboxEvent(CreditReserved(cmd.orderId, cmd.amount)))\n    }\n    // Outbox poller publishes to message broker outside transaction\n}"
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Participant contract rules:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Both command and compensation must be idempotent",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — the orchestrator may retry on timeout."
+              }
+            ],
+            [
+              {
+                "text": "The participant must not assume saga-wide isolation",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — another saga may observe intermediate state."
+              }
+            ],
+            [
+              {
+                "text": "Compensation must always succeed",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — design it to be retry-safe and to handle the case where the forward step never actually committed (compensate a non-existent reservation gracefully)."
+              }
+            ]
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "A saga participant is a service that promises two things: I can do my step, and if told to undo it, I will undo it reliably. Both sides must be idempotent and atomic within the participant's own database."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "msv-ch07-c009",
+      "order": 9,
+      "title": "Pivot Transactions",
+      "teaser": "The pivot transaction is the last step in a saga that can still result in a rollback. Steps before the pivot are compensatable; steps after the pivot are irreversible. Knowing where your pivot is determines which steps need compensating transactions and which do not.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Richardson defines the pivot transaction as the boundary point: if the pivot succeeds, the saga will complete — even if subsequent steps fail, they will be retried until they succeed rather than compensated. If a step before the pivot fails, the saga compensates backward."
+            }
+          ]
+        },
+        {
+          "type": "code",
+          "lang": "text",
+          "code": "Create Order Saga — Pivot Analysis\n\n  Step 1: Create Order (PENDING)          [compensatable]\n  Step 2: Reserve Customer Credit          [compensatable]\n  Step 3: Reserve Inventory Items          [compensatable]\n  Step 4: Charge Payment Card         <-- PIVOT\n  Step 5: Update Order (APPROVED)          [retriable only]\n  Step 6: Send Confirmation Email          [retriable only, no compensation]\n  Step 7: Trigger Fulfillment              [retriable only]\n\nPre-pivot failure  --> compensate steps 1-3 in reverse order\nPost-pivot failure --> retry steps 5-7 until success (no compensation)"
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The pivot concept has practical design implications:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Irreversible side effects go after the pivot.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Sending a confirmation email cannot be unsent. Triggering physical fulfillment cannot be un-triggered. Place these after the saga has committed to succeeding."
+              }
+            ],
+            [
+              {
+                "text": "Post-pivot steps must be retry-safe.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Since they will be retried on failure rather than compensated, they must be idempotent."
+              }
+            ],
+            [
+              {
+                "text": "Pre-pivot steps must have compensations.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Every step before the pivot must have a valid compensation transaction defined."
+              }
+            ],
+            [
+              {
+                "text": "The pivot is usually the most external or irreversible operation",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — in e-commerce, it is typically the payment capture."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "info",
+          "runs": [
+            {
+              "text": "In Temporal and AWS Step Functions, the distinction between pre-pivot (compensatable) and post-pivot (retriable) steps maps directly to the compensation workflow structure. Pre-pivot steps are wrapped in try/compensate blocks; post-pivot steps use retry policies only."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The pivot transaction is the point of no return. Before it, you can still back out gracefully. After it, you are committed — any failure must be fixed by retrying, not by reversing. Knowing where your pivot is tells you exactly which steps need compensation logic."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "msv-ch07-c010",
+      "order": 10,
+      "title": "Idempotency in Sagas",
+      "teaser": "The saga infrastructure will retry failed or timed-out steps. Every command handler and every compensation handler must be idempotent — running them twice must produce the same result as running them once. This is not optional; it is a correctness requirement.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Retries happen in sagas for several reasons: network timeouts, service restarts, message broker at-least-once delivery, and orchestrator crash recovery. In every case, the participant may receive the same command more than once. Idempotency prevents double-execution from corrupting state."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The standard technique is an "
+            },
+            {
+              "text": "idempotency key",
+              "marks": ["bold"]
+            },
+            {
+              "text": " (also called a correlation ID or saga step ID). The orchestrator includes a unique step ID in every command. The participant stores processed step IDs and rejects duplicates:"
+            }
+          ]
+        },
+        {
+          "type": "code",
+          "lang": "text",
+          "code": "// Participant idempotency pattern\nfun handleReserveCredit(cmd: ReserveCredit) {\n    db.transaction {\n        // Check if already processed\n        if (db.existsProcessedCommand(cmd.sagaStepId)) {\n            return db.getStoredReply(cmd.sagaStepId)  // return cached reply\n        }\n        // Execute the step\n        val result = performReservation(cmd)\n        // Store result and mark as processed atomically\n        db.saveProcessedCommand(cmd.sagaStepId, result)\n        db.insert(OutboxEvent(result))\n    }\n}"
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Idempotency considerations for compensations:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Compensate-before-execute scenario.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " A compensation may arrive before the forward step has committed (e.g., the orchestrator times out during a slow database write). The compensation handler must gracefully handle being asked to undo something that has not yet happened — treat it as a no-op and return success."
+              }
+            ],
+            [
+              {
+                "text": "Double compensation.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " The compensation may be retried. Track compensation IDs the same way as forward step IDs."
+              }
+            ],
+            [
+              {
+                "text": "Semantic vs record idempotency.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Sometimes idempotency is natural (setting a flag to RESERVED is idempotent). Sometimes it requires explicit deduplication (decrementing a counter must not happen twice)."
+              }
+            ]
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Idempotency means you can press the same button twice and get the same result as pressing it once. In sagas, the infrastructure will sometimes press that button more than once. Design every step so the second press does nothing extra."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "msv-ch07-c011",
+      "order": 11,
+      "title": "Saga Reliability — Surviving Orchestrator Crashes",
+      "teaser": "The orchestrator is a stateful process — if it crashes mid-saga, in-flight saga instances must be recoverable. The solution is durable state persistence plus an at-least-once message delivery guarantee. Without both, a crashed orchestrator leaves orphaned reservations and locked resources.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The orchestrator's reliability model rests on two properties working together:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Durable saga state.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " After every state transition, the orchestrator writes the new state to a persistent store (database table, DynamoDB item, Temporal workflow history) before acknowledging the triggering message. This is the write-ahead log principle applied to saga state."
+              }
+            ],
+            [
+              {
+                "text": "At-least-once message delivery.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " The message broker (Kafka, RabbitMQ, SQS) must guarantee at-least-once delivery for commands and replies. Combined with participant idempotency, this ensures no step is permanently lost."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Crash recovery scenarios:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Crash before persisting state.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " The message broker will redeliver the reply; the orchestrator reprocesses it from the last durable state. The participant's idempotency key prevents double-execution."
+              }
+            ],
+            [
+              {
+                "text": "Crash after persisting state but before sending the next command.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " On restart, the orchestrator reads persisted state and resends the command. The participant's idempotency key handles the duplicate."
+              }
+            ],
+            [
+              {
+                "text": "Crash during compensation.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Same as above — the compensation state is persisted, and on restart the orchestrator continues compensating from where it stopped."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "In Temporal, all of this is handled by the framework: workflow state is stored in the Temporal server's history, and workflow code is replayed deterministically on restart. The developer writes workflow logic; Temporal handles durability."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "In a hand-rolled orchestrator, you must implement: the saga state table, the outbox pattern for sending commands, a recovery job that scans for stuck sagas, and a timeout mechanism for sagas that never receive a reply."
+            }
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "warning",
+          "runs": [
+            {
+              "text": "A saga orchestrator that stores state only in memory is a liability. A single pod restart will orphan every in-flight saga instance. State must always be durable before the orchestrator proceeds."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Saga reliability means: if the orchestrator crashes, every in-flight saga resumes correctly when it restarts. This requires writing down the current state to a database after every step, so the orchestrator knows exactly where to pick up."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "msv-ch07-c012",
+      "order": 12,
+      "title": "Lack of Isolation — The ACI Trade-off",
+      "teaser": "Sagas are ACD — Atomic, Consistent, Durable — but not Isolated. Intermediate saga states are visible to concurrent requests. This creates anomalies that ACID transactions prevent. The solution is not to pretend isolation exists, but to design countermeasures explicitly.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "In an ACID database, concurrent transactions cannot see each other's uncommitted work. In a saga, every step commits immediately — which means another saga running concurrently can observe a partially completed state. Richardson identifies three classes of anomalies this produces:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Lost updates.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Two sagas both read customer credit as $500, both decide there is enough, and both decrement. One update is lost. Without isolation, the credit check and the update are not atomic across sagas."
+              }
+            ],
+            [
+              {
+                "text": "Dirty reads.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " A saga reads an order that is in the PENDING_PAYMENT state (created by another saga's step 1 but not yet approved). It makes decisions based on that intermediate state, which may then be compensated away."
+              }
+            ],
+            [
+              {
+                "text": "Non-repeatable reads.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " A saga reads a value, then reads it again after a concurrent saga has modified it. The two reads disagree."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Countermeasures (Richardson's taxonomy):"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Semantic locks.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " The saga marks data as PENDING (a dirty flag) and concurrent sagas treat PENDING records as off-limits. The OrderService puts the order in PENDING state; other services refuse to operate on PENDING orders."
+              }
+            ],
+            [
+              {
+                "text": "Commutative updates.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Design updates so the order does not matter. Incrementing/decrementing a counter is commutative; any interleaving of concurrent increments/decrements produces the same result."
+              }
+            ],
+            [
+              {
+                "text": "Pessimistic view.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Re-read data at the latest possible moment before a decision. Minimize the time window in which a dirty read can occur."
+              }
+            ],
+            [
+              {
+                "text": "Value-based ordering.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Resequence saga steps to reduce the read-modify-write window — move the step that reads the most contended data as late as possible."
+              }
+            ],
+            [
+              {
+                "text": "Version-based conflict detection.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Use optimistic locking (row version numbers). The saga's write fails if the version has changed since the read — allowing a retry rather than a silent corrupt update."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "warning",
+          "runs": [
+            {
+              "text": "The lack of isolation is not a saga implementation defect — it is a fundamental property of the pattern. Every system using sagas must explicitly analyze which anomalies are possible and which countermeasures are applied. Ignoring it leads to subtle, hard-to-reproduce data corruption bugs."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "With an ACID transaction, the database hides your half-finished work from everyone else until you commit. Sagas have no such curtain — each step commits immediately and is visible. This means two sagas can step on each other's data. You handle this with explicit countermeasures: dirty flags, commutative operations, and optimistic locking."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "msv-ch07-c013",
+      "order": 13,
+      "title": "Saga Orchestration Tools — Temporal, Step Functions, Camunda",
+      "teaser": "Building a saga orchestrator from scratch is a significant engineering investment. Temporal, AWS Step Functions, and Camunda are purpose-built platforms that handle durable state, retries, timeouts, and workflow history out of the box — letting teams focus on saga logic rather than saga infrastructure.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The saga orchestration tooling landscape has matured substantially since Richardson published "
+            },
+            {
+              "text": "Microservices Patterns",
+              "marks": ["italic"]
+            },
+            {
+              "text": " in 2018. Three tools dominate production usage:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Temporal (temporal.io).",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Open-source workflow engine (Go/Java/TypeScript/Python SDKs). Workflow code is written as regular functions; Temporal replays execution history to reconstruct state after a crash. Supports activities (saga steps), timers, signals, queries, child workflows, and saga compensation via deferred cancel handlers. Used at Uber, Netflix, Stripe, and Datadog. The most developer-friendly option for complex sagas."
+              }
+            ],
+            [
+              {
+                "text": "AWS Step Functions.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Fully managed serverless workflow service. Sagas are defined as Amazon States Language (ASL) JSON state machines. Standard Workflows offer exactly-once semantics with full execution history. Express Workflows offer at-least-once with higher throughput. Native integration with Lambda, ECS, DynamoDB, SQS, and 200+ AWS services. Compensation is implemented via Catch/Fallback states."
+              }
+            ],
+            [
+              {
+                "text": "Camunda Platform 8.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " BPMN-based workflow engine. Sagas are modeled as BPMN compensation event subprocesses, which is the closest to the formal saga pattern in a visual notation. Strong for organizations that want business-analyst-readable workflow diagrams. Zeebe (Camunda's engine) is a distributed, highly available workflow engine with event sourcing."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Comparison:"
+            }
+          ]
+        },
+        {
+          "type": "code",
+          "lang": "text",
+          "code": "Feature              Temporal           Step Functions     Camunda 8\n----------------------------------------------------------------------\nDeployment           Self-hosted/Cloud   AWS managed        Self/Cloud\nLanguage             Code (6 SDKs)       JSON (ASL)         BPMN + Code\nCompensation         Saga pattern lib    Catch/Fallback      BPMN compensation\nVisibility           Temporal UI         CloudWatch          Operate UI\nAt-least-once        Yes (activities)    Standard: 1x        Yes (Zeebe)\nBest for             Complex code sagas  AWS-native stacks   BPMN orgs\nTypical use          Payment, order      Serverless, ETL     Enterprise BPM"
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "For greenfield microservices teams, Temporal is the current community favorite for orchestration sagas due to its code-first approach, excellent visibility tooling, and active open-source community. AWS Step Functions is the obvious choice for AWS-native architectures where managed infrastructure is preferred."
+            }
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "info",
+          "runs": [
+            {
+              "text": "Temporal's model of durable execution — where workflow code is replayed from an event history after a crash — eliminates the need to manually implement the outbox pattern, saga state tables, and recovery jobs. The trade-off is learning Temporal's programming model and operational requirements."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Temporal, Step Functions, and Camunda are saga engines that handle the hard parts — crash recovery, retries, durable state — so you can focus on writing the saga logic itself. They are to sagas what database engines are to transactions: infrastructure you do not want to build yourself."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "msv-ch07-c014",
+      "order": 14,
+      "title": "The Transactional Outbox Pattern",
+      "teaser": "The Transactional Outbox pattern solves the dual-write problem every saga participant faces: how do you atomically update your database and publish an event to the message broker when they are two different systems?",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Every saga participant must do two things as a single unit of work: update its local database, and publish an event or reply to the message broker. But these are two separate systems — you cannot wrap them in a single ACID transaction. If the service crashes between the two writes, you get inconsistency."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The Transactional Outbox pattern resolves this:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "numbered",
+          "items": [
+            [
+              {
+                "text": "Within the same local database transaction",
+                "marks": ["bold"]
+              },
+              {
+                "text": ", write the business update AND insert a row into an "
+              },
+              {
+                "text": "OUTBOX",
+                "marks": ["code"]
+              },
+              {
+                "text": " table with the event payload."
+              }
+            ],
+            [
+              {
+                "text": "A separate Message Relay process",
+                "marks": ["bold"]
+              },
+              {
+                "text": " reads the OUTBOX table (via polling or CDC — Change Data Capture) and publishes events to the broker."
+              }
+            ],
+            [
+              {
+                "text": "After successful publication",
+                "marks": ["bold"]
+              },
+              {
+                "text": ", the relay marks the OUTBOX row as published or deletes it."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "code",
+          "lang": "text",
+          "code": "CustomerService DB\n+------------------+    +------------------------+\n| customers        |    | outbox                 |\n|------------------|    |------------------------|  <-- same transaction\n| id | credit      |    | id | event | published |\n|    |             |    |    |       |           |\n+------------------+    +------------------------+\n                                    |\n                         Message Relay (async)\n                                    |\n                                    v\n                          Kafka / RabbitMQ / SQS"
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Tools that implement CDC-based outbox relay include Debezium (for PostgreSQL, MySQL, MongoDB) and AWS DMS. The relay uses the database's replication log as the outbox reader, which is more efficient than polling and produces near-real-time event publication."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The outbox pattern guarantees at-least-once delivery: the event will be published even if the service crashes after committing the transaction. Combined with participant idempotency, this is sufficient for saga correctness."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "You cannot atomically write to a database and a message broker in the same commit. The outbox workaround: write both your business data and your pending event to the database in one transaction, then have a relay process deliver that event to the broker separately. If anything crashes, the event is still in the database and the relay will find it."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "msv-ch07-c015",
+      "order": 15,
+      "title": "Sagas vs 2PC — The Full Trade-off",
+      "teaser": "Sagas and 2PC are not two implementation choices for the same goal. They represent different consistency models with different availability, scalability, and complexity profiles. Understanding the full trade-off clarifies when sagas are the right choice and what you give up to use them.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The choice between sagas and 2PC is ultimately a choice between two points on the CAP theorem spectrum:"
+            }
+          ]
+        },
+        {
+          "type": "code",
+          "lang": "text",
+          "code": "Property               2PC                          Saga\n-----------------------------------------------------------------------\nConsistency model      ACID (full isolation)         ACD (no isolation)\nAvailability           Low (locks during prepare)   High (no cross-service locks)\nHeterogeneous stores   No (XA required)             Yes (local transactions)\nFailure mode           Blocking (coordinator crash) Non-blocking (compensation)\nIntermediate states    Hidden (isolation)           Visible (require countermeasures)\nComplexity source      Locking protocol             Compensation logic\nDebug difficulty       Deadlock analysis            Saga state tracing\nSuitable for           Single database, legacy      Microservices, polyglot stores\nLatency                Higher (sync round-trips)    Lower (async steps)\nRollback               True rollback                Semantic compensation"
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "When to prefer 2PC (or a single-database ACID transaction):"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "All data lives in a single relational database.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " A simple SQL transaction is faster, simpler, and fully isolated. Use it."
+              }
+            ],
+            [
+              {
+                "text": "Financial systems where double-spending or partial credit is categorically unacceptable.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Some domains genuinely require serializable isolation and accept the availability cost."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "When to prefer sagas:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Multiple services, each with their own database.",
+                "marks": ["bold"]
+              }
+            ],
+            [
+              {
+                "text": "Polyglot persistence (some services use NoSQL, some use RDBMS).",
+                "marks": ["bold"]
+              }
+            ],
+            [
+              {
+                "text": "High availability requirements that 2PC's blocking phase cannot meet.",
+                "marks": ["bold"]
+              }
+            ],
+            [
+              {
+                "text": "Long-running business processes (minutes to days) where holding locks is infeasible.",
+                "marks": ["bold"]
+              }
+            ]
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "info",
+          "runs": [
+            {
+              "text": "In practice, for most microservices architectures the choice is already made: the database-per-service pattern rules out 2PC. The real decision is choreography vs orchestration, and which countermeasures to apply for the lack of isolation."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "2PC gives you full isolation but holds locks across all participants simultaneously — which degrades availability and only works if every participant supports XA. Sagas release locks immediately at each step, but expose intermediate states that concurrent operations can observe. In microservices with separate databases, 2PC is usually not an option at all."
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
