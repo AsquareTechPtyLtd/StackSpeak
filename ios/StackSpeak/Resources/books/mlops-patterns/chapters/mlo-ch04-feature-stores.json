@@ -1,0 +1,1648 @@
+{
+  "chapterId": "mlo-ch04-feature-stores",
+  "shardIndex": 4,
+  "cards": [
+    {
+      "id": "mlo-ch04-c001",
+      "order": 1,
+      "title": "The Training/Serving Skew Problem",
+      "teaser": "Training/serving skew is one of the most common and silent failure modes in ML production: the feature values a model sees during training differ from the values it sees at inference time, causing real-world performance to be far worse than offline metrics suggest.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Imagine you train a fraud detection model. During training you compute a feature called "
+            },
+            {
+              "text": "avg_spend_last_7d",
+              "marks": ["code"]
+            },
+            {
+              "text": " using a batch SQL query over your data warehouse. At serving time, you compute the same feature with a slightly different window definition — perhaps off-by-one in the date boundary — or you compute it from a different data source that has a 15-minute lag. The model was never trained on these values. Its predictions become unreliable in ways that are extremely hard to debug."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Training/serving skew has four common root causes:"
+          }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Different code paths.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Training uses a Spark job; serving uses a microservice with reimplemented logic. A subtle difference in rounding or null handling diverges the outputs."
+              }
+            ],
+            [
+              {
+                "text": "Different data sources.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Training reads from the warehouse; serving reads from the application database replica. Schema drift, replication lag, or denormalization differences produce divergent values."
+              }
+            ],
+            [
+              {
+                "text": "Different preprocessing libraries.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Training uses scikit-learn's "
+              },
+              {
+                "text": "StandardScaler",
+                "marks": ["code"]
+              },
+              {
+                "text": "; a serving engineer reimplements standardization in Java. Mean and variance are stored in the model artifact, but the computation path differs."
+              }
+            ],
+            [
+              {
+                "text": "Time leakage.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Training accidentally includes data from after the label event (a form of data leakage), producing features the model can never have at prediction time."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The canonical solution is a "
+            },
+            {
+              "text": "feature store",
+              "marks": ["bold"]
+            },
+            {
+              "text": ": a system that guarantees the same feature definition computes the same values whether called from a training pipeline or a serving endpoint. The rest of this chapter covers what that system looks like and how to build or buy it."
+            }
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "warning",
+          "runs": [
+            {
+              "text": "Training/serving skew is particularly dangerous because it degrades silently. Offline evaluation metrics look healthy because they were measured on training-time features. The skew only surfaces as unexplained underperformance in A/B tests or production monitoring."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Training/serving skew means your model learned from features computed one way, but at prediction time you compute those same features a slightly different way. The model was never trained on the actual inputs it receives in production — so its real-world performance is worse than your offline tests show."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "mlo-ch04-c002",
+      "order": 2,
+      "title": "Feature Store Overview",
+      "teaser": "A feature store is a centralized system that acts as the single source of truth for ML features — it handles feature computation, storage, versioning, and serving, and ensures the same definition is used whether the consumer is a training job or a live prediction service.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The term \"feature store\" was popularized by Uber's Michelangelo platform (2017) and Netflix's Metaflow (2019), and has since become a standard component in mature MLOps stacks. At its core, a feature store solves three problems simultaneously:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Training/serving parity.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Feature definitions are registered once and computed by a shared engine. Training pipelines read from the offline store; serving systems read from the online store — but both read the same definition."
+              }
+            ],
+            [
+              {
+                "text": "Feature reuse.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Engineers can discover and reuse features built by other teams. A feature computed for a recommendation model can be shared with a fraud detection model without re-implementing the logic."
+              }
+            ],
+            [
+              {
+                "text": "Operational reliability.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " The store handles the operational complexity of low-latency serving, backfills, versioning, and freshness guarantees — complexity that every team would otherwise solve independently."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "A feature store has two storage tiers:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Offline store",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — a columnar store (BigQuery, Snowflake, Parquet on S3) optimized for batch reads. Used during model training and evaluation."
+              }
+            ],
+            [
+              {
+                "text": "Online store",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — a low-latency key-value store (Redis, DynamoDB, Bigtable) optimized for single-entity reads at sub-10ms latency. Used during model serving."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The feature definition — a declarative specification of how a feature is computed — is the contract that binds both tiers together. When the definition changes, both stores are updated in sync."
+            }
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "info",
+          "runs": [
+            {
+              "text": "Major cloud platforms now ship managed feature stores: Vertex AI Feature Store (GCP), Amazon SageMaker Feature Store (AWS), and Azure Machine Learning Feature Store. The architectural pattern is consistent across all of them."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "A feature store is the one place where a feature is defined, computed, and served. Training and serving both pull from it, so they always see the same thing. Think of it as the single source of truth that eliminates the \"we computed it differently\" problem."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "mlo-ch04-c003",
+      "order": 3,
+      "title": "The Offline Store",
+      "teaser": "The offline store is the feature store's batch tier — a columnar data warehouse that holds historical feature values for training, evaluation, and backfill workflows. BigQuery, Snowflake, and Parquet-on-S3 are the dominant backends.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The offline store exists to answer the question: \"What were the feature values for entity X at timestamp T?\" Training pipelines pose this question for millions of (entity, timestamp) pairs; the offline store must answer efficiently across large historical ranges."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Key properties of a well-designed offline store:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Columnar layout.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Feature values are stored in a columnar format (Parquet, ORC, or a warehouse's native format). Training jobs typically select a few feature columns for many rows — columnar storage optimizes this access pattern dramatically over row-oriented storage."
+              }
+            ],
+            [
+              {
+                "text": "Time-partitioned.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Every feature row carries a timestamp. The store is partitioned by time so that training jobs can efficiently pull features for a specific date range without scanning the full history."
+              }
+            ],
+            [
+              {
+                "text": "Append-only semantics.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Feature values are never updated in place — new values are appended with a new timestamp. This preserves the historical record necessary for point-in-time correct training set generation."
+              }
+            ],
+            [
+              {
+                "text": "Backfill capability.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " When a new feature is added, the offline store must be backfilled — historical values computed and loaded for all entities. This is typically done as a one-time batch job using Spark or BigQuery SQL."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Common offline store backends and their tradeoffs:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "BigQuery (GCP)",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — serverless, SQL-native, scales to petabytes; strong integration with Vertex AI and Dataflow."
+              }
+            ],
+            [
+              {
+                "text": "Snowflake",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — warehouse-agnostic, multi-cloud; commonly used in enterprises that already standardize on Snowflake."
+              }
+            ],
+            [
+              {
+                "text": "Parquet on S3/GCS",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — lowest cost, highest flexibility; requires a compute layer (Spark, Athena, BigQuery Omni) and operational investment in schema management."
+              }
+            ]
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The offline store is a big column-oriented table of historical feature values with timestamps. Your training job says \"give me all features for these users at these dates\" and the offline store can answer that efficiently — like a time machine for your feature data."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "mlo-ch04-c004",
+      "order": 4,
+      "title": "The Online Store",
+      "teaser": "The online store is the feature store's low-latency serving tier — a key-value database that returns pre-computed feature values for a single entity in single-digit milliseconds. Redis, DynamoDB, and Bigtable are the canonical backends.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "During model serving, you have microseconds to assemble features before prediction latency becomes unacceptable. The online store is purpose-built for this access pattern: given an entity ID (a user ID, a product ID, a transaction ID), return all current feature values for that entity as fast as possible."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The online store is populated by a "
+            },
+            {
+              "text": "materialization job",
+              "marks": ["bold"]
+            },
+            {
+              "text": " that periodically (or continuously) reads fresh values from the offline store and writes them to the online store. The frequency of this materialization determines the feature freshness."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Common online store backends and their characteristics:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Redis",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — in-memory key-value store; sub-millisecond reads; most popular choice for latency-sensitive applications. Requires memory sizing and replication management. Redis Cluster handles horizontal scale."
+              }
+            ],
+            [
+              {
+                "text": "DynamoDB",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — managed AWS key-value store; single-digit millisecond reads; no operational overhead; higher per-request cost than self-managed Redis."
+              }
+            ],
+            [
+              {
+                "text": "Bigtable",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — GCP's managed wide-column store; excellent for high-throughput serving with thousands of features per entity; 5-10ms typical read latency."
+              }
+            ],
+            [
+              {
+                "text": "Cassandra / ScyllaDB",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — self-managed options favored in multi-cloud or on-premise environments; high operational complexity but no cloud vendor lock-in."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The online store only holds "
+            },
+            {
+              "text": "current",
+              "marks": ["italic"]
+            },
+            {
+              "text": " values — one row per entity. It does not store history. History lives in the offline store. This design keeps the online store small (and therefore fast), trading historical breadth for serving speed."
+            }
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "warning",
+          "runs": [
+            {
+              "text": "The freshness of the online store is determined by the materialization job's frequency. A feature that is materialized hourly can be up to 60 minutes stale. For fraud detection or real-time personalization, this staleness may be unacceptable — see the card on streaming features."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The online store is like a very fast lookup table: give it a user ID, get back all current feature values in under 10 milliseconds. It only stores the latest value per entity — no history — because your prediction service needs speed, not a time machine."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "mlo-ch04-c005",
+      "order": 5,
+      "title": "Online/Offline Parity",
+      "teaser": "Parity between the online and offline stores means the same feature definition produces the same numerical value in both stores — it is the core guarantee a feature store makes and the property that eliminates training/serving skew.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Online/offline parity is achieved through a single shared definition, illustrated below:"
+            }
+          ]
+        },
+        {
+          "type": "code",
+          "lang": "text",
+          "text": "                   ┌─────────────────────────────┐\n                   │    Feature Definition        │\n                   │  (single source of truth)    │\n                   └──────────┬──────────────┬────┘\n                              │              │\n              ┌───────────────▼──┐      ┌────▼───────────────┐\n              │  Offline Store   │      │   Online Store     │\n              │  (BigQuery /     │      │   (Redis /         │\n              │   Snowflake /    │◄─────│    DynamoDB /      │\n              │   Parquet)       │ mat. │    Bigtable)       │\n              │                  │  job │                    │\n              └──────────┬───────┘      └────────┬───────────┘\n                         │                        │\n              ┌──────────▼───────┐      ┌────────▼───────────┐\n              │  Training Job    │      │  Serving Endpoint  │\n              │  (point-in-time  │      │  (real-time,       │\n              │   correct)       │      │   < 10ms)          │\n              └──────────────────┘      └────────────────────┘"
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Parity requires that:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "The transformation logic is identical.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " The batch job and the online materialization job must execute the same code or produce provably equivalent results. Feast and Tecton achieve this by using a single Python transformation that is compiled to both Spark SQL (offline) and a serving-time function (online)."
+              }
+            ],
+            [
+              {
+                "text": "Null and edge-case handling is consistent.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Division by zero, empty aggregation windows, and missing entity rows must be handled identically in both paths. Many skew bugs hide in these edge cases."
+              }
+            ],
+            [
+              {
+                "text": "Aggregation window semantics match.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " If the offline job computes a 7-day window using calendar days, the online computation must use the same boundary logic — not 7 * 24 * 60 * 60 seconds."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Testing for parity is a discipline in itself. The recommended approach is to run a shadow comparison: for a sample of entities, compute the feature value using both the offline and online paths and assert they match within a tolerance (for floating-point features)."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Parity means if you ask the offline store \"what is this feature for user 42?\" and ask the online store the same question, you get the same number. The feature store achieves this by making sure both stores compute the feature the same way, from the same definition."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "mlo-ch04-c006",
+      "order": 6,
+      "title": "Point-in-Time Correctness",
+      "teaser": "Point-in-time correctness means that when generating a training dataset, you only use feature values that were available at the moment of the label event — never data from the future. Violating this constraint is a form of data leakage that produces unrealistically good training metrics.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Consider building a churn prediction model. Your training dataset has one row per user with a label: \"churned within 30 days.\" Each row also needs feature values like "
+            },
+            {
+              "text": "sessions_last_7d",
+              "marks": ["code"]
+            },
+            {
+              "text": " and "
+            },
+            {
+              "text": "avg_purchase_value",
+              "marks": ["code"]
+            },
+            {
+              "text": ". The question is: which values? If you use the feature values from "
+            },
+            {
+              "text": "today",
+              "marks": ["italic"]
+            },
+            {
+              "text": " for a label event that happened 6 months ago, you may be including data from after the user churned. The model learns from the future — its offline metrics look brilliant, but it fails in production because the future isn't available at prediction time."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Point-in-time correctness means: for a label event at timestamp T for entity E, use only feature values with a timestamp ≤ T. The offline store must support this efficiently — it is called a "
+            },
+            {
+              "text": "point-in-time join",
+              "marks": ["bold"]
+            },
+            {
+              "text": " or a "
+            },
+            {
+              "text": "temporal join",
+              "marks": ["bold"]
+            },
+            {
+              "text": "."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "In SQL, a point-in-time join looks like:"
+            }
+          ]
+        },
+        {
+          "type": "code",
+          "lang": "sql",
+          "text": "SELECT\n  e.entity_id,\n  e.label,\n  e.event_timestamp,\n  f.feature_value\nFROM label_events e\nJOIN feature_table f\n  ON  e.entity_id = f.entity_id\n  AND f.feature_timestamp = (\n    SELECT MAX(feature_timestamp)\n    FROM feature_table f2\n    WHERE f2.entity_id = e.entity_id\n      AND f2.feature_timestamp <= e.event_timestamp\n  )"
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "This query is expensive for large datasets. Feature stores optimize it by time-partitioning the offline store and pre-sorting rows per entity — Feast and Tecton both implement optimized point-in-time join operators that avoid the naive nested query."
+            }
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "warning",
+          "runs": [
+            {
+              "text": "Point-in-time correctness is the offline store's most critical correctness property. A feature store that does not enforce it will silently produce training datasets with data leakage. The resulting models appear to have high accuracy in evaluation but fail to generalize in production."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Point-in-time correctness is like a time travel rule: when training on a past event, you can only use data that existed at that moment. No peeking at the future. If you join features using today's values for yesterday's events, your model learns patterns it can never have access to in production."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "mlo-ch04-c007",
+      "order": 7,
+      "title": "Feast — The Open-Source Feature Store",
+      "teaser": "Feast (Feature Store) is the leading open-source feature store, originally developed by Gojek and now backed by Tecton. It provides a Python SDK, a declarative feature registry, and adapters for the most common offline and online store backends.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Feast was open-sourced by Gojek in 2019 and is now stewarded by Tecton. It offers a lightweight, self-hosted feature store that integrates with existing infrastructure: you bring your own offline and online stores, and Feast provides the SDK, the registry, and the materialization engine."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "A Feast feature definition in YAML (Feast 0.30+):"
+            }
+          ]
+        },
+        {
+          "type": "code",
+          "lang": "yaml",
+          "text": "# feature_repo/features.py (Python SDK, not YAML for definitions)\n# Feast definitions are written in Python:\n\nfrom feast import FeatureView, Field, Entity, FileSource\nfrom feast.types import Float64, Int64\nfrom datetime import timedelta\n\nuser = Entity(\n    name=\"user_id\",\n    join_keys=[\"user_id\"],\n    description=\"A user of the platform\"\n)\n\nuser_activity_source = FileSource(\n    path=\"s3://my-bucket/user_activity.parquet\",\n    timestamp_field=\"event_timestamp\"\n)\n\nuser_activity_features = FeatureView(\n    name=\"user_activity_7d\",\n    entities=[user],\n    ttl=timedelta(days=7),\n    schema=[\n        Field(name=\"sessions_last_7d\", dtype=Int64),\n        Field(name=\"avg_purchase_value\", dtype=Float64),\n        Field(name=\"days_since_last_login\", dtype=Int64),\n    ],\n    source=user_activity_source,\n    tags={\"team\": \"ml-platform\", \"version\": \"1.0\"}\n)"
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Key Feast concepts:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "FeatureView",
+                "marks": ["code"]
+              },
+              {
+                "text": " — the core unit: a named set of features defined over an entity, backed by a data source, with a TTL."
+              }
+            ],
+            [
+              {
+                "text": "Entity",
+                "marks": ["code"]
+              },
+              {
+                "text": " — the primary key of the feature (user, product, driver). Entities define the join key between feature views."
+              }
+            ],
+            [
+              {
+                "text": "feast apply",
+                "marks": ["code"]
+              },
+              {
+                "text": " — registers definitions to the registry and creates infrastructure (online store tables, etc.)."
+              }
+            ],
+            [
+              {
+                "text": "feast materialize",
+                "marks": ["code"]
+              },
+              {
+                "text": " — loads feature values from the offline source into the online store for a given time range."
+              }
+            ],
+            [
+              {
+                "text": "get_historical_features()",
+                "marks": ["code"]
+              },
+              {
+                "text": " — performs a point-in-time join against the offline store; returns a training dataset as a Pandas or Spark DataFrame."
+              }
+            ],
+            [
+              {
+                "text": "get_online_features()",
+                "marks": ["code"]
+              },
+              {
+                "text": " — performs a sub-10ms lookup against the online store; used in serving code."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "info",
+          "runs": [
+            {
+              "text": "Feast supports BigQuery, Snowflake, Redshift, and Spark as offline stores, and Redis, DynamoDB, Bigtable, Cassandra, and SQLite as online stores. The feature registry can be stored in a SQL database or on a cloud object store."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Feast is the open-source Swiss Army knife for feature stores. You define features in Python, run \"feast apply\" to register them, \"feast materialize\" to push values to the online store, and then call get_historical_features() for training or get_online_features() for serving — from the same definitions."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "mlo-ch04-c008",
+      "order": 8,
+      "title": "Tecton — The Commercial Feature Store",
+      "teaser": "Tecton is a fully managed, enterprise-grade feature store descended from Uber's Michelangelo platform. It adds orchestration, streaming support, monitoring, and an SLA-backed serving layer on top of Feast's open-source primitives.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Tecton was founded in 2020 by the original creators of Uber's Michelangelo, the industry's first large-scale internal feature store (published 2017). Michelangelo's influence on the field was profound: it demonstrated that a centralized feature store could eliminate training/serving skew at scale across hundreds of models and thousands of features."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Tecton's differentiators over self-managed Feast:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Managed orchestration.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Tecton automatically schedules and runs materialization jobs; in Feast you manage your own Airflow or cron-based scheduling."
+              }
+            ],
+            [
+              {
+                "text": "Streaming-first architecture.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Tecton has native, first-class support for streaming features via Kafka and Kinesis. Streaming features can be updated in sub-second latency, not just batch-materialized hourly."
+              }
+            ],
+            [
+              {
+                "text": "Feature monitoring.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Built-in data quality monitoring, freshness alerts, and skew detection between training and serving distributions."
+              }
+            ],
+            [
+              {
+                "text": "Transformation compute.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Tecton can run transformation logic (Spark, Pandas, Python UDFs) as part of the feature definition, rather than requiring pre-computed values."
+              }
+            ],
+            [
+              {
+                "text": "SLA-backed serving.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Tecton offers contractual P99 latency SLAs on online feature serving — a requirement for enterprise ML teams with production latency budgets."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Tecton also stewards the open-source Feast project and contributes upstream improvements. The commercial platform is built on the same concepts with additional managed infrastructure, enterprise support, and SOC 2 compliance."
+            }
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "info",
+          "runs": [
+            {
+              "text": "Uber's Michelangelo (2017) was the original at-scale demonstration that centralized feature management worked. The paper's key insight: the highest-leverage investment in an ML platform is eliminating the duplication of feature computation across training and serving — everything else is secondary."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Tecton is what you get when the team that built Uber's internal ML platform (Michelangelo) productized it. It handles all the operational work Feast leaves to you — scheduling materialization, monitoring data quality, and serving features with guaranteed latency — in exchange for a subscription fee."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "mlo-ch04-c009",
+      "order": 9,
+      "title": "Feature Engineering Pipelines",
+      "teaser": "Feature engineering pipelines are the batch or streaming jobs — typically Spark, Beam, or Flink — that transform raw data into feature values stored in the feature store. They are the computational backbone of the offline store.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Raw data stored in a data lake or warehouse is rarely directly useful as model features. Feature engineering pipelines apply transformations — aggregations, encodings, normalizations, joins — to produce the cleaned, numerically useful values that the model expects."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Common transformation types:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Window aggregations.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " \"Count of transactions in the last 7 days\", \"sum of spend in the last 30 days\", \"max session duration in the last 24 hours.\" These are the most expensive to compute and the most valuable features in many domains."
+              }
+            ],
+            [
+              {
+                "text": "Entity embeddings.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Dense vector representations of categorical entities (users, products) computed from a lookup table or an embedding model."
+              }
+            ],
+            [
+              {
+                "text": "Ratio features.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " \"Spend in last 7 days / spend in last 90 days\" — relative features that normalize for entity-level baselines."
+              }
+            ],
+            [
+              {
+                "text": "Lag features.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " The value of a feature N periods ago, useful in time-series applications."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Compute framework selection:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Apache Spark",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — dominant choice for batch feature computation; strong DataFrame API, window function support, integrates with Hive/Delta Lake. Runs on Databricks, EMR, or Dataproc."
+              }
+            ],
+            [
+              {
+                "text": "Apache Beam",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — portable batch/streaming API; can run on Dataflow (GCP), Flink, or Spark. Good choice when you need the same pipeline logic to run in both batch and streaming modes."
+              }
+            ],
+            [
+              {
+                "text": "Apache Flink",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — stateful stream processing; best choice for low-latency streaming features that require large, maintained state (e.g., per-user aggregations over a rolling window)."
+              }
+            ],
+            [
+              {
+                "text": "dbt",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — SQL-based transformation framework; increasingly used for batch feature engineering when transformations are expressible in SQL and the team is analytics-first."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "info",
+          "runs": [
+            {
+              "text": "One of the most impactful design choices in feature engineering is whether to compute features as part of the data pipeline (push model) or on-demand at training time (pull model). The feature store typically implements the push model: features are pre-computed and stored, so training is a fast read rather than a slow computation."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Feature engineering pipelines are the factories that turn raw data into model-ready numbers. They run as Spark or Flink jobs on a schedule, computing things like \"how many times did this user log in over the past week\" and writing those values to the feature store."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "mlo-ch04-c010",
+      "order": 10,
+      "title": "Feature Serving SLAs",
+      "teaser": "Online feature serving has a hard latency ceiling: sub-10ms P99 is the industry standard for production ML serving. Every millisecond of feature retrieval eats into the model's inference budget, and budget overruns translate directly to degraded user experience.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "In a real-time ML serving system, the total latency budget for a prediction is typically 50-200ms. That budget must cover: network ingress, feature retrieval, model inference, and network egress. Feature retrieval must consume as little of that budget as possible."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The sub-10ms target is not arbitrary. Redis in-memory lookups typically achieve 0.5-2ms; DynamoDB achieves 2-5ms; Bigtable achieves 3-8ms. These are single-entity point reads on small payloads (a few dozen features). Larger feature vectors, N+1 problems (fetching features for many entities per request), and cold cache scenarios can easily push latency into the 20-50ms range."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Architectural patterns for meeting the SLA:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Batch feature retrieval.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Fetch all features for all entities in a single batched request rather than individual lookups. Most online stores support multi-get operations that amortize the network overhead."
+              }
+            ],
+            [
+              {
+                "text": "Client-side caching.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " For features that change slowly (e.g., user demographics), cache values in the serving process memory for a configurable TTL. Reduces online store load dramatically for high-traffic models."
+              }
+            ],
+            [
+              {
+                "text": "Feature vector precomputation.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " For high-traffic entities (top users, popular products), pre-assemble the full feature vector at materialization time rather than assembling it at serving time from multiple feature views."
+              }
+            ],
+            [
+              {
+                "text": "Co-location.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Deploy the online store in the same cloud region and availability zone as the model serving infrastructure. Cross-region latency alone can add 30-100ms."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "info",
+          "runs": [
+            {
+              "text": "SLA monitoring for feature serving should track P50, P95, and P99 latency separately, plus error rate and cache hit rate. A spike in P99 latency while P50 stays stable typically indicates hot key problems or garbage collection pauses in Redis — common failure modes that look healthy in averages."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Feature serving has a strict latency budget because it sits in the critical path of every prediction. If feature retrieval takes 50ms and your model takes 20ms, your total prediction latency is 70ms — which may be too slow for a real-time product. The target is under 10ms for the feature lookup so the model gets the time it needs."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "mlo-ch04-c011",
+      "order": 11,
+      "title": "Feature Reuse and the Feature Catalog",
+      "teaser": "Feature reuse is the organizational payoff of a feature store: a feature computed once can be shared across teams and models without rewriting the transformation logic. The \"feature catalog\" is the discoverability layer that makes this reuse practical.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Without a feature store, feature engineering is duplicated across every ML team. The fraud team computes "
+            },
+            {
+              "text": "user_spend_30d",
+              "marks": ["code"]
+            },
+            {
+              "text": " in one Spark job; the recommendation team computes the same thing in a different job with slightly different semantics. Both jobs are maintained separately, produce slightly different values, and create the organizational equivalent of distributed technical debt."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "A feature catalog provides:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Search and discovery.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Engineers can search for features by name, entity, owner, or tag. \"Does anyone already compute average spend for users? Let me check the catalog before writing another Spark job.\""
+              }
+            ],
+            [
+              {
+                "text": "Semantic documentation.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Each feature carries metadata: its definition, its data source, its owner, its computation frequency, and its known caveats (\"null for new users in the first 30 days\")."
+              }
+            ],
+            [
+              {
+                "text": "Usage statistics.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " How many models use this feature? What is the average feature importance across those models? Usage data helps prioritize feature maintenance and deprecation."
+              }
+            ],
+            [
+              {
+                "text": "Lineage.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Which models depend on this feature? If the source data quality degrades, which models are at risk? Lineage makes impact analysis tractable."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Feast implements a basic feature registry that serves as a catalog. Tecton's catalog is more mature, with search, usage tracking, and lineage built in. Databricks Feature Store and Vertex AI Feature Store both include catalog functionality integrated with their respective data and model catalogs."
+            }
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "info",
+          "runs": [
+            {
+              "text": "Organizations that achieve high feature reuse typically see 30-50% reduction in feature engineering time on new models. The first model that uses a feature pays the full engineering cost; every subsequent model uses it for free. The catalog is the mechanism that makes this visible and discoverable."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Feature reuse means the fraud team and the recommendation team both use the same \"user_spend_30d\" feature — defined once, computed once, maintained once. The catalog is the library card catalog that lets engineers find features that already exist before building new ones."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "mlo-ch04-c012",
+      "order": 12,
+      "title": "Streaming Features",
+      "teaser": "Streaming features are computed in near real-time from event streams rather than batch jobs — they reflect the most current entity state and are critical for use cases like real-time fraud detection, live recommendations, and dynamic pricing.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Batch-materialized features have a fundamental limitation: they are stale. A feature materialized hourly can be up to 60 minutes behind the current state of the world. For some use cases — user preferences in a recommendation engine — hourly freshness is acceptable. For others — detecting a fraudulent transaction in progress — 60-minute-old features are useless."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Streaming features consume an event stream (Kafka, Kinesis, Pub/Sub) and maintain running aggregations in low-latency storage, updating the online store as new events arrive. The architecture:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Event source",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — raw events (clicks, transactions, logins) arrive on a Kafka topic."
+              }
+            ],
+            [
+              {
+                "text": "Stream processor",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — a Flink or Beam job reads the topic, maintains windowed state, and emits updated feature values. For example: \"increment the transaction count for user 42 and update the rolling 1-hour sum.\""
+              }
+            ],
+            [
+              {
+                "text": "Online store write",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — the processor writes updated values to Redis or Bigtable. Latency from event arrival to online store update: typically 1-5 seconds."
+              }
+            ],
+            [
+              {
+                "text": "Offline store backfill",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — the same events are also persisted to the offline store (via Kafka → Parquet on S3 → Hive table) so that historical training datasets can include streaming features."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The dual-write challenge: streaming features must be written to both the online store (for serving) and the offline store (for training). Tecton handles this natively. In Feast, you must manage the streaming write path yourself with a Flink or Spark Structured Streaming job."
+            }
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "warning",
+          "runs": [
+            {
+              "text": "Point-in-time correctness for streaming features in the offline store requires that the event stream is also persisted with event timestamps, not processing timestamps. If you store the time the Flink job processed the event rather than the time the event occurred, your training data has subtle time drift that is nearly impossible to debug."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "A streaming feature updates in real-time as events happen — instead of waiting for a nightly batch job, a Flink job reads the Kafka stream and updates \"transactions in the last hour\" for each user within seconds of each new transaction. It's the difference between yesterday's news and live news."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "mlo-ch04-c013",
+      "order": 13,
+      "title": "The Build-vs-Buy Decision",
+      "teaser": "Choosing between building a custom feature store, adopting open-source Feast, or purchasing Tecton is one of the most consequential MLOps infrastructure decisions — the wrong choice wastes months of engineering time or locks the organization into a costly dependency.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The build-vs-buy decision for feature stores is governed by three variables: team size and maturity, ML model count and diversity, and operational engineering capacity."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Decision framework:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "1-5 models, single team:",
+                "marks": ["bold"]
+              },
+              {
+                "text": " No feature store. Manage feature computation in your existing data pipeline. A shared Python utility library with documented feature definitions is sufficient. The operational overhead of a feature store exceeds the benefit at this scale."
+              }
+            ],
+            [
+              {
+                "text": "5-20 models, 2-4 teams:",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Self-hosted Feast. You have enough models to benefit from reuse and parity, but not enough scale to justify a commercial platform. Feast provides the framework; your team operates it. Budget 1-2 engineers for initial setup and ongoing maintenance."
+              }
+            ],
+            [
+              {
+                "text": "20+ models, 5+ teams, streaming requirements:",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Evaluate Tecton, Vertex AI Feature Store, or SageMaker Feature Store. The complexity of streaming features, multi-team governance, SLA management, and monitoring makes self-managed Feast increasingly painful. Commercial platforms trade money for engineering time."
+              }
+            ],
+            [
+              {
+                "text": "Regulated industry (finance, healthcare):",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Prioritize auditability, lineage, and compliance features. Tecton and cloud-managed solutions offer better audit trails than self-managed Feast. Verify that the vendor meets SOC 2, HIPAA, or FedRAMP requirements for your use case."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Common build-your-own pitfalls:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Underestimating the operational surface.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " A custom feature store is not just a Redis wrapper and a Spark job — it needs versioning, monitoring, backfill tooling, a catalog, SLA alerting, and disaster recovery. Teams consistently underestimate this scope."
+              }
+            ],
+            [
+              {
+                "text": "Underestimating the streaming complexity.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Streaming features with correct point-in-time semantics are significantly harder to build correctly than batch features. This is where most custom builds break down."
+              }
+            ],
+            [
+              {
+                "text": "Rewriting Feast instead of contributing to it.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Many teams spend months building a custom solution that is functionally equivalent to Feast with worse reliability. Contribute upstream if Feast has gaps; don't start from scratch."
+              }
+            ]
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "For a small team with a handful of models, you don't need a feature store — just disciplined code. For a mid-size team, Feast is probably right. For a large org with streaming requirements and strict SLAs, a commercial platform pays for itself in engineering hours saved. The mistake is building custom at any of these scales."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "mlo-ch04-c014",
+      "order": 14,
+      "title": "Feature Versioning and Schema Evolution",
+      "teaser": "Features change over time — their computation logic is refined, their data sources migrate, and their semantics shift. A feature store must support versioning and schema evolution so that models trained on old feature definitions continue to work while new definitions are introduced.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Feature versioning is the practice of treating feature definitions as versioned artifacts — like code, not like mutable configuration. When a feature definition changes in a backward-incompatible way, a new version is created rather than the old definition being overwritten."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Why versioning matters for features:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Models are pinned to feature versions.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " A model trained on "
+              },
+              {
+                "text": "user_spend_v1",
+                "marks": ["code"]
+              },
+              {
+                "text": " must continue to receive "
+              },
+              {
+                "text": "user_spend_v1",
+                "marks": ["code"]
+              },
+              {
+                "text": " at serving time. If the underlying feature definition changes, the serving behavior changes — and the model was never trained on the new values."
+              }
+            ],
+            [
+              {
+                "text": "Auditing and reproducibility.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " To reproduce a training run from 6 months ago, you need to reconstruct the exact feature values used. This requires that feature definitions are immutable and versioned."
+              }
+            ],
+            [
+              {
+                "text": "Safe rollout of feature changes.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " New feature versions can be tested with shadow traffic or used to train experimental models before replacing the production version. No flag day required."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Schema evolution rules (analogous to Avro/Protobuf schema evolution):"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Adding a new feature to a FeatureView",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — backward compatible; existing consumers are unaffected."
+              }
+            ],
+            [
+              {
+                "text": "Changing a feature's type or computation logic",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — backward incompatible; create a new FeatureView version."
+              }
+            ],
+            [
+              {
+                "text": "Removing a feature",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — deprecate first (catalog warning), then remove after all consumers have migrated."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "info",
+          "runs": [
+            {
+              "text": "Feast uses a Git-based registry model where the feature definitions live in source control. The registry state is derived from the Python files in the repository, making feature versioning equivalent to code versioning. A Git tag or commit SHA becomes the feature version identifier."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Feature versioning means treating your feature definitions like code: when you change how a feature is computed, you don't overwrite the old definition — you create a new version. The models trained on the old version keep using it; new models opt in to the new version. It's the same discipline as API versioning."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "mlo-ch04-c015",
+      "order": 15,
+      "title": "Feature Freshness and Staleness Management",
+      "teaser": "Feature freshness is the maximum age of a feature value at serving time — it is a first-class operational concern because a stale feature can be more harmful than a missing feature, and different features have radically different freshness requirements.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Not all features degrade equally with age. "
+            },
+            {
+              "text": "user_account_creation_date",
+              "marks": ["code"]
+            },
+            {
+              "text": " is effectively static — a feature computed yesterday is as good as one computed a second ago. "
+            },
+            {
+              "text": "current_cart_value",
+              "marks": ["code"]
+            },
+            {
+              "text": " can change every second — a value from 10 minutes ago is worthless for a checkout recommendation."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Freshness requirements drive the choice of feature pipeline architecture:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Daily freshness acceptable (T+24h):",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Nightly batch job is sufficient. Run Spark at midnight, materialize to online store by morning."
+              }
+            ],
+            [
+              {
+                "text": "Hourly freshness required (T+1h):",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Hourly Spark or scheduled materialization. Higher compute cost; manageable with micro-batch."
+              }
+            ],
+            [
+              {
+                "text": "Near-real-time freshness required (T+60s):",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Streaming pipeline required. Flink or Spark Structured Streaming consuming Kafka."
+              }
+            ],
+            [
+              {
+                "text": "Real-time freshness required (T+1s):",
+                "marks": ["bold"]
+              },
+              {
+                "text": " On-demand computation at serving time. The feature is computed live from the request context, not pre-materialized."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Feature stores implement freshness SLAs via TTL (time-to-live) on the online store and freshness monitoring:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "TTL-based expiry:",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Redis entries are given an expiry matching the feature's acceptable staleness. An expired feature returns null, signaling to the serving layer that the feature is unavailable rather than stale."
+              }
+            ],
+            [
+              {
+                "text": "Freshness monitoring:",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Alert when the most recent materialization timestamp for a feature view is older than its SLA. A missed materialization job should trigger an on-call page, not a silent serving degradation."
+              }
+            ]
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Feature freshness is how up-to-date the values in your online store are. Some features are fine to be a day old; others need to be updated every second. The architecture of your feature pipeline — nightly batch, hourly micro-batch, or real-time streaming — should match the freshness requirement of the most time-sensitive feature in your model."
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
