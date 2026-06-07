@@ -1,0 +1,605 @@
+{
+  "stack": "kubernetes-basic",
+  "words": [
+    {
+      "id": "k8s-bas-0010-0000-0000-0000-000000000001",
+      "word": "Container",
+      "pronunciation": "kun-TAYN-er",
+      "partOfSpeech": "noun",
+      "shortDefinition": "A process running on a shared host kernel, isolated by Linux namespaces and constrained by cgroups — not a VM.",
+      "simpleDefinition": "A container is an ordinary Linux process that the kernel has wrapped in isolation boundaries. It shares the host kernel — there is no separate OS, no boot sequence, no hardware emulation. Two primitives make this work: namespaces (what the process can see) and cgroups (what it can consume). The result starts in milliseconds, uses far less RAM than a VM, and can be packed hundreds-deep on a single host.",
+      "longDefinition": "A container is not a virtual machine. A VM emulates hardware, boots a guest OS on a hypervisor, and believes it owns physical resources. A container is a process — identified by a PID on the host — that the kernel has placed inside a set of Linux namespaces (pid, net, mnt, uts, ipc, user) so it cannot see the rest of the machine, and constrained by cgroups so it cannot consume more than its allotted CPU, RAM, and I/O. The container shares the host kernel; its image contains only userspace code and dependencies, not an OS. This architecture gives containers millisecond start times, densities of 300–1,000 per host, and images measured in megabytes instead of gigabytes. The security trade-off versus VMs is real: a kernel vulnerability is a potential container escape because the kernel surface is shared. Sandboxed runtimes like Kata Containers and gVisor address this by adding a VM or syscall-interception layer while keeping the OCI image format intact.",
+      "connector": "Think of a container like a private booth in an open office — you are still in the same building (host kernel) as everyone else, but walls and noise-cancelling headphones (namespaces and cgroups) give you your own isolated environment.",
+      "techContext": "When we moved from VMs to containers, each host went from running 8 services to over 200, cutting our compute bill by 60 percent — all because containers share the kernel instead of duplicating it.",
+      "exampleSentence": "The container started in 120 milliseconds, compared to the 45-second boot time we had with the equivalent VM.",
+      "codeExample": {
+        "language": "bash",
+        "code": "# Run a container interactively and inspect isolation\ndocker run --rm -it ubuntu:24.04 bash\n\n# Inside the container — PID 1 is bash (not host init)\nps aux\n# PID USER  COMMAND\n#   1 root  bash\n\n# The container's network interface is isolated\nip addr show eth0\n# inet 172.17.0.2/16 — completely separate from host"
+      },
+      "etymology": "From Latin continere ('to hold together'); adopted into software to describe a self-contained runtime environment. Docker popularized the term in 2013.",
+      "unlockLevel": 1,
+      "tags": ["kubernetes", "containers", "core", "linux"],
+      "category": "concepts"
+    },
+    {
+      "id": "k8s-bas-0020-0000-0000-0000-000000000002",
+      "word": "Container Image",
+      "pronunciation": "kun-TAYN-er IM-ij",
+      "partOfSpeech": "noun",
+      "shortDefinition": "An ordered stack of read-only filesystem layers plus a config JSON; the portable artifact a runtime uses to start a container.",
+      "simpleDefinition": "A container image is the packaged form of your application — everything it needs to run, bundled into a portable, versioned artifact. It is made of read-only filesystem layers (one per Dockerfile instruction that changes files) stacked on top of each other. The runtime presents them as a single unified filesystem, and when you start a container it gets a thin writable layer on top. Nothing in the image itself ever changes, which is why the same image produces identical containers everywhere it runs.",
+      "longDefinition": "A container image is defined by the OCI Image Specification: an ordered list of read-only filesystem layers (each a tar archive of file additions, modifications, or deletions) plus a config JSON that specifies the entrypoint, environment variables, labels, and architecture. Layers are content-addressed by their SHA-256 digest, which enables two crucial efficiencies: layer sharing (fifty containers on a host using the same base layer store it once) and incremental pulls (only layers not already cached are downloaded). The union filesystem (OverlayFS on Linux) merges the layers into a single directory tree at runtime; writes go to the container's per-instance writable layer only. Tags (myapp:v1.2.3) are mutable pointers to a manifest; digests (myapp@sha256:...) are immutable. Production deployments should pin by digest to guarantee reproducibility — a tag can be silently reassigned.",
+      "connector": "Think of a container image like a cake recipe printed in a cookbook — the recipe never changes, but every time you follow it you get a fresh, identical cake. The container is the cake; the image is the recipe.",
+      "techContext": "Our CI pipeline builds a container image once, pushes it to our registry with a digest-pinned tag, and that exact artifact is promoted through dev, staging, and production — the same bits all the way.",
+      "exampleSentence": "By optimizing our Dockerfile layer order — dependencies before source code — the container image went from rebuilding in 4 minutes to 25 seconds on every code change.",
+      "codeExample": {
+        "language": "dockerfile",
+        "code": "# Layer order matters — put stable layers first\nFROM python:3.12-slim\n\n# Layer 1: system deps (changes rarely)\nRUN apt-get update && apt-get install -y libpq-dev\n\n# Layer 2: Python deps (changes occasionally)\nCOPY requirements.txt .\nRUN pip install --no-cache-dir -r requirements.txt\n\n# Layer 3: app source (changes every commit)\nCOPY . /app\nWORKDIR /app\nCMD [\"python\", \"-m\", \"uvicorn\", \"main:app\", \"--host\", \"0.0.0.0\"]"
+      },
+      "etymology": "Image in the sense of a self-contained snapshot or replica; in computing the term pre-dates containers (disk images, VM images). Container image was standardized by the OCI Image Spec in 2016.",
+      "unlockLevel": 1,
+      "tags": ["kubernetes", "containers", "core", "oci"],
+      "category": "concepts"
+    },
+    {
+      "id": "k8s-bas-0030-0000-0000-0000-000000000003",
+      "word": "Container Registry",
+      "pronunciation": "kun-TAYN-er REJ-is-tree",
+      "partOfSpeech": "noun",
+      "shortDefinition": "An OCI-compliant artifact store that CI pipelines push images to and nodes pull from at runtime.",
+      "simpleDefinition": "A container registry is the warehouse where container images live between being built and being run. Your CI pipeline builds an image and pushes it to the registry; when Kubernetes schedules a pod, each node pulls the image it needs from that registry before starting the container. The registry stores images as content-addressed layers so pushing a new version only uploads the layers that actually changed.",
+      "longDefinition": "Registries implement the OCI Distribution Specification: a set of HTTP endpoints (push, pull, list tags, check existence) that any OCI-compliant tool can speak. The major registries are Docker Hub (docker.io), GitHub Container Registry (ghcr.io), Amazon ECR, and Google Artifact Registry. They share content-addressed storage: layers are referenced by SHA-256 digest, so pushing two images with a common base layer stores that layer once. Docker Hub enforces pull rate limits (100/6 h anonymous, 200 for free accounts) — at Kubernetes cluster scale, dozens of nodes pulling simultaneously will hit these limits. Private registries (ECR, GHCR, Artifact Registry, self-hosted Harbor) remove rate limits and add access control. Kubernetes nodes authenticate with an image pull secret that kubelet presents to the registry when pulling protected images.",
+      "connector": "Think of a container registry like a software library's reserve shelf — developers check in new editions (push), and servers check out copies as needed (pull), all tracked and versioned.",
+      "techContext": "We moved from Docker Hub to our own ECR-backed registry after hitting pull rate limits during a deployment surge that caused pod start failures across the cluster.",
+      "exampleSentence": "The deployment failed because the container registry pull secret had expired; kubelet could not authenticate against the private ECR repository to download the image.",
+      "codeExample": {
+        "language": "bash",
+        "code": "# Build and push to GitHub Container Registry\ndocker build -t ghcr.io/my-org/my-app:v1.2.3 .\ndocker push ghcr.io/my-org/my-app:v1.2.3\n\n# Create an image pull secret for a private registry\nkubectl create secret docker-registry regcred \\\n  --docker-server=ghcr.io \\\n  --docker-username=my-user \\\n  --docker-password=$GITHUB_TOKEN\n\n# Reference the pull secret in a pod spec\n# spec:\n#   imagePullSecrets:\n#     - name: regcred"
+      },
+      "etymology": "Registry in the sense of an official record or repository; container registry follows the pattern of package registries (npm, PyPI, Maven) applied to OCI images.",
+      "unlockLevel": 1,
+      "tags": ["kubernetes", "containers", "core", "oci"],
+      "category": "components"
+    },
+    {
+      "id": "kube0010-0000-0000-0000-000000000001",
+      "word": "Pod",
+      "pronunciation": "PAHD",
+      "partOfSpeech": "noun",
+      "shortDefinition": "Smallest deployable unit in Kubernetes — one or more containers sharing a network namespace, storage, and lifecycle.",
+      "simpleDefinition": "A pod is what Kubernetes schedules, not a container. While Docker works with individual containers, Kubernetes groups one or more tightly related containers into a pod — they all land on the same node, share one IP address, and can talk to each other over localhost. This grouping is useful when a main app container needs a helper (a log shipper, a proxy) right beside it. In practice, most pods hold exactly one container, but the abstraction exists for those that need co-location.",
+      "longDefinition": "A pod is the atomic unit of scheduling in Kubernetes. All containers in a pod share the same Linux network namespace (one IP address, one set of ports, localhost communication) and the same UTS namespace (hostname). They can share storage volumes mounted into the pod spec. A hidden infrastructure container called 'pause' starts first and holds the shared network namespace open; application containers join it. Pods are mortal: they are never moved between nodes — if a node fails, the pod is terminated and a new one is created elsewhere. You almost never create pods directly; instead you create a Deployment, which manages a ReplicaSet, which manages pods. A bare pod that dies is not rescheduled. Each pod gets a spec (desired state) and a status (observed state) — kubectl describe pod shows conditions, container states, and events for debugging.",
+      "connector": "Think of a pod like a shared apartment — multiple containers (roommates) live together at the same address (IP), share utilities (volumes), and can talk through the walls (localhost).",
+      "techContext": "When a pod lands on a node the kubelet creates the pause container first to claim a network namespace, then starts your containers inside it — that is why all containers in a pod share one IP.",
+      "exampleSentence": "The pod stayed in Pending state for three minutes because every node in the cluster lacked the 4 GB of memory it had requested.",
+      "codeExample": {
+        "language": "yaml",
+        "code": "apiVersion: v1\nkind: Pod\nmetadata:\n  name: api-server\n  labels:\n    app: api\nspec:\n  containers:\n    - name: api\n      image: my-registry/api:1.2.3\n      ports:\n        - containerPort: 8080\n      resources:\n        requests:\n          cpu: 250m\n          memory: 128Mi\n        limits:\n          cpu: 500m\n          memory: 256Mi"
+      },
+      "etymology": "Metaphor from a pod of whales or a pea pod — a group of related things enclosed together. Kubernetes adopted the term to describe co-scheduled container groups.",
+      "unlockLevel": 1,
+      "tags": ["kubernetes", "core", "compute"],
+      "category": "components"
+    },
+    {
+      "id": "kube0040-0000-0000-0000-000000000004",
+      "word": "Deployment",
+      "pronunciation": "dee-PLOY-ment",
+      "partOfSpeech": "noun",
+      "shortDefinition": "The standard workload object for stateless apps; manages ReplicaSets to deliver rolling updates and rollback history.",
+      "simpleDefinition": "A Deployment is how you tell Kubernetes to run your application. You give it a pod template (which container image, how much CPU, which ports) and a replica count, and the Deployment keeps exactly that many copies running forever — restarting any that crash. When you push a new version, the Deployment swaps old pods for new ones gradually so users never see downtime. It keeps a history of every version you have ever deployed, so you can roll back in seconds if something goes wrong.",
+      "longDefinition": "A Deployment is a controller that owns a chain of ReplicaSets. Each time you update the pod template (e.g., change the image tag), the Deployment controller creates a new ReplicaSet for the new version and scales the old ReplicaSet down according to the strategy (RollingUpdate or Recreate). This produces an immutable revision history: every ReplicaSet is retained up to revisionHistoryLimit (default 10) scaled to zero, ready to be scaled back up on rollback. Key fields: replicas (desired count), selector (label query binding the Deployment to its pods), strategy.rollingUpdate.maxSurge (extra pods allowed above desired), strategy.rollingUpdate.maxUnavailable (pods that can be offline during rollout), minReadySeconds (seconds a new pod must stay Ready before being counted), and progressDeadlineSeconds (how long a stalled rollout waits before being marked Failed). Deployments are for stateless workloads; databases and stateful apps need StatefulSets.",
+      "connector": "Think of a Deployment like a thermostat for your application — you set the target (three replicas of version 1.3.0), and the system continuously adjusts reality to match, including recovering from failures and swapping versions safely.",
+      "techContext": "When I updated the container image tag in our Deployment, Kubernetes rolled it out one pod at a time, waited for each new pod to pass its readiness probe, then terminated the corresponding old pod — zero user impact.",
+      "exampleSentence": "We rolled back the bad deployment in under 30 seconds with a single kubectl rollout undo command, reverting all pods to the previous image version.",
+      "codeExample": {
+        "language": "yaml",
+        "code": "apiVersion: apps/v1\nkind: Deployment\nmetadata:\n  name: api\nspec:\n  replicas: 3\n  revisionHistoryLimit: 5\n  selector:\n    matchLabels:\n      app: api\n  strategy:\n    type: RollingUpdate\n    rollingUpdate:\n      maxSurge: 1\n      maxUnavailable: 0\n  template:\n    metadata:\n      labels:\n        app: api\n    spec:\n      containers:\n        - name: api\n          image: my-registry/api:1.3.0"
+      },
+      "etymology": "From Latin dis- ('apart') + plicare ('to fold'); in military usage, deploying troops means spreading them into position — the software term carries the same sense of distributing a workload into operation.",
+      "unlockLevel": 1,
+      "tags": ["kubernetes", "core", "orchestration"],
+      "category": "components"
+    },
+    {
+      "id": "kube0050-0000-0000-0000-000000000005",
+      "word": "Service",
+      "pronunciation": "SUR-vis",
+      "partOfSpeech": "noun",
+      "shortDefinition": "A stable virtual IP and DNS name that routes traffic to a dynamic set of pods selected by labels.",
+      "simpleDefinition": "Pods come and go — they crash, restart on different nodes, and get new IP addresses every time. A Service solves this by providing a stable address that never changes. You give the Service a label selector, and it automatically tracks whichever pods currently match those labels. Any pod in the cluster can reach the Service at its consistent DNS name, and traffic is load-balanced across all healthy matching pods.",
+      "longDefinition": "A Service is Kubernetes's network abstraction layer over ephemeral pods. It consists of three things: a stable ClusterIP (virtual IP allocated from the cluster's service CIDR), a DNS name registered by CoreDNS as <service>.<namespace>.svc.cluster.local, and a selector that watches pods with matching labels to build an EndpointSlice. kube-proxy on every node reads the EndpointSlice and programs iptables or IPVS rules that translate the ClusterIP:port to a real pod IP:port. When pods scale up or down, the EndpointSlice updates automatically — no client reconfiguration required. The default Service type is ClusterIP (internal only). NodePort exposes the service on a high-numbered port on every node. LoadBalancer provisions a cloud load balancer with a public IP. ExternalName creates a DNS CNAME alias to an external hostname.",
+      "connector": "Think of a Service like a restaurant's phone number — the kitchen staff (pods) may change every day but customers always call the same number and get connected to whoever is available right now.",
+      "techContext": "We never hardcode pod IPs in service config — every microservice talks to a Kubernetes Service DNS name, which means pods can be replaced, scaled, or rescheduled without any configuration change.",
+      "exampleSentence": "Even when a rolling update replaced all six pods behind the Service, our monitoring showed zero failed requests because traffic was always routed only to healthy pods.",
+      "codeExample": {
+        "language": "yaml",
+        "code": "apiVersion: v1\nkind: Service\nmetadata:\n  name: api-svc\n  namespace: production\nspec:\n  selector:\n    app: api          # routes to pods with this label\n  ports:\n    - name: http\n      port: 80        # Service port\n      targetPort: 8080 # container port\n  type: ClusterIP     # internal only (default)"
+      },
+      "etymology": "From Latin servitium ('slavery, service'); in networking, a service is an accessible endpoint that performs a defined function. The Kubernetes Service object formalizes that concept as a first-class API resource.",
+      "unlockLevel": 1,
+      "tags": ["kubernetes", "core", "networking"],
+      "category": "components"
+    },
+    {
+      "id": "kube0080-0000-0000-0000-000000000008",
+      "word": "Namespace",
+      "pronunciation": "NAYM-spayss",
+      "partOfSpeech": "noun",
+      "shortDefinition": "A virtual cluster inside Kubernetes that scopes names, RBAC, and resource quotas for multi-team isolation.",
+      "simpleDefinition": "A namespace is a virtual partition inside a single Kubernetes cluster. Resources in one namespace are invisible to resources in another by default, and two teams can each have a Service named 'api' without conflict because they live in different namespaces. You can set resource quotas per namespace to prevent one team from consuming the whole cluster, and you can grant developers access to their own namespace without giving them cluster-wide permissions.",
+      "longDefinition": "Namespaces are a soft multi-tenancy mechanism in Kubernetes. Every resource except a handful of cluster-wide types (Nodes, PersistentVolumes, StorageClasses) lives inside a namespace. Names must be unique within a namespace but can repeat across namespaces. DNS names inside the cluster include the namespace — api-svc.production.svc.cluster.local vs api-svc.staging.svc.cluster.local — making cross-namespace calls explicit. Four namespaces exist by default: default (where resources land if you do not specify one), kube-system (Kubernetes infrastructure components like CoreDNS and kube-proxy), kube-public (world-readable config), and kube-node-lease (node heartbeat Lease objects). RBAC bindings can be namespace-scoped (Role + RoleBinding) or cluster-wide (ClusterRole + ClusterRoleBinding). ResourceQuotas and LimitRanges attached to a namespace cap the total CPU, memory, and object counts available to all workloads in that namespace.",
+      "connector": "Think of namespaces like separate departments in a large office building — everyone shares the same infrastructure (electricity, elevators, HR system) but each department has its own rooms and budgets, and outsiders need explicit access.",
+      "techContext": "We create a namespace per environment (dev, staging, production) and per team, applying resource quotas to each so one team's runaway Job can not starve another team's production Deployment.",
+      "exampleSentence": "The alert fired in the wrong Slack channel because the developer had forgotten to specify the namespace and kubectl applied the ConfigMap to default instead of production.",
+      "codeExample": {
+        "language": "bash",
+        "code": "# Create a namespace\nkubectl create namespace team-payments\n\n# Set a resource quota on the namespace\nkubectl apply -f - <<EOF\napiVersion: v1\nkind: ResourceQuota\nmetadata:\n  name: team-budget\n  namespace: team-payments\nspec:\n  hard:\n    requests.cpu: \"4\"\n    requests.memory: 8Gi\n    limits.cpu: \"8\"\n    limits.memory: 16Gi\nEOF\n\n# Set default context namespace\nkubectl config set-context --current --namespace=team-payments"
+      },
+      "etymology": "From 'name' + 'space' — a scope within which names must be unique. The concept is shared with programming language namespaces (C++, Python) and DNS zones.",
+      "unlockLevel": 1,
+      "tags": ["kubernetes", "core", "organization"],
+      "category": "concepts"
+    },
+    {
+      "id": "k8s-bas-0040-0000-0000-0000-000000000004",
+      "word": "Label",
+      "pronunciation": "LAY-bul",
+      "partOfSpeech": "noun",
+      "shortDefinition": "An arbitrary key-value pair attached to any Kubernetes object, used by selectors to group and route to objects.",
+      "simpleDefinition": "Labels are sticky notes on Kubernetes objects. You can put any key-value pair you want on a pod, Service, or Deployment — app=api, env=production, version=1.3.0. What makes labels powerful is that controllers and Services use selectors to find objects by label rather than by name. A Service with selector app=api automatically routes to every pod tagged app=api, whether there are 2 or 200 of them. Change a pod's label and traffic instantly stops going to it.",
+      "longDefinition": "Labels are arbitrary key-value metadata attached to any Kubernetes object (pods, Services, Deployments, Nodes, etc.). Keys can include an optional DNS-qualified prefix (e.g., app.kubernetes.io/name) and a name segment; values are strings. Labels form the coupling mechanism of the entire Kubernetes object model: a Deployment's selector finds the pods it owns by label; a Service's selector finds the pods it routes to by label; node affinity rules select nodes by label; network policies select pods by label. Two selector types exist: equality-based (matchLabels: {app: api, env: production}) and set-based (matchExpressions: [{key: tier, operator: In, values: [backend, worker]}]). A critical rule: a Deployment's selector is immutable after creation — changing it requires deleting and recreating the object. The kubernetes.io/app.kubernetes.io/... convention from the Helm community provides recommended label semantics for tooling interoperability.",
+      "connector": "Think of labels like tags on files in a shared filing cabinet — you write whatever tags make sense (client name, project, status), and anyone can pull out all files matching specific tag combinations without knowing the individual file names.",
+      "techContext": "We use labels to create virtual deployment rings: by changing a pod's ring=canary label to ring=stable, we instantly move it from the canary Service selector to the stable Service selector without any restart.",
+      "exampleSentence": "When I mistakenly removed the app=api label from a pod during debugging, traffic immediately stopped routing to it — proof that labels are the live coupling mechanism, not just metadata.",
+      "codeExample": {
+        "language": "yaml",
+        "code": "# Apply labels in a pod spec\nmetadata:\n  labels:\n    app: api              # application name\n    tier: backend         # architectural layer\n    env: production       # environment\n    version: \"1.3.0\"     # current version\n\n---\n# List pods by label\n# kubectl get pods -l app=api,env=production\n\n# Add a label at runtime\n# kubectl label pod api-abc123 debug=true\n\n# Remove a label (trailing dash = remove)\n# kubectl label pod api-abc123 debug-"
+      },
+      "etymology": "From Old French labelle ('ribbon, label'); in Kubernetes, adopted as metadata markers that enable loose coupling between objects by removing the need for direct name references.",
+      "unlockLevel": 1,
+      "tags": ["kubernetes", "core", "metadata"],
+      "category": "concepts"
+    },
+    {
+      "id": "k8s-bas-0050-0000-0000-0000-000000000005",
+      "word": "Selector",
+      "pronunciation": "suh-LEK-ter",
+      "partOfSpeech": "noun",
+      "shortDefinition": "A label-based query that binds a controller or Service to the set of objects whose labels match.",
+      "simpleDefinition": "A selector is how Kubernetes objects find each other. Instead of linking a Service directly to specific pod names (which would break whenever pods are replaced), you write a selector — a query over labels. The Service says 'give me all pods with app=api', and Kubernetes continuously evaluates that query, adding new matching pods to the endpoint list and removing pods that no longer match. The same pattern lets Deployments track their own pods and lets kubectl filter resource lists.",
+      "longDefinition": "Selectors are the indirection mechanism that makes Kubernetes composition flexible and dynamic. A label selector is a boolean expression evaluated against a set of key-value pairs. Equality-based selectors (matchLabels) use = and !=; set-based selectors (matchExpressions) add In, NotIn, Exists, and DoesNotExist operators. Controllers (Deployments, ReplicaSets, StatefulSets, DaemonSets) use selectors to identify the pods they own — the selector is written once at creation time and is immutable for Deployments. Services use selectors to populate their EndpointSlice (the live list of pod IPs to route to). kubectl supports label selectors on every list command via -l. A key pitfall: if a pod's labels match two different controllers or two different Services with different selectors, it will be owned/served by both — which is rarely intended and can cause unexpected behavior.",
+      "connector": "Think of a selector like a search filter in your email client — you write 'from:api-team AND subject:alert' and every matching email shows up, whether it arrived yesterday or five minutes ago. The filter is live, not a static list.",
+      "techContext": "Our blue/green deployment works by swapping the Service selector from version=blue to version=green — one label change instantly reroutes all cluster traffic from the old pods to the new pods.",
+      "exampleSentence": "The Service stopped receiving traffic from the new pods because we forgot to include the version label in the selector — the selector was more specific than intended.",
+      "codeExample": {
+        "language": "yaml",
+        "code": "# Equality-based selector in a Service\nspec:\n  selector:\n    app: api\n    env: production\n\n---\n# Set-based selector in a Job\nspec:\n  selector:\n    matchExpressions:\n      - key: tier\n        operator: In\n        values: [worker, batch]\n      - key: env\n        operator: NotIn\n        values: [dev]\n\n---\n# kubectl: list pods matching a selector\n# kubectl get pods -l 'app in (api,worker),env=production'"
+      },
+      "etymology": "From Latin seligere ('to choose apart'); in Kubernetes, the selector pattern was derived from CSS selectors — a label query that matches a set rather than a specific named object.",
+      "unlockLevel": 1,
+      "tags": ["kubernetes", "core", "metadata"],
+      "category": "concepts"
+    },
+    {
+      "id": "kube0030-0000-0000-0000-000000000003",
+      "word": "kubectl",
+      "pronunciation": "KOOB-kuh-tul",
+      "partOfSpeech": "noun",
+      "shortDefinition": "The Kubernetes CLI; sends REST requests to the API server to create, inspect, update, and delete cluster resources.",
+      "simpleDefinition": "kubectl is your command-line window into Kubernetes. Every action you take — deploying an app, scaling it, reading its logs, running a shell inside a container — goes through kubectl. Under the hood it translates your commands into REST API calls to the Kubernetes API server. It reads connection details (server URL, credentials) from a kubeconfig file, which lets you manage multiple clusters from one laptop by switching contexts.",
+      "longDefinition": "kubectl (pronounced 'kube-c-t-l', 'kube-cuttle', or 'kube-control' depending on who you ask) is the official CLI for interacting with any Kubernetes cluster. It reads its configuration from ~/.kube/config (or the KUBECONFIG environment variable), which stores one or more cluster contexts — each with a cluster URL, credentials (certificate, token, or OIDC), and a default namespace. Commands fall into two categories: imperative (kubectl run, kubectl expose, kubectl scale — operate directly on state) and declarative (kubectl apply — reconcile cluster state against a manifest file). Declarative apply is preferred in production because manifests can be version-controlled and idempotently re-applied. kubectl supports output formats: -o yaml (full resource spec), -o json, -o wide (extra columns), and -o jsonpath/go-template for scripting. The --dry-run=client and --dry-run=server flags validate manifests without applying them.",
+      "connector": "Think of kubectl like a universal remote control for your cluster — one device (tool) to operate every component, with different button combinations (subcommands) for every possible action.",
+      "techContext": "The first thing any Kubernetes engineer checks when a deployment goes wrong is kubectl get pods followed by kubectl describe pod — those two commands cover 80 percent of all debugging scenarios.",
+      "exampleSentence": "I aliased kubectl to k and set my default namespace in kubeconfig, cutting the keystrokes for every cluster operation in half.",
+      "codeExample": {
+        "language": "bash",
+        "code": "# Common kubectl workflow\nkubectl get pods -n production             # list pods in namespace\nkubectl describe pod api-7d9f-abc -n prod  # detailed status + events\nkubectl logs api-7d9f-abc -f               # stream container logs\nkubectl exec -it api-7d9f-abc -- bash      # shell into container\n\n# Declarative apply (preferred over imperative)\nkubectl apply -f deployment.yaml\n\n# Validate without applying\nkubectl apply --dry-run=server -f deployment.yaml\n\n# Switch between clusters\nkubectl config use-context staging-cluster"
+      },
+      "etymology": "Portmanteau of 'Kube' (Kubernetes) + 'ctl' (control); Kubernetes itself is Greek for 'helmsman' or 'pilot', and kubectl is the tool that steers it.",
+      "unlockLevel": 1,
+      "tags": ["kubernetes", "core", "cli", "tools"],
+      "category": "concepts"
+    },
+    {
+      "id": "kube0020-0000-0000-0000-000000000002",
+      "word": "Node",
+      "pronunciation": "NOHD",
+      "partOfSpeech": "noun",
+      "shortDefinition": "A worker machine (VM or bare-metal) that runs pods; managed by kubelet, kube-proxy, and a container runtime.",
+      "simpleDefinition": "A node is a machine — virtual or physical — that actually runs your containers. When Kubernetes schedules a pod, it picks one of the cluster's nodes and places the pod there. Each node runs three things: the kubelet (the Kubernetes agent that starts and monitors containers), kube-proxy (the network rule manager), and a container runtime (usually containerd, which does the actual work of running containers). You rarely interact with nodes directly; Kubernetes manages them for you.",
+      "longDefinition": "Kubernetes worker nodes form the data plane: they are where user workloads actually execute. Each node has a finite amount of CPU, memory, and storage that the scheduler considers when placing pods. Nodes report their capacity and current allocations back to the control plane via the kubelet. Node conditions (Ready, MemoryPressure, DiskPressure, PIDPressure, NetworkUnavailable) determine whether a node is eligible to receive new pods. When a node becomes NotReady for more than pod-eviction-timeout (default 5 minutes), the node controller begins evicting pods and rescheduling them on healthy nodes. Nodes can be given labels (topology.kubernetes.io/zone, node.kubernetes.io/instance-type) that the scheduler uses to implement affinity, anti-affinity, and topology spread constraints. Managed Kubernetes services (EKS, GKE, AKS) abstract node provisioning through node groups or node pools, adding and removing machines automatically as the cluster's workload changes.",
+      "connector": "Think of nodes like workstations in a factory floor — the factory manager (control plane) assigns jobs to stations based on their capacity and specialty, and each station runs its jobs until told to stop.",
+      "techContext": "We drain a node before maintenance with kubectl drain, which cordons it (blocks new pods) and evicts existing pods so they reschedule to healthy nodes without downtime.",
+      "exampleSentence": "When the spot node was reclaimed by the cloud provider, Kubernetes detected the NotReady condition within 40 seconds and rescheduled all its pods onto other nodes.",
+      "codeExample": {
+        "language": "bash",
+        "code": "# List nodes and their status\nkubectl get nodes\n# NAME            STATUS   ROLES    AGE   VERSION\n# node-1          Ready    <none>   14d   v1.30.0\n# node-2          Ready    <none>   14d   v1.30.0\n\n# Show node resource usage\nkubectl top nodes\n\n# Drain a node for maintenance (evicts pods gracefully)\nkubectl drain node-1 --ignore-daemonsets --delete-emptydir-data\n\n# Re-enable scheduling after maintenance\nkubectl uncordon node-1"
+      },
+      "etymology": "From Latin nodus ('knot') — a point where things connect. In networking and graph theory, a node is a vertex in a graph; in Kubernetes it is the machine vertex in the cluster graph.",
+      "unlockLevel": 1,
+      "tags": ["kubernetes", "core", "infrastructure"],
+      "category": "components"
+    },
+    {
+      "id": "k8s-bas-0060-0000-0000-0000-000000000006",
+      "word": "Cluster",
+      "pronunciation": "KLUS-ter",
+      "partOfSpeech": "noun",
+      "shortDefinition": "A set of nodes (workers) and a control plane that together form a single Kubernetes environment.",
+      "simpleDefinition": "A Kubernetes cluster is the full unit — the control plane (the brain that makes scheduling decisions and stores state) plus the worker nodes (the machines that actually run your containers). When you run kubectl commands, you are talking to the cluster's API server. When you deploy an app, it lands on one of the cluster's nodes. The cluster is the boundary of a single Kubernetes environment; if you need complete isolation between environments, you use separate clusters.",
+      "longDefinition": "A Kubernetes cluster consists of a control plane (kube-apiserver, kube-scheduler, kube-controller-manager, etcd) running on one or more dedicated master nodes, and one or more worker nodes that run user workloads. The control plane is the brain: it stores desired state in etcd, schedules pods onto nodes, and runs reconciliation loops. Worker nodes are the hands: they receive pod specifications from the control plane, execute them via kubelet and containerd, and report status back. In managed Kubernetes (EKS, GKE, AKS), the cloud provider runs and maintains the control plane as a fully managed service — you pay for it but do not see it. Cluster sizing is constrained: a single Kubernetes cluster officially supports up to 5,000 nodes, 150,000 pods, and 300,000 total containers. Beyond those limits organizations run multiple clusters, typically managed with GitOps tooling.",
+      "connector": "Think of a Kubernetes cluster like a company — the control plane is the head office (makes decisions, maintains records), and the worker nodes are the branch offices (do the actual work). The cluster boundary is like the company boundary — cross-company interactions require deliberate federation.",
+      "techContext": "Our production environment runs three clusters — one per region — behind a global load balancer, so a regional outage affects at most one-third of our users.",
+      "exampleSentence": "The new engineer accidentally applied the manifest to the staging cluster instead of production because they had not checked which cluster context was active in their kubeconfig.",
+      "codeExample": {
+        "language": "bash",
+        "code": "# Check which cluster you are currently talking to\nkubectl config current-context\n# prod-us-east-1\n\n# List all clusters in your kubeconfig\nkubectl config get-clusters\n\n# Switch to a different cluster context\nkubectl config use-context staging-eu-west-1\n\n# Overview of the cluster's node capacity\nkubectl get nodes -o wide"
+      },
+      "etymology": "From Middle English cluster ('bunch, group'); in computing, a cluster is a set of machines that collaborate as a single system. The term predates Kubernetes in HPC and database contexts.",
+      "unlockLevel": 1,
+      "tags": ["kubernetes", "core", "infrastructure"],
+      "category": "concepts"
+    },
+    {
+      "id": "kube0210-0000-0000-0000-000000000021",
+      "word": "Control Plane",
+      "pronunciation": "kun-TROHL PLAYN",
+      "partOfSpeech": "noun",
+      "shortDefinition": "The master components (API server, scheduler, controller manager, etcd) that store state and drive reconciliation.",
+      "simpleDefinition": "The control plane is Kubernetes's brain. It consists of four components: the API server (the single entry point every kubectl command talks to), etcd (the database that stores every resource the cluster knows about), the scheduler (which decides which node a new pod goes to), and the controller manager (dozens of loops that watch the cluster and fix anything that drifts from your declared state). In managed cloud Kubernetes (EKS, GKE, AKS), the provider runs the control plane for you and you never see the master nodes.",
+      "longDefinition": "The control plane runs on dedicated master nodes (or is fully managed by the cloud provider) and implements the desired-state control loop. kube-apiserver is the single write gateway to etcd — all cluster components (kubelet, controllers, kubectl) communicate exclusively through it. etcd provides strongly consistent storage using the Raft consensus algorithm; losing etcd without a backup loses the cluster. kube-scheduler watches for unscheduled pods (spec.nodeName == '') and assigns them to nodes in a two-phase process: filtering (eliminate nodes that cannot run the pod) and scoring (rank eligible nodes). kube-controller-manager runs dozens of controllers as goroutines in a single process — the ReplicaSet controller, the Deployment controller, the Node controller, the EndpointSlice controller — each watching one resource type and reconciling observed state to desired state. In HA control planes, kube-apiserver and etcd are replicated (3 or 5 nodes for etcd); the scheduler and controller-manager use leader election so only one active instance runs at a time.",
+      "connector": "Think of the control plane like air traffic control — it has a complete picture of every plane (pod) in the sky (cluster), decides which runway (node) each new flight (pod) uses, and continuously monitors for anything that deviates from the flight plan.",
+      "techContext": "In our managed EKS cluster the control plane costs us about $70/month but we never touch it — AWS handles etcd backups, API server scaling, and control plane upgrades with zero downtime.",
+      "exampleSentence": "When the control plane's API server was overwhelmed by a poorly written controller making thousands of requests per second, new pods queued in Pending for over five minutes.",
+      "codeExample": {
+        "language": "bash",
+        "code": "# Control plane components run as static pods in kube-system\nkubectl get pods -n kube-system\n# NAME                               READY   STATUS\n# etcd-master-1                      1/1     Running\n# kube-apiserver-master-1            1/1     Running\n# kube-controller-manager-master-1   1/1     Running\n# kube-scheduler-master-1            1/1     Running\n\n# Check API server health\nkubectl get --raw /healthz\n# ok"
+      },
+      "etymology": "Control plane is a networking term (the layer that decides how traffic is routed, versus the data plane that actually forwards it). Kubernetes borrowed it to describe the decision-making layer versus the execution (data) plane on worker nodes.",
+      "unlockLevel": 1,
+      "tags": ["kubernetes", "core", "architecture"],
+      "category": "concepts"
+    },
+    {
+      "id": "kube0150-0000-0000-0000-000000000015",
+      "word": "kubelet",
+      "pronunciation": "KOOB-let",
+      "partOfSpeech": "noun",
+      "shortDefinition": "The node agent that watches for pods assigned to its node and tells the container runtime to start or stop them.",
+      "simpleDefinition": "The kubelet is the Kubernetes agent running on every worker node. It watches the API server for pods that have been scheduled onto its node, then tells containerd (the container runtime) to start those containers. It also runs health checks on containers and reports their status back to the control plane. When a container crashes, kubelet restarts it. If the node loses contact with the control plane, kubelet keeps running whatever pods are already running — it never kills running containers just because it cannot reach the API server.",
+      "longDefinition": "The kubelet is a binary that runs directly on the node OS (not as a container). It authenticates to the API server using a node certificate and watches for PodSpec objects assigned to its node via a combination of List and Watch calls (the Informer pattern). When a pod is assigned, kubelet calls the Container Runtime Interface (CRI) — a gRPC API implemented by containerd or CRI-O — to create the pod sandbox (pause container), pull images, create and start containers, and mount volumes and secrets. During the pod's lifetime, kubelet executes liveness, readiness, and startup probes and updates the pod's status conditions. On pod termination, kubelet runs preStop lifecycle hooks, sends SIGTERM, waits terminationGracePeriodSeconds, and then sends SIGKILL if the container has not exited. Static pods — pods defined by YAML files on the node filesystem — are managed directly by kubelet without going through the API server, and are how the control plane components themselves (kube-apiserver, etcd) bootstrap.",
+      "connector": "Think of the kubelet like a factory-floor foreman — the head office (control plane) sends work orders (pod specs), and the foreman makes sure the workers (containers) execute them, reports back on progress, and handles any breakdowns.",
+      "techContext": "When a node shows as NotReady in kubectl get nodes, the first thing we check is whether the kubelet process is still running on that machine with systemctl status kubelet.",
+      "exampleSentence": "The kubelet reported an ImagePullBackOff error because the new container image tag did not exist in the registry — the deployment was blocked at image pull, not at startup.",
+      "codeExample": {
+        "language": "bash",
+        "code": "# Check kubelet status on a node (via SSH)\nsystemctl status kubelet\n\n# View kubelet logs (systemd journal)\njournalctl -u kubelet -f\n\n# kubelet configuration is usually at\ncat /etc/kubernetes/kubelet.conf\n\n# From the control plane: see node-reported conditions\nkubectl describe node worker-1 | grep -A 10 Conditions"
+      },
+      "etymology": "From 'Kube' (Kubernetes) + '-let' (a diminutive suffix suggesting a small agent, as in servlet, applet); kubelet is the small Kubernetes agent that lives on each node.",
+      "unlockLevel": 1,
+      "tags": ["kubernetes", "core", "internals"],
+      "category": "components"
+    },
+    {
+      "id": "kube0230-0000-0000-0000-000000000023",
+      "word": "kube-proxy",
+      "pronunciation": "KOOB PRAHK-see",
+      "partOfSpeech": "noun",
+      "shortDefinition": "Runs on each node and writes iptables/IPVS rules that translate Service virtual IPs to real pod IPs.",
+      "simpleDefinition": "kube-proxy is the network rule manager that runs on every Kubernetes node. When you create a Service with a ClusterIP, kube-proxy writes rules into the Linux kernel (via iptables or IPVS) so that any traffic sent to that virtual IP gets redirected to one of the real pods behind the Service. It watches the Kubernetes API for changes to Services and EndpointSlices and updates the kernel rules instantly whenever pods scale up or down.",
+      "longDefinition": "kube-proxy runs as a DaemonSet (one pod per node) and implements the Kubernetes Service abstraction in the Linux network datapath. In iptables mode (the original, still common), it writes a chain of DNAT rules that match packets destined for a ClusterIP:port and randomly redirect them to one of the pod IPs in the endpoint list. In IPVS mode (preferred for large clusters), it programs the Linux kernel's IP Virtual Server module with a virtual server entry and real server entries — IPVS uses O(1) hash table lookup instead of O(n) iptables chain traversal, critical when a cluster has thousands of Services. kube-proxy watches the API server for EndpointSlice changes and updates kernel rules within milliseconds of a pod going ready or terminating. An increasingly common alternative is to replace kube-proxy entirely with a CNI plugin like Cilium that programs eBPF maps in the kernel — providing equivalent functionality with lower overhead and richer observability.",
+      "connector": "Think of kube-proxy like the switchboard in a hotel — every incoming call (packet) comes in for a room number (Service virtual IP), and the switchboard redirects it to whichever actual extension (pod IP) is currently available.",
+      "techContext": "On our largest cluster with 3,000+ Services we switched from iptables mode to IPVS mode in kube-proxy and saw Service lookup latency drop by 40 percent because IPVS is O(1) instead of O(n).",
+      "exampleSentence": "After the kube-proxy pod was evicted and took 30 seconds to restart, new pods were not receiving any traffic because their IPs had not been added to the iptables rules yet.",
+      "codeExample": {
+        "language": "bash",
+        "code": "# kube-proxy runs as a DaemonSet in kube-system\nkubectl get pods -n kube-system -l k8s-app=kube-proxy\n\n# Check which mode kube-proxy is running in\nkubectl get configmap -n kube-system kube-proxy -o yaml | grep mode\n# mode: ipvs\n\n# View IPVS virtual servers (on a node)\nipvsadm -Ln\n# TCP  10.96.0.1:443 rr\n#   -> 10.0.1.5:6443       Forward  1    0    0"
+      },
+      "etymology": "From 'Kube' (Kubernetes) + 'proxy' (an intermediary agent); kube-proxy acts as the network-level intermediary that hides the dynamic nature of pod IPs behind stable Service virtual IPs.",
+      "unlockLevel": 1,
+      "tags": ["kubernetes", "core", "networking"],
+      "category": "components"
+    },
+    {
+      "id": "kube0220-0000-0000-0000-000000000022",
+      "word": "etcd",
+      "pronunciation": "ET-see-dee",
+      "partOfSpeech": "noun",
+      "shortDefinition": "The distributed key-value store that is the single source of truth for all Kubernetes cluster state.",
+      "simpleDefinition": "etcd is Kubernetes's database. Every object you create — pods, Deployments, Services, Secrets, ConfigMaps — is stored in etcd. When you run kubectl get pods, the API server reads from etcd. When the scheduler picks a node for a pod, it writes that decision to etcd. Nothing in Kubernetes happens without going through etcd. If you lose etcd and have no backup, you lose your entire cluster state — which is why etcd backup is the most critical operational task in any self-managed Kubernetes installation.",
+      "longDefinition": "etcd is a distributed key-value store built specifically for strongly consistent coordination data. It uses the Raft consensus algorithm to ensure that all cluster members agree on every write before acknowledging it — reads return the latest committed value, never stale data. In Kubernetes, the API server is the only component that reads from and writes to etcd; all other components communicate through the API server. etcd stores all objects under a hierarchical key namespace (e.g., /registry/pods/production/api-abc123). For high availability, etcd is deployed as a 3-node or 5-node cluster; it can tolerate floor((n-1)/2) node failures (1 for 3-node, 2 for 5-node). etcd performance is sensitive to disk I/O latency — high fsync latency causes leader election timeouts and can cascade into API server failures. Production etcd requires low-latency SSDs, regular defragmentation, and snapshot backups to object storage. Secret data in etcd is base64-encoded by default; enabling etcd encryption at rest via a KMS plugin ensures secrets are not readable from raw etcd backups.",
+      "connector": "Think of etcd like the deed registry at a county recorder's office — every property (Kubernetes resource) is officially recorded here, and nothing is legally real until it is written down. If the registry burns down without a copy, ownership records are gone.",
+      "techContext": "We snapshot etcd to S3 every 30 minutes and verify restore procedures quarterly — a full cluster rebuild from an etcd snapshot takes about 8 minutes, which is our disaster recovery target.",
+      "exampleSentence": "The cluster became unresponsive because etcd's disk was full and it could no longer accept writes — all API server calls started returning 500 errors within seconds.",
+      "codeExample": {
+        "language": "bash",
+        "code": "# Create an etcd snapshot (run on an etcd node or via pod)\nETCDCTL_API=3 etcdctl snapshot save /backup/etcd-$(date +%Y%m%d-%H%M%S).db \\\n  --endpoints=https://127.0.0.1:2379 \\\n  --cacert=/etc/kubernetes/pki/etcd/ca.crt \\\n  --cert=/etc/kubernetes/pki/etcd/server.crt \\\n  --key=/etc/kubernetes/pki/etcd/server.key\n\n# Verify snapshot status\nETCDCTL_API=3 etcdctl snapshot status /backup/etcd-backup.db"
+      },
+      "etymology": "Named after the /etc directory in Unix (the system configuration directory) + 'd' for distributed; etcd is the distributed configuration store for the cluster, just as /etc is the configuration directory for a single Unix machine.",
+      "unlockLevel": 1,
+      "tags": ["kubernetes", "core", "storage", "internals"],
+      "category": "components"
+    },
+    {
+      "id": "k8s-bas-0070-0000-0000-0000-000000000007",
+      "word": "Manifest",
+      "pronunciation": "MAN-ih-fest",
+      "partOfSpeech": "noun",
+      "shortDefinition": "A YAML or JSON file describing a Kubernetes object's desired state, applied with kubectl apply.",
+      "simpleDefinition": "A manifest is a YAML or JSON file that describes what you want to exist in Kubernetes — a Deployment with three replicas, a Service on port 80, a ConfigMap with your app's settings. You write the manifest, run kubectl apply -f manifest.yaml, and Kubernetes creates or updates the described resources to match. Manifests are the source of truth for your infrastructure: store them in Git, apply them to the cluster, and the cluster stays in sync with your intentions.",
+      "longDefinition": "Every Kubernetes manifest has four top-level fields: apiVersion (the API group and version, e.g., apps/v1), kind (the resource type, e.g., Deployment), metadata (name, namespace, labels, annotations), and spec (the desired state). The API server validates manifests against the registered schema for each kind and either accepts or rejects them. kubectl apply (the preferred workflow) computes a three-way diff between the last-applied configuration, the current live state, and the incoming manifest, then sends a PATCH to the API server — only the fields that changed are modified. kubectl create and kubectl replace are imperative alternatives that replace the entire object. Manifests can be organized into directories (kubectl apply -f ./manifests/) or grouped into a single file with --- separators between documents. Templating tools like Helm and Kustomize generate manifests programmatically from parameterized sources, handling the variation between environments without duplicating YAML.",
+      "connector": "Think of a manifest like an architect's blueprint — it is a precise written description of what should be built. The contractor (Kubernetes) reads the blueprint and builds exactly what it says, and if you want changes you update the blueprint.",
+      "techContext": "Every Kubernetes resource in our production cluster has a corresponding manifest in our Git repository — when a developer changes a replica count, they open a pull request against the manifest, not a kubectl scale command.",
+      "exampleSentence": "The deployment broke because an engineer had used kubectl edit to manually change a replica count, which was overwritten the next time the CI pipeline applied the Git-controlled manifest.",
+      "codeExample": {
+        "language": "yaml",
+        "code": "# A minimal Kubernetes Deployment manifest\napiVersion: apps/v1      # API group/version\nkind: Deployment          # resource type\nmetadata:\n  name: api               # object name\n  namespace: production   # target namespace\n  labels:\n    app: api\nspec:                     # desired state\n  replicas: 3\n  selector:\n    matchLabels:\n      app: api\n  template:\n    metadata:\n      labels:\n        app: api\n    spec:\n      containers:\n        - name: api\n          image: my-registry/api:1.3.0"
+      },
+      "etymology": "From Latin manifestus ('clearly evident, palpable'); in shipping, a manifest is the list of a vessel's cargo. In Kubernetes a manifest is the written declaration of what should exist — made explicit and inspectable.",
+      "unlockLevel": 1,
+      "tags": ["kubernetes", "core", "configuration"],
+      "category": "concepts"
+    },
+    {
+      "id": "k8s-bas-0080-0000-0000-0000-000000000008",
+      "word": "kubectl apply",
+      "pronunciation": "KOOB-kuh-tul uh-PLY",
+      "partOfSpeech": "verb",
+      "shortDefinition": "Declarative command that creates or updates cluster resources to match a manifest file, idempotent on repeated runs.",
+      "simpleDefinition": "kubectl apply is the recommended way to create and update Kubernetes resources. You give it a manifest file, and it compares that file against what is currently in the cluster — creating new resources that do not exist and updating existing ones to match. Run it again with the same file and nothing changes. This idempotency makes it safe to run repeatedly from CI/CD pipelines without worrying about whether a resource already exists.",
+      "longDefinition": "kubectl apply implements the declarative management workflow. It stores the last-applied manifest as an annotation on the live object (kubectl.kubernetes.io/last-applied-configuration), then computes a three-way strategic merge patch: what changed between the last-applied config and the new manifest, accounting for any manual changes on the live object. The patch is sent to the API server, which writes only the changed fields to etcd. This is safer than kubectl replace (which replaces the entire object) and kubectl create (which fails if the object exists). kubectl apply is used for the complete lifecycle — create on first run, update on subsequent runs, with kubectl delete -f to remove. The --prune flag (--prune=true with a label selector) removes resources that exist in the cluster but are not in the provided manifests — useful for pruning deleted resources from a directory-based workflow.",
+      "connector": "Think of kubectl apply like syncing a playlist — you tell the app what songs you want, it adds new ones, removes ones no longer in the list, and leaves unchanged songs alone. You do not specify whether to add or remove; you just declare the desired end state.",
+      "techContext": "Our CI/CD pipeline always runs kubectl apply rather than kubectl create or kubectl replace — this means the same pipeline step is safe to run on both first-time deploys and updates without any branching logic.",
+      "exampleSentence": "We run kubectl apply -f ./manifests/ every time a PR merges to main, and the cluster converges to the Git-declared state within seconds regardless of what changed.",
+      "codeExample": {
+        "language": "bash",
+        "code": "# Apply a single manifest\nkubectl apply -f deployment.yaml\n\n# Apply all manifests in a directory\nkubectl apply -f ./k8s/\n\n# Validate without applying (dry run)\nkubectl apply --dry-run=server -f deployment.yaml\n\n# Apply with recording (deprecating, but common)\nkubectl apply -f deployment.yaml \\\n  --record   # adds change-cause annotation for rollout history\n\n# Diff what would change without applying\nkubectl diff -f deployment.yaml"
+      },
+      "etymology": "apply as a verb meaning 'to put into effect'; kubectl apply directs Kubernetes to make the declared state effective, following the declarative style of infrastructure-as-code tools like Terraform's plan/apply pattern.",
+      "unlockLevel": 1,
+      "tags": ["kubernetes", "core", "cli"],
+      "category": "processes"
+    },
+    {
+      "id": "k8s-bas-0090-0000-0000-0000-000000000009",
+      "word": "kubectl get",
+      "pronunciation": "KOOB-kuh-tul GET",
+      "partOfSpeech": "verb",
+      "shortDefinition": "Lists Kubernetes resources of a given type, optionally filtered by namespace, labels, or output format.",
+      "simpleDefinition": "kubectl get is the most common Kubernetes command — it lists resources of a type you specify. kubectl get pods shows all pods in the current namespace. Add -A for all namespaces, -l app=api to filter by label, -o wide for extra columns, or -o yaml to see the full resource definition. It is the first command you run when something goes wrong and you need to understand the current state of your cluster.",
+      "longDefinition": "kubectl get queries the Kubernetes API server for one or more resources of the specified type (or all types with kubectl get all). It supports name-based lookup (kubectl get pod api-abc123), label selectors (-l app=api,env=production), and field selectors (--field-selector status.phase=Pending). Output formats: default tabular, -o wide (extra informational columns), -o yaml (full resource YAML including server-assigned fields), -o json, -o jsonpath='{.items[*].metadata.name}' (scripting-friendly), -o custom-columns (define your own column headings). The -w / --watch flag makes kubectl stream changes in real time rather than printing a static snapshot — useful for watching a deployment roll out. kubectl get can operate across namespaces (-n <ns> or --all-namespaces / -A) and can retrieve multiple resource types at once (kubectl get pods,services,deployments).",
+      "connector": "Think of kubectl get like a SELECT statement in SQL — you specify which table (resource type) and optional WHERE clauses (labels, names), and get back a formatted result set.",
+      "techContext": "I always start debugging with kubectl get pods -o wide — the -o wide output shows which node each pod is on, which immediately tells me if the problem is isolated to a specific node.",
+      "exampleSentence": "Running kubectl get pods -l app=api -w in a terminal while the deployment rolled out let me watch each pod transition from Pending to Running in real time.",
+      "codeExample": {
+        "language": "bash",
+        "code": "# Common kubectl get patterns\nkubectl get pods                          # pods in current namespace\nkubectl get pods -A                       # all namespaces\nkubectl get pods -n production -o wide    # with node column\nkubectl get pods -l app=api               # filtered by label\nkubectl get pod api-abc123 -o yaml        # full YAML for one pod\nkubectl get pods --field-selector status.phase=Pending  # stuck pods\nkubectl get pods -w                       # watch mode (stream changes)\nkubectl get pods,svc,deploy               # multiple types at once"
+      },
+      "etymology": "get as HTTP GET — retrieve a representation of a resource. kubectl get maps directly onto the HTTP GET verb in the Kubernetes REST API.",
+      "unlockLevel": 1,
+      "tags": ["kubernetes", "core", "cli"],
+      "category": "processes"
+    },
+    {
+      "id": "k8s-bas-0100-0000-0000-0000-000000000010",
+      "word": "kubectl describe",
+      "pronunciation": "KOOB-kuh-tul deh-SKRYBE",
+      "partOfSpeech": "verb",
+      "shortDefinition": "Shows detailed state, events, and conditions for a resource — the first debugging tool when a pod won't start.",
+      "simpleDefinition": "kubectl describe gives you the full human-readable picture of a specific Kubernetes resource. For a pod, it shows conditions (is it scheduled? ready?), container states (running, waiting, terminated), resource requests and limits, and most importantly, the event log — a chronological list of things Kubernetes did or tried to do. When kubectl get pods shows a pod as Pending or CrashLoopBackOff, kubectl describe pod is the next command you run.",
+      "longDefinition": "kubectl describe calls the API server for the resource and for any associated events (stored separately in the kube-system namespace), then renders both in a rich human-readable format. For pods, the output includes: scheduling information (node assigned), container images, resource requests/limits, volume mounts, environment variables, probe configurations, IP addresses, conditions (PodScheduled, Initialized, ContainersReady, Ready), per-container state (Waiting with Reason/Message, Running with StartedAt, Terminated with ExitCode), and the Events section — a timeline of the last actions taken on or by this object. The Events section is the most diagnostic: ImagePullBackOff shows failed image pulls with the error message; FailedScheduling shows why no node was eligible (insufficient CPU, node selector mismatch); OOMKilled shows the container was killed by the kernel for exceeding its memory limit. Events expire after one hour by default.",
+      "connector": "Think of kubectl describe like a patient chart in a hospital — it shows not just the current vital signs (status) but also the full history of what happened, what was administered, and any warning signs along the way.",
+      "techContext": "Every on-call runbook starts with kubectl describe pod for the failing pod — the Events section has told us the root cause (wrong image tag, insufficient memory, missing Secret) in under two minutes at least a dozen times.",
+      "exampleSentence": "kubectl get pods showed CrashLoopBackOff but kubectl describe pod showed an OOMKilled event — the container was being killed by the kernel for exceeding its 256Mi memory limit every time it started.",
+      "codeExample": {
+        "language": "bash",
+        "code": "# Describe a specific pod\nkubectl describe pod api-abc123 -n production\n\n# Describe a deployment\nkubectl describe deployment api -n production\n\n# The Events section at the bottom is the most useful part:\n# Events:\n#   Type     Reason             Age   Message\n#   ----     ------             ----  -------\n#   Warning  FailedScheduling   2m    0/3 nodes available: 3 Insufficient memory\n#   Normal   Scheduled          90s   Successfully assigned to node-2\n#   Normal   Pulled             80s   Successfully pulled image\n#   Normal   Started            75s   Started container api"
+      },
+      "etymology": "describe as 'give a detailed account of'; kubectl describe provides the rich narrative account of a resource's state that kubectl get's tabular output cannot.",
+      "unlockLevel": 1,
+      "tags": ["kubernetes", "core", "cli", "debugging"],
+      "category": "processes"
+    },
+    {
+      "id": "k8s-bas-0110-0000-0000-0000-000000000011",
+      "word": "kubectl exec",
+      "pronunciation": "KOOB-kuh-tul EK-sek",
+      "partOfSpeech": "verb",
+      "shortDefinition": "Runs a command inside a running container, similar to ssh but for pods.",
+      "simpleDefinition": "kubectl exec lets you run a command directly inside a running container. The most common use is opening an interactive shell so you can poke around inside a running pod — check environment variables, test network connectivity, inspect files, or run diagnostic commands. It is the Kubernetes equivalent of SSH-ing into a server, except instead of a machine you are entering a specific container inside a specific pod.",
+      "longDefinition": "kubectl exec works by the kubelet opening a streaming connection from your terminal to the specified container's stdin/stdout/stderr via the API server's exec sub-resource endpoint. This tunnels over the same HTTPS connection used for all API traffic — no separate SSH infrastructure is needed. Flags: -it (interactive + TTY for shells), -c <container> (select a container when a pod has multiple), -- <command> (the command to run). For distroless or minimal images that lack a shell entirely, kubectl debug is the alternative (it injects an ephemeral container with debug tools). kubectl exec is commonly used to: verify environment variables are injected correctly, test DNS resolution (nslookup api-svc), check connectivity (curl http://downstream-svc), inspect mounted ConfigMap values (cat /etc/config/app.conf), and run one-off database migrations or admin scripts.",
+      "connector": "Think of kubectl exec like a walkie-talkie to a specific room in a building — you can speak directly into that room (container) and hear back without physically going there.",
+      "techContext": "When our app was failing to connect to the database, I used kubectl exec to get a shell inside the pod and ran psql from there — confirming the password was correct and the problem was a network policy blocking the connection.",
+      "exampleSentence": "kubectl exec -it postgres-0 -- psql -U admin gave me direct database access to verify the migration had applied correctly before we declared the deployment successful.",
+      "codeExample": {
+        "language": "bash",
+        "code": "# Open an interactive bash shell in a pod\nkubectl exec -it api-abc123 -- bash\n\n# Run a one-off command (non-interactive)\nkubectl exec api-abc123 -- env | grep DATABASE\n\n# Exec into a specific container in a multi-container pod\nkubectl exec -it api-abc123 -c sidecar -- sh\n\n# Test DNS resolution from inside a pod\nkubectl exec api-abc123 -- nslookup postgres-svc.production.svc.cluster.local\n\n# Check connectivity to another service\nkubectl exec api-abc123 -- curl -s http://payments-svc/health"
+      },
+      "etymology": "exec from Unix execute — run a program. kubectl exec is the kubectl verb for executing a command in an already-running container, analogous to the shell exec built-in.",
+      "unlockLevel": 1,
+      "tags": ["kubernetes", "core", "cli", "debugging"],
+      "category": "processes"
+    },
+    {
+      "id": "k8s-bas-0120-0000-0000-0000-000000000012",
+      "word": "kubectl logs",
+      "pronunciation": "KOOB-kuh-tul LOGZ",
+      "partOfSpeech": "verb",
+      "shortDefinition": "Streams or retrieves stdout/stderr from a container inside a pod.",
+      "simpleDefinition": "kubectl logs shows you what a container is printing to its output — everything your app writes to stdout or stderr. Use it to check startup messages, read error traces, or follow the live log stream with -f. For a pod that crashed, add --previous to see the logs from the last run before it restarted. This is usually the first command after kubectl describe when you need to understand why an application is misbehaving.",
+      "longDefinition": "Kubernetes captures container stdout and stderr and stores them on the node where the container ran. kubectl logs reads those stored bytes via the API server's log sub-resource. Key flags: -f / --follow (stream logs in real time, like tail -f), --previous / -p (logs from the prior container instance — essential for crash diagnosis), --since=1h (logs from the last hour), --since-time='2026-01-15T10:00:00Z' (logs since a specific timestamp), --tail=100 (last N lines), -c <container> (select container in a multi-container pod), --prefix (prefix each line with the pod/container name, useful with -l for multi-pod logs). Logs are retained on the node until the container or pod is deleted, or until the container log file exceeds the kubelet's container-log-max-size (default 10Mi). For production, logs should be shipped to a centralized store (Elasticsearch, Loki, Cloud Logging) by a sidecar or DaemonSet — never rely solely on kubectl logs in an incident.",
+      "connector": "Think of kubectl logs like checking your phone's recent call log — it shows you what happened (messages the container sent), how recently, and you can watch it live as new events come in.",
+      "techContext": "We always check kubectl logs --previous when a pod is in CrashLoopBackOff — the --previous flag shows the logs from the crashed instance rather than the currently starting (and mostly empty) one.",
+      "exampleSentence": "kubectl logs api-abc123 --since=5m -f revealed the database connection pool was exhausted — we could see one 'connection refused' error every 200 milliseconds in the live stream.",
+      "codeExample": {
+        "language": "bash",
+        "code": "# Basic log retrieval\nkubectl logs api-abc123\n\n# Follow logs in real time\nkubectl logs api-abc123 -f\n\n# Logs from a crashed container (previous instance)\nkubectl logs api-abc123 --previous\n\n# Last 50 lines from the last hour\nkubectl logs api-abc123 --tail=50 --since=1h\n\n# Logs from all pods matching a label\nkubectl logs -l app=api -f --prefix\n\n# Logs from a specific container in a multi-container pod\nkubectl logs api-abc123 -c sidecar"
+      },
+      "etymology": "log as a chronological record of events; kubectl logs retrieves the chronological event record that a container wrote to its standard output and error streams.",
+      "unlockLevel": 1,
+      "tags": ["kubernetes", "core", "cli", "debugging"],
+      "category": "processes"
+    },
+    {
+      "id": "k8s-bas-0130-0000-0000-0000-000000000013",
+      "word": "kubectl scale",
+      "pronunciation": "KOOB-kuh-tul SKAYL",
+      "partOfSpeech": "verb",
+      "shortDefinition": "Sets the replica count on a Deployment, ReplicaSet, or StatefulSet imperatively.",
+      "simpleDefinition": "kubectl scale changes the number of running pod replicas for a workload. Tell it the resource and the new count, and the Deployment controller immediately starts creating or deleting pods to reach that number. It is the imperative way to scale — fast and direct, but bypasses your Git-controlled manifests. In production, prefer updating the replicas field in your manifest and running kubectl apply so the change is tracked.",
+      "longDefinition": "kubectl scale sends a PATCH request to the API server that updates only the spec.replicas field of the targeted resource. It works on Deployments, ReplicaSets, StatefulSets, and Jobs (for Job parallelism). Scaling up creates new pods; scaling down removes the excess pods by sending SIGTERM and waiting for graceful shutdown. The --replicas flag sets the absolute count; there is no relative increment. The --current-replicas flag acts as a precondition — the command only executes if the current replica count matches, which prevents accidentally overwriting a scale change made by a competing operator or HPA. kubectl scale is the imperative alternative to updating the manifest; in GitOps workflows it should only be used for immediate incident mitigation (scaling to 0 to stop a broken deploy, scaling up in a traffic emergency), followed by a manifest update to record the change.",
+      "connector": "Think of kubectl scale like a manual override dial on automated machinery — you can turn it directly in an emergency, but your automation (manifests, HPA) will eventually reset it unless you also update the baseline configuration.",
+      "techContext": "When a bad deployment was causing errors, I used kubectl scale deployment api --replicas=0 to immediately stop all traffic to it while the team rolled back — faster than waiting for a full rollout undo.",
+      "exampleSentence": "During the traffic spike we kubectl scale deployment api --replicas=20 to immediately add capacity while our HPA caught up to the sustained load.",
+      "codeExample": {
+        "language": "bash",
+        "code": "# Scale a deployment to 5 replicas\nkubectl scale deployment api --replicas=5\n\n# Scale with a precondition (only if currently at 3)\nkubectl scale deployment api \\\n  --current-replicas=3 \\\n  --replicas=5\n\n# Scale to zero (stops all pods — useful for emergencies)\nkubectl scale deployment api --replicas=0\n\n# Scale a StatefulSet\nkubectl scale statefulset postgres --replicas=3"
+      },
+      "etymology": "scale from Latin scala ('ladder, staircase'); in computing, to scale means to adjust capacity up or down. kubectl scale is the direct command to climb or descend the replica count ladder.",
+      "unlockLevel": 1,
+      "tags": ["kubernetes", "core", "cli"],
+      "category": "processes"
+    },
+    {
+      "id": "k8s-bas-0140-0000-0000-0000-000000000014",
+      "word": "Port Forward",
+      "pronunciation": "PORT FOR-werd",
+      "partOfSpeech": "verb",
+      "shortDefinition": "kubectl port-forward tunnels a local port to a pod or service for local development access without exposing it publicly.",
+      "simpleDefinition": "Port forwarding lets you reach a pod or service running inside the cluster from your local machine, without exposing it to the internet or creating a permanent Service. Run kubectl port-forward and Kubernetes opens a tunnel from a port on your laptop to a port inside the cluster. You can then open localhost:8080 in your browser and talk to a pod running inside Kubernetes. The tunnel lasts as long as the kubectl command is running.",
+      "longDefinition": "kubectl port-forward establishes a tunnel via the Kubernetes API server's portforward sub-resource. The kubelet on the pod's node opens a connection from the container's port to the API server, and kubectl on the local machine holds the other end, listening on the local port. Traffic is multiplexed over the existing HTTPS API server connection — no extra firewall rules or network exposure is needed. Port-forward works against both pods (kubectl port-forward pod/<name>) and Services (kubectl port-forward svc/<name>), with the Service variant selecting one of the pods behind the Service. Common uses: inspecting a web UI (Prometheus, Grafana, Kubernetes dashboard), connecting a local database client to a cluster database pod, testing an API endpoint before exposing it externally, and debugging by sending crafted requests directly to a specific pod instance. Port-forward is not suitable for production traffic: it is a single-stream debug tunnel that goes through the API server, which is not designed for data-plane load.",
+      "connector": "Think of kubectl port-forward like a temporary, personal tunnel through a firewall — you build it on demand, it exists only while you are using it, and it disappears when you are done without leaving any permanent change to the cluster.",
+      "techContext": "When I need to query a Prometheus instance running in the cluster, I run kubectl port-forward svc/prometheus 9090:9090 and then open localhost:9090 — I am talking directly to the cluster without a public endpoint.",
+      "exampleSentence": "Port forwarding to the admin dashboard let us diagnose the production issue without exposing it to the internet — we ran the forward on a bastion host and SSH-tunneled into that.",
+      "codeExample": {
+        "language": "bash",
+        "code": "# Forward local port 8080 to pod port 8080\nkubectl port-forward pod/api-abc123 8080:8080\n\n# Forward to a Service (selects one pod behind it)\nkubectl port-forward svc/api-svc 8080:80\n\n# Forward to a pod in a specific namespace\nkubectl port-forward pod/grafana-xyz -n monitoring 3000:3000\n\n# Run in background\nkubectl port-forward svc/postgres 5432:5432 &\n\n# Access via localhost while port-forward runs\n# curl http://localhost:8080/health"
+      },
+      "etymology": "Port from Latin porta ('gate, opening') + forward — redirect traffic arriving at a local gateway onward to a remote destination. Port forwarding is a general networking concept; kubectl port-forward applies it specifically to Kubernetes pods and services.",
+      "unlockLevel": 1,
+      "tags": ["kubernetes", "core", "cli", "networking"],
+      "category": "processes"
+    },
+    {
+      "id": "kube0120-0000-0000-0000-000000000012",
+      "word": "ReplicaSet",
+      "pronunciation": "REP-lih-kuh-set",
+      "partOfSpeech": "noun",
+      "shortDefinition": "Ensures a specified number of identical pod replicas run at all times; the mechanism behind Deployment self-healing.",
+      "simpleDefinition": "A ReplicaSet is a controller that keeps a specified number of identical pods running. If a pod crashes, the ReplicaSet creates a replacement. If a node dies and takes two pods with it, the ReplicaSet starts two new pods on healthy nodes. It is the self-healing engine underneath every Kubernetes Deployment — when you create a Deployment, the Deployment creates and manages ReplicaSets on your behalf.",
+      "longDefinition": "A ReplicaSet owns a set of pods identified by a label selector and a replica count. It runs a continuous reconciliation loop: observe the count of pods matching the selector, compare to the desired count, and create or delete pods to close the gap. When creating new pods it uses a pod template embedded in the ReplicaSet spec. ReplicaSets do not provide update or rollback capabilities — that is the Deployment's job. A Deployment manages multiple ReplicaSets: the active one (current desired version) and scaled-to-zero old ones (previous versions, kept for rollback). You rarely create a ReplicaSet directly; when debugging you might inspect a ReplicaSet to understand which pods belong to which Deployment revision. The selector on a ReplicaSet is immutable; if a pod with matching labels already exists and is not owned, the RS will adopt it — this can cause surprising behavior if labels are reused carelessly.",
+      "connector": "Think of a ReplicaSet like a staffing agency contract that says 'always keep three people on this shift' — when someone calls in sick (pod crashes), the agency immediately finds a replacement (starts a new pod) so the count never drops.",
+      "techContext": "When a rolling deployment is in progress, kubectl get replicasets shows the old RS scaling down while the new RS scales up — this is how you can see the two ReplicaSets the Deployment is managing simultaneously.",
+      "exampleSentence": "The ReplicaSet replaced the OOM-killed pod within 8 seconds — by the time the alert fired, the pod count was already back to the desired three.",
+      "codeExample": {
+        "language": "bash",
+        "code": "# List ReplicaSets (shows Deployment-managed RS history)\nkubectl get replicasets -n production\n# NAME           DESIRED   CURRENT   READY\n# api-7d9b4       3         3         3    <- active\n# api-6c8a2       0         0         0    <- previous revision\n# api-5b7f1       0         0         0    <- older revision\n\n# See which pods belong to a ReplicaSet\nkubectl get pods -l pod-template-hash=7d9b4 -n production"
+      },
+      "etymology": "From 'replica' (Latin replicare, 'to repeat') + 'set'; a ReplicaSet is the set of pod copies maintained at the declared replica count.",
+      "unlockLevel": 1,
+      "tags": ["kubernetes", "core", "availability"],
+      "category": "components"
+    },
+    {
+      "id": "k8s-bas-0150-0000-0000-0000-000000000015",
+      "word": "Volume",
+      "pronunciation": "VAHL-yoom",
+      "partOfSpeech": "noun",
+      "shortDefinition": "A named directory mounted into pod containers; survives container restarts but is deleted when the pod is deleted.",
+      "simpleDefinition": "A container's filesystem is ephemeral — when the container restarts, everything written to it is gone. A Volume gives containers a place to store data that survives restarts. You declare a volume in the pod spec and mount it into one or more containers at a chosen path. The simplest volume type (emptyDir) is just a directory on the node that all containers in the pod can share. When the pod itself is deleted, emptyDir volumes disappear too — for data that must outlast pod deletion, you need a PersistentVolume.",
+      "longDefinition": "Kubernetes volumes are defined at the pod level, not the container level. All containers in a pod can mount the same volume — this is how a main application container and a log-shipper sidecar share a log directory. Volume types include: emptyDir (temporary scratch space, lives and dies with the pod), hostPath (a directory on the node's own filesystem — creates node affinity), configMap (mounts ConfigMap data as files — read-only, auto-updates when the ConfigMap changes), secret (mounts Secret data as files — read-only, held in tmpfs on the node), projected (combines multiple sources into one mount point), emptyDir with medium: Memory (tmpfs RAM-backed scratch space). For data that must outlast pod deletion, the workload should use a PersistentVolumeClaim, which requests a PersistentVolume. Volumes are the mechanism by which pods receive their runtime configuration (via ConfigMap and Secret volume mounts) as well as how multi-container pods share working data.",
+      "connector": "Think of a pod volume like a shared whiteboard in a meeting room — any participant (container) can write on it, and the writing survives if someone leaves the room and comes back (container restart), but when the meeting ends (pod deleted) the whiteboard is erased.",
+      "techContext": "We use a secret volume to mount TLS certificates into our Nginx sidecar and an emptyDir volume so the main app and the sidecar can share a socket file — both containers reference the same paths but maintain their own writable filesystems.",
+      "exampleSentence": "The sidecar log shipper could only read the app's log files because both containers mounted the same emptyDir volume at /var/log/app, even though they were different container images.",
+      "codeExample": {
+        "language": "yaml",
+        "code": "spec:\n  volumes:\n    - name: shared-logs      # emptyDir: lives with the pod\n      emptyDir: {}\n    - name: app-config       # configMap: auto-updated\n      configMap:\n        name: app-config\n    - name: tls-certs        # secret: in-memory (tmpfs)\n      secret:\n        secretName: tls-secret\n  containers:\n    - name: app\n      volumeMounts:\n        - name: shared-logs\n          mountPath: /var/log/app\n        - name: app-config\n          mountPath: /etc/app\n    - name: log-shipper\n      volumeMounts:\n        - name: shared-logs\n          mountPath: /var/log/app\n          readOnly: true"
+      },
+      "etymology": "From Latin volumen ('roll, scroll') — a container for data. In computing, volume refers to a storage unit. Kubernetes volumes adapt the concept to ephemeral pod-scoped storage.",
+      "unlockLevel": 1,
+      "tags": ["kubernetes", "core", "storage"],
+      "category": "components"
+    },
+    {
+      "id": "kube0060-0000-0000-0000-000000000006",
+      "word": "ConfigMap",
+      "pronunciation": "KON-fig-map",
+      "partOfSpeech": "noun",
+      "shortDefinition": "A key-value store for non-secret configuration data that can be injected into pods as env vars or mounted files.",
+      "simpleDefinition": "A ConfigMap holds non-sensitive configuration for your application — things like a log level, a feature flag value, or an entire nginx.conf file. You create a ConfigMap with the data your app needs, then tell your Deployment to inject it either as environment variables or as files mounted into a specific directory. The key benefit: you can use the same container image in dev, staging, and production but configure it differently with different ConfigMaps — no rebuilding required.",
+      "longDefinition": "A ConfigMap is a Kubernetes API object with a data field (UTF-8 key-value pairs) and optionally a binaryData field (base64-encoded binary). Key sizes can be up to 1 MiB total per ConfigMap. Pods consume ConfigMaps in two ways: as environment variables (envFrom.configMapRef injects all keys; valueFrom.configMapKeyRef injects a specific key) or as mounted volume files (each key becomes a filename, the value becomes the file content). Volume-mounted ConfigMaps auto-update when the ConfigMap changes, with a propagation delay of up to the kubelet's sync period (default ~1 minute) — this enables live configuration reloads in apps that watch their config files. Environment-variable injection does not update without a pod restart. ConfigMaps are stored in etcd in plaintext — never put passwords or tokens in a ConfigMap. A ConfigMap can be marked immutable: true to prevent accidental modification and eliminate API server watch traffic for that ConfigMap.",
+      "connector": "Think of a ConfigMap like a universal remote control's settings page — the remote hardware (container image) is the same, but the button mappings (configuration) are different for each TV brand (environment) it is programmed for.",
+      "techContext": "We store our nginx.conf in a ConfigMap so infrastructure engineers can update the proxy rules via kubectl apply without any application team involvement or container rebuild.",
+      "exampleSentence": "After updating the ConfigMap to increase the connection pool size, the new value was picked up by the running pods within 60 seconds via the volume mount — no pod restart required.",
+      "codeExample": {
+        "language": "yaml",
+        "code": "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: app-config\ndata:\n  LOG_LEVEL: \"info\"\n  MAX_CONNECTIONS: \"50\"\n  nginx.conf: |\n    server {\n      listen 80;\n      root /usr/share/nginx/html;\n    }\n---\n# Inject as env vars\nenvFrom:\n  - configMapRef:\n      name: app-config\n---\n# Mount as files\nvolumeMounts:\n  - name: config\n    mountPath: /etc/app\nvolumes:\n  - name: config\n    configMap:\n      name: app-config"
+      },
+      "etymology": "From 'configuration' + 'map' (key-value mapping); ConfigMap is the Kubernetes primitive for mapping configuration keys to their values, decoupled from the container image.",
+      "unlockLevel": 1,
+      "tags": ["kubernetes", "core", "configuration"],
+      "category": "components"
+    },
+    {
+      "id": "kube0070-0000-0000-0000-000000000007",
+      "word": "Secret",
+      "pronunciation": "SEE-krit",
+      "partOfSpeech": "noun",
+      "shortDefinition": "A Kubernetes object for sensitive data (passwords, tokens, certs); stored base64-encoded and mountable into pods.",
+      "simpleDefinition": "A Secret is the Kubernetes way to handle sensitive data — passwords, API tokens, TLS certificates, SSH keys. Like a ConfigMap, it stores key-value pairs that you inject into pods as environment variables or mount as files. Unlike a ConfigMap, the data is base64-encoded and Kubernetes applies stricter access controls. Important caveat: base64 is not encryption — anyone with kubectl permissions to read Secrets can decode them. For true encryption, enable etcd encryption at rest or use an external secrets manager integrated via the External Secrets Operator.",
+      "longDefinition": "A Secret is a Kubernetes object with a type field (Opaque for arbitrary data, kubernetes.io/tls for certificate pairs, kubernetes.io/dockerconfigjson for registry credentials, etc.) and a data field where values are base64-encoded byte strings. Kubernetes stores Secrets in etcd and serves them to pods via the kubelet — they are held in tmpfs (RAM) on the node, not written to node disk, which limits exposure from disk forensics. Access is controlled by RBAC — the default is that all pods in a namespace can read all Secrets in that namespace, which is why namespace isolation matters. Secrets should ideally be created by CI/CD tooling or an operator, not committed to Git (even encrypted). Production-grade secret management combines Kubernetes Secrets as the delivery mechanism (pods always read from a mounted Secret volume) with an upstream store (AWS Secrets Manager, HashiCorp Vault, GCP Secret Manager) as the authoring interface, synchronized by the External Secrets Operator.",
+      "connector": "Think of a Kubernetes Secret like a safe-deposit box inside the bank vault (Kubernetes cluster) — the box is more protected than regular storage, but the bank staff with the master key (cluster admin) can still open it. For truly sensitive secrets you need a separate vault with separate access controls.",
+      "techContext": "We never store database passwords in ConfigMaps — they live in Secrets. Our CI pipeline creates them at deploy time using vault secret injection rather than committing them to Git.",
+      "exampleSentence": "The connection string was failing because the Secret had been created with the password URL-encoded, but the application expected raw characters — a subtle encoding mismatch that kubectl describe revealed in the mounted volume.",
+      "codeExample": {
+        "language": "bash",
+        "code": "# Create a Secret from literal values\nkubectl create secret generic db-credentials \\\n  --from-literal=username=admin \\\n  --from-literal=password='s3cr3t-p4ss'\n\n# View a Secret (base64-encoded — not plaintext)\nkubectl get secret db-credentials -o yaml\n\n# Decode a secret value\nkubectl get secret db-credentials \\\n  -o jsonpath='{.data.password}' | base64 -d\n\n# Mount as env var in a pod\n# env:\n#   - name: DB_PASSWORD\n#     valueFrom:\n#       secretKeyRef:\n#         name: db-credentials\n#         key: password"
+      },
+      "etymology": "From Latin secretus ('set apart, hidden'); the Kubernetes Secret object is named to signal that it holds data that should be hidden from casual inspection and protected by access controls.",
+      "unlockLevel": 1,
+      "tags": ["kubernetes", "core", "security", "configuration"],
+      "category": "components"
+    },
+    {
+      "id": "kube0090-0000-0000-0000-000000000009",
+      "word": "Helm Chart",
+      "pronunciation": "HELM CHART",
+      "partOfSpeech": "noun",
+      "shortDefinition": "A packaged collection of Kubernetes manifests with a values file, installable and upgradeable as a single unit.",
+      "simpleDefinition": "A Helm chart is a reusable package of Kubernetes manifests. Instead of applying a dozen individual YAML files to install something like Prometheus or PostgreSQL, you install one chart with one command. Charts use a template system — you override settings in a values.yaml file, and Helm fills in the templates to produce the final YAML. Helm also tracks what you have installed (called a release), letting you upgrade, roll back, and uninstall entire application stacks as single operations.",
+      "longDefinition": "A Helm chart is a directory (or .tgz archive) with a specific structure: Chart.yaml (chart metadata: name, version, description), values.yaml (default configurable values), and templates/ (Go template YAML files that render Kubernetes manifests using values). When you run helm install, Helm renders the templates with the merged values (defaults + any --set overrides + custom values files) and applies the resulting YAML to the cluster. The installed instance is called a Helm release — Helm stores release metadata as Secrets in the target namespace, enabling helm upgrade (re-render with new values or chart version and apply), helm rollback (revert to a previous release revision), and helm uninstall (delete all resources created by the chart). Public charts live on chart repositories (Artifact Hub is the public index). Charts support dependencies (subcharts) for bundling multiple components. The three-way strategic merge patch that helm upgrade uses computes what changed between the current release, the desired release, and any manual modifications — similar to kubectl apply's logic.",
+      "connector": "Think of a Helm chart like an IKEA flat-pack kit — everything you need to build the finished product (application stack) is included, with an instruction booklet (values.yaml) you customize for your space (environment), and the result is assembled with one operation.",
+      "techContext": "We use Helm charts for all third-party tools — Prometheus, Grafana, cert-manager — so a single helm upgrade updates the whole monitoring stack. Our own applications get Kustomize overlays for simpler customization.",
+      "exampleSentence": "Installing the cert-manager chart required only two commands — adding the Jetstack chart repository and helm install — producing all 23 Kubernetes resources correctly configured with our cluster's domain.",
+      "codeExample": {
+        "language": "bash",
+        "code": "# Add a chart repository\nhelm repo add prometheus-community \\\n  https://prometheus-community.github.io/helm-charts\nhelm repo update\n\n# Install a chart (creates a Helm release)\nhelm install prometheus prometheus-community/kube-prometheus-stack \\\n  --namespace monitoring --create-namespace \\\n  --values my-values.yaml\n\n# Upgrade a release\nhelm upgrade prometheus prometheus-community/kube-prometheus-stack \\\n  --namespace monitoring \\\n  --set grafana.adminPassword=newpass\n\n# List releases\nhelm list -n monitoring\n\n# Roll back to previous revision\nhelm rollback prometheus 1 -n monitoring"
+      },
+      "etymology": "Helm is the nautical steering mechanism (tiller/wheel). The Helm project adopted the metaphor of navigating a Kubernetes cluster. A chart is a nautical navigation map — the Helm chart is your map for deploying an application.",
+      "unlockLevel": 1,
+      "tags": ["kubernetes", "core", "tooling", "packaging"],
+      "category": "components"
+    },
+    {
+      "id": "k8s-bas-0160-0000-0000-0000-000000000016",
+      "word": "OCI (Open Container Initiative)",
+      "pronunciation": "OH-see-eye (OH-pen kun-TAYN-er ih-NIH-shuh-tiv)",
+      "partOfSpeech": "noun",
+      "shortDefinition": "Linux Foundation standard defining the Image Spec, Runtime Spec, and Distribution Spec so any image runs on any runtime.",
+      "simpleDefinition": "OCI is the set of open standards that makes container images portable. Before OCI, Docker images could only run on Docker. OCI defined a universal format for container images (how layers are structured), runtimes (how a container must be executed), and registries (how images are stored and retrieved). Any OCI-compliant image — built with Docker, Buildah, or ko — runs on any OCI-compliant runtime — containerd, CRI-O, or Podman — without modification. This interoperability is why you can build an image on your laptop and run it on any Kubernetes cluster in any cloud.",
+      "longDefinition": "The Open Container Initiative was founded in 2015 by Docker, CoreOS, Google, Red Hat, and others under the Linux Foundation, in response to fragmentation risk as multiple container formats and runtimes competed for adoption. The OCI publishes three specifications: the Image Spec (opencontainers/image-spec) defines the container image format — a content-addressed manifest referencing an ordered list of filesystem layer blobs plus a config JSON; the Runtime Spec (opencontainers/runtime-spec) defines the interface between a container manager and a low-level runtime, specifying a config.json bundle format with namespaces, cgroups, mounts, and the process to execute; the Distribution Spec (opencontainers/distribution-spec) standardizes the HTTP registry API used to push and pull images. The reference runtime implementation is runc (donated by Docker, maintained under OCI), which accepts an OCI bundle and uses clone() + cgroups + mount + exec to create the container. Kata Containers and gVisor are OCI-compliant alternative runtimes that provide VM-level and syscall-interception isolation respectively, selectable per pod via Kubernetes RuntimeClass.",
+      "connector": "Think of OCI like the USB standard for computers — before USB, every peripheral used a different plug. OCI standardized the 'plug' (image format and runtime API) so any container image fits any runtime without adapters.",
+      "techContext": "Because our images are OCI-compliant, we can build them in GitHub Actions using Docker, push to ECR, and have containerd on EKS nodes pull and run them — no tool-specific knowledge required at any step.",
+      "exampleSentence": "Switching our container runtime from Docker to containerd was completely transparent to our applications because both are OCI-compliant — the images we had already pushed to our registry ran without change.",
+      "codeExample": {
+        "language": "bash",
+        "code": "# Inspect an OCI image manifest (using crane tool)\ncrane manifest ghcr.io/my-org/my-app:v1.2.3 | jq .\n# {\n#   \"schemaVersion\": 2,\n#   \"mediaType\": \"application/vnd.oci.image.manifest.v1+json\",\n#   \"config\": { \"digest\": \"sha256:...\" },\n#   \"layers\": [\n#     { \"digest\": \"sha256:...\", \"size\": 31234567 },\n#     { \"digest\": \"sha256:...\", \"size\": 4567890 }\n#   ]\n# }\n\n# Any OCI-compliant tool can run this image\ncontainerd pull ghcr.io/my-org/my-app:v1.2.3\npodman run ghcr.io/my-org/my-app:v1.2.3"
+      },
+      "etymology": "Open Container Initiative is descriptively named: open (vendor-neutral, public standard) + container + initiative (an organized effort). Founded under the Linux Foundation to prevent proprietary lock-in of the container ecosystem.",
+      "unlockLevel": 1,
+      "tags": ["kubernetes", "containers", "core", "standards"],
+      "category": "concepts"
+    }
+  ]
+}
