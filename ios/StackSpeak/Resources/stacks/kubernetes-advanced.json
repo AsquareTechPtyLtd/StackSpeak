@@ -1,0 +1,605 @@
+{
+  "stack": "kubernetes-advanced",
+  "words": [
+    {
+      "id": "kube0130-0000-0000-0000-000000000013",
+      "word": "Readiness Probe",
+      "pronunciation": "RED-ee-ness PROHB",
+      "partOfSpeech": "noun",
+      "shortDefinition": "Periodic health check that removes a pod from Service endpoints when it fails, preventing traffic from reaching an unready instance.",
+      "simpleDefinition": "A readiness probe asks a pod \"are you ready to serve traffic right now?\" on a schedule. When it fails, the pod's IP is removed from the Service's endpoint list — no new requests reach it — and re-added only once the probe passes again. The container is never restarted; it simply goes off rotation until it recovers. This is essential during startup warmup, rolling updates, and temporary overload.",
+      "longDefinition": "The readiness probe is one of three probe types Kubernetes runs against every container. Unlike the liveness probe (which kills and restarts a sick container), a failing readiness probe takes a softer action: it sets the pod's Ready condition to False and instructs the endpoints controller to remove the pod's IP from the Endpoints and EndpointSlice objects that back the Service. kube-proxy and Ingress controllers propagate this change, stopping all new traffic to the pod within seconds. When the probe passes again, the pod is re-added automatically. This mechanism is critical in two scenarios: during rolling updates (new pods must pass readiness before traffic is shifted away from old pods) and during transient overload (a pod can signal \"I'm overwhelmed, hold new requests\" without dying). Production best practice is to separate the readiness endpoint from the liveness endpoint: readiness can check dependency availability (can I reach the database?), while liveness should only check internal state — using one expensive endpoint for both causes dependency-outage-induced restart loops.",
+      "connector": "Think of a readiness probe like a restaurant's kitchen 'ready to serve' light — when it's off, the host stops seating new tables at that station, but the kitchen staff stays and keeps working until they're ready to take orders again.",
+      "techContext": "After a rolling update, new pods fail readiness probes until their warm-up cache is populated, preventing customers from hitting a cold instance while old pods remain in rotation.",
+      "exampleSentence": "The deployment stalled at 50% because the new pods were failing their readiness probes — the /ready endpoint was correctly checking the downstream cache service, which hadn't finished loading.",
+      "codeExample": {
+        "language": "yaml",
+        "code": "readinessProbe:\n  httpGet:\n    path: /ready\n    port: 8080\n  initialDelaySeconds: 5\n  periodSeconds: 5\n  failureThreshold: 3\n  successThreshold: 1\n  timeoutSeconds: 3\n# Separate liveness keeps dependency failures from triggering restarts\nlivenessProbe:\n  httpGet:\n    path: /healthz   # internal-only, no I/O\n    port: 8080\n  periodSeconds: 10\n  failureThreshold: 3"
+      },
+      "etymology": "From Old English rǣde ('prepared') + Latin probare ('to test'). The term entered Kubernetes vocabulary at launch in 2014 alongside liveness probe, reflecting the two questions every running service must answer.",
+      "unlockLevel": 4,
+      "tags": ["kubernetes", "health", "availability", "lifecycle"],
+      "category": "components"
+    },
+    {
+      "id": "k8s-adv-0010-0000-0000-0000-000000000001",
+      "word": "Startup Probe",
+      "pronunciation": "START-up PROHB",
+      "partOfSpeech": "noun",
+      "shortDefinition": "A one-shot probe that disables liveness and readiness checks until a slow-starting container finishes initialisation, preventing false kill loops during bootstrap.",
+      "simpleDefinition": "A startup probe is a gating mechanism: while it is running, Kubernetes suspends both the liveness and readiness probes entirely. The startup probe may fail many times without consequence — it simply keeps trying up to failureThreshold * periodSeconds seconds. The moment it succeeds once, it disengages and hands control to liveness and readiness. This elegantly solves the initialDelaySeconds dilemma: before startup probes, teams had to set a long delay on liveness to cover worst-case startup times, which meant real post-startup failures went undetected for just as long.",
+      "longDefinition": "Startup probes were added as alpha in Kubernetes 1.16 and graduated to stable in 1.20. They address a fundamental tension: liveness probes need to be tight enough to catch failures quickly during steady-state operation, but a tight liveness probe will fire false positives during a slow startup (JVM class loading, database migration runs, certificate generation). The startup probe decouples these two concerns. Kubernetes runs only the startup probe until it succeeds once; liveness and readiness are held in check. After success, liveness kicks in with its normally aggressive threshold without danger of killing an app that is merely still initializing. The startup probe can use the same endpoint as liveness — the semantic difference is entirely in the timing contract. A common pattern: startupProbe with failureThreshold: 30 and periodSeconds: 10 allows up to 300 seconds of startup time, while livenessProbe with failureThreshold: 3 and periodSeconds: 10 catches steady-state hangs within 30 seconds.",
+      "connector": "Think of a startup probe like a 'Do Not Disturb' sign on a hotel room door — housekeeping (liveness checks) waits outside until the guest signals they are ready to be visited, but once the sign is removed, normal service resumes on the usual tight schedule.",
+      "techContext": "A Spring Boot service running Liquibase migrations at startup can take 90 seconds to initialize; the startup probe grants that time window without risking a liveness-induced CrashLoopBackOff on cold nodes.",
+      "exampleSentence": "After adding a startup probe with a 5-minute budget, our JVM service stopped entering CrashLoopBackOff during cluster cold starts because liveness was no longer competing with the class-loading phase.",
+      "codeExample": {
+        "language": "yaml",
+        "code": "# Allow up to 300s (30 * 10s) for the app to start\nstartupProbe:\n  httpGet:\n    path: /actuator/health/liveness\n    port: 8080\n  failureThreshold: 30\n  periodSeconds: 10\n\n# Once started, tight liveness is now safe\nlivenessProbe:\n  httpGet:\n    path: /actuator/health/liveness\n    port: 8080\n  failureThreshold: 3\n  periodSeconds: 10\n  timeoutSeconds: 3"
+      },
+      "etymology": "Compound of 'startup' (initialization phase) + Latin probare ('to test'). Introduced in the Kubernetes 1.16 changelog as 'startupProbe' to distinguish it from the ongoing liveness and readiness checks.",
+      "unlockLevel": 4,
+      "tags": ["kubernetes", "health", "availability", "lifecycle"],
+      "category": "components"
+    },
+    {
+      "id": "k8s-adv-0020-0000-0000-0000-000000000002",
+      "word": "Node Affinity",
+      "pronunciation": "NOHD uh-FIN-ih-tee",
+      "partOfSpeech": "noun",
+      "shortDefinition": "Scheduling rules that require or prefer pods to land on nodes with specific labels — such as availability zone, instance type, or GPU model.",
+      "simpleDefinition": "Node Affinity is the richer, more expressive successor to the simple nodeSelector field. It lets you declare scheduling rules in two flavors: hard (requiredDuringSchedulingIgnoredDuringExecution) and soft (preferredDuringSchedulingIgnoredDuringExecution). Hard rules are Filter-phase constraints — a pod will stay Pending forever if no matching node exists. Soft rules are Score-phase hints — the scheduler gives bonus points to matching nodes but will place the pod on a non-matching node if necessary. The rules support operators like In, NotIn, Exists, DoesNotExist, Gt, and Lt, enabling set-based and range-based matching that plain key-value nodeSelector cannot express.",
+      "longDefinition": "Node Affinity lives under spec.affinity.nodeAffinity in the pod spec. The two rule types map directly to the scheduler's two-phase pipeline: the required flavor participates in the Filter phase (eliminating ineligible nodes), while the preferred flavor participates in the Score phase (adding weight to candidate nodes). Both types carry the 'IgnoredDuringExecution' suffix, meaning existing pods are not evicted if a node's labels change after scheduling — a planned RequiredDuringExecution variant would enforce re-scheduling but is not yet GA. Practical uses: restrict GPU training pods to GPU nodes (required, using label accelerator=nvidia-t4), prefer pods to land on SSD-backed nodes without blocking on HDD nodes (preferred, weight 80), or spread across specific availability zones using the topology.kubernetes.io/zone built-in label. Node Affinity composes with Pod Affinity, Anti-Affinity, Taints, Tolerations, and Topology Spread Constraints — they are evaluated together in the scheduler pipeline.",
+      "connector": "Think of node affinity like specifying seating preferences on a flight: required rules are \"I cannot board without a window seat\" (the airline must accommodate or you don't fly), while preferred rules are \"I'd love a window seat\" (the airline tries, but will seat you in the aisle if nothing else is available).",
+      "techContext": "We use required node affinity to ensure GPU training jobs only land on nodes labeled accelerator=nvidia-a100, and preferred affinity to steer latency-sensitive APIs toward nodes in the primary availability zone without blocking their scheduling.",
+      "exampleSentence": "The data-processing pods sat Pending for 20 minutes because the required node affinity rule referenced a zone label that had been renamed during last week's node pool migration.",
+      "codeExample": {
+        "language": "yaml",
+        "code": "affinity:\n  nodeAffinity:\n    # Hard: pod will not schedule unless this matches\n    requiredDuringSchedulingIgnoredDuringExecution:\n      nodeSelectorTerms:\n      - matchExpressions:\n        - key: topology.kubernetes.io/zone\n          operator: In\n          values: [us-east1-a, us-east1-b]   # OR between values\n    # Soft: prefer SSD nodes, but fall back to HDD\n    preferredDuringSchedulingIgnoredDuringExecution:\n    - weight: 80\n      preference:\n        matchExpressions:\n        - key: disktype\n          operator: In\n          values: [ssd]"
+      },
+      "etymology": "From Latin affinitas ('relation by marriage') — nodes and pods are 'related' or 'attracted' to each other via label rules. The term was borrowed from database query planning, where affinity describes preferred data locality.",
+      "unlockLevel": 4,
+      "tags": ["kubernetes", "scheduling", "infrastructure"],
+      "category": "concepts"
+    },
+    {
+      "id": "k8s-adv-0030-0000-0000-0000-000000000003",
+      "word": "Pod Anti-Affinity",
+      "pronunciation": "PAHD AN-tee-uh-FIN-ih-tee",
+      "partOfSpeech": "noun",
+      "shortDefinition": "Scheduling rule that pushes replicas apart across nodes or zones so a single infrastructure failure cannot take down all instances simultaneously.",
+      "simpleDefinition": "Pod Anti-Affinity is the repulsion twin of Pod Affinity. Instead of pulling pods toward nodes where matching pods already run, it pushes pods away. The canonical use case: you have 5 replicas of a service and you want to ensure no two replicas share the same node (or zone). You specify a labelSelector that matches the pod's own labels and a topologyKey of kubernetes.io/hostname — the scheduler then refuses to place a replica on any node that already hosts a replica of the same app. Like Node Affinity, it comes in hard (required) and soft (preferred) flavors.",
+      "longDefinition": "Pod Anti-Affinity lives under spec.affinity.podAntiAffinity and uses the identical syntax as podAffinity but with inverted semantics. The topologyKey field defines the scope of 'apart' — kubernetes.io/hostname means 'different node'; topology.kubernetes.io/zone means 'different availability zone'; a custom label could mean 'different rack'. Hard anti-affinity is a strict ceiling: if your Deployment requests 5 replicas but only 3 nodes match the anti-affinity selector, 2 pods will remain Pending permanently. Soft anti-affinity (preferred) avoids the stalling problem by scoring nodes based on how few matching pods they already host, allowing the scheduler to pack if absolutely necessary. For most HA use cases, soft anti-affinity is the safer choice: it spreads replicas when possible without blocking scaling. The performance caveat: pod affinity and anti-affinity rules are O(N×M) in the scheduler — for large clusters with many pods, required anti-affinity rules can slow scheduling significantly. Topology Spread Constraints offer a more expressive and often more performant alternative for spreading use cases.",
+      "connector": "Think of pod anti-affinity like assigning on-call engineers to different data centres — you never want both primary and backup engineers to be in the same building when the roof leaks, so the rule is 'no two people from the same team in the same location'.",
+      "techContext": "We apply soft pod anti-affinity with topologyKey: topology.kubernetes.io/zone on all stateless services to ensure a zone outage never exceeds 33% replica loss across our three-zone cluster.",
+      "exampleSentence": "After the node failure took down three co-located API replicas simultaneously, we added required pod anti-affinity — subsequent node failures now affect at most one replica.",
+      "codeExample": {
+        "language": "yaml",
+        "code": "affinity:\n  podAntiAffinity:\n    # Hard: no two replicas on the same node\n    requiredDuringSchedulingIgnoredDuringExecution:\n    - labelSelector:\n        matchLabels:\n          app: api-server\n      topologyKey: kubernetes.io/hostname\n    # Soft: prefer different zones\n    preferredDuringSchedulingIgnoredDuringExecution:\n    - weight: 100\n      podAffinityTerm:\n        labelSelector:\n          matchLabels:\n            app: api-server\n        topologyKey: topology.kubernetes.io/zone"
+      },
+      "etymology": "From Greek anti- ('against') + Latin affinitas ('relation'). The term is used in chemistry for molecules that repel each other — borrowed into Kubernetes scheduling to describe placement repulsion rules.",
+      "unlockLevel": 4,
+      "tags": ["kubernetes", "scheduling", "availability", "resilience"],
+      "category": "concepts"
+    },
+    {
+      "id": "k8s-adv-0040-0000-0000-0000-000000000004",
+      "word": "Taints and Tolerations",
+      "pronunciation": "TAYNTS and tol-er-AY-shunz",
+      "partOfSpeech": "noun",
+      "shortDefinition": "Taints repel pods from nodes; tolerations are pod-side exemptions. Together they dedicate nodes to specific workloads or mark nodes with special hardware or conditions.",
+      "simpleDefinition": "Taints and tolerations are an asymmetric scheduling mechanism: you apply a taint to a node (like 'this node is for GPU work only'), and only pods that carry the matching toleration can land on or remain on that node. Three taint effects exist: NoSchedule (new pods without the toleration are blocked), PreferNoSchedule (soft block), and NoExecute (new pods blocked AND existing pods without the toleration are evicted). Kubernetes itself uses NoExecute taints automatically when a node becomes NotReady or Unreachable, and system DaemonSets carry tolerations for those built-in taints so they keep running regardless.",
+      "longDefinition": "Taints are added to nodes with kubectl taint nodes <node> key=value:Effect and stored in node.spec.taints. Tolerations are declared on pods in spec.tolerations and must match a taint's key, value (or Exists operator), and effect to be considered a match. When all taints on a node are tolerated by a pod, the scheduler treats the node as eligible. If any taint is not tolerated, the taint's effect applies. The tolerationSeconds field (for NoExecute tolerations only) specifies how many seconds an already-running pod may continue on the node after the taint is applied — crucial for graceful eviction during node draining. Production patterns: dedicate GPU nodes with dedicated=gpu:NoSchedule, protect spot/preemptible nodes from latency-sensitive workloads with spot=true:NoSchedule, or cordon nodes for maintenance with node.kubernetes.io/unschedulable. Kubernetes adds built-in taints for node conditions (not-ready, unreachable, disk-pressure, memory-pressure, PID-pressure, network-unavailable) — DaemonSet pods carry tolerations for these so infrastructure agents stay running on degraded nodes.",
+      "connector": "Think of taints as VIP-only velvet ropes at a club entrance — anyone without the right wristband (toleration) is turned away, but the right wristband gets you past the rope even into the reserved section.",
+      "techContext": "Our GPU nodes carry the taint dedicated=gpu:NoSchedule; only training pods with the matching toleration can land on them, preventing general-purpose services from consuming expensive GPU capacity.",
+      "exampleSentence": "The database migration job was stuck Pending because the target namespace had pods with a toleration for the spot taint but the Job spec was missing it — adding the toleration fixed the scheduling.",
+      "codeExample": {
+        "language": "yaml",
+        "code": "# Apply taint to a GPU node (shell)\nkubectl taint nodes gpu-node-1 dedicated=gpu:NoSchedule\n\n# Pod toleration to allow scheduling onto the tainted node\nspec:\n  tolerations:\n  - key: \"dedicated\"\n    operator: \"Equal\"\n    value: \"gpu\"\n    effect: \"NoSchedule\"\n  # Tolerate node unreadiness for up to 5 minutes before eviction\n  - key: \"node.kubernetes.io/not-ready\"\n    operator: \"Exists\"\n    effect: \"NoExecute\"\n    tolerationSeconds: 300"
+      },
+      "etymology": "Taint from Old French taint ('dyed, stained') — a node is 'stained' with a property that contaminates eligibility. Toleration from Latin tolerare ('to bear') — a pod that bears the taint's condition is exempt from its effect.",
+      "unlockLevel": 4,
+      "tags": ["kubernetes", "scheduling", "infrastructure"],
+      "category": "concepts"
+    },
+    {
+      "id": "k8s-adv-0050-0000-0000-0000-000000000005",
+      "word": "QoS Classes (Guaranteed/Burstable/BestEffort)",
+      "pronunciation": "KYOO-oh-ESS KLAS-ez",
+      "partOfSpeech": "noun",
+      "shortDefinition": "Kubernetes automatically assigns every pod one of three Quality of Service classes based on resource configuration; QoS class determines eviction order when a node runs low on memory.",
+      "simpleDefinition": "Kubernetes infers a pod's QoS class from its resource spec — you never set it manually. Guaranteed means every container in the pod has requests equal to limits for both CPU and memory. BestEffort means no container sets any resource requests or limits at all. Everything else is Burstable. The class matters when a node runs out of memory: the kubelet evicts BestEffort pods first, then Burstable, and kills Guaranteed pods last. The Linux OOM killer follows the same order via OOM score adjustments.",
+      "longDefinition": "QoS classes are determined at pod creation by inspecting every container's resources.requests and resources.limits fields. The rules are: Guaranteed requires all containers in the pod to set both requests and limits, with requests == limits for every resource (CPU and memory). If any container has a request without a matching limit, or sets a limit without a request, the pod is Burstable. If no container sets any resource fields at all, the pod is BestEffort. The implications extend beyond eviction order: Guaranteed pods receive a Linux OOM score of -997 (essentially immune to the kernel OOM killer), BestEffort pods receive 1000 (first target), and Burstable pods receive a value between 2 and 999 proportional to how far their usage exceeds their request. Guaranteed pods also benefit from more predictable CPU scheduling because their cgroup receives a fixed quota rather than a burst allowance. The practical trade-off: Guaranteed pods cannot burst beyond their request even when the node has idle capacity, while Burstable pods can use spare resources but are less protected from eviction. For latency-sensitive production services, Guaranteed QoS is the recommended configuration.",
+      "connector": "Think of QoS classes like airline boarding priority: BestEffort passengers board last and get bumped first if the flight is oversold; Guaranteed passengers have reserved seats and are the last to be affected by overbooking; Burstable passengers are somewhere in between depending on their fare class.",
+      "techContext": "Our database pods use requests == limits (Guaranteed QoS) to protect them from eviction under node memory pressure; batch processing pods use BestEffort to accept eviction gracefully and be rescheduled.",
+      "exampleSentence": "After a memory leak in a batch job exhausted node memory, the kubelet correctly evicted the BestEffort analytics pods first, leaving the Guaranteed API pods untouched and the service unimpacted.",
+      "codeExample": {
+        "language": "yaml",
+        "code": "# Guaranteed QoS — requests == limits for every container\nresources:\n  requests:\n    cpu: \"500m\"\n    memory: \"256Mi\"\n  limits:\n    cpu: \"500m\"      # equal to request\n    memory: \"256Mi\"  # equal to request\n\n# Burstable QoS — requests set but limits differ\nresources:\n  requests:\n    cpu: \"100m\"\n    memory: \"128Mi\"\n  limits:\n    cpu: \"1\"         # higher than request = Burstable\n    memory: \"512Mi\"\n\n# BestEffort QoS — no resources field at all (omit entirely)"
+      },
+      "etymology": "Quality of Service from telecommunications, where QoS describes prioritization policies for network traffic. Adopted by Kubernetes to describe resource guarantee levels, following the same tiering logic.",
+      "unlockLevel": 4,
+      "tags": ["kubernetes", "scheduling", "resources", "availability"],
+      "category": "concepts"
+    },
+    {
+      "id": "k8s-adv-0060-0000-0000-0000-000000000006",
+      "word": "Vertical Pod Autoscaler (VPA)",
+      "pronunciation": "VUR-tih-kul PAHD AW-toh-SKAY-lur",
+      "partOfSpeech": "noun",
+      "shortDefinition": "Recommends or automatically adjusts per-pod CPU and memory requests based on historical usage data, complementing HPA for right-sizing workloads.",
+      "simpleDefinition": "The Horizontal Pod Autoscaler changes how many replicas run; the Vertical Pod Autoscaler changes how big each replica is. VPA observes actual resource consumption over time and either recommends better requests/limits (Off mode) or applies them automatically (Auto mode) by evicting and recreating pods with updated specs. It solves the right-sizing problem: teams frequently set requests too high (wasting capacity) or too low (causing OOM kills) because they are guessing without usage data.",
+      "longDefinition": "VPA consists of three components: the Recommender (watches historical resource usage and computes recommendations), the Updater (evicts pods whose current requests deviate too far from recommendations in Auto mode), and the Admission Controller (injects the recommended resource values into new pods at admission time). Three update modes: Off (generate recommendations in status but never apply them — useful as a read-only advisory), Initial (apply recommendations only when pods are first created, never evict), and Auto (apply recommendations by evicting and recreating pods). The critical constraint: VPA in Auto mode is not safe to use simultaneously with HPA on CPU or memory — VPA changes the requests that HPA's utilization ratio is calculated against, creating a feedback loop where each system's changes cause the other to oscillate. The safe combination is HPA on custom metrics (requests/second) plus VPA on CPU/memory in Auto mode, or HPA on CPU with VPA in Off mode as a recommendation engine. VPA works well for JVM services (heap sizing), ML training (GPU memory), and any workload where optimal resource sizing is difficult to predict statically.",
+      "connector": "Think of VPA like a personal trainer who reviews your workout data and adjusts the weights you should be lifting — not changing how many sets you do (that's HPA's job), but making each set more optimally sized for your actual capability.",
+      "techContext": "We run VPA in Off mode for all production services to get right-sizing recommendations without disruption, then apply the recommendations during planned maintenance windows to avoid Updater-initiated evictions.",
+      "exampleSentence": "After enabling VPA Auto on our batch processing workers, the average memory request per pod dropped by 40% based on actual usage data, freeing significant cluster capacity without any OOM kills.",
+      "codeExample": {
+        "language": "yaml",
+        "code": "apiVersion: autoscaling.k8s.io/v1\nkind: VerticalPodAutoscaler\nmetadata:\n  name: api-vpa\nspec:\n  targetRef:\n    apiVersion: apps/v1\n    kind: Deployment\n    name: api-server\n  updatePolicy:\n    updateMode: \"Off\"    # \"Auto\" to apply automatically\n  resourcePolicy:\n    containerPolicies:\n    - containerName: \"*\"\n      minAllowed:\n        cpu: 50m\n        memory: 64Mi\n      maxAllowed:\n        cpu: \"4\"\n        memory: 4Gi\n      controlledResources: [\"cpu\", \"memory\"]"
+      },
+      "etymology": "Vertical from Latin verticalis ('overhead') — scaling upward (bigger) as opposed to horizontal (more). Autoscaler from Greek autos ('self') + Latin scala ('ladder') — a self-climbing resource ladder.",
+      "unlockLevel": 4,
+      "tags": ["kubernetes", "scaling", "resources", "automation"],
+      "category": "concepts"
+    },
+    {
+      "id": "k8s-adv-0070-0000-0000-0000-000000000007",
+      "word": "Topology Spread Constraints",
+      "pronunciation": "tuh-PAH-luh-jee SPRED kun-STRAYNTS",
+      "partOfSpeech": "noun",
+      "shortDefinition": "Declarative rules that distribute pods evenly across zones, nodes, or custom topology domains for resilience, with configurable tolerance for imbalance.",
+      "simpleDefinition": "Topology Spread Constraints are the sophisticated replacement for pod anti-affinity in spreading use cases. You declare: across all domains defined by a node-label key (e.g., zones), keep the distribution of my pods balanced to within maxSkew replicas of the least-loaded domain. Unlike anti-affinity (which is binary — either the pod is alone in the domain or not), TSC is ratio-based — you can allow multiple replicas per zone while still enforcing relative balance. whenUnsatisfiable: DoNotSchedule makes it a hard constraint; ScheduleAnyway makes it a soft scoring hint.",
+      "longDefinition": "Topology Spread Constraints were GA in Kubernetes 1.24. Each constraint specifies four fields: maxSkew (maximum allowed difference in pod count between the most-loaded and least-loaded topology domain), topologyKey (the node label key that defines domain boundaries — e.g., topology.kubernetes.io/zone for zone-level spread), whenUnsatisfiable (DoNotSchedule for hard enforcement, ScheduleAnyway to nudge but not block), and labelSelector (which pods the constraint counts). Multiple constraints can be stacked — one for zone spread and one for node spread simultaneously. The minDomains field (1.25+) specifies a minimum number of eligible topology domains before the constraint is enforced, preventing over-restriction when zones are temporarily unavailable. A cluster-admin can also set defaultConstraints in the KubeSchedulerConfiguration to apply default topology spread to all pods organization-wide. TSC is strictly more expressive than pod anti-affinity for spreading: anti-affinity says 'no two replicas in the same domain' (which caps replicas to the number of domains), while TSC says 'keep imbalance within N' (allowing scale beyond domain count as long as balance is maintained).",
+      "connector": "Think of topology spread constraints like a staffing rule for a call centre with multiple buildings: 'no building should have more than 2 more agents than any other building' — you can have multiple agents per building, you just can't let the distribution get too lopsided.",
+      "techContext": "We combine a maxSkew: 1 zone constraint (DoNotSchedule) with a maxSkew: 2 node constraint (ScheduleAnyway) — zones are balanced hard, nodes are balanced soft, giving zone resilience without blocking single-node scaling.",
+      "exampleSentence": "Switching from hard pod anti-affinity to topology spread constraints with maxSkew: 2 allowed our Deployment to scale past 3 replicas without hitting the zone-count ceiling that was previously blocking scale-out.",
+      "codeExample": {
+        "language": "yaml",
+        "code": "spec:\n  topologySpreadConstraints:\n  - maxSkew: 1\n    topologyKey: topology.kubernetes.io/zone\n    whenUnsatisfiable: DoNotSchedule   # hard zone spread\n    labelSelector:\n      matchLabels:\n        app: api-server\n  - maxSkew: 2\n    topologyKey: kubernetes.io/hostname\n    whenUnsatisfiable: ScheduleAnyway  # soft node spread\n    labelSelector:\n      matchLabels:\n        app: api-server\n    minDomains: 3   # require at least 3 zones before enforcing"
+      },
+      "etymology": "Topology from Greek topos ('place') + logos ('study') — the study of spatial arrangement. Constraint from Latin constringere ('to bind together'). The compound describes binding rules about the spatial placement of pods.",
+      "unlockLevel": 4,
+      "tags": ["kubernetes", "scheduling", "availability", "resilience"],
+      "category": "concepts"
+    },
+    {
+      "id": "kube0110-0000-0000-0000-000000000011",
+      "word": "Native Sidecar Container",
+      "pronunciation": "NAY-tiv SYD-kahr kun-TAYN-er",
+      "partOfSpeech": "noun",
+      "shortDefinition": "An init container with restartPolicy: Always (Kubernetes 1.29+) that starts before main containers and terminates after them, eliminating startup races and fixing Job completion with persistent sidecars.",
+      "simpleDefinition": "Classic sidecar containers (regular spec.containers entries) have three lifecycle problems: they may start after the main container (causing early traffic to reach an unproxied service), they never exit on their own (so Jobs with Envoy or Fluentd sidecars hang forever), and they may shut down before the main container flushes its last log. Native sidecars fix all three: declare the sidecar in spec.initContainers with restartPolicy: Always, and Kubernetes guarantees it starts before main containers, runs throughout the pod's lifetime, and stops only after all main containers have exited.",
+      "longDefinition": "Native sidecar containers were introduced as alpha in Kubernetes 1.28, promoted to beta in 1.29, and are stable in 1.30+. The mechanism is a single field change: moving the sidecar from spec.containers to spec.initContainers and adding restartPolicy: Always. This triggers a different lifecycle path in the kubelet: the init container with restartPolicy: Always is started as part of the init phase (guaranteeing it precedes main containers), but unlike regular init containers it does not block the start of subsequent init containers or main containers once it is Running — it runs concurrently. The pod is considered Ready only when the native sidecar is ready (its readiness probe, if any, passes). For Jobs and CronJobs, the pod completes when all non-sidecar containers (main containers and regular init containers) have completed — the native sidecar receives SIGTERM after the last main container exits, allowing it to flush buffers and clean up. This resolves the longstanding pain point where Kubernetes Job pods running Envoy, Fluentd, or cloud-sql-proxy sidecars would never complete. The migration path from a classic sidecar is surgical: move the container definition and add one field.",
+      "connector": "Think of a native sidecar like a stage manager in theater — they arrive before the actors (start first), work throughout the entire show (run alongside), and are the last to leave after the stage is cleared and the actors have gone home (terminate after main containers exit).",
+      "techContext": "After migrating our Envoy proxy from spec.containers to a native sidecar initContainer, our CronJob batch pipelines finally completed cleanly instead of hanging after the main worker finished.",
+      "exampleSentence": "The CI pipeline integration tests kept timing out because the Fluent Bit log-shipping sidecar kept the Job pods alive indefinitely — converting it to a native sidecar fixed the completion semantics instantly.",
+      "codeExample": {
+        "language": "yaml",
+        "code": "spec:\n  initContainers:\n  # Native sidecar: starts first, runs throughout, stops last\n  - name: envoy-proxy\n    image: envoyproxy/envoy:v1.29.0\n    restartPolicy: Always          # This single field enables native sidecar\n    ports:\n    - containerPort: 9901\n    readinessProbe:\n      httpGet:\n        path: /ready\n        port: 9901\n  containers:\n  - name: app\n    image: my-app:2.0\n    # Envoy is guaranteed to be Running before app starts"
+      },
+      "etymology": "Native from Latin nativus ('innate, born') — built into the Kubernetes scheduler rather than a community workaround. Sidecar from the motorcycle attachment — a companion that travels alongside the main vehicle. The 'native' prefix distinguishes the Kubernetes 1.29 lifecycle-aware implementation from the classic co-container approach.",
+      "unlockLevel": 4,
+      "tags": ["kubernetes", "architecture", "lifecycle", "patterns"],
+      "category": "patterns"
+    },
+    {
+      "id": "k8s-adv-0080-0000-0000-0000-000000000008",
+      "word": "Priority Class",
+      "pronunciation": "PRY-or-ih-tee KLAS",
+      "partOfSpeech": "noun",
+      "shortDefinition": "A cluster-scoped object mapping a name to a numeric scheduling priority; pods referencing a PriorityClass with a higher value preempt lower-priority pods when resources are scarce.",
+      "simpleDefinition": "A PriorityClass assigns a human-readable name to an integer (higher = more important). Pods reference a PriorityClass by name and inherit its integer value. When the scheduler cannot find capacity for a high-priority pod, it triggers preemption: evicting lower-priority pods on candidate nodes to free space. Without custom PriorityClasses, all user pods compete equally, meaning a burst of batch jobs can starve critical production services. Kubernetes ships two built-in classes: system-cluster-critical (2,000,000,000) for DNS and CNI, and system-node-critical (2,000,001,000) for node-level agents.",
+      "longDefinition": "PriorityClasses are cluster-scoped (no namespace) because they describe a global ordering contract. The integer value range is -2,147,483,648 to 1,000,000,000 for user-defined classes; values above 1 billion are reserved for system classes. The globalDefault: true field designates one class as the default for pods that do not specify a priorityClassName — useful to ensure batch workloads automatically get a lower priority without requiring every batch Job spec to reference a class. The preemptionPolicy field controls whether the pod may trigger preemption (PreemptLowerPriority, the default) or only queue ahead of lower-priority pods without evicting anyone (Never — useful for high-priority batch that should not disrupt production but should beat other batch). When preemption fires, the scheduler selects victim pods by priority (lowest first), respects PodDisruptionBudgets (will not evict a pod if doing so would violate the PDB), and picks the node that requires the fewest victims. Preempted pods are gracefully terminated (SIGTERM + grace period), not SIGKILL'd immediately.",
+      "connector": "Think of PriorityClasses like triage levels in an emergency room: a code-red patient (critical production service) gets the next available bed even if it means moving a stable patient (batch job) to a waiting chair — but the stable patient isn't thrown out, just gracefully relocated.",
+      "techContext": "We define three PriorityClasses: critical-prod (900000) for customer-facing services, standard-prod (500000) for internal services, and batch (100) for overnight jobs; this ensures a surge in batch work never queues ahead of production pods.",
+      "exampleSentence": "During peak load when the cluster was full, the high-priority checkout service pod remained Pending for only 15 seconds before the scheduler preempted two batch analysis pods to free the required CPU.",
+      "codeExample": {
+        "language": "yaml",
+        "code": "apiVersion: scheduling.k8s.io/v1\nkind: PriorityClass\nmetadata:\n  name: critical-prod\nvalue: 1000000\nglobalDefault: false\ndescription: \"Customer-facing production services\"\npreemptionPolicy: PreemptLowerPriority\n---\napiVersion: scheduling.k8s.io/v1\nkind: PriorityClass\nmetadata:\n  name: batch-low\nvalue: 100\nglobalDefault: true\ndescription: \"Default for batch jobs — will be preempted first\"\npreemptionPolicy: Never   # won't evict others, just queues ahead of same-level"
+      },
+      "etymology": "Priority from Latin prior ('before, earlier') + itas (suffix of state). Class from Latin classis ('division, group'). The compound describes a named tier in the scheduling ordering system.",
+      "unlockLevel": 4,
+      "tags": ["kubernetes", "scheduling", "resources"],
+      "category": "components"
+    },
+    {
+      "id": "k8s-adv-0090-0000-0000-0000-000000000009",
+      "word": "Pod Preemption",
+      "pronunciation": "PAHD pree-EMP-shun",
+      "partOfSpeech": "noun",
+      "shortDefinition": "The scheduler evicts lower-priority pods to free node resources for a high-priority pod that cannot be placed because the cluster is full.",
+      "simpleDefinition": "Pod preemption is what happens when a high-priority pod is stuck Pending because no node has enough available resources. The scheduler scans for nodes where evicting one or more lower-priority pods would free sufficient resources, selects the best candidate node, gracefully terminates the chosen victim pods, and schedules the high-priority pod once resources are freed. Preemption respects PodDisruptionBudgets — it will not evict a pod if doing so would violate the PDB — and attempts to minimize the number of victims.",
+      "longDefinition": "Preemption is triggered automatically when a pod with a non-zero PriorityClass value cannot be scheduled (Pending state with a FailedScheduling event). The algorithm: first, find all nodes where removing pods would make the pending pod schedulable (accounting for resource requests, affinity, taints/tolerations, etc.). For each candidate node, compute the minimum set of pods to evict (by priority, lowest first) and score the node based on how few and how low-priority the victims are. Select the best-scored node, nominate it on the pending pod's status (nominatedNodeName field), and begin graceful eviction of the victims. Preempted pods receive SIGTERM and the full terminationGracePeriodSeconds before SIGKILL — preemption is not an instant kill. During the grace period, other pods may land on the node, so the high-priority pod is not guaranteed to land there; if the node fills up again before preemption completes, the scheduler re-runs the algorithm. Preemption interacts with inter-pod affinity, topology spread, and PDBs — the full evaluation can be expensive in large clusters and may take several scheduler cycles. The preemptionPolicy: Never field on a PriorityClass disables preemption for that class: the pod queues ahead of lower-priority pods in the scheduler's pending queue but does not evict any running pod.",
+      "connector": "Think of pod preemption like a concert venue calling back floor seats from general admission to give them to VIP ticket holders when a VIP arrives unexpectedly — the GA holder is asked to leave (gracefully), not physically removed, and the VIP gets their preferred spot.",
+      "techContext": "When our machine-learning training job landed a high-priority inference pod in Pending, preemption evicted two lower-priority feature-extraction jobs, returning the cluster to normal service latency within 30 seconds.",
+      "exampleSentence": "The PDB with minAvailable: 2 blocked preemption of the third API replica even though the batch pod had higher priority — the scheduler correctly reported 'insufficient pods' rather than violating the budget.",
+      "codeExample": {
+        "language": "yaml",
+        "code": "# High-priority pod triggers preemption when cluster is full\napiVersion: v1\nkind: Pod\nspec:\n  priorityClassName: critical-prod   # value: 1000000\n  containers:\n  - name: app\n    resources:\n      requests:\n        cpu: \"2\"\n        memory: 4Gi\n\n# Check if pod has been nominated for a node post-preemption:\n# kubectl get pod <name> -o jsonpath='{.status.nominatedNodeName}'"
+      },
+      "etymology": "From Latin praemptio ('purchase in advance') — the concept of seizing something before others have a chance. Adopted from operating system scheduling where high-priority processes preempt lower-priority ones on the CPU.",
+      "unlockLevel": 4,
+      "tags": ["kubernetes", "scheduling", "resources"],
+      "category": "concepts"
+    },
+    {
+      "id": "k8s-adv-0100-0000-0000-0000-000000000010",
+      "word": "RuntimeClass",
+      "pronunciation": "RUN-tym KLAS",
+      "partOfSpeech": "noun",
+      "shortDefinition": "Selects the container runtime sandbox per pod — runc (default), gVisor (syscall-intercept), or Kata Containers (VM-isolation) — enabling workload-specific security postures.",
+      "simpleDefinition": "RuntimeClass is a cluster-level object that names a container runtime handler and optionally declares per-pod resource overhead. Pods reference a RuntimeClass by name in spec.runtimeClassName. Without it, pods use the default runtime (usually runc via containerd). With it, you can route security-sensitive workloads to gVisor (which intercepts system calls in userspace) or Kata Containers (which wraps each pod in a lightweight VM), giving them stronger isolation than the shared kernel provides — without changing the container image or application code.",
+      "longDefinition": "RuntimeClass was GA in Kubernetes 1.20 and works through the Container Runtime Interface (CRI). The handler field in the RuntimeClass spec maps to a runtime handler configured in containerd.config.toml or CRI-O's runtime configuration. The scheduling field allows you to specify nodeSelector labels and tolerations so pods using that RuntimeClass are automatically directed to nodes with the appropriate runtime installed — you do not need to manually add node affinity to every secure workload. The overhead field specifies extra CPU and memory that the runtime infrastructure itself consumes (VM kernel, hypervisor, agent) — the scheduler adds this to the pod's resource requests for accurate bin-packing. Kata Containers typically add ~160 MiB memory and ~250m CPU overhead per pod. In practice, RuntimeClasses enable a security tiering model: most workloads run in the fast default runc sandbox, while workloads processing sensitive data (multi-tenant SaaS, financial transactions, PII) run in Kata or gVisor without needing separate nodes or different images. Cloud providers (GKE Sandbox, AKS with Kata, EKS Bottlerocket) expose this through managed RuntimeClasses.",
+      "connector": "Think of RuntimeClass like choosing the type of container used to ship goods: most cargo goes in a standard intermodal container (runc), but hazardous materials go in a reinforced canister (Kata Containers) — same cargo, different containment for different risk profiles.",
+      "techContext": "We route our multi-tenant API pods to the kata-containers RuntimeClass for VM-level isolation between customer workloads, while keeping internal tooling on the default runc runtime for speed.",
+      "exampleSentence": "By adding runtimeClassName: gvisor to our user-submitted-code execution pods, we get syscall-level sandboxing without changing the Docker images or the orchestration pipeline.",
+      "codeExample": {
+        "language": "yaml",
+        "code": "# RuntimeClass definition (created by cluster admin)\napiVersion: node.k8s.io/v1\nkind: RuntimeClass\nmetadata:\n  name: kata-containers\nhandler: kata\noverhead:\n  podFixed:\n    memory: \"160Mi\"\n    cpu: \"250m\"\nscheduling:\n  nodeClassification:\n    tolerations:\n    - key: runtime.kata-containers.io\n      operator: Exists\n      effect: NoSchedule\n---\n# Pod referencing the RuntimeClass\nspec:\n  runtimeClassName: kata-containers\n  containers:\n  - name: app\n    image: my-app:1.0"
+      },
+      "etymology": "Runtime from 'run time' — the period when a program is executing, as opposed to compile time. Class from Latin classis ('category'). The compound names a category of execution environment for pods at runtime.",
+      "unlockLevel": 4,
+      "tags": ["kubernetes", "security", "infrastructure"],
+      "category": "components"
+    },
+    {
+      "id": "k8s-adv-0110-0000-0000-0000-000000000011",
+      "word": "Multi-Arch Image",
+      "pronunciation": "MUL-tee-ARCH IM-ij",
+      "partOfSpeech": "noun",
+      "shortDefinition": "An OCI image index (manifest list) referencing per-architecture image manifests so the runtime automatically pulls the correct variant for amd64, arm64, or other platforms.",
+      "simpleDefinition": "A multi-arch image is not a single image but a pointer — an OCI image index that contains a list of image manifests, one for each target architecture (linux/amd64, linux/arm64, linux/arm/v7, etc.) and sometimes per-OS. When you docker pull or kubectl apply a manifest referencing a multi-arch image, the container runtime on the node reads the current node's architecture and pulls only the matching variant. The user and the Kubernetes manifest see one image name; the runtime handles the rest invisibly. This is how docker.io/library/nginx and most major images work today.",
+      "longDefinition": "Multi-arch images are built using docker buildx with the --platform flag or tools like ko (for Go) and Buildpack. The resulting OCI image index is pushed to a registry as a single tag (e.g., my-app:1.0). The OCI image index spec (part of the Image Spec v1.1) defines the mediaType application/vnd.oci.image.index.v1+json and the manifests array, each entry containing platform.os, platform.architecture, and platform.variant. When the container runtime (containerd or CRI-O) receives a pull request, it sends the host architecture to the registry and receives only the matching manifest and layers. Kubernetes clusters mixing arm64 nodes (AWS Graviton, Apple Silicon dev boxes) with amd64 nodes depend on multi-arch images — a single-architecture image will schedule fine but fail to pull (ImagePullBackOff) on nodes of the wrong architecture. Multi-arch images are also a prerequisite for RuntimeClass with Kata Containers on arm64 hosts. The manifest list format was created by Docker and later standardized as the OCI image index. Build pipelines creating multi-arch images typically use QEMU emulation or cross-compilation, with emulation being simpler but slower for CPU-intensive builds.",
+      "connector": "Think of a multi-arch image like a bilingual book published in one volume — the cover is the same everywhere, but when you open it, native English speakers find English pages and native French speakers find French pages. One product, multiple internal implementations for different audiences.",
+      "techContext": "After adding arm64 Graviton nodes to the cluster for cost savings, we had to rebuild all our service images as multi-arch manifests — any image missing the arm64 layer caused ImagePullBackOff on Graviton nodes.",
+      "exampleSentence": "The CI pipeline builds a multi-arch image for linux/amd64 and linux/arm64 on every release, so the same Helm chart deploys correctly to both our cloud cluster and our on-premises arm64 edge servers.",
+      "codeExample": {
+        "language": "bash",
+        "code": "# Build and push a multi-arch image with docker buildx\ndocker buildx create --name multiarch --use\n\ndocker buildx build \\\n  --platform linux/amd64,linux/arm64 \\\n  --tag my-registry/my-app:1.0 \\\n  --push \\\n  .\n\n# Inspect the resulting manifest list\ndocker buildx imagetools inspect my-registry/my-app:1.0"
+      },
+      "etymology": "Multi- from Latin multus ('many') + architecture from Latin architectura ('art of building'). Image from Latin imago ('likeness, copy'). The compound describes a single image artifact that represents multiple architectural builds.",
+      "unlockLevel": 4,
+      "tags": ["kubernetes", "containers", "infrastructure"],
+      "category": "concepts"
+    },
+    {
+      "id": "k8s-adv-0120-0000-0000-0000-000000000012",
+      "word": "Image Pull Secret",
+      "pronunciation": "IM-ij POHL SEE-krit",
+      "partOfSpeech": "noun",
+      "shortDefinition": "A Secret of type kubernetes.io/dockerconfigjson that kubelet uses to authenticate against a private container registry before pulling images.",
+      "simpleDefinition": "When a pod references a container image from a private registry, the container runtime needs registry credentials to pull it. An Image Pull Secret is a Kubernetes Secret containing a base64-encoded .dockerconfigjson blob with registry credentials. You reference it in a pod spec via spec.imagePullSecrets, or attach it to a ServiceAccount so every pod using that account inherits it automatically. Without it, pulling from ECR, GAR, Docker Hub private repos, or self-hosted registries fails with ImagePullBackOff.",
+      "longDefinition": "Image Pull Secrets are Secrets of type kubernetes.io/dockerconfigjson. Their data field contains a single key (.dockerconfigjson) whose value is the base64-encoded JSON of the standard Docker credential store format: {\"auths\": {\"registry.example.com\": {\"auth\": \"<base64 user:pass>\"}}}. This format is identical to ~/.docker/config.json. The kubelet reads the secret at pod creation time, passes the credentials to containerd (or CRI-O), which uses them for the image pull. Best-practice alternatives to long-lived credentials: use cloud-native registry authentication where kubelet authenticates with the node's IAM identity (AWS ECR credentials helper, GKE Workload Identity for Artifact Registry) — this eliminates static secrets entirely. When static credentials are unavoidable, use an External Secrets Operator to sync credentials from a secrets manager into a Kubernetes Secret rather than managing the base64-encoded value manually. Image Pull Secrets are namespace-scoped — a Secret in the default namespace cannot be referenced by pods in the kube-system namespace. Attaching the secret to a ServiceAccount (spec.imagePullSecrets on the ServiceAccount object) is the recommended approach over specifying it in every pod spec, as it centralizes the reference and survives pod spec changes.",
+      "connector": "Think of an image pull secret like a hotel key card for the container registry's storage room — the kubelet needs the card to open the door and retrieve the image layers, and the card is stored securely in Kubernetes Secrets rather than taped to the hotel room door.",
+      "techContext": "We attach the ECR image pull secret to the default ServiceAccount in each namespace so every pod automatically inherits registry access without requiring developers to add imagePullSecrets to every Deployment spec.",
+      "exampleSentence": "The pod entered ImagePullBackOff because the image pull secret had expired — ECR tokens last only 12 hours, so we moved to the IAM-based node-level credential helper to avoid manual rotation.",
+      "codeExample": {
+        "language": "bash",
+        "code": "# Create the image pull secret from Docker credentials\nkubectl create secret docker-registry regcred \\\n  --docker-server=private-registry.example.com \\\n  --docker-username=ci-user \\\n  --docker-password=<password> \\\n  --namespace=production\n\n# Attach to ServiceAccount (all pods in namespace inherit it)\nkubectl patch serviceaccount default \\\n  -p '{\"imagePullSecrets\": [{\"name\": \"regcred\"}]}'"
+      },
+      "etymology": "Image from Latin imago ('copy, likeness') — a container image is a copy of a filesystem. Pull from Old English pullian ('to draw toward') — pulling the image from the registry. Secret from Latin secretus ('set apart, hidden').",
+      "unlockLevel": 4,
+      "tags": ["kubernetes", "security", "containers"],
+      "category": "components"
+    },
+    {
+      "id": "k8s-adv-0130-0000-0000-0000-000000000013",
+      "word": "Scheduler Profile",
+      "pronunciation": "SKEJ-uh-ler PROH-fyl",
+      "partOfSpeech": "noun",
+      "shortDefinition": "A named plugin configuration inside kube-scheduler; multiple profiles allow different scheduling strategies per workload class within the same cluster.",
+      "simpleDefinition": "A Scheduler Profile is a named configuration of the kube-scheduler's plugin pipeline. You can define multiple profiles in one kube-scheduler deployment, each with a different combination of Filter and Score plugins enabled or disabled. Pods reference a profile by setting spec.schedulerName to the profile's name. Without a custom schedulerName, pods use the 'default-scheduler' profile. This lets you run a latency-optimized profile for production APIs and a throughput-optimized profile for batch jobs — all from the same scheduler binary, without running multiple scheduler deployments.",
+      "longDefinition": "The kube-scheduler's KubeSchedulerConfiguration API (schedulerName, profiles array) defines per-profile plugin configurations. Each profile specifies which plugins are enabled or disabled at each extension point (PreFilter, Filter, PreScore, Score, Reserve, Permit, PreBind, Bind, PostBind). Disabling the InterPodAffinity plugin for a batch profile, for example, eliminates the O(N×M) affinity evaluation cost for batch pods that have no affinity rules, speeding up scheduling under high pod churn. Enabling custom plugins (e.g., Volcano's gang scheduling plugin) in a dedicated profile allows co-scheduling of ML training jobs that require all pods to start simultaneously, while leaving production workloads on the default pipeline. The 'default-scheduler' profile always exists and cannot be removed. Running additional schedulers (separate Deployment objects) is an alternative, but a single binary with multiple profiles is lower operational overhead and avoids split-brain scheduling on the same resources. Production teams typically define three profiles: default (all plugins, standard latency-sensitive tuning), batch (reduced plugin set, throughput-optimized), and gpu-gang (with gang scheduling plugin for ML workloads).",
+      "connector": "Think of scheduler profiles like different staff playbooks in a warehouse — the same management team uses a rush-order playbook for priority shipments and a bulk-storage playbook for routine inventory, applying different rules and shortcuts based on the type of work.",
+      "techContext": "We added a batch-profile with InterPodAffinity and PodTopologySpread plugins disabled, cutting scheduler latency for bulk Job pod creation from 200ms per pod to 12ms — an order of magnitude improvement for our nightly ETL pipeline.",
+      "exampleSentence": "By routing ML training Jobs to the gpu-gang scheduler profile, we ensured all pods in a training job start simultaneously rather than gradually, preventing the tensor parallelism deadlock that occurred with partial startup.",
+      "codeExample": {
+        "language": "yaml",
+        "code": "# KubeSchedulerConfiguration (passed to kube-scheduler --config)\napiVersion: kubescheduler.config.k8s.io/v1\nkind: KubeSchedulerConfiguration\nprofiles:\n- schedulerName: default-scheduler\n  plugins:\n    score:\n      disabled:\n      - name: NodeResourcesBalancedAllocation  # removed for packing\n- schedulerName: batch-scheduler\n  plugins:\n    filter:\n      disabled:\n      - name: InterPodAffinity   # skip affinity check for batch\n---\n# Pod referencing the batch profile\nspec:\n  schedulerName: batch-scheduler"
+      },
+      "etymology": "Scheduler from Old French eschelier ('to climb, arrange in steps') — the scheduler arranges pods into execution order. Profile from Italian profilo ('outline, contour') — a specific configuration outline for the scheduling pipeline.",
+      "unlockLevel": 4,
+      "tags": ["kubernetes", "scheduling", "architecture"],
+      "category": "components"
+    },
+    {
+      "id": "k8s-adv-0140-0000-0000-0000-000000000014",
+      "word": "Ambassador Container",
+      "pronunciation": "am-BAS-uh-dor kun-TAYN-er",
+      "partOfSpeech": "noun",
+      "shortDefinition": "A sidecar that proxies outbound connections from the main container, handling service discovery, retry logic, and protocol translation so the main container talks only to localhost.",
+      "simpleDefinition": "The ambassador pattern is a specialized sidecar that faces outward. The main container connects to localhost on a fixed port; the ambassador proxy intercepts the connection and forwards it to the real external endpoint, handling authentication, TLS, connection pooling, service discovery, and retries on the main container's behalf. The main container remains environment-agnostic — it never needs to know the actual address or credentials of the downstream service. The classic example: cloud-sql-proxy as an ambassador, letting a Go app connect to localhost:5432 while the proxy handles IAM auth and TLS to Cloud SQL.",
+      "longDefinition": "The ambassador container pattern was formalized by Brendan Burns and David Oppenheimer in their 2016 paper 'Design Patterns for Container-Based Distributed Systems'. It is one of three canonical multi-container pod patterns (sidecar, ambassador, adapter). The ambassador differs from the broader sidecar pattern in directionality: it is specifically an outbound proxy, not a general co-processor. Production use cases: cloud database proxies (cloud-sql-proxy, rds-proxy-sidecar) that handle cloud provider authentication without embedding credentials in the app image; multi-cloud router ambassadors that route to different backends in dev/staging/production; legacy protocol bridges where the app speaks HTTP/1.1 and the downstream requires gRPC; and connection poolers (PgBouncer as ambassador) that absorb connection bursts from stateless apps before they reach the database. The key distinction from Istio's Envoy sidecar: Istio injects Envoy transparently as part of the service mesh control plane, handling all traffic in both directions. An ambassador container is an explicit, application-level design decision for a specific outbound dependency. The two approaches can coexist: Istio handles east-west service mesh traffic; a cloud-sql-proxy ambassador handles the cloud database connection.",
+      "connector": "Think of an ambassador container like a company's local office in a foreign country — your main team communicates with the local office in their native language (localhost calls), and the local office handles the actual negotiations, translations, and paperwork with the foreign government (external service) on your behalf.",
+      "techContext": "Our Node.js services use cloud-sql-proxy as an ambassador container, allowing the app to connect to localhost:5432 for Postgres while the proxy handles GCP IAM authentication and TLS — no database credentials in the app image or environment variables.",
+      "exampleSentence": "By replacing the direct Redis connection with a Twemproxy ambassador container, we transparently added connection pooling and consistent hashing across the shard cluster without changing a single line of application code.",
+      "codeExample": {
+        "language": "yaml",
+        "code": "spec:\n  containers:\n  - name: app\n    image: my-go-app:1.0\n    env:\n    - name: DB_HOST\n      value: \"localhost\"   # talks to ambassador, not real DB\n    - name: DB_PORT\n      value: \"5432\"\n  - name: cloud-sql-proxy\n    image: gcr.io/cloud-sql-connectors/cloud-sql-proxy:2.9\n    args:\n    - \"--private-ip\"\n    - \"my-project:us-central1:my-postgres-instance\"\n    - \"--port=5432\"\n    # No DB password needed — uses node's Workload Identity"
+      },
+      "etymology": "Ambassador from Medieval Latin ambaxiator ('messenger, envoy') — an official representative who acts on behalf of another entity. The pattern name was chosen because the sidecar acts as the pod's diplomatic representative to external services.",
+      "unlockLevel": 4,
+      "tags": ["kubernetes", "architecture", "patterns", "networking"],
+      "category": "patterns"
+    },
+    {
+      "id": "k8s-adv-0150-0000-0000-0000-000000000015",
+      "word": "Leader Election",
+      "pronunciation": "LEE-der ih-LEK-shun",
+      "partOfSpeech": "noun",
+      "shortDefinition": "Pattern where multiple controller replicas compete for a Kubernetes Lease object; only the holder acts as the active controller, enabling high-availability without split-brain.",
+      "simpleDefinition": "Running a single replica of a Kubernetes controller is a reliability anti-pattern — one crash means downtime. But running multiple replicas that all act simultaneously risks duplicate reconciliations and conflicting mutations. Leader election solves this: all replicas run, but only the one holding the Lease object is active; others stand by watching. If the leader crashes or fails to renew its lease within leaseDurationSeconds, a standby takes over by successfully updating the Lease's holderIdentity. The failover window is the lease duration — typically 15 seconds.",
+      "longDefinition": "Kubernetes uses the coordination.k8s.io/v1 Lease object as a distributed lock for leader election. A Lease stores the current holder's identity (a unique string, typically the pod name), the time the lease was last renewed (renewTime), the time it was acquired (acquireTime), and how many transitions have occurred (leaseTransitions). Active candidates call the Kubernetes API to update renewTime before leaseDurationSeconds expires; if a candidate misses its renewal window (due to crash, network partition, or GC pause), other candidates detect the stale lease and compete to acquire it via an optimistic-concurrency API update (using resourceVersion — only the first update wins). The controller-runtime library (used by Kubebuilder and Operator SDK) provides leader election via the --leader-elect flag, wiring it to the manager's lifecycle automatically. Core Kubernetes components — kube-controller-manager and kube-scheduler — use the same lease-based mechanism with leases in kube-system. The practical effect: you can run three replicas of your operator for HA, and a node draining the leader pod causes a <15-second gap in reconciliation (not a full outage). During the gap, Kubernetes state remains consistent — nothing is corrupted — the operator just isn't responding to events.",
+      "connector": "Think of leader election like a relay race baton: all runners (replicas) are warmed up and ready; only the one holding the baton (Lease) runs at full speed. If the baton-holder stumbles, they pass it in an orderly hand-off, and another runner continues the race within seconds.",
+      "techContext": "Our cert-manager operator runs three replicas; during a planned node drain, the leader election lease transitions in under 10 seconds, and certificate renewal processing resumes without any certificate expiry.",
+      "exampleSentence": "The operator entered a split-brain state because two pods simultaneously believed they held the lease — investigation revealed a Kubernetes API server latency spike had caused the renewal to time out on the leader's side while still processing.",
+      "codeExample": {
+        "language": "go",
+        "code": "// controller-runtime leader election (Go operator)\nmgr, err := ctrl.NewManager(ctrl.GetConfigOrDie(), ctrl.Options{\n    Scheme:                 scheme,\n    LeaderElection:         true,\n    LeaderElectionID:       \"my-operator-leader\",\n    LeaseDuration:          lo.ToPtr(15 * time.Second),\n    RenewDeadline:          lo.ToPtr(10 * time.Second),\n    RetryPeriod:            lo.ToPtr(2 * time.Second),\n})\n// Only the leader's controllers and webhooks are started;\n// standbys block on the lease acquisition call."
+      },
+      "etymology": "Leader from Old English lǣdan ('to guide') + election from Latin electio ('a choosing'). The compound describes the process by which a distributed group of replicas chooses one to lead — borrowed from distributed systems research (Paxos, Raft) and adapted for the Kubernetes Lease API.",
+      "unlockLevel": 4,
+      "tags": ["kubernetes", "architecture", "availability", "patterns"],
+      "category": "patterns"
+    },
+    {
+      "id": "k8s-adv-0160-0000-0000-0000-000000000016",
+      "word": "Gateway API",
+      "pronunciation": "GAY-tuh-way AY-pee-eye",
+      "partOfSpeech": "noun",
+      "shortDefinition": "Next-generation Kubernetes L7 routing API that supersedes Ingress; three role-separated types — GatewayClass, Gateway, HTTPRoute — with first-class support for traffic splitting and header matching.",
+      "simpleDefinition": "The Kubernetes Ingress resource has always been limited: it has no standard way to express traffic splitting, header-based routing, or advanced TLS configuration — every Ingress controller implements these as non-portable annotations. Gateway API is the formal replacement: a set of CRDs (GatewayClass, Gateway, HTTPRoute, GRPCRoute, TCPRoute) with these capabilities built into the spec. The three-role model separates infrastructure (cluster operators manage GatewayClass and Gateway) from application (developers manage HTTPRoute in their namespace), enabling better multi-team governance.",
+      "longDefinition": "Gateway API reached General Availability (v1.0) in October 2023 with the core types GatewayClass, Gateway, and HTTPRoute graduating to v1. It addresses four main Ingress limitations: expressiveness (routing rules that previously required custom annotations are now first-class fields), portability (the same HTTPRoute YAML works across Nginx, Envoy, Istio, Cilium, and other Gateway API implementations), role-based model (GatewayClass is owned by infra team, Gateway is owned by namespace-level ops, HTTPRoute is owned by developers), and advanced traffic management (weighted traffic splitting between backends, request mirroring, header manipulation, URL rewriting). The GatewayClass is a cluster-scoped object naming the controller implementation. Gateway is namespace-scoped (or cluster-scoped for shared gateways) and binds to a GatewayClass, provisioning the actual load balancer or proxy. HTTPRoute attaches to a Gateway and defines routing rules. In Kubernetes clusters, Ingress remains supported but new projects are encouraged to use Gateway API. Istio, Cilium, nginx-gateway, and Google Cloud Load Balancing all support Gateway API natively.",
+      "connector": "Think of the Gateway API like an upgraded airport control tower with separated roles: the airport authority (GatewayClass) sets the flight rules, air traffic control (Gateway) manages the runways and gates, and individual airlines (HTTPRoutes) file their own flight plans — each role has exactly the permissions it needs.",
+      "techContext": "After migrating from Ingress to HTTPRoute, we implemented weighted traffic splitting for our blue/green deployments natively in the YAML spec without any controller-specific annotations, making the configuration portable between Cilium and Nginx Gateway.",
+      "exampleSentence": "The Gateway API's HTTPRoute traffic splitting let us shift 5% of traffic to the canary service with a single field change, replacing a complex Ingress annotation hack that had broken on every nginx-ingress upgrade.",
+      "codeExample": {
+        "language": "yaml",
+        "code": "# HTTPRoute with weighted traffic splitting (5% canary)\napiVersion: gateway.networking.k8s.io/v1\nkind: HTTPRoute\nmetadata:\n  name: checkout-route\nspec:\n  parentRefs:\n  - name: prod-gateway\n    namespace: infra\n  rules:\n  - matches:\n    - path:\n        type: PathPrefix\n        value: /checkout\n    backendRefs:\n    - name: checkout-stable\n      port: 8080\n      weight: 95\n    - name: checkout-canary\n      port: 8080\n      weight: 5"
+      },
+      "etymology": "Gateway from Old English geat ('opening, gate') + way ('path') — the point of entry into a network. API from Application Programming Interface. The name signals that it is the official Kubernetes API for managing cluster ingress gateways.",
+      "unlockLevel": 4,
+      "tags": ["kubernetes", "networking", "routing"],
+      "category": "components"
+    },
+    {
+      "id": "k8s-adv-0170-0000-0000-0000-000000000017",
+      "word": "EndpointSlice",
+      "pronunciation": "END-point SLYS",
+      "partOfSpeech": "noun",
+      "shortDefinition": "Sharded successor to the Endpoints object; distributes Service backend IPs across multiple smaller objects so a single pod IP change updates only one slice, reducing API server load at scale.",
+      "simpleDefinition": "In the original Kubernetes design, one Endpoints object held all backend pod IPs for a Service. At scale (Services with hundreds of pods), every pod addition, removal, or IP change required rewriting the entire Endpoints object — fanning out to every node's kube-proxy. EndpointSlice shards this into smaller objects (default max 100 endpoints per slice), so a single pod change updates one slice and propagates a much smaller delta to all watchers. This significantly reduces API server write amplification and network bandwidth for large Services.",
+      "longDefinition": "EndpointSlice was GA in Kubernetes 1.21 and is the default backing mechanism for Services since 1.21. Each EndpointSlice is a namespaced object belonging to a Service (connected via endpointslice.kubernetes.io/managed-by and kubernetes.io/service-name labels) and holds up to 100 endpoints by default (configurable via --max-endpoints-per-slice on the controller manager). The endpoints field records each pod's IP, port(s), ready/not-ready state, and the serving/terminating conditions (terminating allows kube-proxy to keep routing to gracefully-shutting-down pods). EndpointSlice supports multiple address types (IPv4, IPv6, FQDN) for dual-stack clusters. The practical impact: a Service with 500 pods uses 5 EndpointSlices; removing one pod touches only one slice (1/5th the object size) vs. rewriting the entire 500-entry Endpoints object. kube-proxy subscribes to EndpointSlice events and updates iptables/IPVS rules only for changed slices. For Gateway API implementations and Ingress controllers that watch endpoints directly, EndpointSlice is the recommended API. The older Endpoints API is still generated by Kubernetes for backward compatibility but is not recommended for new controllers.",
+      "connector": "Think of EndpointSlice like splitting a massive phone directory into smaller regional booklets — updating one person's listing requires reprinting only the relevant booklet, not the entire directory. Every subscriber gets only the changed booklet rather than the full directory reprint.",
+      "techContext": "After our fleet-management Service grew to 800 pods, switching kube-proxy to EndpointSlice mode reduced the API server write bandwidth by 85% during rolling deployments because only one slice per pod change instead of the full object.",
+      "exampleSentence": "The custom controller was causing API server overload because it was watching the legacy Endpoints resource across 200 Services; migrating it to EndpointSlice with a label filter cut the watch traffic by an order of magnitude.",
+      "codeExample": {
+        "language": "bash",
+        "code": "# List EndpointSlices for a Service\nkubectl get endpointslices \\\n  -l kubernetes.io/service-name=my-service \\\n  -n production\n\n# Inspect one slice — shows per-endpoint ready/terminating state\nkubectl get endpointslice my-service-abc12 \\\n  -n production \\\n  -o jsonpath='{.endpoints[*].conditions}'"
+      },
+      "etymology": "Endpoint from networking — the IP/port address of a service endpoint. Slice from Old English slīcian ('to cut thin') — a thin, manageable section of the full endpoints list. The compound describes dividing the endpoint list into slices for scalable propagation.",
+      "unlockLevel": 4,
+      "tags": ["kubernetes", "networking", "scalability"],
+      "category": "components"
+    },
+    {
+      "id": "k8s-adv-0180-0000-0000-0000-000000000018",
+      "word": "Volume Snapshot",
+      "pronunciation": "VAHL-yoom SNAP-shot",
+      "partOfSpeech": "noun",
+      "shortDefinition": "A CSI-backed API for crash-consistent, point-in-time copies of PersistentVolumeClaims, used for backups, staging database cloning, and pre-upgrade safeguards.",
+      "simpleDefinition": "Volume Snapshot lets you create a point-in-time copy of a PersistentVolumeClaim (PVC) using the underlying CSI driver's native snapshot capability (EBS snapshot, GCP Persistent Disk snapshot, etc.). The snapshot is taken at the storage layer — the running pod does not need to stop. From a snapshot you can restore the original PVC or provision a new PVC pre-loaded with the snapshot's data, which is the standard mechanism for cloning a production database into a staging environment without a slow dump/restore cycle.",
+      "longDefinition": "Volume Snapshots are implemented through three CRDs: VolumeSnapshotClass (names the CSI driver and deletion policy, analogous to StorageClass), VolumeSnapshot (user-created request for a snapshot — analogous to PVC), and VolumeSnapshotContent (the actual snapshot in the storage backend — analogous to PV). The workflow mirrors PVC/PV dynamic provisioning: you create a VolumeSnapshot referencing a source PVC and a VolumeSnapshotClass; the CSI controller driver calls the storage API (CreateSnapshot), creates the VolumeSnapshotContent, and sets readyToUse: true. To restore from a snapshot, create a PVC with spec.dataSource.kind: VolumeSnapshot referencing the snapshot name — the CSI driver pre-populates the new PV with the snapshot data. Volume Snapshots are crash-consistent by default (storage-layer snapshot) but not application-consistent (a PostgreSQL WAL replay may be needed on restore). For application consistency, quiesce the database with CHECKPOINT or fsync before snapshotting. Common production uses: nightly PVC backup pipeline using a CronJob that creates VolumeSnapshots and deletes old ones, blue/green database promotion by cloning production into staging via snapshot, and pre-upgrade safeguard (snapshot before a Helm upgrade, restore if the upgrade fails).",
+      "connector": "Think of a volume snapshot like hitting 'save game' in a video game: you capture the exact state of the storage at a moment in time, and can restore to that exact state or start a new game from that checkpoint — all without stopping the current game in progress.",
+      "techContext": "Our CI pipeline creates a VolumeSnapshot of the production database nightly and restores it into the staging namespace, giving developers a fresh staging environment with real (anonymized) data without any pg_dump wait time.",
+      "exampleSentence": "Before the schema migration, we created a VolumeSnapshot of the production PVC; when the migration caused data corruption, we restored from the snapshot in under 5 minutes instead of running a 2-hour backup restore.",
+      "codeExample": {
+        "language": "yaml",
+        "code": "# Create a snapshot\napiVersion: snapshot.storage.k8s.io/v1\nkind: VolumeSnapshot\nmetadata:\n  name: postgres-snapshot-20260101\nspec:\n  volumeSnapshotClassName: csi-aws-vsc\n  source:\n    persistentVolumeClaimName: postgres-data\n---\n# Restore into a new PVC\napiVersion: v1\nkind: PersistentVolumeClaim\nmetadata:\n  name: postgres-staging\nspec:\n  storageClassName: gp3\n  dataSource:\n    name: postgres-snapshot-20260101\n    kind: VolumeSnapshot\n    apiGroup: snapshot.storage.k8s.io\n  accessModes: [ReadWriteOnce]\n  resources:\n    requests:\n      storage: 100Gi"
+      },
+      "etymology": "Volume from Latin volumen ('something rolled up, a roll of writing') — in storage, a named block device. Snapshot from photography — an instantaneous capture of state. The compound describes a point-in-time capture of a storage volume.",
+      "unlockLevel": 4,
+      "tags": ["kubernetes", "storage", "backup"],
+      "category": "components"
+    },
+    {
+      "id": "k8s-adv-0190-0000-0000-0000-000000000019",
+      "word": "Immutable ConfigMap/Secret",
+      "pronunciation": "ih-MYOO-tuh-bul KON-fig-map / SEE-krit",
+      "partOfSpeech": "noun",
+      "shortDefinition": "Setting immutable: true on a ConfigMap or Secret prevents all updates and eliminates the API server watch traffic those objects would otherwise generate.",
+      "simpleDefinition": "Once a ConfigMap or Secret is declared immutable (immutable: true), the Kubernetes API server rejects any attempt to modify its data. To change the content, you must create a new object with a new name. The payoff: kubelet can stop watching immutable objects for changes, reducing the API server watch load proportionally. In clusters with thousands of pods and hundreds of ConfigMaps/Secrets, this can meaningfully reduce control plane load. The immutability guarantee also prevents accidental live-config changes from corrupting running workloads.",
+      "longDefinition": "Immutable Secrets and ConfigMaps were GA in Kubernetes 1.21. The immutable: true field is a one-way door — once set, it cannot be unset (the API server rejects the update). This allows the kubelet to skip the watch/notify loop for that object entirely, since the object can never change. The latency benefit is most visible in large clusters: normally, kubelet watches every ConfigMap and Secret mounted by pods on its node; with immutability, that watch is dropped for eligible objects. The usage pattern for immutable config: include a content hash or version in the object name (app-config-v3, app-config-<sha256[:8]>) and roll your Deployment to reference the new name when config changes. This is the same pattern that immutable image tags enforce for container images. Helm and Kustomize both support this pattern natively (Helm's configmap hash suffix plugin, Kustomize's configMapGenerator with hash appended). Immutable Secrets are particularly valuable in high-security environments where preventing any accidental plaintext update to credential material is a compliance requirement.",
+      "connector": "Think of an immutable ConfigMap like a printed instruction manual rather than a shared Google Doc — once printed, no one can edit it, everyone working from it gets exactly the same content, and if you need a revision you print a new edition with a new version number.",
+      "techContext": "By declaring all version-pinned configuration ConfigMaps as immutable, we reduced the API server's object watch count by 40% in our 3000-node cluster and eliminated the class of incidents caused by accidental live-config modifications.",
+      "exampleSentence": "After switching to immutable ConfigMaps with content-hashed names and rolling updates on change, the cluster's API server watch connections dropped noticeably and accidental config mutations became impossible.",
+      "codeExample": {
+        "language": "yaml",
+        "code": "# Immutable ConfigMap — content cannot be changed after creation\napiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: app-config-a1b2c3d4   # hash suffix for uniqueness\nimmutable: true               # one-way door\ndata:\n  LOG_LEVEL: \"info\"\n  MAX_CONNECTIONS: \"50\"\n---\n# Deployment references the specific immutable version\nenv:\n- name: LOG_LEVEL\n  valueFrom:\n    configMapKeyRef:\n      name: app-config-a1b2c3d4\n      key: LOG_LEVEL"
+      },
+      "etymology": "Immutable from Latin immutabilis ('not changeable') — the in- prefix (not) + mutabilis (capable of change). ConfigMap from 'configuration' + 'map' (key-value store). The compound describes a configuration map that cannot be altered after creation.",
+      "unlockLevel": 4,
+      "tags": ["kubernetes", "configuration", "security"],
+      "category": "concepts"
+    },
+    {
+      "id": "k8s-adv-0200-0000-0000-0000-000000000020",
+      "word": "External Secrets Operator",
+      "pronunciation": "eks-TUR-nul SEE-krits AH-per-ay-tor",
+      "partOfSpeech": "noun",
+      "shortDefinition": "A Kubernetes operator that synchronises secrets from AWS Secrets Manager, HashiCorp Vault, GCP Secret Manager, and other stores into native Kubernetes Secrets.",
+      "simpleDefinition": "The External Secrets Operator (ESO) bridges the gap between a corporate secrets store (where secrets belong) and Kubernetes Secrets (where pods consume them). You define an ExternalSecret CRD referencing a secret path in AWS Secrets Manager, Vault, GCP Secret Manager, Azure Key Vault, or similar. ESO reconciles this by fetching the value from the external store and writing it into a Kubernetes Secret. It re-syncs on a configurable interval and propagates rotations automatically — when the upstream secret rotates, the Kubernetes Secret updates, and pods that mount it as a volume see the new value without a restart.",
+      "longDefinition": "External Secrets Operator is a CNCF sandbox project (formerly AWS Secrets Operator and then combined with the Kubernetes External Secrets project). It defines three CRDs: SecretStore (namespace-scoped connection to a secrets backend), ClusterSecretStore (cluster-scoped), and ExternalSecret (the sync request, analogous to PVC). Authentication to the external store is handled via provider-specific mechanisms: AWS IAM roles for service accounts (IRSA), GKE Workload Identity, Azure Managed Identity, or static credentials in a bootstrap Secret. ESO supports template rendering (merge multiple secrets into one, rename keys, base64-encode values), push secrets (writing a Kubernetes Secret back to an external store), and generator plugins (generate new secrets like UUIDs or RSA keys). The key production benefit: secrets never need to be stored in Git, Helm values files, or CI pipelines. The workflow is: engineer stores secret in Vault or AWS Secrets Manager, commits an ExternalSecret manifest to Git, and CI deploys the ExternalSecret — ESO pulls the actual secret value at runtime. This enables GitOps for secret metadata (which secret, from where) without exposing secret values in source control.",
+      "connector": "Think of the External Secrets Operator like a secure document courier service — you tell it 'fetch document X from the vault at address Y and deliver a copy to room Z on the Kubernetes floor', and it makes the pickup, delivery, and periodic refresh runs for you, never leaving the secret in a public inbox.",
+      "techContext": "We store all database passwords in AWS Secrets Manager with automatic 30-day rotation; ESO syncs them into Kubernetes Secrets every 5 minutes, so pods pick up rotated credentials via volume refresh without any restart or pipeline involvement.",
+      "exampleSentence": "After adopting ESO, we removed the last hardcoded base64-encoded Secret from our Helm values files — all credentials now live in AWS Secrets Manager and are pulled at runtime by ExternalSecret objects committed to Git.",
+      "codeExample": {
+        "language": "yaml",
+        "code": "apiVersion: external-secrets.io/v1beta1\nkind: ExternalSecret\nmetadata:\n  name: db-credentials\nspec:\n  refreshInterval: 5m\n  secretStoreRef:\n    name: aws-secrets-manager\n    kind: ClusterSecretStore\n  target:\n    name: db-credentials   # the Kubernetes Secret to create/update\n    creationPolicy: Owner\n  data:\n  - secretKey: password    # key in the K8s Secret\n    remoteRef:\n      key: /prod/myapp/db  # path in AWS Secrets Manager\n      property: password   # JSON field within the secret"
+      },
+      "etymology": "External from Latin externus ('outside') — the secrets originate outside Kubernetes. Secrets from Latin secretus ('set apart'). Operator from the Kubernetes Operator pattern (CRD + controller encapsulating operational knowledge). The compound describes an operator that manages the lifecycle of externally-sourced secrets.",
+      "unlockLevel": 4,
+      "tags": ["kubernetes", "security", "secrets", "gitops"],
+      "category": "components"
+    },
+    {
+      "id": "k8s-adv-0210-0000-0000-0000-000000000021",
+      "word": "Static Pod",
+      "pronunciation": "STAT-ik PAHD",
+      "partOfSpeech": "noun",
+      "shortDefinition": "A pod managed directly by kubelet from a manifest file on the node's filesystem, used to bootstrap control-plane components before the API server is available.",
+      "simpleDefinition": "A static pod is a pod that the kubelet manages entirely on its own, without interacting with the API server. The kubelet watches a local directory (typically /etc/kubernetes/manifests/) for YAML files; any manifest it finds there is started and kept running, with kubelet handling restarts. This is how kubeadm bootstraps the control plane: it writes static pod manifests for kube-apiserver, kube-controller-manager, kube-scheduler, and etcd before any Kubernetes API exists. The kubelet creates mirror pods (read-only API representations) once the API server comes up, making static pods visible in kubectl get pods but not modifiable through the API.",
+      "longDefinition": "Static pods bypass the entire Kubernetes control plane: no scheduler assigns them to nodes (kubelet runs them on the local node by definition), no admission webhooks validate them (they skip the API server admission chain entirely), and no ReplicaSet or Deployment manages their lifecycle. The kubelet's staticPodPath configuration (or --pod-manifest-path flag) points to the watched directory. Files can be added, modified, or deleted — the kubelet hot-watches the directory with inotify and acts within seconds. Deleting a manifest file terminates the pod. kubeadm stores its control-plane manifests at /etc/kubernetes/manifests/, and the safest way to upgrade a kubeadm-bootstrapped cluster component is to modify the manifest file there (kubeadm upgrade does this for you). Mirror pods in the API have the suffix of the node name appended to the pod name (e.g., kube-apiserver-control-plane-node) and are read-only — kubectl delete will not actually delete the static pod, only the mirror object, and the mirror is recreated within seconds. Static pods are not a general-purpose workload pattern — outside of control-plane bootstrap, use Deployments and DaemonSets. Their value is precisely their independence from the API server.",
+      "connector": "Think of static pods like the emergency generator in a data center — it powers the system before the main grid is connected, operates independently of central management, and is the foundation that allows everything else to start. Once the main system is up, normal management takes over, but the generator stays running in the background.",
+      "techContext": "When diagnosing a corrupted kube-controller-manager, we SSH'd to the control plane node, modified /etc/kubernetes/manifests/kube-controller-manager.yaml to add a debug flag, and the kubelet restarted the static pod with the new config within 5 seconds — no kubectl needed.",
+      "exampleSentence": "The kubeadm init process writes four static pod manifests, and within 60 seconds kubelet has started the API server, etcd, controller manager, and scheduler — the entire control plane bootstrapped from local disk files.",
+      "codeExample": {
+        "language": "bash",
+        "code": "# View static pod manifests on a kubeadm control-plane node\nls /etc/kubernetes/manifests/\n# kube-apiserver.yaml  kube-controller-manager.yaml\n# kube-scheduler.yaml  etcd.yaml\n\n# Mirror pods are visible but not deletable via API\nkubectl get pods -n kube-system | grep -E 'apiserver|etcd'\n# kube-apiserver-my-control-plane   1/1   Running\n# etcd-my-control-plane             1/1   Running\n\n# Actual deletion requires removing the manifest file on the node\n# sudo rm /etc/kubernetes/manifests/etcd.yaml  (for example)"
+      },
+      "etymology": "Static from Latin staticus ('causing to stand') — a pod that is statically placed on a node by its local kubelet, as opposed to dynamically scheduled by the kube-scheduler. Pod from the Kubernetes metaphor of a pod of whales.",
+      "unlockLevel": 4,
+      "tags": ["kubernetes", "infrastructure", "internals"],
+      "category": "components"
+    },
+    {
+      "id": "k8s-adv-0220-0000-0000-0000-000000000022",
+      "word": "Work Queue Pattern",
+      "pronunciation": "WURK KYOO PAT-urn",
+      "partOfSpeech": "noun",
+      "shortDefinition": "Multiple Kubernetes Job pods pull independent tasks from a shared external queue, scaling batch processing throughput horizontally without inter-worker coordination.",
+      "simpleDefinition": "In the work queue pattern, tasks are pushed into a queue (Redis, RabbitMQ, SQS, Kafka) by a producer, and a Kubernetes Job with parallelism > 1 spawns multiple worker pods that each pull and process tasks independently until the queue is empty. Workers do not communicate with each other — the queue is the sole coordination point. When a worker crashes mid-task, the message returns to the queue (if not acknowledged), and another worker retries it. The Job completes when the queue is drained, or when a fixed number of successful completions are reached.",
+      "longDefinition": "The work queue pattern maps naturally to the Kubernetes Job spec. Two approaches to completion tracking: fixed completions (set completions equal to queue depth, each pod processes one item and exits 0) — works when the queue depth is known before the Job starts; and queue-drain termination (set completions: 1, parallelism: N, workers exit 0 only when they observe an empty queue) — works for dynamic queue sizes. The Indexed Job mode (completionMode: Indexed, GA in 1.24) assigns each pod a stable integer index via the JOB_COMPLETION_INDEX environment variable, enabling sharded processing without an external queue (each worker processes its index's slice of data deterministically). Worker idempotency is the critical design constraint: because pods can be interrupted by preemption, node failure, or OOM, every task must be safe to process twice. The standard contract is claim-process-acknowledge: a worker claims a task (making it invisible to others), processes it, and only acknowledges (commits/deletes) from the queue after processing is confirmed complete. Claiming without acknowledging on crash causes the message to return to the queue after the visibility timeout. Redis, RabbitMQ, and SQS all implement this pattern; Kafka uses consumer group offsets instead.",
+      "connector": "Think of the work queue pattern like a self-checkout register bank at a grocery store — shoppers (tasks) queue up, any available register (worker pod) takes the next shopper, processes their items independently, and the next shopper advances. The checkout manager (scheduler) can add more registers if the queue grows long.",
+      "techContext": "Our nightly image-processing pipeline uses a Redis work queue: a CronJob pushes 50,000 image IDs at midnight, and a Job with parallelism: 20 drains the queue by 3 AM, with any interrupted items automatically retried by other workers.",
+      "exampleSentence": "When three workers crashed simultaneously due to a node failure mid-batch, their unclaimed Redis tasks were automatically re-queued after the visibility timeout and processed by surviving workers — not a single image was lost.",
+      "codeExample": {
+        "language": "yaml",
+        "code": "apiVersion: batch/v1\nkind: Job\nmetadata:\n  name: image-processor\nspec:\n  parallelism: 8            # 8 concurrent workers\n  completions: 8            # total completions required\n  completionMode: Indexed   # each pod gets a stable index\n  backoffLimit: 4\n  template:\n    spec:\n      restartPolicy: OnFailure\n      containers:\n      - name: worker\n        image: my-image-processor:1.0\n        env:\n        - name: REDIS_URL\n          value: redis://redis-svc:6379\n        - name: WORKER_INDEX\n          valueFrom:\n            fieldRef:\n              fieldPath: metadata.annotations['batch.kubernetes.io/job-completion-index']"
+      },
+      "etymology": "Work from Old English weorc ('labor, deed') + queue from French queue ('tail, line') — a line of work to be processed. Pattern from Latin patronus ('model, example') — a reusable solution template. The compound describes a recurring architectural approach for parallel batch processing.",
+      "unlockLevel": 4,
+      "tags": ["kubernetes", "patterns", "batch", "architecture"],
+      "category": "patterns"
+    },
+    {
+      "id": "k8s-adv-0230-0000-0000-0000-000000000023",
+      "word": "containerd",
+      "pronunciation": "kun-TAYN-er-dee",
+      "partOfSpeech": "noun",
+      "shortDefinition": "The CNCF-graduated container runtime that kubelet communicates with via CRI to manage image pulls, overlay snapshots, and container process lifecycle.",
+      "simpleDefinition": "containerd is the container runtime that actually runs containers on every Kubernetes node. kubelet does not talk to Docker (Docker was removed in Kubernetes 1.24); it talks to containerd via the Container Runtime Interface (CRI). containerd handles image pulling from registries, unpacking OCI image layers into overlay filesystems (snapshots), starting and stopping container processes (via runc as the default OCI runtime), and managing container logs. It is the default runtime on GKE, EKS, AKS, and most production Kubernetes distributions.",
+      "longDefinition": "containerd was extracted from Docker (as the lower-level runtime) in 2017 and donated to the CNCF, graduating in 2019. It follows a layered architecture: containerd itself manages the high-level lifecycle (image management, container metadata, task scheduling); it delegates actual process execution to a shimv2-based OCI runtime (default: runc, alternatives: kata-agent for Kata Containers, runsc for gVisor). The shim layer decouples containerd's lifecycle from the container process — if containerd restarts, the shim keeps the container running and re-attaches. The CRI plugin built into containerd (since 1.1) allows kubelet to communicate via the CRI gRPC interface without an intermediate adapter. containerd uses a plugin architecture: you can enable or disable features (CRI, snapshotter, garbage collector) and configure them independently. The snapshotter manages the layered filesystem: for each container, containerd creates a read-write overlay layer on top of the image's read-only layers (using overlayfs, zfs, or other backends). containerd also hosts the nerdctl CLI (Docker-compatible command-line tool) and is increasingly used directly in serverless runtimes (AWS Lambda, Fargate) for its lightweight footprint.",
+      "connector": "Think of containerd like the logistics engine of a shipping company — it manages the warehouse (image storage), coordinates the loading dock (image pulls from registry), and dispatches delivery drivers (runc processes) to move containers to their destinations, all without being the truck driver itself.",
+      "techContext": "After the Docker shim deprecation, we updated our CI/CD pipelines to use nerdctl (the containerd-native CLI) for local image builds and debugged a cni plugin issue by inspecting containerd's snapshot metadata directly.",
+      "exampleSentence": "The node was failing to pull large images because the containerd snapshot store was full — clearing the dangling snapshots with ctr snapshot rm freed 40 GB and restored scheduling capacity.",
+      "codeExample": {
+        "language": "bash",
+        "code": "# List running containers via containerd's CLI\nsudo ctr containers list\n\n# List images cached by containerd\nsudo ctr images list\n\n# Pull an image directly through containerd\nsudo ctr images pull docker.io/library/nginx:1.25\n\n# Inspect containerd config and CRI plugin status\nsudo crictl info | jq '.config.containerdEndpoint'"
+      },
+      "etymology": "A portmanteau of 'container' + 'd' (Unix daemon suffix). The name signals its role as the background daemon service managing container lifecycle, analogous to systemd or Docker's dockerd.",
+      "unlockLevel": 4,
+      "tags": ["kubernetes", "containers", "infrastructure", "internals"],
+      "category": "components"
+    },
+    {
+      "id": "k8s-adv-0240-0000-0000-0000-000000000024",
+      "word": "Pause Container",
+      "pronunciation": "PAWZ kun-TAYN-er",
+      "partOfSpeech": "noun",
+      "shortDefinition": "A hidden infrastructure container started by kubelet as the first container in every pod to hold the pod's network namespace, ensuring container restarts do not change the pod's IP address.",
+      "simpleDefinition": "Every Kubernetes pod contains at least one container you did not ask for: the pause container (also called the infra container). It runs a minimal binary that does nothing except sleep forever, holding open the Linux network namespace. All other containers in the pod join this network namespace — they share the IP and port space. If an app container crashes and restarts, a new process starts in the same namespace, keeping the pod's IP stable. Without the pause container, a container restart would create a new network namespace with a new IP, breaking in-flight connections and kube-proxy routing.",
+      "longDefinition": "The pause container image (gcr.io/pause, registry.k8s.io/pause) is a ~250KB binary written in C that calls pause() (a POSIX syscall that suspends the process until a signal arrives) in an infinite loop. Its sole purpose is to be the namespace holder. When kubelet creates a pod, it creates the pause container first (via CRI), gets its PID and network namespace, then creates each app container joined to that namespace (using the --net=container:<pause-id> semantic at the CRI layer). The pause container also holds the IPC namespace (enabling shared memory between pod containers) and the UTS namespace (hostname). Because it holds the namespaces, even if all app containers in the pod die and are restarted, the namespace files (/proc/<pause-pid>/ns/net) remain open and the pod's IP is preserved in the cluster's routing tables. In managed Kubernetes services, the pause image version is managed by the control plane; self-managed clusters set it via kubelet's --pod-infra-container-image flag. Admission webhooks and container scanning tools sometimes need to explicitly exclude the pause container from scanning, as it intentionally has no filesystem content to scan.",
+      "connector": "Think of the pause container like a permanent mailbox installed at an address — the actual mail-carriers (app containers) come and go, get replaced when they quit, but the mailbox stays at the address permanently so mail (network traffic) always knows where to go.",
+      "techContext": "Our container security scanner falsely flagged the pause container as vulnerable-to-scan-skipped because it has no file layer; we added a registry exception for registry.k8s.io/pause to avoid alert fatigue.",
+      "exampleSentence": "When all three app containers in a pod crashed simultaneously due to an OOM event, the pod's IP remained stable throughout the restart because the pause container kept the network namespace alive while kubelet recreated the app containers.",
+      "codeExample": {
+        "language": "bash",
+        "code": "# Pause containers are visible in containerd but not in kubectl\nsudo crictl ps --all | grep pause\n# You'll see one pause container per pod on the node\n\n# Inspect the pause container's network namespace\nPAUSE_PID=$(sudo crictl inspect <pause-container-id> | jq -r '.info.pid')\nsudo nsenter --net=/proc/$PAUSE_PID/ns/net ip addr show"
+      },
+      "etymology": "Pause from Latin pausare ('to stop, halt') — named for the pause() system call its binary executes indefinitely. Container from Latin continere ('to hold together') — it holds the shared namespaces together for the pod.",
+      "unlockLevel": 4,
+      "tags": ["kubernetes", "containers", "internals", "networking"],
+      "category": "concepts"
+    },
+    {
+      "id": "k8s-adv-0250-0000-0000-0000-000000000025",
+      "word": "Sealed Secrets",
+      "pronunciation": "SEELD SEE-krits",
+      "partOfSpeech": "noun",
+      "shortDefinition": "A CRD-and-controller pair that encrypts Kubernetes Secrets with a cluster-held asymmetric key so the encrypted form can be safely committed to Git.",
+      "simpleDefinition": "Sealed Secrets solves a fundamental GitOps problem: Kubernetes Secrets are only base64-encoded (not encrypted), so committing them to Git exposes credentials. The Sealed Secrets controller generates an asymmetric key pair and stores the private key in the cluster. You use the kubeseal CLI to encrypt a Secret with the cluster's public key, producing a SealedSecret CRD object. This encrypted object is safe to commit to Git — only the specific cluster with the matching private key can decrypt it. The controller watches for SealedSecret objects, decrypts them, and creates the corresponding native Kubernetes Secret.",
+      "longDefinition": "Sealed Secrets was created by Bitnami (now part of VMware/Broadcom) and is a popular open-source project. The encryption uses hybrid cryptography: the Secret's plaintext is encrypted with a random AES key (symmetric, fast), and the AES key itself is encrypted with the cluster's RSA-4096 public key (asymmetric, slow but used only once per seal). The output SealedSecret CRD stores the ciphertext and the encrypted AES key. The controller's private key is stored as a regular Kubernetes Secret in the kube-system namespace — protecting it (RBAC, etcd encryption) is critical for the overall security model. Key rotation: the controller generates a new key pair every 30 days by default; old sealed secrets encrypted with previous keys remain decryptable (old private keys are retained). The scope field on a SealedSecret binds decryption to a specific namespace or even a specific Secret name, preventing a sealed secret intended for one namespace from being copied to another. Sealed Secrets is designed for teams using GitOps (Argo CD, Flux) where all cluster resources live in Git — SealedSecrets are the one mechanism that makes this practical for credentials without a separate secrets manager infrastructure.",
+      "connector": "Think of Sealed Secrets like a safety deposit box at a bank: you put your valuables (the Secret plaintext) into the box (encrypt with the public key), and only the bank vault (the controller with the private key) can open it — you can share the locked box freely without exposing its contents.",
+      "techContext": "Our entire infrastructure is GitOps with Argo CD; we commit SealedSecret objects alongside all other manifests, and the Sealed Secrets controller decrypts them at apply time — no secrets manager infrastructure required for teams starting out.",
+      "exampleSentence": "After adopting Sealed Secrets, our Git history no longer required secret branches or manual encryption steps — database passwords are committed as SealedSecret YAML objects alongside the Deployment that uses them.",
+      "codeExample": {
+        "language": "bash",
+        "code": "# Fetch the cluster's public key\nkubeseal --fetch-cert \\\n  --controller-namespace kube-system \\\n  --controller-name sealed-secrets-controller \\\n  > pub-sealed-secrets.pem\n\n# Seal a secret\nkubectl create secret generic db-password \\\n  --dry-run=client \\\n  --from-literal=password='s3cr3t' \\\n  -o yaml | \\\n  kubeseal --cert pub-sealed-secrets.pem \\\n  -o yaml > sealed-db-password.yaml\n\n# Commit sealed-db-password.yaml to Git safely"
+      },
+      "etymology": "Sealed from Old English seglian ('to mark with a seal') — in cryptography, sealing means encrypting in a way only the key-holder can unseal. Secrets from Latin secretus ('set apart, hidden'). The compound describes secrets made safe for storage by asymmetric encryption.",
+      "unlockLevel": 4,
+      "tags": ["kubernetes", "security", "secrets", "gitops"],
+      "category": "components"
+    },
+    {
+      "id": "k8s-adv-0260-0000-0000-0000-000000000026",
+      "word": "preStop Hook",
+      "pronunciation": "PREE-stop HOOK",
+      "partOfSpeech": "noun",
+      "shortDefinition": "A lifecycle hook that runs synchronously before SIGTERM is sent to a container, used to bridge the load-balancer-deregistration race condition during pod termination.",
+      "simpleDefinition": "When Kubernetes deletes a pod, two events happen in parallel: the endpoints controller removes the pod's IP from Service endpoints (propagating to kube-proxy on all nodes), and kubelet begins the termination sequence. The propagation takes 1-5 seconds, but SIGTERM arrives immediately. During that window, the load balancer still routes new connections to the pod — which may have already closed its listener. The preStop hook bridges this gap: it runs before SIGTERM is sent, its duration consumes from the terminationGracePeriodSeconds budget, and a 5-second sleep in the hook gives the control plane time to drain traffic before the application begins shutting down.",
+      "longDefinition": "The preStop hook is defined under spec.containers[].lifecycle.preStop and supports the same handler types as probes: exec (run a shell command), httpGet (call an HTTP endpoint), and sleep (Kubernetes 1.29+ — native sleep without needing /bin/sleep in the image). The hook is synchronous: kubelet waits for the hook to complete (or for terminationGracePeriodSeconds to expire, whichever comes first) before sending SIGTERM. The hook duration consumes from the shared terminationGracePeriodSeconds budget — if the budget is 30 seconds and the preStop hook takes 5 seconds, the application has 25 seconds to drain connections and exit after SIGTERM arrives. The race condition the preStop hook solves: kubelet sends SIGTERM to the container process; if the application immediately closes its listener on SIGTERM (correct behavior), new connections routed to the pod's IP during the kube-proxy propagation window get connection-refused. A preStop sleep of 5-10 seconds holds the container alive long enough for kube-proxy to update its iptables rules and the load balancer to stop routing to the pod. This pattern is a best practice for any HTTP service that handles rolling updates or node drains gracefully. Without it, you will see 502/503 errors during rolling deployments even if the application handles SIGTERM correctly.",
+      "connector": "Think of the preStop hook like the announcement before a restaurant closes: 'Last orders please — we stop serving in 5 minutes.' It gives customers (in-flight requests) time to finish, the kitchen (app) time to serve them, and the front door (load balancer) time to stop letting new customers in — all before the lights go off.",
+      "techContext": "Adding a 10-second preStop sleep eliminated the 502 error spike we were seeing during every rolling deployment — those errors disappeared because kube-proxy had time to drain the pod from all iptables rules before the app stopped accepting connections.",
+      "exampleSentence": "The SRE team traced 0.3% of rolling-deploy requests returning 503 to a missing preStop hook — after adding preStop: sleep: seconds: 5, the error rate dropped to zero during deployments.",
+      "codeExample": {
+        "language": "yaml",
+        "code": "spec:\n  terminationGracePeriodSeconds: 60  # total budget\n  containers:\n  - name: api\n    lifecycle:\n      preStop:\n        sleep:\n          seconds: 10   # K8s 1.29+ native sleep\n        # Older clusters:\n        # exec:\n        #   command: [\"/bin/sleep\", \"10\"]\n    # Application has ~50s to drain after SIGTERM"
+      },
+      "etymology": "Pre- from Latin prae ('before') + stop from Old English stoppian ('to close'). Hook from Old English hoc ('bent object') — a hook is a handler that attaches to a specific event in a lifecycle. The compound describes a handler that runs before the stop signal.",
+      "unlockLevel": 4,
+      "tags": ["kubernetes", "lifecycle", "availability", "networking"],
+      "category": "concepts"
+    },
+    {
+      "id": "k8s-adv-0270-0000-0000-0000-000000000027",
+      "word": "IPVS Mode",
+      "pronunciation": "EYE-pee-vee-es MOHD",
+      "partOfSpeech": "noun",
+      "shortDefinition": "kube-proxy operating mode that uses Linux IP Virtual Server hash tables for O(1) Service routing, superseding iptables at clusters with 1000+ Services.",
+      "simpleDefinition": "kube-proxy has two primary modes for implementing Kubernetes Service routing: iptables (the default) and IPVS. In iptables mode, each Service adds multiple rules to a linear iptables chain — as Services grow into the thousands, lookups become O(N) and rule updates during pod churn become expensive. IPVS mode uses the Linux kernel's IPVS (IP Virtual Server) module, which implements virtual server load balancing using hash tables for O(1) lookups regardless of cluster size. It also provides built-in load-balancing algorithms (round-robin, least connections, source hash) beyond iptables' single random selection.",
+      "longDefinition": "IPVS was originally designed for Linux-based load balancers (LVS — Linux Virtual Server) and uses the Netfilter framework at the INPUT hook, maintaining kernel hash tables of virtual service IPs mapped to real server IPs. kube-proxy in IPVS mode creates an IPVS virtual server for each Kubernetes Service's ClusterIP and populates its real-server table with the pod IPs from EndpointSlices. Route lookups are O(1) (hash table) vs. iptables' O(N) (sequential rule traversal). For a cluster with 10,000 Services, IPVS lookups are thousands of times faster than iptables chains. Updates are also O(1) per change vs. iptables' full-chain rewrite. Enabling IPVS mode requires the ip_vs, ip_vs_rr, ip_vs_sh, and nf_conntrack kernel modules to be loaded on all nodes. IPVS mode requires an additional dummy network interface (kube-ipvs0) to which all ClusterIPs are bound, so the kernel's IPVS module intercepts traffic destined for Service IPs. The caveat: IPVS handles ClusterIP routing, but iptables rules are still used for SNAT/masquerade (NodePort, LoadBalancer) and NetworkPolicy — IPVS mode does not eliminate iptables entirely. In managed Kubernetes services, IPVS is typically enabled by setting kube-proxy's mode: ipvs in the KubeProxyConfiguration.",
+      "connector": "Think of the difference between iptables and IPVS like the difference between a hotel concierge looking up your room assignment in a sequential guest ledger (iptables) versus an instant digital room-key lookup system indexed by your name (IPVS) — both get you to your room, but one scales to a 10,000-room hotel with no degradation.",
+      "techContext": "After upgrading our 500-node cluster to IPVS mode, kube-proxy's CPU usage during node drains dropped by 70% because Service endpoint updates are O(1) hash operations instead of rebuilding iptables chains with thousands of rules.",
+      "exampleSentence": "With 8,000 Services in the cluster, iptables-mode kube-proxy was spending 40% of a core per node just processing rule updates during deployments; switching to IPVS mode brought that to under 2%.",
+      "codeExample": {
+        "language": "yaml",
+        "code": "# kube-proxy ConfigMap (managed clusters: set via cluster config)\napiVersion: kubeproxy.config.k8s.io/v1alpha1\nkind: KubeProxyConfiguration\nmode: ipvs\nipvs:\n  scheduler: \"rr\"     # round-robin (default)\n  # Options: rr, lc (least conn), dh (dest hash), sh (src hash)\n\n# Verify IPVS rules on a node\nipvsadm -Ln | head -30"
+      },
+      "etymology": "IPVS from IP Virtual Server — a Linux kernel module implementing virtual server load balancing. Mode from Latin modus ('measure, manner') — the operational manner in which kube-proxy implements Service routing. The compound describes kube-proxy's high-performance routing mode.",
+      "unlockLevel": 4,
+      "tags": ["kubernetes", "networking", "performance"],
+      "category": "concepts"
+    },
+    {
+      "id": "k8s-adv-0280-0000-0000-0000-000000000028",
+      "word": "minReadySeconds",
+      "pronunciation": "MIN-RED-ee SEK-undz",
+      "partOfSpeech": "noun",
+      "shortDefinition": "A Deployment field requiring a new pod to remain continuously Ready for N seconds before counting as available, slowing rollouts to allow unstable pods to self-reveal.",
+      "simpleDefinition": "minReadySeconds is a Deployment (and StatefulSet, DaemonSet) field that delays counting a newly created pod as 'available' until it has been continuously in the Ready state for at least that many seconds. Without it, a pod counts as available the moment its readiness probe first passes — even if it fails 10 seconds later. With minReadySeconds: 30, a pod that passes readiness then crashes within 30 seconds will not have been counted as available, keeping the rollout from advancing and surfacing the instability early.",
+      "longDefinition": "minReadySeconds defaults to 0, meaning pods are counted as available immediately on first readiness probe success. The field interacts critically with Deployment rolling update strategy: maxUnavailable controls how many old pods can be taken down; maxSurge controls how many new pods can be created above the desired replica count. The rollout advances (taking down old pods or creating new ones) based on the count of 'available' pods. By setting minReadySeconds > 0, you insert a mandatory observation window: a pod must remain Ready for that duration before it contributes to the available count. This catches failure patterns that readiness probes alone miss: a pod that passes readiness on startup but fails due to a slow memory leak, a race condition with a cache warm-up, or a configuration bug that surfaces only after the first request hits a code path not exercised by the health endpoint. A typical value of 30-60 seconds for stateless services catches most transient failures without significantly lengthening rollout duration. For the progress deadline: Kubernetes uses spec.progressDeadlineSeconds (default 600s) to mark a Deployment as stalled if it fails to make progress; minReadySeconds per pod must be less than this deadline or the rollout will always time out. minReadySeconds is often combined with preStop hooks and PodDisruptionBudgets to form a complete rollout safety configuration.",
+      "connector": "Think of minReadySeconds like the probationary period for a new employee before they are counted as a fully productive team member — they may show up and pass orientation (readiness probe), but they only count toward the team's full capacity after they've demonstrated sustained performance for the required probationary window.",
+      "techContext": "Setting minReadySeconds: 60 on our payment service deployment caught a cache-initialization bug where pods passed their readiness probe at second 5 but crashed at second 45 — without the field, the rollout would have proceeded thinking the new pods were healthy.",
+      "exampleSentence": "After adding minReadySeconds: 30, the broken release that had been silently deploying and crashing in a loop was immediately caught as a stalled Deployment because no pod ever stayed Ready for the required 30 seconds.",
+      "codeExample": {
+        "language": "yaml",
+        "code": "apiVersion: apps/v1\nkind: Deployment\nmetadata:\n  name: api-server\nspec:\n  replicas: 5\n  minReadySeconds: 30    # pod must stay Ready 30s before counting as available\n  strategy:\n    type: RollingUpdate\n    rollingUpdate:\n      maxSurge: 1\n      maxUnavailable: 0   # zero-downtime: always 5+ available pods\n  progressDeadlineSeconds: 300   # stall if no progress in 5 min\n  template:\n    spec:\n      containers:\n      - name: api\n        readinessProbe:\n          httpGet:\n            path: /ready\n            port: 8080\n          periodSeconds: 5"
+      },
+      "etymology": "min from Latin minimus ('smallest, least') + ready from Old English rǣde ('prepared') + seconds from Medieval Latin secunda ('second part, unit of time'). The field name describes the minimum duration a pod must remain in the ready state before the system considers it available.",
+      "unlockLevel": 4,
+      "tags": ["kubernetes", "deployment", "availability", "lifecycle"],
+      "category": "concepts"
+    }
+  ]
+}

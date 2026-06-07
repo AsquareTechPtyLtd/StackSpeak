@@ -1,0 +1,605 @@
+{
+  "stack": "kubernetes-advanced-2",
+  "words": [
+    {
+      "id": "kube0250-0000-0000-0000-000000000025",
+      "word": "Custom Resource Definition (CRD)",
+      "pronunciation": "KUS-tum REE-sors DEF-ih-NIH-shun",
+      "partOfSpeech": "noun",
+      "shortDefinition": "Registers a new API type with the Kubernetes API server so you can create resources like PostgresCluster or Certificate.",
+      "simpleDefinition": "A CRD extends the Kubernetes API with your own object types. Once applied, you can kubectl create, get, and watch your new type just like a built-in Deployment. The API server validates objects against the schema you define and stores them in etcd — no changes to Kubernetes source code required.",
+      "longDefinition": "The Kubernetes API is an extensible registry, not a closed list. A CustomResourceDefinition is itself a Kubernetes object (kind: CustomResourceDefinition) that registers a new API group, version, and resource type with the API server. After applying a CRD, the cluster accepts objects of that kind at a structured REST path and validates them against an embedded OpenAPI v3 schema. The CRD specifies scope (Namespaced or Cluster), plural and singular names, short names for kubectl, and one or more versions — each independently served and with its own schema. The openAPIV3Schema block provides server-side admission validation, rejecting malformed objects before they reach etcd. CRDs replaced the older Aggregated API Server mechanism for the vast majority of use cases and are the foundation of the Operator pattern, service meshes, GitOps controllers, and virtually every CNCF ecosystem tool. cert-manager, Prometheus Operator, ArgoCD, Flux, Istio, and Crossplane all register their domain objects as CRDs.",
+      "connector": "Think of a CRD like filing a form with a government registry: once the form is accepted, your new entity type — PostgresCluster, Certificate, Gateway — is officially recognised and can be created, queried, and tracked by any Kubernetes tool.",
+      "techContext": "After kubectl apply -f postgres-crd.yaml the API server immediately accepts objects of kind PostgresCluster; you can kubectl get postgresclusters as naturally as kubectl get deployments.",
+      "exampleSentence": "The cert-manager CRDs register Certificate and Issuer as first-class Kubernetes objects, so the whole TLS lifecycle is managed through standard kubectl commands.",
+      "codeExample": {
+        "language": "yaml",
+        "code": "apiVersion: apiextensions.k8s.io/v1\nkind: CustomResourceDefinition\nmetadata:\n  name: postgresclusters.postgres-operator.crunchydata.com\nspec:\n  group: postgres-operator.crunchydata.com\n  names:\n    kind: PostgresCluster\n    plural: postgresclusters\n    singular: postgrescluster\n    shortNames: [pgc]\n  scope: Namespaced\n  versions:\n    - name: v1beta1\n      served: true\n      storage: true\n      schema:\n        openAPIV3Schema:\n          type: object\n          properties:\n            spec:\n              type: object\n              required: [postgresVersion]\n              properties:\n                postgresVersion:\n                  type: integer\n                  minimum: 13"
+      },
+      "etymology": "From Latin customus ('established by use') + Old French ressource ('resource') + Latin definitio ('a bounding'); coined by the Kubernetes project around 2016 as the successor to Third Party Resources.",
+      "unlockLevel": 4,
+      "tags": ["kubernetes", "operators", "extensibility", "api"],
+      "category": "components"
+    },
+    {
+      "id": "k8s-ad2-0010-0000-0000-0000-000000000001",
+      "word": "Operator Pattern",
+      "pronunciation": "OP-uh-ray-tur PAT-urn",
+      "partOfSpeech": "noun",
+      "shortDefinition": "A controller paired with a CRD that encodes domain-specific operational knowledge as reconciliation logic.",
+      "simpleDefinition": "An operator is a custom controller that extends Kubernetes to manage a specific piece of software — not just deploying it, but operating it: scaling, backing up, upgrading, and healing. It listens to a custom resource that a human fills in as a declaration of intent, then continuously takes actions to make reality match that declaration.",
+      "longDefinition": "The Operator pattern was coined by CoreOS engineers Brandon Philips and Josh Wood in 2016. The insight: stateful distributed systems like databases, message queues, and certificate authorities need ongoing operational expertise far beyond what a Deployment provides. An operator encodes that expertise — what a senior on-call engineer would do in a runbook — as code. It pairs a CRD (the human-facing API) with a controller (the reconciliation logic). Real-world examples make the value concrete: cert-manager watches Certificate CRs and automates the full ACME/Let's Encrypt lifecycle including renewal; prometheus-operator watches Prometheus CRs and translates them into StatefulSets with correct sharding; the Crunchy Data postgres-operator handles primary/replica topology, pgBackRest backups, and rolling minor-version upgrades. The operator manages Day-2 operations — upgrade, backup, failover — that a StatefulSet alone cannot. OperatorHub.io catalogs over 300 community and certified operators, making it the standard delivery mechanism for complex stateful workloads on Kubernetes.",
+      "connector": "Think of an operator like a senior specialist employee who never clocks off: they watch for any deviation from the correct state of their domain, and act immediately to fix it according to documented best practices — without being asked.",
+      "techContext": "We replaced our 500-line Postgres runbook with the Crunchy Data postgres-operator; failover, backups, and version upgrades now happen automatically when we update the PostgresCluster CR.",
+      "exampleSentence": "The cert-manager operator renewed our wildcard certificate automatically at two-thirds of its lifetime, without any human intervention or downtime.",
+      "codeExample": {
+        "language": "yaml",
+        "code": "# Declare intent: I want a Postgres cluster\napiVersion: postgres-operator.crunchydata.com/v1beta1\nkind: PostgresCluster\nmetadata:\n  name: hippo\n  namespace: production\nspec:\n  postgresVersion: 15\n  instances:\n    - name: instance1\n      replicas: 3\n      dataVolumeClaimSpec:\n        accessModes: [ReadWriteOnce]\n        resources:\n          requests:\n            storage: 10Gi\n  backups:\n    pgbackrest:\n      repos:\n        - name: repo1\n          volume:\n            volumeClaimSpec:\n              accessModes: [ReadWriteOnce]\n              resources:\n                requests:\n                  storage: 5Gi\n# The operator creates StatefulSets, Services, backups — no further input needed"
+      },
+      "etymology": "From Latin operari ('to work, to take effect'); applied to Kubernetes controllers by CoreOS in 2016 in a landmark blog post 'Introducing Operators: Putting Operational Knowledge into Software'.",
+      "unlockLevel": 4,
+      "tags": ["kubernetes", "operators", "extensibility", "architecture"],
+      "category": "patterns"
+    },
+    {
+      "id": "k8s-ad2-0020-0000-0000-0000-000000000002",
+      "word": "Reconciliation Loop",
+      "pronunciation": "reh-kon-SIL-ee-AY-shun LOOP",
+      "partOfSpeech": "noun",
+      "shortDefinition": "The observe-diff-act cycle every Kubernetes controller runs: compare desired spec to actual status, take minimum action.",
+      "simpleDefinition": "The reconciliation loop is the core logic inside every Kubernetes controller: read the desired state from a resource's spec, observe the actual state of the cluster, compute the difference, and perform the minimum actions to close that gap. It runs on every change event and periodically, making the system self-healing and eventually consistent.",
+      "longDefinition": "Every component in Kubernetes that keeps resources in their desired state is a controller driven by a reconciliation loop. The built-in ReplicaSet controller is the simplest example: count running Pods, compare to spec.replicas, create or delete to match. The pattern has four properties that distinguish it from a conventional run-once script. First, it is level-triggered, not edge-triggered: the controller reacts to the current state of the world, not just to a change event — if it misses an event or crashes and restarts, the next full sync still converges correctly. Second, it is idempotent: running reconcile ten times when only one run was needed leaves the system identical to running it once. Third, it tolerates errors with exponential back-off: a transient dependency failure re-queues the object rather than crashing the controller. Fourth, it actuates through the Kubernetes API, never via SSH or shell commands, making changes auditable and reversible. The reconcile function reads from an informer cache (not the live API) to avoid flooding etcd, and uses server-side apply or strategic-merge patch to avoid overwriting fields owned by other controllers.",
+      "connector": "Think of the reconciliation loop like a smart thermostat: it continuously asks 'is the temperature what I want?', and if not, it does the minimum — turn heating up or down — until the answer is yes. It never stops checking.",
+      "techContext": "Our operator's reconcile function runs in under 50ms on an unmodified object because it reads from the informer cache and returns immediately when the diff is zero.",
+      "exampleSentence": "The reconciliation loop caught the manually deleted ConfigMap within three seconds and recreated it without any alert being paged.",
+      "codeExample": {
+        "language": "text",
+        "code": "func Reconcile(ctx context.Context, req Request) (Result, error) {\n    // 1. OBSERVE desired state\n    cr := &MyApp{}\n    if err := r.Get(ctx, req.NamespacedName, cr); err != nil {\n        return ctrl.Result{}, client.IgnoreNotFound(err)\n    }\n\n    // 2. OBSERVE actual state (from informer cache)\n    dep := &appsv1.Deployment{}\n    if err := r.Get(ctx, childName(cr), dep); err != nil {\n        if apierrors.IsNotFound(err) {\n            // 3. ACT — create missing child\n            return ctrl.Result{}, r.Create(ctx, buildDeployment(cr))\n        }\n        return ctrl.Result{}, err\n    }\n\n    // 4. DIFF — patch only if needed\n    if dep.Spec.Replicas != cr.Spec.Replicas {\n        dep.Spec.Replicas = cr.Spec.Replicas\n        return ctrl.Result{}, r.Update(ctx, dep)\n    }\n\n    // Diff is zero — do nothing\n    return ctrl.Result{}, nil\n}"
+      },
+      "etymology": "From Latin reconciliare ('to restore, bring back together') + Old English loppe ('loop, noose'); the programming sense of loop predates computers; the reconciliation loop concept was formalised in the Kubernetes controller model circa 2014.",
+      "unlockLevel": 4,
+      "tags": ["kubernetes", "operators", "architecture", "patterns"],
+      "category": "patterns"
+    },
+    {
+      "id": "k8s-ad2-0030-0000-0000-0000-000000000003",
+      "word": "Admission Webhook",
+      "pronunciation": "ad-MISH-un WEB-hook",
+      "partOfSpeech": "noun",
+      "shortDefinition": "An HTTP callback the API server calls during object creation/update to mutate or validate the resource before persistence.",
+      "simpleDefinition": "An admission webhook is a custom HTTPS endpoint registered with the Kubernetes API server. On every resource create or update request, the API server calls the webhook with the object and waits for a decision. A mutating webhook can modify the object in flight; a validating webhook can approve or reject it. This is how sidecars get injected, image policies get enforced, and missing defaults get filled in.",
+      "longDefinition": "After a Kubernetes API request passes authentication and authorisation, it enters the admission phase. Mutating admission webhooks run first; they receive an AdmissionReview request containing the incoming object and return a JSON patch to apply. Validating admission webhooks run afterward; they receive the (potentially mutated) object and return allow or deny with an optional message. Both are registered via cluster resources — MutatingWebhookConfiguration and ValidatingWebhookConfiguration — that specify which resource types and operations trigger the webhook, the service endpoint, a CA bundle for TLS verification, and a failurePolicy (Fail or Ignore). Fail means a webhook server that is unreachable causes the admission request to be rejected, making webhook availability a critical cluster dependency. Istio uses mutating webhooks to inject Envoy sidecars into every new Pod; cert-manager uses them to inject CA bundles; OPA Gatekeeper and Kyverno use validating webhooks to enforce policy. Admission webhooks must respond within timeoutSeconds (default 10 s) or the request times out according to failurePolicy.",
+      "connector": "Think of admission webhooks like a customs checkpoint at a border: every object entering the cluster is inspected, can have items added or removed (mutating), and can be turned away entirely if it fails inspection (validating).",
+      "techContext": "We register a mutating webhook that injects a readOnlyRootFilesystem: true into every Pod container that does not already set it, so security hardening is automatic across all teams.",
+      "exampleSentence": "The validating admission webhook blocked the deployment that referenced a container image from an unregistered registry, preventing the supply-chain policy violation from reaching production.",
+      "codeExample": {
+        "language": "yaml",
+        "code": "apiVersion: admissionregistration.k8s.io/v1\nkind: ValidatingWebhookConfiguration\nmetadata:\n  name: require-resource-limits\nwebhooks:\n  - name: validate-limits.policy.example.com\n    admissionReviewVersions: [v1]\n    clientConfig:\n      service:\n        name: policy-webhook\n        namespace: policy-system\n        path: /validate-pods\n      caBundle: <base64-ca-cert>\n    rules:\n      - operations: [CREATE, UPDATE]\n        apiGroups: [\"\"]\n        apiVersions: [v1]\n        resources: [pods]\n    failurePolicy: Fail   # reject if webhook is unreachable\n    sideEffects: None\n    namespaceSelector:\n      matchExpressions:\n        - key: kubernetes.io/metadata.name\n          operator: NotIn\n          values: [kube-system, policy-system]"
+      },
+      "etymology": "Admission from Latin admissionem ('a letting in'); webhook is a portmanteau of 'web' + 'hook' (a software trigger), popularised by early web APIs circa 2007; combined in the Kubernetes project around 2017.",
+      "unlockLevel": 4,
+      "tags": ["kubernetes", "security", "operators", "extensibility"],
+      "category": "components"
+    },
+    {
+      "id": "k8s-ad2-0040-0000-0000-0000-000000000004",
+      "word": "ValidatingAdmissionPolicy",
+      "pronunciation": "VAL-ih-DAY-ting ad-MISH-un POL-ih-see",
+      "partOfSpeech": "noun",
+      "shortDefinition": "CEL-based in-process admission validation (K8s 1.26+) that replaces webhook round-trips for common policy rules.",
+      "simpleDefinition": "ValidatingAdmissionPolicy moves policy evaluation from external webhook servers into the API server itself, using the Common Expression Language (CEL). Instead of maintaining a running HTTPS service the API server calls, you deploy a YAML file with CEL expressions and the API server evaluates them inline — no network hop, no external availability dependency.",
+      "longDefinition": "ValidatingAdmissionPolicy (VAP) was promoted to stable in Kubernetes 1.28 (GA). It uses CEL — the same sandboxed expression language used in Kubernetes CRD validation rules and audit logging — to evaluate policy rules natively within the API server process. The resource is split into two objects: ValidatingAdmissionPolicy (defines the CEL rule and what it applies to) and ValidatingAdmissionPolicyBinding (instantiates the policy with a scope — namespace selector, resource selector — and an enforcement action: Deny, Warn, or Audit). The Audit action logs violations without blocking, enabling policy dry-run. Because CEL expressions are sandboxed (no external calls, bounded execution time), VAP eliminates the operational overhead and availability risk of running webhook servers. Its key limitation: CEL cannot modify objects, so mutating logic still requires a webhook. For structural validation — required fields, value constraints, cross-field rules — VAP is now the preferred approach over validating webhooks.",
+      "connector": "Think of ValidatingAdmissionPolicy like a grammar checker built directly into a word processor — instead of sending every document to an external service for review, the rules run instantly inside the application itself.",
+      "techContext": "We migrated our require-resource-limits webhook to a ValidatingAdmissionPolicy and eliminated the webhook deployment entirely, removing a critical-path availability dependency.",
+      "exampleSentence": "The ValidatingAdmissionPolicy rejected the Pod spec with a clear message — 'all containers must have memory limits set' — before it ever reached etcd.",
+      "codeExample": {
+        "language": "yaml",
+        "code": "apiVersion: admissionregistration.k8s.io/v1\nkind: ValidatingAdmissionPolicy\nmetadata:\n  name: require-memory-limits\nspec:\n  failurePolicy: Fail\n  matchConstraints:\n    resourceRules:\n      - apiGroups: [\"\"]\n        apiVersions: [v1]\n        operations: [CREATE, UPDATE]\n        resources: [pods]\n  validations:\n    - expression: >\n        object.spec.containers.all(c,\n          has(c.resources) &&\n          has(c.resources.limits) &&\n          has(c.resources.limits.memory))\n      message: \"All containers must declare a memory limit.\"\n---\napiVersion: admissionregistration.k8s.io/v1\nkind: ValidatingAdmissionPolicyBinding\nmetadata:\n  name: require-memory-limits-production\nspec:\n  policyName: require-memory-limits\n  validationActions: [Deny]\n  matchResources:\n    namespaceSelector:\n      matchLabels:\n        env: production"
+      },
+      "etymology": "Validating from Latin validare ('to strengthen, confirm'); admission and policy from Latin; CEL (Common Expression Language) was developed at Google and adopted by Kubernetes in 2022.",
+      "unlockLevel": 4,
+      "tags": ["kubernetes", "security", "policy", "operators"],
+      "category": "components"
+    },
+    {
+      "id": "k8s-ad2-0050-0000-0000-0000-000000000005",
+      "word": "RBAC (Role-Based Access Control)",
+      "pronunciation": "AR-bak — Role-BAYST AK-ses kun-TROHL",
+      "partOfSpeech": "noun",
+      "shortDefinition": "Kubernetes authorisation model: Roles define allowed verbs on resources; RoleBindings assign Roles to subjects.",
+      "simpleDefinition": "RBAC is Kubernetes's access control system. A Role (or ClusterRole) lists which API verbs — get, list, watch, create, patch, delete — are allowed on which resource types. A RoleBinding (or ClusterRoleBinding) attaches a Role to subjects: ServiceAccounts, users, or groups. Nothing is permitted unless a binding explicitly grants it. The model is purely additive — there are no deny rules.",
+      "longDefinition": "Kubernetes RBAC (enabled by the --authorization-mode=RBAC API server flag, the default since Kubernetes 1.8) is a deny-by-default authorisation model. The data model has four resource types: Role (namespace-scoped permission set), ClusterRole (cluster-scoped or cross-namespace permission set), RoleBinding (attaches a Role or ClusterRole to subjects within a specific namespace), and ClusterRoleBinding (attaches a ClusterRole to subjects with cluster-wide effect). Permissions are expressed as rules: apiGroups, resources, verbs, and optionally resourceNames for per-object scoping. RBAC is purely additive — a subject's effective permissions are the union of all grants; you cannot create a deny rule. A critical pattern: use a ClusterRole but bind it with a RoleBinding to limit scope to one namespace, avoiding per-namespace Role duplication. The cluster-admin ClusterRole grants every action on every resource and must be treated as a superuser — audit its bindings regularly. Key debugging tool: kubectl auth can-i list pods --namespace production --as system:serviceaccount:production:my-sa.",
+      "connector": "Think of RBAC like a keycard system in an office building: the Role is the access level printed on the card, the RoleBinding is the act of issuing that card to an employee. Without a card, every door stays locked.",
+      "techContext": "Our CI service account uses a RoleBinding that grants only get, list on ConfigMaps in the deploy namespace — following least-privilege so a compromised pipeline token cannot modify cluster state.",
+      "exampleSentence": "The kubectl auth can-i check revealed that the monitoring ServiceAccount could delete Secrets, which we fixed by replacing the ClusterRoleBinding with a narrowly scoped Role.",
+      "codeExample": {
+        "language": "yaml",
+        "code": "# Role: allow reading pods and their logs in one namespace\napiVersion: rbac.authorization.k8s.io/v1\nkind: Role\nmetadata:\n  name: pod-reader\n  namespace: production\nrules:\n  - apiGroups: [\"\"]\n    resources: [\"pods\", \"pods/log\"]\n    verbs: [\"get\", \"list\", \"watch\"]\n---\n# RoleBinding: grant to the monitoring ServiceAccount\napiVersion: rbac.authorization.k8s.io/v1\nkind: RoleBinding\nmetadata:\n  name: pod-reader-binding\n  namespace: production\nsubjects:\n  - kind: ServiceAccount\n    name: monitoring-agent\n    namespace: production\nroleRef:\n  kind: Role\n  name: pod-reader\n  apiGroup: rbac.authorization.k8s.io"
+      },
+      "etymology": "Role-Based Access Control was formalised by NIST in 1992; the phrase entered common computing parlance in the late 1990s; Kubernetes adopted RBAC as the default authorisation mode in version 1.8 (2017).",
+      "unlockLevel": 4,
+      "tags": ["kubernetes", "security", "rbac", "platform"],
+      "category": "concepts"
+    },
+    {
+      "id": "k8s-ad2-0060-0000-0000-0000-000000000006",
+      "word": "Pod Security Standards (PSS)",
+      "pronunciation": "POD sih-KYUR-ih-tee STAN-durdz",
+      "partOfSpeech": "noun",
+      "shortDefinition": "Three built-in security profiles (Privileged, Baseline, Restricted) enforced by the PodSecurity admission controller.",
+      "simpleDefinition": "Pod Security Standards define three named security profiles for pods. Privileged allows everything and is intended only for cluster infrastructure components. Baseline blocks known privilege escalation paths while permitting typical application patterns. Restricted applies the strictest hardening — non-root execution, all capabilities dropped, read-only root filesystem — following current best practices. Namespaces are labelled to enforce, audit, or warn for a chosen profile.",
+      "longDefinition": "PodSecurityPolicy (PSP) was deprecated in Kubernetes 1.21 and removed in 1.25. Its replacement is a two-part system: Pod Security Standards (PSS) define what the profiles mean, and Pod Security Admission (PSA) enforces them. PSS defines three profiles. Privileged is completely unrestricted — allows all Linux capabilities, host networking, host PID/IPC namespace, privileged containers. Intended only for CNI plugins, CSI drivers, and node-level DaemonSets. Baseline prevents known privilege escalation while permitting typical application containers without modification — blocks hostProcess, hostNetwork, privileged containers, and dangerous capabilities (SYS_ADMIN, NET_ADMIN). Recommended floor for multi-tenant clusters. Restricted is the hardened policy — requires runAsNonRoot: true, drops all Linux capabilities, disallows privilege escalation (allowPrivilegeEscalation: false), restricts volume types to ConfigMap/Secret/emptyDir/PVC, and requires RuntimeDefault or Localhost seccomp profile. PSA is built into Kubernetes (no additional components) and is configured by labelling namespaces with pod-security.kubernetes.io/enforce, /audit, and /warn labels pinned to a Kubernetes version.",
+      "connector": "Think of Pod Security Standards like building codes for houses: Privileged is no restrictions (industrial zone), Baseline is standard residential safety codes, and Restricted is the full set of earthquake-resistant, fire-proof requirements for high-risk zones.",
+      "techContext": "We label all production namespaces with pod-security.kubernetes.io/enforce: restricted after auditing that our workloads pass the profile with only minor image changes.",
+      "exampleSentence": "Migrating to the restricted profile forced us to fix five services that still ran as root — a security improvement we had been postponing for months.",
+      "codeExample": {
+        "language": "yaml",
+        "code": "# Namespace with PSS labels: enforce baseline, warn/audit restricted\napiVersion: v1\nkind: Namespace\nmetadata:\n  name: production\n  labels:\n    pod-security.kubernetes.io/enforce: baseline\n    pod-security.kubernetes.io/enforce-version: v1.29\n    pod-security.kubernetes.io/audit: restricted\n    pod-security.kubernetes.io/audit-version: v1.29\n    pod-security.kubernetes.io/warn: restricted\n    pod-security.kubernetes.io/warn-version: v1.29"
+      },
+      "etymology": "Pod Security Standards — the compound proper noun was introduced by the Kubernetes SIG-Auth in 2021 as the successor to PodSecurityPolicy; 'standards' emphasises that the profiles are named specifications, not runtime enforcement objects.",
+      "unlockLevel": 4,
+      "tags": ["kubernetes", "security", "platform", "policy"],
+      "category": "concepts"
+    },
+    {
+      "id": "k8s-ad2-0070-0000-0000-0000-000000000007",
+      "word": "Workload Identity",
+      "pronunciation": "WURK-lohd eye-DEN-tih-tee",
+      "partOfSpeech": "noun",
+      "shortDefinition": "Federates a Kubernetes ServiceAccount to a cloud IAM role (AWS IRSA, GKE Workload Identity) without static credentials.",
+      "simpleDefinition": "Workload Identity binds a Kubernetes ServiceAccount to a cloud IAM role so that pods automatically receive short-lived cloud credentials — without storing any secret in the cluster. The API server issues a projected token scoped to the pod's ServiceAccount; the cloud IAM system exchanges it for a time-limited access token. No AWS_ACCESS_KEY_ID, no JSON key file, no credential rotation scripts.",
+      "longDefinition": "Static cloud credentials stored in Kubernetes Secrets are a persistent security risk: they do not expire, they replicate to etcd backups, and a compromised pod can exfiltrate them. Workload Identity solves this by federating Kubernetes's OIDC identity provider with cloud IAM. Each cloud has a slightly different implementation: AWS IAM Roles for Service Accounts (IRSA) annotates the ServiceAccount with the IAM role ARN and configures the kube-apiserver as a trusted OIDC issuer. EKS injects a projected service account token with the cluster's OIDC issuer URL into the pod; the AWS SDK exchanges this token for temporary credentials via STS AssumeRoleWithWebIdentity. GKE Workload Identity binds a Kubernetes ServiceAccount to a Google Service Account using IAM policy, allowing in-cluster pods to call Google Cloud APIs as that GSA. Azure Workload Identity uses a federated identity credential on an Azure Managed Identity, trusting tokens from the AKS OIDC issuer. In all cases the token is short-lived (default 1 hour, rotated by kubelet), audience-scoped, and never stored in a Secret.",
+      "connector": "Think of Workload Identity like a badge-swipe system for cloud services: the pod shows its signed Kubernetes badge to the cloud IAM gate, and the gate issues a time-limited access pass — no permanent key needed, and the pass expires on its own.",
+      "techContext": "Migrating our S3-accessing pods to IRSA eliminated 23 long-lived AWS access keys, and the security team's quarterly credential audit shrank from 3 days to under an hour.",
+      "exampleSentence": "After enabling GKE Workload Identity, our data-pipeline pods call Cloud Storage and BigQuery without any service account JSON key file in the container or in any Secret.",
+      "codeExample": {
+        "language": "yaml",
+        "code": "# AWS IRSA: annotate ServiceAccount with the IAM Role ARN\napiVersion: v1\nkind: ServiceAccount\nmetadata:\n  name: data-pipeline\n  namespace: production\n  annotations:\n    eks.amazonaws.com/role-arn: arn:aws:iam::123456789012:role/data-pipeline-role\n---\n# The pod spec references the SA; EKS injects the OIDC token automatically\napiVersion: apps/v1\nkind: Deployment\nmetadata:\n  name: data-pipeline\n  namespace: production\nspec:\n  template:\n    spec:\n      serviceAccountName: data-pipeline\n      containers:\n        - name: app\n          image: my-org/data-pipeline:1.0.0\n          # No AWS_ACCESS_KEY_ID or AWS_SECRET_ACCESS_KEY needed\n          # AWS SDK auto-discovers credentials from the projected token"
+      },
+      "etymology": "Workload Identity as a term was popularised by Google Cloud's GKE documentation circa 2019; the underlying technology — OIDC token exchange for cloud credentials — draws on the OAuth 2.0 token exchange RFC 8693 (2020).",
+      "unlockLevel": 4,
+      "tags": ["kubernetes", "security", "cloud", "iam"],
+      "category": "concepts"
+    },
+    {
+      "id": "k8s-ad2-0080-0000-0000-0000-000000000008",
+      "word": "OPA Gatekeeper",
+      "pronunciation": "OH-pee-ay GAYT-kee-pur",
+      "partOfSpeech": "noun",
+      "shortDefinition": "Admission controller that evaluates Rego policies from ConstraintTemplates against every API request.",
+      "simpleDefinition": "OPA Gatekeeper is a CNCF-graduated Kubernetes admission controller backed by Open Policy Agent. You write policies in Rego — a declarative logic language — and package them as ConstraintTemplates. A Constraint instantiates a template against a set of resources. Gatekeeper evaluates every matching API request against all active Constraints and rejects or warns on violations, and continuously audits existing resources too.",
+      "longDefinition": "Gatekeeper (github.com/open-policy-agent/gatekeeper) deploys OPA as a validating admission webhook and extends the Kubernetes API with two CRD types. A ConstraintTemplate defines a new constraint type by embedding Rego policy logic and declaring its parameters — Gatekeeper generates a new CRD from each template. A Constraint is an instance of a ConstraintTemplate, specifying which resources it applies to (by kind, namespace selector, label selector) and supplying parameter values. The enforcementAction can be deny (block at admission), warn (allow but return a warning), or dryrun (log the violation in the Constraint status without affecting requests). Gatekeeper's Audit feature periodically re-evaluates all existing resources against all Constraints and surfaces violations in the Constraint's status.violations field — policy violations on existing resources are continuously visible, not just at admission time. The Gatekeeper Policy Library provides pre-built ConstraintTemplates for container registry allowlists, required labels, resource limits, replica minimum counts, and PSP-equivalent rules. Gatekeeper is best suited to environments already invested in OPA for other policy decisions, or where Rego's expressiveness is required for complex multi-field rules.",
+      "connector": "Think of Gatekeeper like a city building permit system: ConstraintTemplates are the building codes (rules), Constraints are the active regulations for a specific district (namespace), and the admission webhook is the inspector who checks every permit application against those codes.",
+      "techContext": "Our Gatekeeper ConstraintTemplates enforce that every production Pod has resource limits, comes from our internal registry, and declares a team owner label — three policies in three files, enforced automatically.",
+      "exampleSentence": "Gatekeeper's continuous audit surfaced 47 existing Deployments that violated our new required-labels policy, letting us fix them before enforcement was switched from warn to deny.",
+      "codeExample": {
+        "language": "yaml",
+        "code": "# ConstraintTemplate: require a team label on all Pods\napiVersion: templates.gatekeeper.sh/v1\nkind: ConstraintTemplate\nmetadata:\n  name: requireteamlabel\nspec:\n  crd:\n    spec:\n      names:\n        kind: RequireTeamLabel\n  targets:\n    - target: admission.k8s.gatekeeper.sh\n      rego: |\n        package requireteamlabel\n        violation[{\"msg\": msg}] {\n          not input.review.object.metadata.labels.team\n          msg := \"Pod must have a 'team' label\"\n        }\n---\napiVersion: constraints.gatekeeper.sh/v1beta1\nkind: RequireTeamLabel\nmetadata:\n  name: require-team-label-all\nspec:\n  enforcementAction: warn\n  match:\n    kinds:\n      - apiGroups: [\"\"]\n        kinds: [\"Pod\"]"
+      },
+      "etymology": "OPA (Open Policy Agent) — a CNCF project started in 2016 at Styra; Gatekeeper — from 'gatekeeper' (one who controls entry), the Kubernetes integration first released in 2018 by Google.",
+      "unlockLevel": 4,
+      "tags": ["kubernetes", "security", "policy", "operators"],
+      "category": "components"
+    },
+    {
+      "id": "k8s-ad2-0090-0000-0000-0000-000000000009",
+      "word": "Kyverno",
+      "pronunciation": "kih-VUR-noh",
+      "partOfSpeech": "noun",
+      "shortDefinition": "Kubernetes-native policy engine; policies are written in YAML and applied as a validating/mutating admission webhook.",
+      "simpleDefinition": "Kyverno is a CNCF-graduated policy engine designed for Kubernetes teams who prefer YAML over a policy language. Policies are expressed as Kubernetes custom resources using JMESPath expressions, and support four rule types: validate (block non-compliant resources), mutate (rewrite resources in flight), generate (create additional resources in response to events), and verifyImages (verify cosign signatures on container images at admission time).",
+      "longDefinition": "Kyverno (kyverno.io, from the Greek for 'to govern') operates as both a validating and mutating admission webhook. Its ClusterPolicy and Policy CRDs contain YAML rules that match resources by kind, name, and label selector using JMESPath for field matching — no separate policy language. The validate rule type blocks non-compliant resources with a clear rejection message. The mutate rule type rewrites incoming resources using JSON patch or strategic merge patch to automatically add missing security settings, labels, or annotations. The generate rule type creates additional resources (such as a default NetworkPolicy or a mirrored Secret) when a triggering event occurs. The verifyImages rule type is unique to Kyverno: it verifies cosign signatures or SBOM attestations on container images directly at admission time, without requiring custom Rego. Kyverno supports background scanning of existing resources and reports violations in the ClusterPolicyReport and PolicyReport CRDs. Compared to OPA Gatekeeper, Kyverno has a lower adoption barrier for teams fluent in Kubernetes YAML, first-class mutation and image verification support, and the ability to generate resources — but Rego provides more expressive power for complex multi-rule policies.",
+      "connector": "Think of Kyverno like a smart spell-checker for your Kubernetes cluster: you define rules in the same language as your manifests, and it automatically flags or fixes objects that do not conform — without learning a separate policy language.",
+      "techContext": "We use Kyverno's verifyImages rule to block any Pod from starting unless its image was signed by our CI pipeline via cosign — one YAML file covers every namespace.",
+      "exampleSentence": "A Kyverno generate rule automatically creates a default-deny NetworkPolicy whenever a new namespace is labelled app-tier: backend, so every new service is isolated from day one.",
+      "codeExample": {
+        "language": "yaml",
+        "code": "# Kyverno ClusterPolicy: disallow latest tag + verify cosign signature\napiVersion: kyverno.io/v1\nkind: ClusterPolicy\nmetadata:\n  name: supply-chain-security\nspec:\n  validationFailureAction: Enforce\n  background: true\n  rules:\n    - name: disallow-latest\n      match:\n        any:\n          - resources:\n              kinds: [Pod]\n      validate:\n        message: \"Image tag ':latest' is not allowed; use an immutable digest.\"\n        pattern:\n          spec:\n            containers:\n              - image: \"!*:latest\"\n    - name: verify-image-signature\n      match:\n        any:\n          - resources:\n              kinds: [Pod]\n      verifyImages:\n        - imageReferences: [\"ghcr.io/my-org/*\"]\n          attestors:\n            - entries:\n                - keyless:\n                    issuer: \"https://token.actions.githubusercontent.com\"\n                    subject: \"https://github.com/my-org/*\""
+      },
+      "etymology": "Kyverno is from the Greek κυβερνώ (kybernó, 'I govern'), the same root as Kubernetes; the project was created by Nirmata and donated to the CNCF in 2020, graduating in 2023.",
+      "unlockLevel": 4,
+      "tags": ["kubernetes", "security", "policy", "operators"],
+      "category": "components"
+    },
+    {
+      "id": "k8s-ad2-0100-0000-0000-0000-000000000010",
+      "word": "Finalizer",
+      "pronunciation": "FYE-nuh-lye-zur",
+      "partOfSpeech": "noun",
+      "shortDefinition": "A string on an object's metadata that blocks deletion until the owning controller performs cleanup and removes it.",
+      "simpleDefinition": "A finalizer is a string stored in an object's metadata.finalizers list. The Kubernetes API server enforces one rule: an object with a non-empty finalizers list cannot be permanently deleted. When you issue a delete command, the API server sets a deletionTimestamp instead of removing the object. The owning controller detects this timestamp, performs external cleanup, then removes its finalizer string. Once the list is empty, the object is permanently deleted.",
+      "longDefinition": "Finalizers solve the cleanup problem for operators that manage external resources — cloud load balancers, DNS records, IAM roles, database users — that exist outside the Kubernetes cluster and would be orphaned by a simple object deletion. The lifecycle is: when the controller first processes an object, it adds its finalizer string (e.g., postgres-operator.crunchydata.com/cleanup) to metadata.finalizers. The API server accepts the update. When a user issues kubectl delete, the API server sets metadata.deletionTimestamp to the current time instead of removing the object — it enters a Terminating state. The controller's reconcile function detects a non-nil deletionTimestamp, runs its cleanup logic (delete the S3 bucket, revoke IAM credentials, remove the DNS record), and then removes its finalizer string from the list. When the list is empty the API server permanently deletes the object. Multiple finalizers are independent: each controller manages its own string, and the object remains in Terminating until all finalizers are removed. Hung finalizers — caused by a controller that crashed during cleanup — are one of the most common reasons namespaces get stuck in Terminating state. Cleanup logic must be idempotent and use exponential back-off to avoid infinite loops.",
+      "connector": "Think of a finalizer like a sticky note on a file folder that says 'do not shred until Bob signs off'. The file can be marked for disposal, but it stays in the cabinet until Bob removes his note.",
+      "techContext": "Our S3-backed operator adds a finalizer on each BackupJob CR; the controller deletes the corresponding S3 prefix and IAM policy before removing the finalizer, preventing cloud resource leaks.",
+      "exampleSentence": "The namespace was stuck in Terminating for hours because a CRD controller had been uninstalled while its finalizer strings remained on dozens of custom resources — we had to manually patch them out.",
+      "codeExample": {
+        "language": "text",
+        "code": "const myFinalizer = \"example.com/cleanup\"\n\nfunc (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {\n    obj := &MyResource{}\n    r.Get(ctx, req.NamespacedName, obj)\n\n    if obj.DeletionTimestamp.IsZero() {\n        // Ensure our finalizer is registered\n        if !controllerutil.ContainsFinalizer(obj, myFinalizer) {\n            controllerutil.AddFinalizer(obj, myFinalizer)\n            return ctrl.Result{}, r.Update(ctx, obj)\n        }\n    } else {\n        // Object is being deleted\n        if controllerutil.ContainsFinalizer(obj, myFinalizer) {\n            if err := r.deleteExternalResources(obj); err != nil {\n                return ctrl.Result{}, err // retry with back-off\n            }\n            controllerutil.RemoveFinalizer(obj, myFinalizer)\n            return ctrl.Result{}, r.Update(ctx, obj)\n        }\n    }\n    return ctrl.Result{}, nil\n}"
+      },
+      "etymology": "From Latin finalis ('of or belonging to an end'); in Kubernetes, coined as part of the garbage collection and controller design discussions circa 2016.",
+      "unlockLevel": 4,
+      "tags": ["kubernetes", "operators", "lifecycle", "patterns"],
+      "category": "concepts"
+    },
+    {
+      "id": "k8s-ad2-0110-0000-0000-0000-000000000011",
+      "word": "Owner Reference",
+      "pronunciation": "OH-nur REF-ur-uns",
+      "partOfSpeech": "noun",
+      "shortDefinition": "Metadata field linking a dependent object to its owner; enables garbage collection when the owner is deleted.",
+      "simpleDefinition": "An owner reference is an entry in an object's metadata.ownerReferences list that points to a parent object by kind, name, and UID. When the parent is deleted, Kubernetes's garbage collector automatically deletes all dependent objects that list it as an owner — no custom cleanup code required for in-cluster children.",
+      "longDefinition": "OwnerReferences implement the parent-child lifecycle contract in Kubernetes. Every object created by a controller as a child of a custom resource should have an ownerReference pointing to the CR. The garbage collector (part of kube-controller-manager) watches for objects whose owner no longer exists and deletes them. Two deletion propagation policies are supported: Background (default) — the parent is deleted immediately, and the garbage collector asynchronously deletes orphaned children; Foreground — the parent enters Terminating and the garbage collector deletes children with blockOwnerDeletion: true before allowing the parent to disappear. The controller: true field in an ownerReference designates which owner is the managing controller; only one ownerReference may have controller: true. Cross-namespace ownerReferences are not allowed — an owner must be in the same namespace as its dependents, or both must be cluster-scoped. For cleanup of external resources (cloud services, DNS records), finalizers are the correct mechanism — ownerReferences handle only in-cluster children. The Kubebuilder helper ctrl.SetControllerReference(parent, child, scheme) sets the ownerReference correctly and handles the UID lookup.",
+      "connector": "Think of owner references like a parent's name on a child's school enrollment form: when the parent is no longer in the system, the school knows to remove the child's record automatically.",
+      "techContext": "Every Deployment, Service, and ConfigMap our operator creates carries an ownerReference to the parent CustomResource — deleting the CR cascades automatically and leaves no orphaned resources.",
+      "exampleSentence": "The ReplicaSet's pod all carry ownerReferences back to the ReplicaSet itself, so when the Deployment deletes the old ReplicaSet, all its pods are garbage collected within seconds.",
+      "codeExample": {
+        "language": "yaml",
+        "code": "# A Pod automatically created by a ReplicaSet carries this in its metadata:\napiVersion: v1\nkind: Pod\nmetadata:\n  name: frontend-abc12\n  ownerReferences:\n    - apiVersion: apps/v1\n      kind: ReplicaSet\n      name: frontend\n      uid: d9607e19-f88f-11e6-a518-42010a800195\n      controller: true          # this owner controls the pod\n      blockOwnerDeletion: true  # blocks foreground deletion until pod is gone\n\n# Kubebuilder helper to set ownerReference in a controller:\n# ctrl.SetControllerReference(parentCR, childDeployment, r.Scheme)"
+      },
+      "etymology": "Owner from Old English āgen ('one's own'); reference from Latin referentia ('bringing back'); ownerReferences as a Kubernetes API field was introduced in Kubernetes 1.6 (2017) to replace ad-hoc label-based garbage collection.",
+      "unlockLevel": 4,
+      "tags": ["kubernetes", "operators", "lifecycle", "patterns"],
+      "category": "concepts"
+    },
+    {
+      "id": "k8s-ad2-0120-0000-0000-0000-000000000012",
+      "word": "Status Subresource",
+      "pronunciation": "STAY-tus SUB-reh-sors",
+      "partOfSpeech": "noun",
+      "shortDefinition": "Separate update endpoint for a resource's .status field, preventing controllers from accidentally overwriting spec.",
+      "simpleDefinition": "The status subresource splits a Kubernetes object into two independent update endpoints. Users write to /apis/.../myresource/name (the spec endpoint); controllers write to /apis/.../myresource/name/status (the status endpoint). This separation prevents controllers from accidentally modifying spec, and prevents users from setting arbitrary status values without the controller running.",
+      "longDefinition": "In the Kubernetes API convention, a resource's spec is user intent (what they want) and status is observed state (what actually exists). Without the status subresource, a single PATCH to an object could overwrite both, allowing a poorly written controller to corrupt the spec. When a CRD declares subresources.status in its spec, the API server creates a separate /status endpoint. Updates to the main resource endpoint no longer modify the status field, and updates to the /status endpoint no longer modify the spec field. RBAC can grant different subjects different permissions on the two endpoints: an operator gets verbs on resources/status while normal users only write to the main resource. Controllers should always use client.Status().Update() or client.Status().Patch() to write status — not the main Update call. The status field should contain conditions (a list of typed boolean observations following the Kubernetes condition convention: type, status, reason, message, lastTransitionTime) rather than free-form string fields. The scale subresource is the other common subresource: it exposes a /scale endpoint that the HPA and kubectl scale use to read and write replica counts without access to the full spec.",
+      "connector": "Think of the status subresource like separate mailboxes for incoming and outgoing mail: the spec mailbox is for users to drop in instructions; the status mailbox is for the controller to report what it has done. They cannot accidentally swap mail.",
+      "techContext": "Our operator updates cr.Status.ReadyReplicas only through r.Status().Update(), which is why ArgoCD never shows a diff on the status field even though the controller writes to it on every reconcile.",
+      "exampleSentence": "Enabling the status subresource on our CRD immediately caught a bug where our controller was accidentally clearing spec.replicas when it wrote back the status conditions.",
+      "codeExample": {
+        "language": "yaml",
+        "code": "# CRD with status subresource declared\napiVersion: apiextensions.k8s.io/v1\nkind: CustomResourceDefinition\nmetadata:\n  name: myapps.example.com\nspec:\n  group: example.com\n  versions:\n    - name: v1\n      served: true\n      storage: true\n      subresources:\n        status: {}    # enable status subresource\n        scale:        # optional: expose /scale for HPA\n          specReplicasPath: .spec.replicas\n          statusReplicasPath: .status.readyReplicas\n      schema:\n        openAPIV3Schema:\n          type: object\n          properties:\n            spec:\n              type: object\n            status:\n              type: object\n              properties:\n                conditions:\n                  type: array"
+      },
+      "etymology": "Status from Latin status ('state, condition'); subresource from Latin sub- ('under, secondary') + resource — coined in the Kubernetes API machinery discussions around 2016.",
+      "unlockLevel": 4,
+      "tags": ["kubernetes", "operators", "api", "patterns"],
+      "category": "concepts"
+    },
+    {
+      "id": "k8s-ad2-0130-0000-0000-0000-000000000013",
+      "word": "Conversion Webhook",
+      "pronunciation": "kun-VUR-zhun WEB-hook",
+      "partOfSpeech": "noun",
+      "shortDefinition": "A webhook that translates CRD objects between API versions so clients on different versions interoperate.",
+      "simpleDefinition": "As a CRD evolves it accumulates multiple API versions (v1alpha1, v1beta1, v1). A conversion webhook is an HTTPS endpoint that the API server calls to translate a stored object from its on-disk version to the version a particular client is requesting. This lets different clients use different API versions while etcd stores only one authoritative representation.",
+      "longDefinition": "A CRD can declare multiple API versions, each with a different schema. Exactly one version has storage: true — all objects are physically stored in etcd in this version. When a client requests a different version, the API server calls the conversion webhook with a ConversionReview request containing the object and the desired target version; the webhook returns the converted object. The conversion strategy is declared in the CRD spec.conversion.strategy field: None (for trivially compatible schemas where no structural changes exist) or Webhook. Conversion must be lossless and round-trip safe: converting v1alpha1 → v1 → v1alpha1 must produce the original object. Fields that exist only in v1 should be preserved using annotations or round-trip-safe encoding when stored at v1alpha1. The Kubernetes API machinery project recommends the Hub-and-Spoke conversion pattern: designate one hub version (typically the latest stable) and write conversions only to/from hub, reducing N² conversion code to 2(N-1) functions. Kubebuilder's conversion scaffolding generates the Hub interface automatically. Conversion webhooks run on every API read that requires a version translation, so performance matters: keep conversions simple and avoid external calls inside the webhook handler.",
+      "connector": "Think of a conversion webhook like a live translator in an international meeting: the speaker uses their native language, the translator converts it for each listener on the fly, and everyone hears a version they understand — while the meeting minutes are kept in one authoritative language.",
+      "techContext": "Our v1alpha1-to-v1 conversion webhook runs in under 2 ms because we implemented the Hub pattern — no intermediate conversions, just direct field mapping in both directions.",
+      "exampleSentence": "The conversion webhook let us promote the CRD from v1alpha1 to v1 without breaking the 30 existing clusters still using the older operator that only speaks v1alpha1.",
+      "codeExample": {
+        "language": "yaml",
+        "code": "# CRD with conversion webhook declared\nspec:\n  conversion:\n    strategy: Webhook\n    webhook:\n      conversionReviewVersions: [v1]\n      clientConfig:\n        service:\n          name: myapp-conversion-webhook\n          namespace: myapp-system\n          path: /convert\n        caBundle: <base64-encoded-CA>\n\n# Conversion flow when client requests v1 but object is stored as v1alpha1:\n#\n# Client: GET /apis/example.com/v1/myapps/foo\n#   → API server fetches v1alpha1 object from etcd\n#   → calls /convert: {object: v1alpha1-obj, desiredAPIVersion: v1}\n#   → webhook returns: {object: v1-obj}\n#   → API server returns v1 object to client"
+      },
+      "etymology": "Conversion from Latin conversio ('a turning about'); webhook is a portmanteau of 'web' and 'hook'; the Kubernetes conversion webhook design was introduced in Kubernetes 1.13 (2018) as part of the CRD versioning system.",
+      "unlockLevel": 4,
+      "tags": ["kubernetes", "operators", "api", "extensibility"],
+      "category": "components"
+    },
+    {
+      "id": "k8s-ad2-0140-0000-0000-0000-000000000014",
+      "word": "SecurityContext",
+      "pronunciation": "sih-KYUR-ih-tee KON-tekst",
+      "partOfSpeech": "noun",
+      "shortDefinition": "Pod or container-level Linux security settings: runAsNonRoot, readOnlyRootFilesystem, allowPrivilegeEscalation, capabilities.",
+      "simpleDefinition": "SecurityContext is the YAML block in a pod or container spec that configures Linux-level security settings: which user and group the process runs as, whether root execution is permitted, whether the filesystem is read-only, which Linux capabilities the process holds, whether privilege escalation via setuid binaries is allowed, and which seccomp filter applies. It is the primary mechanism for hardening individual workloads.",
+      "longDefinition": "SecurityContext exists at two levels in a pod spec. spec.securityContext (the pod-level context) applies defaults to all containers and governs volume ownership. spec.containers[*].securityContext (container-level context) overrides pod-level settings for a specific container. The most impactful settings: runAsNonRoot: true rejects any container whose image default UID is 0 — preventing root-level filesystem access and lateral movement if the container is compromised. allowPrivilegeEscalation: false prevents the process from acquiring more privileges than its parent process, blocking setuid binaries and sudo — this alone eliminates a large class of container escape techniques. readOnlyRootFilesystem: true prevents an attacker with code execution from writing malware to the container filesystem; all writable paths must be explicitly mounted as emptyDir volumes. capabilities drop ALL followed by targeted add returns only the minimal Linux capabilities the process needs — NET_BIND_SERVICE for services binding ports below 1024 is the typical only addition for stateless applications. seccompProfile: type: RuntimeDefault applies the container runtime's built-in seccomp filter, blocking approximately 100 rarely-needed and dangerous system calls with no custom profile required. The Kubernetes Restricted Pod Security Standard requires all of these settings.",
+      "connector": "Think of SecurityContext like the permissions on a contractor's badge at a secure facility: it defines exactly which doors they can open, whether they can carry tools, and whether they can access sensitive areas — the minimum needed to do the job.",
+      "techContext": "After adding SecurityContext with all capabilities dropped and readOnlyRootFilesystem: true, our threat-model assessment showed that a container escape would give an attacker only a severely constrained process with no persistent write access.",
+      "exampleSentence": "The security scanner flagged our deployment for missing allowPrivilegeEscalation: false, which we added and confirmed it breaks nothing because our image has no setuid binaries.",
+      "codeExample": {
+        "language": "yaml",
+        "code": "apiVersion: v1\nkind: Pod\nmetadata:\n  name: hardened-api\nspec:\n  securityContext:\n    runAsNonRoot: true\n    runAsUser: 1000\n    runAsGroup: 3000\n    fsGroup: 2000\n    seccompProfile:\n      type: RuntimeDefault\n  containers:\n    - name: api\n      image: my-org/api:1.0.0\n      securityContext:\n        allowPrivilegeEscalation: false\n        readOnlyRootFilesystem: true\n        capabilities:\n          drop: [\"ALL\"]\n          add: [\"NET_BIND_SERVICE\"]\n      volumeMounts:\n        - name: tmp\n          mountPath: /tmp\n        - name: cache\n          mountPath: /app/cache\n  volumes:\n    - name: tmp\n      emptyDir: {}\n    - name: cache\n      emptyDir: {}"
+      },
+      "etymology": "Security from Latin securitas ('freedom from care, safety'); context from Latin contextus ('connection, coherence'); SecurityContext as a Kubernetes API field was introduced in Kubernetes 1.0 and significantly expanded in 1.11.",
+      "unlockLevel": 4,
+      "tags": ["kubernetes", "security", "platform", "linux"],
+      "category": "concepts"
+    },
+    {
+      "id": "k8s-ad2-0150-0000-0000-0000-000000000015",
+      "word": "Sigstore / Cosign",
+      "pronunciation": "SIG-stor / KOH-syn",
+      "partOfSpeech": "noun",
+      "shortDefinition": "Supply-chain tooling for signing and verifying OCI images with keyless certificates anchored to OIDC identities.",
+      "simpleDefinition": "Sigstore is a Linux Foundation project providing the infrastructure for signing software artifacts. Cosign is its CLI tool for signing and verifying OCI container images. Keyless signing uses your CI pipeline's OIDC identity — from GitHub Actions, GitLab CI, or any OIDC provider — instead of a stored private key. Fulcio issues a short-lived certificate; Rekor's public transparency log records the signing event permanently.",
+      "longDefinition": "Container image signing defends against supply-chain attacks: a compromised registry, a mutable tag pointing to a different digest, or a build system compromise (SolarWinds-style). Sigstore provides three services. Fulcio is a certificate authority that issues short-lived (10-minute) certificates bound to a CI workflow's OIDC identity — no long-lived private key required. Rekor is a tamper-evident, append-only transparency log that records every signing event permanently and publicly; unexpected signings are detectable via the log. Cosign is the CLI tool that orchestrates signing (cosign sign) and verification (cosign verify) against these services. Keyless signing in GitHub Actions works because GitHub injects an OIDC token scoped to the specific workflow and repository; Fulcio issues a certificate anchored to that identity; Rekor logs the event. Verification asserts that the image was signed by a certificate whose identity matches the expected workflow URL — proving it came from your CI pipeline and has not been tampered with since. Signing without enforcing verification at admission time provides no protection. Kyverno's verifyImages rule and OPA Gatekeeper's external data feature both integrate cosign verification as admission checks.",
+      "connector": "Think of Sigstore/Cosign like a certified postal service with a public ledger: the post office (Fulcio) stamps your parcel with a time-limited certificate; every stamped parcel is logged publicly (Rekor); the recipient can verify the stamp proves exactly who sent it and when.",
+      "techContext": "Our CI pipeline runs cosign sign after every Docker push; Kyverno's verifyImages rule then rejects any pod that references an image without a valid signature from our GitHub Actions workflow.",
+      "exampleSentence": "Cosign's keyless signing eliminated our certificate rotation process entirely — every build proves its identity via the GitHub OIDC token, with no stored private key to rotate or protect.",
+      "codeExample": {
+        "language": "bash",
+        "code": "# Sign image keylessly in GitHub Actions (OIDC token is the identity)\ncosign sign --yes ghcr.io/my-org/my-service@sha256:abc123\n# Fulcio issues a 10-minute cert; Rekor logs the event permanently\n\n# Verify: prove the image was signed by our release workflow\ncosign verify \\\n  --certificate-identity-regexp \\\n    'https://github.com/my-org/my-service/.github/workflows/release.yml@refs/heads/main' \\\n  --certificate-oidc-issuer \\\n    'https://token.actions.githubusercontent.com' \\\n  ghcr.io/my-org/my-service@sha256:abc123\n\n# Exit 0 = valid signature from expected workflow\n# Exit non-0 = reject the image"
+      },
+      "etymology": "Sigstore — portmanteau of 'signature' + 'store'; cosign — portmanteau of 'co-' (joint) + 'sign'; project initiated by Red Hat, Google, and Purdue University in 2021 and donated to the Linux Foundation / OpenSSF.",
+      "unlockLevel": 4,
+      "tags": ["kubernetes", "security", "supply-chain", "devops"],
+      "category": "concepts"
+    },
+    {
+      "id": "k8s-ad2-0160-0000-0000-0000-000000000016",
+      "word": "Binary Authorization",
+      "pronunciation": "BY-nuh-ree aw-thor-ih-ZAY-shun",
+      "partOfSpeech": "noun",
+      "shortDefinition": "GKE admission policy that only allows pods to run images whose attestations satisfy a defined policy.",
+      "simpleDefinition": "Binary Authorization is a GKE admission control feature that enforces a deploy-time security policy: pods can only run container images that carry signed attestations proving they passed required checks — vulnerability scan, quality gate, identity verification — before being deployed. Unsigned images or images whose attestations do not satisfy the active policy are rejected at pod creation time.",
+      "longDefinition": "Binary Authorization (BinAuthz) integrates Google Cloud's Container Analysis API with GKE admission control to enforce supply-chain security. The policy is configured at the GKE cluster level and evaluated on every pod creation request. A policy specifies which attestors must have signed an image before it can be deployed — an attestor is a named trust root backed by a key pair stored in Cloud KMS or a PKIX public key. Attestations are signed notes attached to an image's digest in Container Analysis. CI/CD stages create attestations at key milestones: after a vulnerability scan passes, after QA sign-off, or after cosign keyless signing. The policy can have per-cluster rules (images must have attestation from these attestors), allowlist rules (certain images bypass policy, e.g., pause containers), and a default rule (reject all or allow all as a fallback). Binary Authorization also supports a dry-run mode (log-only) for policy development and a breakglass mechanism — a cluster-admin can override the policy with an annotation, and the override is logged to Cloud Audit Logs for accountability. It integrates with cosign attestations via the Cloud KMS signer.",
+      "connector": "Think of Binary Authorization like a venue's wristband system: before anyone enters (a pod runs), security checks that they have the right wristband from the right issuer — a ticket office you trust. No wristband, no entry, regardless of what they claim.",
+      "techContext": "Binary Authorization on our production GKE cluster ensures that only images attested by both our vulnerability-scan attestor and our QA-sign-off attestor can run — a manual bypass is possible but logged and paged to the security team.",
+      "exampleSentence": "Binary Authorization blocked a rushed hotfix deploy that had skipped the vulnerability scan stage — the engineer had to use the breakglass procedure, which triggered an immediate security review.",
+      "codeExample": {
+        "language": "yaml",
+        "code": "# Binary Authorization policy (set via gcloud or Cloud Console)\n# Example policy YAML (simplified)\ndefaultAdmissionRule:\n  evaluationMode: REQUIRE_ATTESTATION\n  enforcementMode: ENFORCED_BLOCK_AND_AUDIT_LOG\n  requireAttestationsBy:\n    - projects/my-project/attestors/vulnerability-scan-passed\n    - projects/my-project/attestors/qa-approved\nadmissionWhitelistPatterns:\n  - namePattern: gcr.io/google-containers/pause*\n  - namePattern: k8s.gcr.io/pause*\nclusterAdmissionRules:\n  us-central1-a.production-cluster:\n    evaluationMode: REQUIRE_ATTESTATION\n    enforcementMode: ENFORCED_BLOCK_AND_AUDIT_LOG\n    requireAttestationsBy:\n      - projects/my-project/attestors/vulnerability-scan-passed\n      - projects/my-project/attestors/qa-approved"
+      },
+      "etymology": "Binary from Latin binarius ('consisting of two'); Authorization from Medieval Latin authorizationem; 'Binary Authorization' is a Google Cloud product name introduced in 2018 as a GKE security feature.",
+      "unlockLevel": 4,
+      "tags": ["kubernetes", "security", "supply-chain", "gcp"],
+      "category": "components"
+    },
+    {
+      "id": "k8s-ad2-0170-0000-0000-0000-000000000017",
+      "word": "App-of-Apps Pattern",
+      "pronunciation": "AP uv APS PAT-urn",
+      "partOfSpeech": "noun",
+      "shortDefinition": "GitOps pattern where one ArgoCD Application manages a set of child Application manifests stored in Git.",
+      "simpleDefinition": "The App-of-Apps pattern is a meta-application in ArgoCD: a root Application whose sync target directory in Git contains other Application manifests rather than workload resources. Syncing the root application bootstraps the entire fleet — creating every child Application, each of which then reconciles its own source independently.",
+      "longDefinition": "The App-of-Apps pattern solves the GitOps bootstrapping problem: how do you get all your Application resources into a fresh cluster without applying them one by one? The answer is a single root Application pointing at a directory that contains nothing but other Application manifests — for ingress-nginx, cert-manager, prometheus, each microservice, and the platform configuration. When the root application syncs, ArgoCD creates all the child Application objects in the argocd namespace. Each child then has its own source, its own sync policy (automated or manual), its own health thresholds, and its own sync window. Bootstrapping a new cluster requires only installing ArgoCD and applying the one root Application. The ArgoCD UI renders the full hierarchy as a tree: root → child applications → workload resources. The Flux equivalent is a root Kustomization at clusters/production that references subdirectory Kustomizations or HelmReleases. A warning: deep nesting (root → platform → infra → app) makes debugging difficult; three levels is typically the maximum before tracing parent-child relationships becomes expensive.",
+      "connector": "Think of the App-of-Apps pattern like a franchise operations manual: one document (the root app) references all the individual store guides (child apps), and following the franchise manual once sets up the entire network.",
+      "techContext": "Our platform team ships a single 'bootstrap' ArgoCD Application per cluster type; applying it to a fresh cluster provisions cert-manager, ingress, Prometheus, and all 40 microservices without any other manual steps.",
+      "exampleSentence": "After adopting the App-of-Apps pattern, cloning a new staging cluster from scratch went from a 4-hour manual process to a 15-minute automated bootstrap.",
+      "codeExample": {
+        "language": "yaml",
+        "code": "# Root application — points at the apps/ directory in Git\napiVersion: argoproj.io/v1alpha1\nkind: Application\nmetadata:\n  name: platform-root\n  namespace: argocd\nspec:\n  project: default\n  source:\n    repoURL: https://github.com/my-org/platform-fleet\n    targetRevision: main\n    path: clusters/production/apps   # directory of child Application manifests\n  destination:\n    server: https://kubernetes.default.svc\n    namespace: argocd\n  syncPolicy:\n    automated:\n      prune: true\n      selfHeal: true\n\n# Inside clusters/production/apps/cert-manager.yaml:\n# ---\n# apiVersion: argoproj.io/v1alpha1\n# kind: Application\n# metadata:\n#   name: cert-manager\n# spec:\n#   source:\n#     repoURL: https://charts.jetstack.io\n#     chart: cert-manager\n#     targetRevision: v1.14.0"
+      },
+      "etymology": "App-of-Apps is a descriptive compound coined by the ArgoCD community circa 2019; it is a play on the Unix philosophy of composable tools, applying it to ArgoCD Application resources.",
+      "unlockLevel": 4,
+      "tags": ["kubernetes", "gitops", "argocd", "architecture"],
+      "category": "patterns"
+    },
+    {
+      "id": "k8s-ad2-0180-0000-0000-0000-000000000018",
+      "word": "GitOps",
+      "pronunciation": "GIT-ops",
+      "partOfSpeech": "noun",
+      "shortDefinition": "Practice of using Git as the single source of truth for cluster state; ArgoCD or Flux auto-reconciles any drift.",
+      "simpleDefinition": "GitOps inverts the traditional push-based deployment model: instead of a CI pipeline pushing manifests into a cluster, a controller running inside the cluster continuously pulls its desired state from a Git repository and reconciles toward it. Git becomes the single source of truth — every cluster change is a Git commit, with an author, a diff, and a timestamp.",
+      "longDefinition": "The term GitOps was coined by Weaveworks CEO Alexis Richardson in 2017. The four properties that define a GitOps system: Declarative — the entire desired state is expressed in Git as YAML manifests, Helm charts, or Kustomize overlays; Versioned and immutable — Git is an append-only log where every change has an author, timestamp, diff, and commit hash; Pulled automatically — the controller inside the cluster polls Git (or responds to webhooks) and applies approved state changes without external systems needing credentials to reach the cluster API server; Continuously reconciled — if the cluster drifts from the desired state (a pod is deleted, a ConfigMap edited directly), the controller detects the deviation and corrects it on the next cycle. The security model is a key benefit: the cluster never exposes its API server to external CI systems — credentials flow inward, not outward. GitOps does not replace CI pipelines: CI still builds, tests, and pushes images; the boundary is the Git commit. ArgoCD and Flux are the two dominant CNCF-graduated implementations.",
+      "connector": "Think of GitOps like a house with a self-updating blueprint: the blueprint in Git is the authority on what the house should look like; a robot inside the house constantly compares the actual state to the blueprint and fixes any discrepancy, automatically.",
+      "techContext": "Since adopting GitOps, our production change audit trail is simply the Git commit log — every deploy is traceable to a PR, a reviewer, and a timestamp, which reduced our SOC 2 evidence preparation from weeks to hours.",
+      "exampleSentence": "GitOps caught and reversed an engineer's direct kubectl edit of a production ConfigMap within 90 seconds — before any downstream services noticed the misconfiguration.",
+      "codeExample": {
+        "language": "yaml",
+        "code": "# ArgoCD Application: the cluster auto-syncs from Git\napiVersion: argoproj.io/v1alpha1\nkind: Application\nmetadata:\n  name: my-service\n  namespace: argocd\nspec:\n  source:\n    repoURL: https://github.com/my-org/my-service-config\n    targetRevision: main\n    path: helm\n  destination:\n    server: https://kubernetes.default.svc\n    namespace: production\n  syncPolicy:\n    automated:\n      prune: true      # delete resources removed from Git\n      selfHeal: true   # auto-correct any drift from Git state\n\n# To deploy: merge a PR that bumps the image tag in helm/values.yaml\n# ArgoCD detects the commit and applies within the polling interval (~3 min)"
+      },
+      "etymology": "GitOps is a portmanteau of 'Git' (the version control system, named by Linus Torvalds after himself as a British slang term) and 'Ops' (operations); coined by Alexis Richardson of Weaveworks in a 2017 blog post.",
+      "unlockLevel": 4,
+      "tags": ["kubernetes", "gitops", "devops", "architecture"],
+      "category": "processes"
+    },
+    {
+      "id": "k8s-ad2-0190-0000-0000-0000-000000000019",
+      "word": "Drift Detection",
+      "pronunciation": "DRIFT dih-TEK-shun",
+      "partOfSpeech": "noun",
+      "shortDefinition": "GitOps controller continuously compares live cluster state to Git; alerts or auto-corrects when they diverge.",
+      "simpleDefinition": "Drift is the gap between what is declared in Git and what is actually running in the cluster. It happens from direct kubectl edits, operator mutations, or admission webhook side-effects. GitOps controllers detect drift on every reconciliation cycle and either alert on it or automatically heal it, depending on the sync policy.",
+      "longDefinition": "Drift is inevitable in any cluster touched by humans. Sources include: direct kubectl edits (an on-call engineer scales a Deployment from 3 to 10 replicas during an incident, never committing the change to Git); operator mutations (HPA, VPA, or cert-manager mutating a resource field after the GitOps controller last applied it); and admission webhook side-effects (Istio sidecar injection adding fields not in the original Git manifest). ArgoCD reports drift as an OutOfSync status on the Application and shows a per-field diff in its UI. Flux reports drift in the Kustomization status conditions and via the Notification controller. When selfHeal: true is set, ArgoCD reapplies Git state whenever live state diverges; Flux always reconciles toward Git state on each cycle. A key operational challenge: drift caused by legitimate operator activity (HPA changing replica count) must be excluded from the diff — ArgoCD uses ignoreDifferences rules to specify JSON pointers to skip; Flux uses server-side apply field ownership so fields managed by other controllers (fieldManager) are not overwritten on reconciliation. The most dangerous drift is undetected drift: a GitOps controller with alerting disabled provides no protection.",
+      "connector": "Think of drift detection like a ship's GPS continuously comparing actual position to the plotted course: if the currents push the ship off course (drift), the navigator is alerted immediately and can correct — not discover the deviation when the ship arrives at the wrong port.",
+      "techContext": "We set selfHeal: false on production so GitOps still applies Git changes but does not fight the HPA over replica counts — drift on spec.replicas is listed in ignoreDifferences.",
+      "exampleSentence": "Drift detection caught an undocumented change to the production ingress ConfigMap that had been applied directly three weeks earlier but never committed to Git.",
+      "codeExample": {
+        "language": "yaml",
+        "code": "# ArgoCD: ignore HPA-managed replicas and cert-manager-owned secrets in drift calc\nspec:\n  ignoreDifferences:\n    - group: apps\n      kind: Deployment\n      jsonPointers:\n        - /spec/replicas        # owned by HPA; exclude from OutOfSync calculation\n    - group: \"\"\n      kind: Secret\n      managedFieldsManagers:\n        - cert-manager-controller  # cert-manager owns this field\n\n# Flux: uses server-side apply field ownership automatically\n# Fields owned by 'hpa-controller' fieldManager are not overwritten by Flux"
+      },
+      "etymology": "Drift from Old Norse drift ('something driven'); in navigation, drift is the lateral displacement of a vessel from its intended course by current or wind; adopted metaphorically into software infrastructure management circa 2017.",
+      "unlockLevel": 4,
+      "tags": ["kubernetes", "gitops", "devops", "operations"],
+      "category": "concepts"
+    },
+    {
+      "id": "k8s-ad2-0200-0000-0000-0000-000000000020",
+      "word": "Kubebuilder",
+      "pronunciation": "KYOOB-bil-dur",
+      "partOfSpeech": "noun",
+      "shortDefinition": "Go scaffolding framework for building Kubernetes operators, generating CRD boilerplate and reconciler stubs.",
+      "simpleDefinition": "Kubebuilder is the reference framework for building Kubernetes operators in Go. It generates a complete project skeleton with CRD YAML, RBAC manifests, a reconciler stub, a Makefile, and a Dockerfile. CRD schemas and RBAC rules are generated from Go struct annotations and marker comments, eliminating hand-maintained boilerplate.",
+      "longDefinition": "Kubebuilder (kubernetes-sigs/kubebuilder) wraps the controller-runtime library and provides a code-generation workflow: kubebuilder init --domain example.com creates the project scaffold; kubebuilder create api --group apps --version v1alpha1 --kind Foo generates the CRD Go type, CRD YAML, RBAC manifests, and reconciler stub. The project uses controller-gen (a code generator) to process marker comments in Go source and emit CRD validation rules and RBAC manifests. For example, //+kubebuilder:validation:Minimum=1 on a struct field emits the corresponding openAPIV3Schema constraint in the CRD; //+kubebuilder:rbac:groups=example.com,resources=foos,verbs=get;list;watch emits a ClusterRole rule. The controller-runtime Manager abstraction hosts multiple controllers, a shared informer cache, leader election via a Kubernetes Lease object, and a webhook server. Starting a new controller is three lines: ctrl.NewControllerManagedBy(mgr).For(&Foo{}).Complete(reconciler). Operator SDK (Red Hat / OperatorHub) extends Kubebuilder with Ansible and Helm operator flavors and adds OperatorHub packaging via ClusterServiceVersion. Both wrap controller-runtime; a project started with either can use the other's tooling.",
+      "connector": "Think of Kubebuilder like the rails new command for Ruby on Rails: you describe what you want to build, and the framework generates all the repetitive scaffolding — project structure, config files, boilerplate wiring — leaving you to write only the business logic.",
+      "techContext": "Kubebuilder generated our CRD, RBAC manifests, and reconciler stub in under a minute; the only code we wrote was the reconcile function body and the Go struct fields for the custom resource.",
+      "exampleSentence": "After running kubebuilder create api for our BackupJob kind, we had a running reconciler with leader election and webhook scaffolding in the same afternoon.",
+      "codeExample": {
+        "language": "bash",
+        "code": "# Scaffold a new operator project\nkubebuilder init --domain example.com --repo github.com/my-org/my-operator\n\n# Generate CRD type, RBAC, and reconciler stub for a new API\nkubebuilder create api \\\n  --group apps \\\n  --version v1alpha1 \\\n  --kind BackupJob\n\n# controller-gen processes marker comments to produce CRD YAML and RBAC\nmake generate   # regenerates zz_generated.deepcopy.go\nmake manifests  # regenerates config/crd/ and config/rbac/\n\n# Run the controller locally against a cluster\nmake run"
+      },
+      "etymology": "Kubebuilder is a compound of 'Kube' (from Kubernetes, from the Greek kubernetes, 'helmsman') + 'builder'; the project was started by the Kubernetes SIG API Machinery group in 2018.",
+      "unlockLevel": 4,
+      "tags": ["kubernetes", "operators", "go", "tooling"],
+      "category": "concepts"
+    },
+    {
+      "id": "k8s-ad2-0210-0000-0000-0000-000000000021",
+      "word": "Operator Capability Levels",
+      "pronunciation": "OP-uh-ray-tur KAY-puh-BIL-ih-tee LEV-ulz",
+      "partOfSpeech": "noun",
+      "shortDefinition": "OperatorHub maturity model (Basic Install → Full Autopilot) that describes how much operational knowledge an operator encodes.",
+      "simpleDefinition": "Operator Capability Levels are a five-level maturity model from the Operator Framework. Level 1 automates installation; Level 2 adds seamless upgrades; Level 3 manages the full lifecycle including backup and recovery; Level 4 exposes rich metrics and structured observability; Level 5 is full autopilot — the operator monitors, scales, and tunes the application on its own. Levels are cumulative.",
+      "longDefinition": "Red Hat and the OperatorHub community formalised five capability levels to describe how much operational expertise an operator encodes. The levels are cumulative — each level implies all previous ones. Level 1 (Basic Install): the operator automates installation and initial configuration; a CR triggers deployment of the correct Deployments, Services, and ConfigMaps. Most 'Hello World' operators stop here. Level 2 (Seamless Upgrades): the operator can upgrade from one application version to another without data loss or extended downtime — it knows the safe upgrade path: drain connections, take a backup, apply the new image, verify health. Level 3 (Full Lifecycle): the operator manages backup, recovery, failure detection, and self-healing — it detects a crashed replica, triggers a failover, and restores from backup if needed. The Crunchy postgres-operator and Strimzi Kafka operator reach Level 3. Level 4 (Deep Insights): the operator exposes rich Prometheus metrics, structured conditions in status, and pre-wired alerts — the cluster's health is visible to observability tooling without manual configuration. Level 5 (Autopilot): the operator monitors its own performance metrics and adjusts — scaling replicas based on query load, rebalancing shards, tuning memory — without human decisions. Very few production operators reach Level 5 today. The levels are a communication tool, not a certification. The more practical question is: which Day-2 operations does this operator handle, and which still require a human?",
+      "connector": "Think of Operator Capability Levels like a self-driving car's automation tiers: Level 1 helps you park; Level 3 drives on the highway under supervision; Level 5 drives itself anywhere with no human involvement. Each level encodes more domain expertise.",
+      "techContext": "When evaluating Postgres operators for our platform, we used the capability level taxonomy to confirm the Crunchy operator reached Level 3 before adopting it for production — backup and failover automation were non-negotiable.",
+      "exampleSentence": "Describing our Redis operator as Level 2 in the architecture review made it immediately clear to the SRE team that they still own backup scheduling and failover — the operator only automates installs and upgrades.",
+      "codeExample": {
+        "language": "text",
+        "code": "Operator Capability Levels summary:\n\nLevel 1 — Basic Install\n  CR applied → correct Deployments, Services, ConfigMaps created\n  Example: most 'Hello World' operators\n\nLevel 2 — Seamless Upgrades\n  Knows the safe upgrade path: drain, backup, apply, verify\n  Example: prometheus-operator version bumps\n\nLevel 3 — Full Lifecycle\n  Backup, restore, failure detection, auto-failover\n  Example: Crunchy postgres-operator, Strimzi Kafka operator\n\nLevel 4 — Deep Insights\n  Prometheus metrics, ServiceMonitors, pre-wired alerts\n  Example: prometheus-operator, Elasticsearch operator\n\nLevel 5 — Autopilot\n  Self-scales, self-tunes, self-heals without human decisions\n  Example: Google's internal Spanner operator (not public)"
+      },
+      "etymology": "Operator Capability Levels — the taxonomy was formalised by Red Hat and the Operator Framework community in 2019 as part of the OperatorHub certification programme.",
+      "unlockLevel": 4,
+      "tags": ["kubernetes", "operators", "maturity", "architecture"],
+      "category": "concepts"
+    },
+    {
+      "id": "k8s-ad2-0220-0000-0000-0000-000000000022",
+      "word": "Informer Pattern",
+      "pronunciation": "in-FOR-mur PAT-urn",
+      "partOfSpeech": "noun",
+      "shortDefinition": "Controller client pattern using a local cache backed by List+Watch to avoid flooding the API server with direct calls.",
+      "simpleDefinition": "The Informer pattern provides controllers with an efficient, consistent view of Kubernetes resources. Instead of calling the API server on every reconcile, an Informer opens a persistent watch connection, maintains a local in-memory cache of all objects, and pushes change events to a rate-limited work queue. Controllers read from the local cache and write only to the API server.",
+      "longDefinition": "The Kubernetes API server exposes a watch endpoint for every resource type. A client opening GET /apis/apps/v1/deployments?watch=true receives a long-lived HTTP response streaming WatchEvent objects (type: ADDED/MODIFIED/DELETED plus the full resource) as changes occur in etcd. An Informer wraps this raw watch stream with two additional layers. The in-memory cache (Store/Indexer) keeps all objects of the watched type locally with support for indexed lookups (e.g., 'all Pods on node X'). The event handlers and work queue receive ADDED/MODIFIED/DELETED events and push the changed object's NamespacedName key into a rate-limited, deduplicated work queue; reconcile worker goroutines drain the queue. Informers also implement resync — periodically re-enqueuing every cached object to trigger a full reconcile and catch drifts that produce no watch event. A SharedInformerFactory ensures multiple controllers watching the same resource type share a single watch connection and cache, not N separate connections. In kube-controller-manager, all 30+ built-in controllers share informers this way. Reading from the informer cache rather than the live API server is an absolute requirement for controllers operating at scale — each additional direct API call under load degrades API server performance for all cluster components.",
+      "connector": "Think of the Informer pattern like a local newspaper subscription: instead of calling the press office for every story, you receive the daily paper, and your team reads from the stack. New editions arrive automatically; the press office only hears from you when you place an order (write to the API).",
+      "techContext": "Our controller reads from the informer cache for all Get calls in reconcile; the API server only sees our write traffic — roughly 1 write per reconcile instead of 3–4 reads plus a write.",
+      "exampleSentence": "Switching from direct API calls to informer cache reads dropped our reconciler's average API server request rate by 85% and eliminated the throttling errors we were seeing at peak load.",
+      "codeExample": {
+        "language": "text",
+        "code": "Informer architecture:\n\n  etcd\n    ↓\n  API server (watch endpoint)\n    ↓\n  [Reflector]           ← reconnects on disconnect; handles resource version\n    ↓\n  [DeltaFIFO Queue]     ← ordered change buffer\n    ↓\n  ┌──────────────────────────────┐\n  │  [Store / Indexer]           │  ← in-memory cache; all reconcile reads happen here\n  │  [Event Handlers]            │  ← OnAdd / OnUpdate / OnDelete callbacks\n  └──────────────────────────────┘\n              ↓\n  [Rate-Limited Work Queue]      ← deduplicated; one entry per changed object key\n              ↓\n  [Reconcile Worker Goroutines]  ← N workers drain the queue\n\n  Reads: cache only.  Writes: direct to API server."
+      },
+      "etymology": "Informer from Latin informare ('to give form to, instruct'); the Informer as a Kubernetes programming pattern was formalized in the client-go library (circa 2016) and documented in the Kubernetes controller-runtime package.",
+      "unlockLevel": 4,
+      "tags": ["kubernetes", "operators", "patterns", "performance"],
+      "category": "patterns"
+    },
+    {
+      "id": "k8s-ad2-0230-0000-0000-0000-000000000023",
+      "word": "ClusterRole / ClusterRoleBinding",
+      "pronunciation": "KLUS-tur-ROHL / KLUS-tur-ROHL-BYN-ding",
+      "partOfSpeech": "noun",
+      "shortDefinition": "Cluster-scoped RBAC types that grant permissions across all namespaces, unlike namespace-scoped Role and RoleBinding.",
+      "simpleDefinition": "A ClusterRole is an RBAC permission set that governs access to cluster-wide resources (Nodes, PersistentVolumes, Namespaces, StorageClasses, CRDs) and can optionally span all namespaces. A ClusterRoleBinding attaches a ClusterRole to subjects with cluster-wide effect. Operators, monitoring systems, CSI drivers, and ingress controllers all require ClusterRoles to function.",
+      "longDefinition": "Some Kubernetes resources exist outside any namespace: nodes, namespaces, persistentvolumes, clusterroles, storageclasses, and CRDs. These can only be governed by a ClusterRole — a namespace-scoped Role cannot reference them. ClusterRoles follow the same permission structure as Roles (apiGroups, resources, verbs) but operate cluster-wide. A ClusterRoleBinding attaches a ClusterRole to subjects (ServiceAccounts, users, groups) with cluster-wide effect — the subject can act on matching resources in every namespace or on cluster-scoped resources everywhere. A critical pattern: bind a ClusterRole with a RoleBinding (not ClusterRoleBinding) to limit its scope to one namespace — this is how the built-in admin and edit ClusterRoles are used for namespace-level admin access without duplicating Role definitions. The cluster-admin ClusterRole grants every action on every resource and is the Kubernetes superuser equivalent; any subject bound to it can do anything in the cluster. Audit cluster-admin bindings regularly with kubectl get clusterrolebindings -o wide | grep cluster-admin and keep the list to system components only. Beware of escalation verbs: create on rolebindings or clusterrolebindings gives the subject the ability to grant themselves additional permissions — Kubernetes prevents direct privilege escalation above your current level but indirect paths exist.",
+      "connector": "Think of ClusterRole vs Role like the difference between a master key (ClusterRole) and a floor key (Role) in a multi-storey building: the master key works on every floor and every common area; the floor key only opens rooms on one specific floor.",
+      "techContext": "Our Prometheus server uses a ClusterRole that grants get, list, watch on nodes, pods, and services across all namespaces, bound via a ClusterRoleBinding — the only cluster-wide permission we grant to a non-system service account.",
+      "exampleSentence": "Discovering that our log collector's ClusterRoleBinding referenced cluster-admin instead of a scoped ClusterRole was the highest-priority RBAC finding in our security audit.",
+      "codeExample": {
+        "language": "yaml",
+        "code": "# ClusterRole: read nodes and pods across all namespaces\napiVersion: rbac.authorization.k8s.io/v1\nkind: ClusterRole\nmetadata:\n  name: metrics-collector\nrules:\n  - apiGroups: [\"\"]\n    resources: [\"nodes\", \"nodes/metrics\", \"pods\", \"namespaces\"]\n    verbs: [\"get\", \"list\", \"watch\"]\n  - apiGroups: [\"metrics.k8s.io\"]\n    resources: [\"nodes\", \"pods\"]\n    verbs: [\"get\", \"list\"]\n---\napiVersion: rbac.authorization.k8s.io/v1\nkind: ClusterRoleBinding\nmetadata:\n  name: metrics-collector-binding\nsubjects:\n  - kind: ServiceAccount\n    name: prometheus\n    namespace: monitoring\nroleRef:\n  kind: ClusterRole\n  name: metrics-collector\n  apiGroup: rbac.authorization.k8s.io"
+      },
+      "etymology": "Cluster from Latin clustrum ('a bolt, bar'); Role from Old French role ('list, register'); ClusterRole and ClusterRoleBinding as Kubernetes API types were introduced with RBAC GA in Kubernetes 1.8 (2017).",
+      "unlockLevel": 4,
+      "tags": ["kubernetes", "security", "rbac", "platform"],
+      "category": "components"
+    },
+    {
+      "id": "k8s-ad2-0240-0000-0000-0000-000000000024",
+      "word": "Audit Logging",
+      "pronunciation": "AW-dit LOG-ing",
+      "partOfSpeech": "noun",
+      "shortDefinition": "API server policy that records every request (who, what, when) to a log sink for compliance and incident investigation.",
+      "simpleDefinition": "Kubernetes Audit Logging records every request made to the API server — who made it (user or ServiceAccount), what action was performed, on which resource, and when — according to a policy that specifies which requests to log at which level of detail. Audit logs are the primary forensic tool after a security incident and the foundation of compliance evidence for SOC 2, PCI DSS, and CIS Kubernetes Benchmark.",
+      "longDefinition": "The Kubernetes API server supports an audit policy that controls which requests are logged and how much detail is captured. An audit policy is a YAML file specifying rules in order; the first matching rule applies. Each rule selects API groups, resources, verbs, users, and namespaces, and assigns one of four logging levels: None (do not log), Metadata (log request metadata — user, verb, resource, timestamp — but not body), Request (log metadata plus request body), and RequestResponse (log metadata plus request and response bodies — useful for debugging but verbose). Audit events are written to a log backend: a JSON file on the API server host (configurable via --audit-log-path) or a webhook backend that forwards events to an aggregation system. The audit log captures the full picture of cluster activity: kubectl exec into pods, Secret reads, privilege escalations, and admission webhook calls. Critical events to audit at RequestResponse level: Secret reads and writes, ServiceAccount token creation, ClusterRoleBinding mutations. Key fields in each audit event: user.username, user.groups, verb, objectRef.resource, objectRef.name, objectRef.namespace, sourceIPs, requestReceivedTimestamp. When responding to a security incident, audit logs answer: 'What did the attacker read? What did they create? Which ServiceAccount token did they use?'",
+      "connector": "Think of Kubernetes Audit Logging like a security camera system for the API server: it records every door that opens (every API call), who opened it, and when — without the camera, you have no evidence of what happened after an intrusion.",
+      "techContext": "After our incident, the audit logs let us reconstruct exactly which ServiceAccount was used, which Secrets it read, and which pods it exec'd into — the investigation would have been impossible without them.",
+      "exampleSentence": "The audit log showed that the compromised CI token had listed all Secrets in the production namespace at 03:17 UTC — two hours before the attacker's payload executed.",
+      "codeExample": {
+        "language": "yaml",
+        "code": "# Audit policy (passed to API server via --audit-policy-file)\napiVersion: audit.k8s.io/v1\nkind: Policy\nrules:\n  # Log Secret reads and writes at RequestResponse level\n  - level: RequestResponse\n    resources:\n      - group: \"\"\n        resources: [\"secrets\"]\n\n  # Log RBAC mutations at RequestResponse level\n  - level: RequestResponse\n    resources:\n      - group: \"rbac.authorization.k8s.io\"\n        resources: [\"clusterrolebindings\", \"rolebindings\"]\n\n  # Log all other requests at Metadata level (no body)\n  - level: Metadata\n    omitStages: [RequestReceived]"
+      },
+      "etymology": "Audit from Latin audire ('to hear') — originally referred to an official examination of accounts read aloud; logging from Old Norse logg ('a felled tree', later a ship's log) — adopted into computing for event recording.",
+      "unlockLevel": 4,
+      "tags": ["kubernetes", "security", "compliance", "operations"],
+      "category": "concepts"
+    },
+    {
+      "id": "k8s-ad2-0250-0000-0000-0000-000000000025",
+      "word": "Encrypted etcd",
+      "pronunciation": "en-KRIP-ted ET-see-dee",
+      "partOfSpeech": "noun",
+      "shortDefinition": "KMS-backed encryption at rest for etcd data, ensuring Secrets are not stored in plaintext on the control-plane disk.",
+      "simpleDefinition": "By default, Kubernetes Secrets are stored in etcd with only base64 encoding — readable by anyone with etcd access. Enabling encryption at rest means the API server encrypts Secret data before writing to etcd and decrypts it on read. With a KMS provider, the encryption key lives outside the cluster — in AWS KMS, GCP Cloud KMS, or Azure Key Vault — so even a stolen etcd backup is unreadable without KMS access.",
+      "longDefinition": "A default Kubernetes installation stores Secrets in etcd with base64 encoding — not encryption. Anyone with direct etcd access (through a snapshot, a backup, or an etcd client) can read all Secret values including database passwords, API tokens, and TLS private keys. Kubernetes supports encryption at rest via an EncryptionConfiguration resource on the API server. The provider list determines where encryption keys live: aescbc/aesgcm encrypt with a symmetric key stored in the EncryptionConfiguration file on the control plane — better than plaintext but the key is still on-host. The KMS v2 provider (stable in Kubernetes 1.29) uses envelope encryption: each Secret is encrypted with a per-object data encryption key (DEK) using AES-GCM; the DEK is itself wrapped by a key-encryption key (KEK) that lives in the external KMS and never leaves it. Even a complete etcd dump is unreadable without access to the external KMS. Cloud provider implementations: AWS EKS enables envelope encryption natively via the cluster config using the aws-encryption-provider sidecar. GKE Application-layer secrets encryption is a cluster feature flag. AKS uses the Azure KMS plugin calling Azure Key Vault. After enabling encryption, existing Secrets must be re-encrypted: kubectl get secrets --all-namespaces -o json | kubectl replace -f -. The identity provider (no encryption) must remain as a fallback until all objects are migrated.",
+      "connector": "Think of encrypted etcd like a bank vault inside a safety deposit box: etcd is the vault (physically secure), but its contents are further locked in a box whose key (the KEK) is held by the bank (external KMS). Breaking into the vault without the key yields only locked boxes.",
+      "techContext": "After enabling KMS v2 encryption on our EKS cluster, a stolen etcd backup from our disaster-recovery tests showed only ciphertext — confirmed that credentials are protected even if backup storage is compromised.",
+      "exampleSentence": "An etcd encryption audit found that our 18-month-old cluster had stored Secrets in plaintext all along because the encryption provider had never been configured after initial setup.",
+      "codeExample": {
+        "language": "yaml",
+        "code": "# /etc/kubernetes/encryption-config.yaml (passed to kube-apiserver)\napiVersion: apiserver.config.k8s.io/v1\nkind: EncryptionConfiguration\nresources:\n  - resources:\n      - secrets\n      - configmaps   # optional: encrypt ConfigMaps too\n    providers:\n      - kms:\n          apiVersion: v2          # KMS v2: per-object DEKs, cached in-memory\n          name: aws-kms\n          endpoint: unix:///var/run/kmsplugin/socket.sock\n          cachesize: 1000\n          timeout: 3s\n      - identity: {}              # fallback for reading pre-encryption Secrets\n\n# After enabling, re-encrypt existing Secrets:\n# kubectl get secrets --all-namespaces -o json | kubectl replace -f -"
+      },
+      "etymology": "Encrypted from Late Latin encryptare ('to hide in a crypt'); etcd from Unix /etc (configuration directory) + 'd' (distributed) — named by CoreOS circa 2013.",
+      "unlockLevel": 4,
+      "tags": ["kubernetes", "security", "etcd", "compliance"],
+      "category": "concepts"
+    },
+    {
+      "id": "k8s-ad2-0260-0000-0000-0000-000000000026",
+      "word": "Multi-Cluster Federation",
+      "pronunciation": "MUL-tee KLUS-tur FED-uh-RAY-shun",
+      "partOfSpeech": "noun",
+      "shortDefinition": "Topology where workloads span multiple independent Kubernetes clusters for geographic distribution or blast-radius reduction.",
+      "simpleDefinition": "Multi-cluster federation describes running workloads across multiple independent Kubernetes clusters, each with its own control plane. Clusters may span geographic regions for low latency, separate environments for blast-radius isolation, or divide tenants for regulatory compliance. GitOps tooling — each cluster running its own ArgoCD or Flux agent — has replaced the failed KubeFed centralised control-plane approach.",
+      "longDefinition": "A single Kubernetes cluster is a single failure domain, a single blast radius, and a single regulatory boundary. Multiple clusters trade operational complexity for isolation. The four forces that push organisations toward multiple clusters: blast-radius isolation (a rogue DaemonSet, broken webhook, or etcd corruption affects all workloads in a single cluster), geographic distribution (latency-sensitive workloads need clusters near their users; active-active multi-region requires independent clusters because a single cluster spanning regions cannot survive a network partition without split-brain), regulatory and data-sovereignty requirements (GDPR, HIPAA, and financial regulations often require data to remain within specific legal jurisdictions), and tenancy isolation (large enterprises find namespace-per-team sharing increasingly fragile). The Kubernetes Federation project (KubeFed) was archived in 2023 after limited adoption — its centralised API approach proved too complex and too fragile. The winning pattern is GitOps: each cluster self-reconciles from Git independently. ArgoCD's ApplicationSet controller fans out Applications to registered clusters; Flux manages clusters by pointing each cluster's Flux agent at the appropriate Git path. Cross-cluster service discovery uses the MCS API (ServiceExport/ServiceImport) implemented by Submariner or cloud-native solutions like GKE Multi-Cluster Services.",
+      "connector": "Think of multi-cluster federation like a franchise restaurant chain: each location (cluster) runs independently with its own kitchen (control plane), but they share the same menu (GitOps config repo) and brand standards (policies). No single location's failure takes down the whole chain.",
+      "techContext": "We run three production clusters — us-east, eu-west, and ap-southeast — each with its own ArgoCD ApplicationSet, sharing a single fleet Git repo; a regional cluster outage affects only its traffic portion.",
+      "exampleSentence": "Multi-cluster federation let us pass the GDPR audit confidently because EU customer data provably never leaves the eu-west cluster, which has independent etcd storage and no cross-cluster volume mounts.",
+      "codeExample": {
+        "language": "yaml",
+        "code": "# ArgoCD ApplicationSet: deploy the same app to all production clusters\napiVersion: argoproj.io/v1alpha1\nkind: ApplicationSet\nmetadata:\n  name: my-service\n  namespace: argocd\nspec:\n  generators:\n    - clusters:\n        selector:\n          matchLabels:\n            tier: production\n  template:\n    metadata:\n      name: \"my-service-{{name}}\"\n    spec:\n      source:\n        repoURL: https://github.com/my-org/fleet\n        path: apps/my-service\n        targetRevision: main\n        helm:\n          valueFiles:\n            - values.yaml\n            - \"values-{{metadata.labels.region}}.yaml\"\n      destination:\n        server: \"{{server}}\"\n        namespace: my-service\n      syncPolicy:\n        automated:\n          prune: true\n          selfHeal: true"
+      },
+      "etymology": "Federation from Latin foedus ('treaty, league') — the political metaphor for independent states cooperating while retaining sovereignty; applied to Kubernetes clusters by the core project circa 2015.",
+      "unlockLevel": 4,
+      "tags": ["kubernetes", "architecture", "gitops", "platform"],
+      "category": "architecture"
+    },
+    {
+      "id": "k8s-ad2-0270-0000-0000-0000-000000000027",
+      "word": "Environment Promotion via Git PR",
+      "pronunciation": "en-VY-run-munt pruh-MOH-shun VY-uh GIT PEE-AR",
+      "partOfSpeech": "noun",
+      "shortDefinition": "GitOps workflow where promoting a config change to staging or production is done via a reviewed Pull Request merge.",
+      "simpleDefinition": "GitOps environment promotion makes deploying to a new environment a Git operation, not a CLI command. A CI pipeline builds an image and opens a PR in the config repo that bumps the image tag in the target environment's values file. A human reviews and merges the PR; the GitOps controller detects the commit and applies the change. Git history is the deployment record.",
+      "longDefinition": "GitOps environment promotion separates the application source repository (code and Dockerfile) from the environment configuration repository (Kustomize overlays or Helm values files per environment). The promotion flow: CI builds and pushes my-service:abc1234 and opens a PR against the config repo that sets image.tag: abc1234 in clusters/dev/values.yaml. The dev PR is auto-merged; the GitOps controller deploys to dev within minutes. After dev tests pass, a separate PR is opened (manually or by automation) targeting clusters/staging/values.yaml with the same tag. After staging sign-off, a production PR is opened targeting clusters/prod/values.yaml — this PR requires a named approver. Merging it is the production deployment. The Git PR is the deployment record: who approved it, what changed, what CI checks ran on the PR — all of this is in the Git log, satisfying SOC 2, ISO 27001, and most financial regulatory change management requirements. Flux provides an ImageUpdateAutomation controller that automates step 1: it watches an OCI registry, detects a new tag matching a semver policy, and commits the bumped tag to Git. ArgoCD relies on external tooling (Argo CD Image Updater, or a CI step) for the same purpose.",
+      "connector": "Think of environment promotion via Git PR like a formal promotion committee at a company: the candidate (new image) moves through probationary stages (dev, staging), each stage requires sign-off, and the final promotion to a senior role (production) requires a documented approval that is permanently on record.",
+      "techContext": "Our promotion pipeline opens the prod PR automatically after staging smoke tests pass; the tech lead's PR approval is both the human gate and the compliance record for every production deployment.",
+      "exampleSentence": "Environment promotion via Git PR meant that when auditors asked for evidence of who approved the March 15 production change, we simply linked to the GitHub PR — author, reviewer, CI checks, and merge timestamp all in one place.",
+      "codeExample": {
+        "language": "bash",
+        "code": "# CI step: bump image tag in dev config repo and open PR\nNEW_TAG=$(git rev-parse --short HEAD)\n\n# Clone config repo\ngit clone https://github.com/my-org/fleet-config /tmp/fleet\ncd /tmp/fleet\n\n# Update dev values file\nsed -i \"s|image.tag:.*|image.tag: ${NEW_TAG}|\" \\\n  clusters/dev/apps/my-service/values.yaml\n\ngit commit -am \"chore(dev): bump my-service to ${NEW_TAG}\"\ngit push origin HEAD:bump-my-service-dev-${NEW_TAG}\n\n# Open PR via GitHub CLI\ngh pr create \\\n  --title \"deploy: my-service ${NEW_TAG} to dev\" \\\n  --body \"Auto-generated by CI. Merge to trigger GitOps deploy.\"\n\n# For production: same flow but requires --reviewer tech-lead"
+      },
+      "etymology": "Environment from Latin environer ('to surround'); promotion from Latin promotio ('a moving forward'); Pull Request is a GitHub-coined term from 2008 for requesting that a branch be pulled and merged.",
+      "unlockLevel": 4,
+      "tags": ["kubernetes", "gitops", "devops", "processes"],
+      "category": "processes"
+    },
+    {
+      "id": "k8s-ad2-0280-0000-0000-0000-000000000028",
+      "word": "KMS Plugin",
+      "pronunciation": "KAY-em-es PLUG-in",
+      "partOfSpeech": "noun",
+      "shortDefinition": "API server extension that delegates Secret encryption/decryption to an external KMS (AWS KMS, GCP Cloud KMS, HashiCorp Vault).",
+      "simpleDefinition": "A KMS Plugin is a sidecar process running alongside the Kubernetes API server that bridges the API server's encryption provider interface to an external key management system. The API server sends DEK wrap/unwrap calls to the plugin over a Unix socket; the plugin calls AWS KMS, GCP Cloud KMS, or HashiCorp Vault. The key-encryption key (KEK) never leaves the external KMS.",
+      "longDefinition": "Kubernetes's KMS provider interface (KMS v1 introduced in 1.10; KMS v2 stable in 1.29) allows the API server to delegate Secret encryption to an external key management system. The architecture uses envelope encryption: the API server generates a unique data encryption key (DEK) per Secret, encrypts the Secret data with AES-GCM using the DEK, then sends the DEK to the KMS plugin for wrapping (encryption with the key-encryption key, KEK). The KMS plugin calls the external KMS — AWS KMS, GCP Cloud KMS, Azure Key Vault, or HashiCorp Vault — which wraps the DEK and returns the ciphertext DEK. Both the encrypted Secret and the ciphertext DEK are stored in etcd. On read, the API server sends the ciphertext DEK to the plugin for unwrapping; the plugin calls the KMS to recover the DEK; the API server decrypts the Secret. The KEK never leaves the external KMS. KMS v2 improves on v1 by caching DEKs in memory — reducing KMS API call volume dramatically compared to v1 which called the KMS on every read. The KMS plugin must be highly available; if it becomes unreachable, the API server cannot decrypt Secrets and workloads that reference them will fail to start. Cloud-managed Kubernetes services (EKS, GKE, AKS) provide native KMS integration without running a plugin sidecar manually.",
+      "connector": "Think of a KMS Plugin like a bank safety-deposit box attendant: you bring your document (DEK) to the attendant, who locks it in a vault (external KMS) that only the bank controls. When you need the document back, the attendant retrieves it — you never hold the vault key yourself.",
+      "techContext": "Our KMS Plugin connects to AWS KMS via a CMK ARN; the plugin is deployed as a DaemonSet on control-plane nodes with a PodDisruptionBudget of minAvailable: 1 to ensure it survives node drains.",
+      "exampleSentence": "After the KMS Plugin was misconfigured and became unreachable, new pods started failing with SecretNotFound errors because the API server could not decrypt the Secrets needed to inject environment variables.",
+      "codeExample": {
+        "language": "yaml",
+        "code": "# KMS plugin sidecar in the kube-apiserver static pod (simplified)\n# The plugin listens on a Unix socket; the API server connects to it\n\n# EncryptionConfiguration referencing the KMS plugin:\napiVersion: apiserver.config.k8s.io/v1\nkind: EncryptionConfiguration\nresources:\n  - resources: [secrets]\n    providers:\n      - kms:\n          apiVersion: v2\n          name: aws-kms-us-east-1\n          endpoint: unix:///var/run/kmsplugin/socket.sock\n          cachesize: 1000   # cache decrypted DEKs; reduces KMS API calls\n          timeout: 3s\n      - identity: {}  # fallback for reading pre-encryption secrets\n\n# The aws-encryption-provider sidecar container runs alongside kube-apiserver\n# mounting the same socket path"
+      },
+      "etymology": "KMS (Key Management Service/System) — generic industry term; plugin from 'plug in' (a connector that extends a system); the Kubernetes KMS provider interface was introduced in Kubernetes Enhancement Proposal KEP-1867.",
+      "unlockLevel": 4,
+      "tags": ["kubernetes", "security", "encryption", "etcd"],
+      "category": "components"
+    },
+    {
+      "id": "k8s-ad2-0290-0000-0000-0000-000000000029",
+      "word": "Projected Volume",
+      "pronunciation": "proh-JEK-ted VAHL-yoom",
+      "partOfSpeech": "noun",
+      "shortDefinition": "Single volume mount that aggregates multiple sources (Secrets, ConfigMaps, ServiceAccount token, downward API) into one directory.",
+      "simpleDefinition": "A Projected Volume combines multiple volume sources — Secrets, ConfigMaps, a ServiceAccount token, and downward API values — into a single directory mount inside a container. Instead of mounting four separate volumes into four directories, one projected volume delivers all sources under one path with controlled file permissions and token expiry.",
+      "longDefinition": "Kubernetes supports four volume sources that can be projected: Secret (provides secret data as files), ConfigMap (provides configuration data as files), ServiceAccountToken (provides a bound, audience-scoped, time-limited token — replacing the older auto-mounted legacy token), and DownwardAPI (provides pod metadata — namespace, labels, annotations, resource limits — as files or environment variables). A Projected Volume aggregates these sources into a single filesystem mount point with a configurable defaultMode (file permission bits) applied uniformly. The most important use is the ServiceAccountToken projection: unlike the legacy auto-mounted Secret-based token, a projected ServiceAccountToken has configurable audience (bound to a specific API server or cloud service), expirationSeconds (default 3600 s, minimum 600 s, kubelet rotates automatically before expiry), and path (where inside the projected directory to place the token file). This is the mechanism behind Workload Identity — the IRSA, GKE Workload Identity, and Azure Workload Identity tokens are all projected tokens with cloud-specific audiences. The projected volume can also enforce that all sources are mapped into the same directory with consistent permissions, avoiding the per-source directory proliferation that occurs when mounting multiple volumes separately.",
+      "connector": "Think of a Projected Volume like a single company badge that contains your photo ID, your access card, your business cards, and your car park pass — all encoded on one card instead of four separate items you have to carry.",
+      "techContext": "We use a projected volume to co-locate the ServiceAccountToken (for Workload Identity), the CA bundle ConfigMap, and the application config Secret all under /var/secrets — one mount, clean filesystem layout.",
+      "exampleSentence": "Switching to a projected ServiceAccountToken with expirationSeconds: 3600 replaced the old legacy token Secret that had been permanently mounted in the pod with no expiry — a security improvement with no application code change.",
+      "codeExample": {
+        "language": "yaml",
+        "code": "apiVersion: v1\nkind: Pod\nmetadata:\n  name: app-with-projected-volume\nspec:\n  containers:\n    - name: app\n      image: my-org/app:1.0\n      volumeMounts:\n        - name: secrets-and-config\n          mountPath: /var/secrets\n          readOnly: true\n  volumes:\n    - name: secrets-and-config\n      projected:\n        defaultMode: 0444   # read-only for all sources\n        sources:\n          - serviceAccountToken:\n              path: token\n              expirationSeconds: 3600\n              audience: sts.amazonaws.com   # AWS IRSA audience\n          - configMap:\n              name: app-config\n              items:\n                - key: app.properties\n                  path: app.properties\n          - secret:\n              name: tls-certs\n              items:\n                - key: tls.crt\n                  path: tls.crt\n          - downwardAPI:\n              items:\n                - path: namespace\n                  fieldRef:\n                    fieldPath: metadata.namespace"
+      },
+      "etymology": "Projected from Latin proiectus ('thrown forward') — in the sense of mapping or consolidating information into a single representation; the Projected Volume type was introduced in Kubernetes 1.11 (2018).",
+      "unlockLevel": 4,
+      "tags": ["kubernetes", "security", "workload-identity", "storage"],
+      "category": "components"
+    }
+  ]
+}
