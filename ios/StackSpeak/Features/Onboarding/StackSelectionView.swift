@@ -101,7 +101,7 @@ struct StackSelectionView: View {
 
             VStack(spacing: theme.spacing.sm) {
                 ForEach(mandatoryStacks) { stack in
-                    StackCard(stack: stack, isSelected: true, isMandatory: false,
+                    StackCard(stack: stack, isSelected: true,
                               isLocked: true, onToggle: {})
                 }
             }
@@ -120,7 +120,6 @@ struct StackSelectionView: View {
                     StackCard(
                         stack: stack,
                         isSelected: selectedOptionalStacks.contains(stack),
-                        isMandatory: false,
                         onToggle: { toggleStack(stack) }
                     )
                 }
@@ -182,22 +181,20 @@ struct StackCard: View {
 
     let stack: WordStack
     let isSelected: Bool
-    let isMandatory: Bool
     let isLocked: Bool
     let onToggle: () -> Void
 
-    init(stack: WordStack, isSelected: Bool, isMandatory: Bool,
+    init(stack: WordStack, isSelected: Bool,
          isLocked: Bool = false, onToggle: @escaping () -> Void) {
         self.stack = stack
         self.isSelected = isSelected
-        self.isMandatory = isMandatory
         self.isLocked = isLocked
         self.onToggle = onToggle
     }
 
     var body: some View {
         Group {
-            if isMandatory || isLocked {
+            if isLocked {
                 cardContent
                     .accessibilityLabel(stack.displayName)
                     .accessibilityHint(isLocked ? String(localized: "stacks.locked.a11yHint") : "")
@@ -228,16 +225,9 @@ struct StackCard: View {
                 .clipShape(.rect(cornerRadius: RadiusTokens.inline))
 
             VStack(alignment: .leading, spacing: 2) {
-                HStack(spacing: theme.spacing.xs) {
-                    Text(stack.displayName)
-                        .font(TypographyTokens.headline)
-                        .foregroundColor(isLocked ? theme.colors.inkMuted : theme.colors.ink)
-                    if isMandatory {
-                        Text("onboarding.stacks.required")
-                            .font(TypographyTokens.caption)
-                            .foregroundColor(theme.colors.inkMuted)
-                    }
-                }
+                Text(stack.displayName)
+                    .font(TypographyTokens.headline)
+                    .foregroundColor(isLocked ? theme.colors.inkMuted : theme.colors.ink)
 
                 Text(stack.description)
                     .font(TypographyTokens.footnote)
@@ -247,11 +237,9 @@ struct StackCard: View {
 
             Spacer()
 
-            if !isMandatory {
-                Image(systemName: cardState == .active ? "checkmark.circle.fill" : "circle")
-                    .font(.system(.title2))
-                    .foregroundColor(cardState == .active ? theme.colors.accent : theme.colors.inkFaint)
-            }
+            Image(systemName: cardState == .active ? "checkmark.circle.fill" : "circle")
+                .font(.system(.title2))
+                .foregroundColor(cardState == .active ? theme.colors.accent : theme.colors.inkFaint)
         }
         .padding(theme.spacing.cardPadding)
         .background(cardState == .active ? theme.colors.accentBg : theme.colors.surface)

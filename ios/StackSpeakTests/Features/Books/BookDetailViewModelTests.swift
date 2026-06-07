@@ -48,7 +48,6 @@ struct BookDetailViewModelChapterTests {
         let vm = BookDetailViewModel()
         await vm.open(
             bookId: "book-1",
-            catalogService: BookCatalogService(source: mock),
             contentSource: mock,
             modelContext: ModelContext(container)
         )
@@ -77,7 +76,6 @@ struct BookDetailViewModelChapterTests {
         let vm = BookDetailViewModel()
         await vm.open(
             bookId: "book-1",
-            catalogService: BookCatalogService(source: mock),
             contentSource: mock,
             modelContext: context
         )
@@ -137,7 +135,6 @@ struct BookDetailViewModelStreakToastTests {
         let vm = BookDetailViewModel()
         await vm.open(
             bookId: "book-1",
-            catalogService: BookCatalogService(source: mock),
             contentSource: mock,
             modelContext: context
         )
@@ -159,7 +156,6 @@ struct BookDetailViewModelStreakToastTests {
         let vm = BookDetailViewModel()
         await vm.open(
             bookId: "book-1",
-            catalogService: BookCatalogService(source: mock),
             contentSource: mock,
             modelContext: context
         )
@@ -182,7 +178,6 @@ struct BookDetailViewModelStreakToastTests {
         let vm = BookDetailViewModel()
         await vm.open(
             bookId: "book-1",
-            catalogService: BookCatalogService(source: mock),
             contentSource: mock,
             modelContext: context
         )
@@ -191,7 +186,6 @@ struct BookDetailViewModelStreakToastTests {
         // Re-call open within the same VM instance — should not emit again.
         await vm.open(
             bookId: "book-1",
-            catalogService: BookCatalogService(source: mock),
             contentSource: mock,
             modelContext: context
         )

@@ -4,22 +4,30 @@ import Foundation
 
 // MARK: - Helpers
 
-/// Mirrors StackManagementView.saveChanges() for a free user — always unions mandatory + optional.
-private func applyFreeUserSave(progress: UserProgress, selectedOptional: Set<String>) {
-    let mandatory = Set(WordStack.mandatoryStacks(for: progress.level).map { $0.rawValue })
-    progress.selectedStacks = mandatory.union(selectedOptional)
+/// Drives the production `StackSelectionPolicy` (not a copy of it) so these tests
+/// break if the real save logic changes.
+private func stacks(_ ids: Set<String>) -> Set<WordStack> {
+    Set(ids.map { WordStack(rawValue: $0) })
 }
 
-/// Mirrors StackManagementView.saveChanges() for a pro user — saves exactly the selection.
+private func applyFreeUserSave(progress: UserProgress, selectedOptional: Set<String>) {
+    progress.selectedStacks = StackSelectionPolicy.selectedStacks(
+        level: progress.level, isPro: false,
+        selectedMandatory: [], selectedOptional: stacks(selectedOptional)
+    )
+}
+
 private func applyProUserSave(progress: UserProgress,
                                selectedMandatory: Set<String>,
                                selectedOptional: Set<String>) {
-    progress.selectedStacks = selectedMandatory.union(selectedOptional)
+    progress.selectedStacks = StackSelectionPolicy.selectedStacks(
+        level: progress.level, isPro: true,
+        selectedMandatory: stacks(selectedMandatory), selectedOptional: stacks(selectedOptional)
+    )
 }
 
-/// Mirrors StackManagementView.canSave for a pro user.
 private func canSavePro(mandatory: Int, optional: Int) -> Bool {
-    mandatory + optional >= 3
+    StackSelectionPolicy.canSave(mandatoryCount: mandatory, optionalCount: optional)
 }
 
 // MARK: - Free user save logic

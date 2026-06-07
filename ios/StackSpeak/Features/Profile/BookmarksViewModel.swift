@@ -1,5 +1,8 @@
 import Foundation
 import SwiftData
+import OSLog
+
+private let logger = Logger(category: "BookmarksViewModel")
 
 /// View state for the consolidated bookmarks screen under the You tab.
 /// Surfaces two sections: bookmarked book cards and bookmarked words.
@@ -33,7 +36,14 @@ final class BookmarksViewModel {
     ) async {
         wordIds = userProgress?.bookmarkedWordIds ?? []
 
-        let bookmarks = bookmarkRepository.allBookmarks()
+        let bookmarks: [BookmarkedCard]
+        do {
+            bookmarks = try bookmarkRepository.allBookmarks()
+        } catch {
+            logger.error("Failed to load bookmarks: \(error.localizedDescription, privacy: .public)")
+            cardRows = []
+            return
+        }
         guard !bookmarks.isEmpty else {
             cardRows = []
             return

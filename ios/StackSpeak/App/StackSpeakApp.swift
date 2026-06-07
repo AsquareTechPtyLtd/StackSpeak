@@ -34,7 +34,7 @@ struct StackSpeakApp: App {
             // Wipe the store and retry so the app stays usable. Word data reloads from
             // the bundle; user progress is lost, but a crash loop is worse.
             logger.error("ModelContainer init failed, wiping store and retrying: \(firstError.localizedDescription, privacy: .public)")
-            Self.deleteStoreFiles(schema: schema)
+            Self.deleteStoreFiles()
             do {
                 container = try Self.makeContainer(schema: schema)
             } catch let secondError {
@@ -81,7 +81,7 @@ struct StackSpeakApp: App {
         return container
     }
 
-    private static func deleteStoreFiles(schema: Schema) {
+    private static func deleteStoreFiles() {
         // Delete the entire SwiftData directory for this app to ensure a clean slate.
         // SwiftData stores files in Application Support/{bundle-id}/
         guard let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first else { return }

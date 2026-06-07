@@ -21,14 +21,9 @@ final class ReviewSchedulerService: ReviewRepository {
             throw error
         }
     }
-
-    // Note: fetchDueReviews and getReviewStats were removed as dead code.
-    // ReviewViewModel implements these inline. Future: consolidate logic here.
 }
 
 enum ReviewQuality: Int {
     case again = 2
     case good = 4
 }
-
-// ReviewStats was removed - unused after deleting getReviewStats()

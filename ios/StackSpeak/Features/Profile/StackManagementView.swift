@@ -2,9 +2,8 @@ import SwiftUI
 import SwiftData
 import OSLog
 
-/// SM1 — optional stacks grouped by category (Foundations / Intermediate /
-/// Advanced) so the picker doesn't read as one long flat list.
-/// Pro users can also deselect mandatory stacks; minimum 3 total required.
+/// Lets users manage which stacks feed their daily words. Optional stacks are
+/// grouped by category; pro users can also deselect mandatory stacks.
 struct StackManagementView: View {
     @Environment(\.theme) private var theme
     @Environment(\.userProgress) private var userProgress
@@ -34,13 +33,12 @@ struct StackManagementView: View {
             .sorted { $0.0.sortOrder < $1.0.sortOrder }
     }
 
-    private var totalSelectedCount: Int {
-        isPro
-            ? selectedMandatoryStacks.count + selectedOptionalStacks.count
-            : mandatoryStacks.count + selectedOptionalStacks.count
+    private var canSave: Bool {
+        StackSelectionPolicy.canSave(
+            mandatoryCount: isPro ? selectedMandatoryStacks.count : mandatoryStacks.count,
+            optionalCount: selectedOptionalStacks.count
+        )
     }
-
-    private var canSave: Bool { totalSelectedCount >= 3 }
 
     var body: some View {
         ZStack {
@@ -125,7 +123,6 @@ struct StackManagementView: View {
                     StackCard(
                         stack: stack,
                         isSelected: isPro ? selectedMandatoryStacks.contains(stack) : true,
-                        isMandatory: false,
                         isLocked: !isPro,
                         onToggle: { toggleMandatoryStack(stack) }
                     )
@@ -154,7 +151,6 @@ struct StackManagementView: View {
                     StackCard(
                         stack: stack,
                         isSelected: selectedOptionalStacks.contains(stack),
-                        isMandatory: false,
                         onToggle: { toggleStack(stack) }
                     )
                 }
@@ -191,15 +187,12 @@ struct StackManagementView: View {
 
     private func saveChanges() {
         guard let progress = userProgress, canSave else { return }
-        let selectedRaw: Set<String>
-        if isPro {
-            selectedRaw = Set(selectedMandatoryStacks.map { $0.rawValue })
-                .union(Set(selectedOptionalStacks.map { $0.rawValue }))
-        } else {
-            let mandatory = Set(WordStack.mandatoryStacks(for: progress.level).map { $0.rawValue })
-            selectedRaw = mandatory.union(Set(selectedOptionalStacks.map { $0.rawValue }))
-        }
-        progress.selectedStacks = selectedRaw
+        progress.selectedStacks = StackSelectionPolicy.selectedStacks(
+            level: progress.level,
+            isPro: isPro,
+            selectedMandatory: selectedMandatoryStacks,
+            selectedOptional: selectedOptionalStacks
+        )
         do {
             try modelContext.save()
             saveSuccessTrigger &+= 1

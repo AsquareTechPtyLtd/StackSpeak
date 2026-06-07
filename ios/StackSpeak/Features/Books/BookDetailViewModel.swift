@@ -53,7 +53,6 @@ final class BookDetailViewModel {
     /// twice will not re-emit the toast within the same ViewModel instance.
     func open(
         bookId: String,
-        catalogService: BookCatalogService,
         contentSource: any BookContentSource,
         modelContext: ModelContext,
         now: Date = Date()

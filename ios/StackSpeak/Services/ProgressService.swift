@@ -1,17 +1,15 @@
 import Foundation
 import SwiftData
-import OSLog
 
 @MainActor
 final class ProgressService: ProgressRepository {
     private let modelContext: ModelContext
-    private let logger = Logger(category: "ProgressService")
 
     init(modelContext: ModelContext) {
         self.modelContext = modelContext
     }
 
-    func markWordPracticed(wordId: UUID, sentence: String, inputMethod: InputMethod, markAsMastered: Bool, userProgress: UserProgress) {
+    func markWordPracticed(wordId: UUID, sentence: String, inputMethod: InputMethod, markAsMastered: Bool, userProgress: UserProgress) throws {
         var practiced = userProgress.wordsPracticedIds
         practiced.insert(wordId)
         userProgress.wordsPracticedIds = practiced
@@ -46,38 +44,26 @@ final class ProgressService: ProgressRepository {
             userProgress.wordsWithTwoCorrectIds = twoCorrect
         }
 
-        do {
-            try modelContext.save()
-        } catch {
-            logger.error("Failed to save word practiced: \(error.localizedDescription, privacy: .public)")
-        }
+        try modelContext.save()
     }
 
-    func markWordMastered(_ wordId: UUID, userProgress: UserProgress) {
+    func markWordMastered(_ wordId: UUID, userProgress: UserProgress) throws {
         var mastered = userProgress.masteredWordIds
         mastered.insert(wordId)
         userProgress.masteredWordIds = mastered
 
-        do {
-            try modelContext.save()
-        } catch {
-            logger.error("Failed to save word mastered: \(error.localizedDescription, privacy: .public)")
-        }
+        try modelContext.save()
     }
 
-    func unmarkWordMastered(_ wordId: UUID, userProgress: UserProgress) {
+    func unmarkWordMastered(_ wordId: UUID, userProgress: UserProgress) throws {
         var mastered = userProgress.masteredWordIds
         mastered.remove(wordId)
         userProgress.masteredWordIds = mastered
 
-        do {
-            try modelContext.save()
-        } catch {
-            logger.error("Failed to save word unmastered: \(error.localizedDescription, privacy: .public)")
-        }
+        try modelContext.save()
     }
 
-    func toggleBookmark(_ wordId: UUID, userProgress: UserProgress) {
+    func toggleBookmark(_ wordId: UUID, userProgress: UserProgress) throws {
         var bookmarked = userProgress.bookmarkedWordIds
         if bookmarked.contains(wordId) {
             bookmarked.remove(wordId)
@@ -86,11 +72,7 @@ final class ProgressService: ProgressRepository {
         }
         userProgress.bookmarkedWordIds = bookmarked
 
-        do {
-            try modelContext.save()
-        } catch {
-            logger.error("Failed to save bookmark toggle: \(error.localizedDescription, privacy: .public)")
-        }
+        try modelContext.save()
     }
 
     func completeDailySet(_ dailySet: DailySet, userProgress: UserProgress) throws {
@@ -138,7 +120,7 @@ final class ProgressService: ProgressRepository {
         selectedAnswer: String,
         correctAnswer: String,
         userProgress: UserProgress
-    ) -> Int? {
+    ) throws -> Int? {
         let result = AssessmentResult(
             wordId: wordId,
             attemptedAt: Date(),
@@ -162,11 +144,7 @@ final class ProgressService: ProgressRepository {
         let oldLevel = userProgress.level
         checkAndAdvanceLevel(userProgress: userProgress)
 
-        do {
-            try modelContext.save()
-        } catch {
-            logger.error("Failed to save assessment result: \(error.localizedDescription, privacy: .public)")
-        }
+        try modelContext.save()
 
         return userProgress.level > oldLevel ? userProgress.level : nil
     }

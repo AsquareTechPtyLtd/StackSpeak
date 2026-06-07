@@ -1,8 +1,6 @@
 import Foundation
 
-/// Pluggable source of book catalog + per-book content. The MVP ships
-/// `BundledBookSource` (reads from `Bundle.main`); Phase 7 swaps in
-/// `RemoteBookSource` without UI / state changes.
+/// Loads book catalog, manifests, and chapter cards.
 protocol BookContentSource: Sendable {
     func loadCatalog() async throws -> BooksCatalog
     func loadManifest(bookId: String) async throws -> BookManifest

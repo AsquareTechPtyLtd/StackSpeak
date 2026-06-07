@@ -21,8 +21,8 @@ struct ProgressServiceTests {
         userProgress.level = 1
         context.insert(userProgress)
 
-        // Add enough correct assessments to jump multiple levels
-        // L1→L2 needs 20, L2→L3 needs 50, L3→L4 needs 100
+        // Add enough correct assessments to jump multiple levels.
+        // Thresholds (LevelDefinition): L1→L2 = 15, L2→L3 = 35, L3→L4 = 60, L4→L5 = 90.
         for i in 0..<120 {
             let wordId = UUID()
             let result = AssessmentResult(
@@ -50,8 +50,9 @@ struct ProgressServiceTests {
         // Rebuild cache to reflect the 60 words with 2+ correct
         userProgress.rebuildTwoCorrectCache()
 
-        // Should advance to level 3 (60 words with 2 correct exceeds L2→L3 threshold of 50)
-        let newLevel = service.recordAssessmentResult(
+        // 60 words assessed correctly twice clears L1→L2 (15), L2→L3 (35), and
+        // L3→L4 (60), but not L4→L5 (90), so the user lands on level 4.
+        let newLevel = try service.recordAssessmentResult(
             wordId: UUID(),
             isCorrect: true,
             selectedAnswer: "test",
@@ -59,8 +60,8 @@ struct ProgressServiceTests {
             userProgress: userProgress
         )
 
-        #expect(userProgress.level >= 2, "Should have advanced at least to level 2")
-        #expect(newLevel != nil, "Should return new level")
+        #expect(userProgress.level == 4)
+        #expect(newLevel == 4)
     }
 
     @Test("Streak calculation handles consecutive days")

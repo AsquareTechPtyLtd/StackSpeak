@@ -29,37 +29,37 @@ struct BookmarkServiceTests {
     func toggleAddRemove() throws {
         let ctx = try makeContext()
         let service = BookmarkService(modelContext: ctx)
-        #expect(service.isBookmarked(cardId: "c1") == false)
-        let added = service.toggle(card: card("c1"), in: "book", chapterId: "ch1")
+        #expect(try service.isBookmarked(cardId: "c1") == false)
+        let added = try service.toggle(card: card("c1"), in: "book", chapterId: "ch1")
         #expect(added == true)
-        #expect(service.isBookmarked(cardId: "c1") == true)
-        let removed = service.toggle(card: card("c1"), in: "book", chapterId: "ch1")
+        #expect(try service.isBookmarked(cardId: "c1") == true)
+        let removed = try service.toggle(card: card("c1"), in: "book", chapterId: "ch1")
         #expect(removed == false)
-        #expect(service.isBookmarked(cardId: "c1") == false)
+        #expect(try service.isBookmarked(cardId: "c1") == false)
     }
 
     @Test("Rapid double-toggle ends in expected state — no duplicates created")
     func idempotencyOnDoubleToggle() throws {
         let ctx = try makeContext()
         let service = BookmarkService(modelContext: ctx)
-        _ = service.toggle(card: card("c1"), in: "book", chapterId: "ch1")
-        _ = service.toggle(card: card("c1"), in: "book", chapterId: "ch1")
-        _ = service.toggle(card: card("c1"), in: "book", chapterId: "ch1")
-        #expect(service.isBookmarked(cardId: "c1") == true)
-        #expect(service.allBookmarks().count == 1)
+        try service.toggle(card: card("c1"), in: "book", chapterId: "ch1")
+        try service.toggle(card: card("c1"), in: "book", chapterId: "ch1")
+        try service.toggle(card: card("c1"), in: "book", chapterId: "ch1")
+        #expect(try service.isBookmarked(cardId: "c1") == true)
+        #expect(try service.allBookmarks().count == 1)
     }
 
     @Test("allBookmarks returns most-recent first")
     func sortedByDate() async throws {
         let ctx = try makeContext()
         let service = BookmarkService(modelContext: ctx)
-        _ = service.toggle(card: card("c1"), in: "book", chapterId: "ch1")
+        try service.toggle(card: card("c1"), in: "book", chapterId: "ch1")
         try await Task.sleep(nanoseconds: 10_000_000)
-        _ = service.toggle(card: card("c2"), in: "book", chapterId: "ch1")
+        try service.toggle(card: card("c2"), in: "book", chapterId: "ch1")
         try await Task.sleep(nanoseconds: 10_000_000)
-        _ = service.toggle(card: card("c3"), in: "book", chapterId: "ch2")
+        try service.toggle(card: card("c3"), in: "book", chapterId: "ch2")
 
-        let bookmarks = service.allBookmarks()
+        let bookmarks = try service.allBookmarks()
         #expect(bookmarks.map(\.cardId) == ["c3", "c2", "c1"])
     }
 
@@ -67,10 +67,10 @@ struct BookmarkServiceTests {
     func explicitRemove() throws {
         let ctx = try makeContext()
         let service = BookmarkService(modelContext: ctx)
-        _ = service.toggle(card: card("c1"), in: "book", chapterId: "ch1")
-        _ = service.toggle(card: card("c2"), in: "book", chapterId: "ch1")
-        service.remove(cardId: "c1")
-        #expect(service.isBookmarked(cardId: "c1") == false)
-        #expect(service.isBookmarked(cardId: "c2") == true)
+        try service.toggle(card: card("c1"), in: "book", chapterId: "ch1")
+        try service.toggle(card: card("c2"), in: "book", chapterId: "ch1")
+        try service.remove(cardId: "c1")
+        #expect(try service.isBookmarked(cardId: "c1") == false)
+        #expect(try service.isBookmarked(cardId: "c2") == true)
     }
 }

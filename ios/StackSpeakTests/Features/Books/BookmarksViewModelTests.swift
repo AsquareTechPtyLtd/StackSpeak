@@ -29,6 +29,8 @@ final class InMemoryBookmarkRepository: BookmarkRepository {
     func remove(cardId: String) {
         rows.removeAll { $0.cardId == cardId }
     }
+
+    // Non-throwing in-memory impl satisfies the `throws` protocol requirements.
 }
 
 @Suite("BookmarksViewModel — surfaces both card and word bookmarks")

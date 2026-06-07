@@ -1,4 +1,7 @@
 import SwiftUI
+import OSLog
+
+private let logger = Logger(category: "WordDetailView")
 
 /// Typography-led reader for a single word.
 ///
@@ -177,14 +180,22 @@ struct WordDetailView: View {
     // MARK: - Actions
 
     private func toggleBookmark() {
-        services?.progress.toggleBookmark(word.id, userProgress: userProgress)
+        do {
+            try services?.progress.toggleBookmark(word.id, userProgress: userProgress)
+        } catch {
+            logger.error("Failed to toggle bookmark: \(error.localizedDescription, privacy: .public)")
+        }
     }
 
     private func toggleMastered() {
-        if isMastered {
-            services?.progress.unmarkWordMastered(word.id, userProgress: userProgress)
-        } else {
-            services?.progress.markWordMastered(word.id, userProgress: userProgress)
+        do {
+            if isMastered {
+                try services?.progress.unmarkWordMastered(word.id, userProgress: userProgress)
+            } else {
+                try services?.progress.markWordMastered(word.id, userProgress: userProgress)
+            }
+        } catch {
+            logger.error("Failed to toggle mastered: \(error.localizedDescription, privacy: .public)")
         }
     }
 }

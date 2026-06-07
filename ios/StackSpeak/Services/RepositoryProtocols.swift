@@ -17,10 +17,10 @@ protocol WordRepository {
 /// Protocol for user progress data access
 @MainActor
 protocol ProgressRepository {
-    func markWordPracticed(wordId: UUID, sentence: String, inputMethod: InputMethod, markAsMastered: Bool, userProgress: UserProgress)
-    func markWordMastered(_ wordId: UUID, userProgress: UserProgress)
-    func unmarkWordMastered(_ wordId: UUID, userProgress: UserProgress)
-    func toggleBookmark(_ wordId: UUID, userProgress: UserProgress)
+    func markWordPracticed(wordId: UUID, sentence: String, inputMethod: InputMethod, markAsMastered: Bool, userProgress: UserProgress) throws
+    func markWordMastered(_ wordId: UUID, userProgress: UserProgress) throws
+    func unmarkWordMastered(_ wordId: UUID, userProgress: UserProgress) throws
+    func toggleBookmark(_ wordId: UUID, userProgress: UserProgress) throws
     func completeDailySet(_ dailySet: DailySet, userProgress: UserProgress) throws
     func recordAssessmentResult(
         wordId: UUID,
@@ -28,7 +28,7 @@ protocol ProgressRepository {
         selectedAnswer: String,
         correctAnswer: String,
         userProgress: UserProgress
-    ) -> Int?
+    ) throws -> Int?
     func getNewStacksForLevel(_ level: Int) -> (mandatory: Set<WordStack>, optional: Set<WordStack>)
 }
 

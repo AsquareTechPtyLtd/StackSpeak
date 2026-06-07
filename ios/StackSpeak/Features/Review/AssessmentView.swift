@@ -1,15 +1,11 @@
 import SwiftUI
 import SwiftData
+import OSLog
 
-/// One assessment question.
-///
-/// A1 — redundant "What does this word mean?" prompt removed (the four
-///   definition options are self-evidently the question).
-/// A2 — single-signal selection on `OptionButton` (background + border, no
-///   triple-stacked icon).
-/// A3 — correct answers auto-advance after a brief read-through; incorrect
-///   answers stay until Continue is tapped so the user can see the right one.
-/// A4 — `.sensoryFeedback` `.success` / `.error` on submit.
+private let logger = Logger(category: "AssessmentView")
+
+/// Multiple-choice assessment card for one practiced word. Correct answers
+/// auto-advance after a brief read-through; incorrect answers wait for Continue.
 struct AssessmentView: View {
     @Environment(\.theme) private var theme
     @Environment(\.services) private var services
@@ -132,13 +128,19 @@ struct AssessmentView: View {
         hasSubmitted = true
         feedbackTrigger = isCorrect ? .correct : .incorrect
 
-        let newLevel = services.progress.recordAssessmentResult(
-            wordId: word.id,
-            isCorrect: isCorrect,
-            selectedAnswer: selected,
-            correctAnswer: word.shortDefinition,
-            userProgress: progress
-        )
+        let newLevel: Int?
+        do {
+            newLevel = try services.progress.recordAssessmentResult(
+                wordId: word.id,
+                isCorrect: isCorrect,
+                selectedAnswer: selected,
+                correctAnswer: word.shortDefinition,
+                userProgress: progress
+            )
+        } catch {
+            logger.error("Failed to record assessment result: \(error.localizedDescription, privacy: .public)")
+            newLevel = nil
+        }
         pendingLevelUp = newLevel
 
         if let newLevel {
@@ -160,15 +162,21 @@ struct AssessmentView: View {
     // MARK: - Options generation
 
     private func generateOptions() {
-        guard let progress = userProgress,
-              let allWords = try? modelContext.fetch(FetchDescriptor<Word>()) else { return }
+        guard let progress = userProgress else { return }
+        let allWords: [Word]
+        do {
+            allWords = try modelContext.fetch(FetchDescriptor<Word>())
+        } catch {
+            logger.error("Failed to fetch words for assessment options: \(error.localizedDescription, privacy: .public)")
+            return
+        }
 
         let distractors = Self.buildDistractors(for: word, count: Self.distractorCount,
                                                 allWords: allWords, progress: progress)
-        var allOptions = [word.shortDefinition] + distractors
-        allOptions = Array(NSOrderedSet(array: allOptions)) as? [String] ?? allOptions
-        allOptions.shuffle()
-        options = allOptions
+        var seen = Set<String>()
+        options = ([word.shortDefinition] + distractors)
+            .filter { seen.insert($0).inserted }
+            .shuffled()
     }
 
     /// Picks plausible wrong-answer definitions: prefers words the user has practiced,

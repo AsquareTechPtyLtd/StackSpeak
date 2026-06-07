@@ -7,10 +7,10 @@ import SwiftData
 /// `bookId` + `chapterId` for deep-linking from the You tab.
 @MainActor
 protocol BookmarkRepository {
-    func toggle(card: BookCard, in bookId: String, chapterId: String) -> Bool
-    func isBookmarked(cardId: String) -> Bool
-    func allBookmarks() -> [BookmarkedCard]
-    func remove(cardId: String)
+    func toggle(card: BookCard, in bookId: String, chapterId: String) throws -> Bool
+    func isBookmarked(cardId: String) throws -> Bool
+    func allBookmarks() throws -> [BookmarkedCard]
+    func remove(cardId: String) throws
 }
 
 @MainActor
@@ -25,39 +25,39 @@ final class BookmarkService: BookmarkRepository {
     /// new state — `true` if bookmarked after the call, `false` if removed.
     /// Idempotent on rapid double-toggle (the SwiftData unique constraint guards us).
     @discardableResult
-    func toggle(card: BookCard, in bookId: String, chapterId: String) -> Bool {
-        if let existing = fetch(cardId: card.id) {
+    func toggle(card: BookCard, in bookId: String, chapterId: String) throws -> Bool {
+        if let existing = try fetch(cardId: card.id) {
             modelContext.delete(existing)
-            try? modelContext.save()
+            try modelContext.save()
             return false
         }
         let bookmark = BookmarkedCard(cardId: card.id, bookId: bookId, chapterId: chapterId)
         modelContext.insert(bookmark)
-        try? modelContext.save()
+        try modelContext.save()
         return true
     }
 
-    func isBookmarked(cardId: String) -> Bool {
-        fetch(cardId: cardId) != nil
+    func isBookmarked(cardId: String) throws -> Bool {
+        try fetch(cardId: cardId) != nil
     }
 
-    func allBookmarks() -> [BookmarkedCard] {
+    func allBookmarks() throws -> [BookmarkedCard] {
         let descriptor = FetchDescriptor<BookmarkedCard>(
             sortBy: [SortDescriptor(\.bookmarkedAt, order: .reverse)]
         )
-        return (try? modelContext.fetch(descriptor)) ?? []
+        return try modelContext.fetch(descriptor)
     }
 
-    func remove(cardId: String) {
-        guard let row = fetch(cardId: cardId) else { return }
+    func remove(cardId: String) throws {
+        guard let row = try fetch(cardId: cardId) else { return }
         modelContext.delete(row)
-        try? modelContext.save()
+        try modelContext.save()
     }
 
-    private func fetch(cardId: String) -> BookmarkedCard? {
+    private func fetch(cardId: String) throws -> BookmarkedCard? {
         let descriptor = FetchDescriptor<BookmarkedCard>(
             predicate: #Predicate { $0.cardId == cardId }
         )
-        return try? modelContext.fetch(descriptor).first
+        return try modelContext.fetch(descriptor).first
     }
 }

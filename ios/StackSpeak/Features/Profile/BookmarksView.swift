@@ -1,5 +1,8 @@
 import SwiftUI
 import SwiftData
+import OSLog
+
+private let logger = Logger(category: "BookmarksView")
 
 /// Consolidated bookmarks under the You tab. Two sections: saved cards and
 /// saved words. Replaces the prior single-section "Saved" entry.
@@ -28,7 +31,11 @@ struct BookmarksView: View {
                                 cardRow(row)
                                     .swipeActions(edge: .trailing) {
                                         Button(role: .destructive) {
-                                            services?.bookmark.remove(cardId: row.id)
+                                            do {
+                                                try services?.bookmark.remove(cardId: row.id)
+                                            } catch {
+                                                logger.error("Failed to remove bookmark: \(error.localizedDescription, privacy: .public)")
+                                            }
                                             Task { await load() }
                                         } label: {
                                             Label("common.remove", systemImage: "bookmark.slash")

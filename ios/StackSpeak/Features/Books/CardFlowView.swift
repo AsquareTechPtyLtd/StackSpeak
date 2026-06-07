@@ -1,5 +1,8 @@
 import SwiftUI
 import SwiftData
+import OSLog
+
+private let logger = Logger(category: "CardFlowView")
 
 /// The reading surface for one chapter — title, teaser, explanation, feynman.
 /// Bottom toolbar provides prev / next + bookmark + mark-complete. Cap-reached
@@ -120,10 +123,14 @@ struct CardFlowView: View {
             Button {
                 bookmarkBump.toggle()
                 guard let card = viewModel.currentCard else { return }
-                _ = services?.bookmark.toggle(card: card, in: bookId, chapterId: chapter.id)
+                do {
+                    _ = try services?.bookmark.toggle(card: card, in: bookId, chapterId: chapter.id)
+                } catch {
+                    logger.error("Failed to toggle card bookmark: \(error.localizedDescription, privacy: .public)")
+                }
             } label: {
                 let isBookmarked = viewModel.currentCard
-                    .map { services?.bookmark.isBookmarked(cardId: $0.id) ?? false }
+                    .map { (try? services?.bookmark.isBookmarked(cardId: $0.id) ?? false) ?? false }
                     ?? false
                 Image(systemName: isBookmarked ? "bookmark.fill" : "bookmark")
                     .symbolEffect(.bounce, value: bookmarkBump)

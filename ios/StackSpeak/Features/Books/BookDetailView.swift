@@ -130,7 +130,6 @@ struct BookDetailView: View {
         guard let services else { return }
         await viewModel.open(
             bookId: book.id,
-            catalogService: services.bookCatalog,
             contentSource: BundledBookSource.main(),
             modelContext: modelContext
         )

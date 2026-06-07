@@ -586,7 +586,7 @@ function buildAllBooks(contentRoot, sharedRoot) {
     if (!fs.statSync(dir).isDirectory()) continue;
     const summary = buildBook(dir, sharedRoot, fs, path);
     summaries.push(summary);
-    console.log(`  ✓ ${summary.id} — ${summary.chapterCount} chapter(s), ${summary.cardCount} card(s)`);
+    console.log(`built ${summary.id}: ${summary.chapterCount} chapters, ${summary.cardCount} cards`);
   }
 
   // Free book first, then alphabetical by title — gives the catalog a stable order.
@@ -604,7 +604,7 @@ function buildAllBooks(contentRoot, sharedRoot) {
     path.join(sharedRoot, 'books-catalog.json'),
     JSON.stringify(catalog, null, 2)
   );
-  console.log(`✓ Wrote ${summaries.length} book(s) and catalog at ${sharedRoot}/books-catalog.json`);
+  console.log(`wrote ${summaries.length} books to ${path.join(sharedRoot, 'books-catalog.json')}`);
 }
 
 module.exports = {

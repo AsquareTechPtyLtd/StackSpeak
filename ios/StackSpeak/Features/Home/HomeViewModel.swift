@@ -82,13 +82,18 @@ final class HomeViewModel {
         services: Services,
         userProgress: UserProgress
     ) {
-        services.progress.markWordPracticed(
-            wordId: wordId,
-            sentence: explanation,
-            inputMethod: inputMethod,
-            markAsMastered: markAsMastered,
-            userProgress: userProgress
-        )
+        do {
+            try services.progress.markWordPracticed(
+                wordId: wordId,
+                sentence: explanation,
+                inputMethod: inputMethod,
+                markAsMastered: markAsMastered,
+                userProgress: userProgress
+            )
+        } catch {
+            errorMessage = error.localizedDescription
+            return
+        }
 
         guard let set = dailySet else { return }
         set.markWordCompleted(wordId)

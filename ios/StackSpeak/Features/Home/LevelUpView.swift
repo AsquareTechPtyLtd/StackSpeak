@@ -140,7 +140,6 @@ struct LevelUpStackPickerSheet: View {
                                 StackCard(
                                     stack: stack,
                                     isSelected: selectedOptionalStacks.contains(stack),
-                                    isMandatory: false,
                                     onToggle: { toggle(stack) }
                                 )
                             }

@@ -1,10 +1,7 @@
 import Foundation
 
-/// MVP `BookContentSource` that reads catalog, manifests, and chapter shards from disk —
-/// either the app bundle (production) or any directory URL (tests, fixtures).
-///
-/// Phase 7 adds `RemoteBookSource` with a CDN-backed cache; the swap is transparent
-/// to ViewModels because both implementations conform to `BookContentSource`.
+/// Reads book catalog, manifests, and chapter shards from disk — either the app
+/// bundle (production) or any directory URL (tests, fixtures).
 final class BundledBookSource: BookContentSource, @unchecked Sendable {
     private let resourcesURL: URL
     private let catalogFileName: String
@@ -39,17 +36,19 @@ final class BundledBookSource: BookContentSource, @unchecked Sendable {
         return f
     }()
 
+    /// Reads file contents, mapping a genuine missing-file error to the caller's
+    /// `notFound` case while letting permission/transient read errors surface as-is.
+    private func readData(at url: URL, notFound: @autoclosure () -> BookContentError) throws -> Data {
+        do {
+            return try Data(contentsOf: url)
+        } catch CocoaError.fileNoSuchFile, CocoaError.fileReadNoSuchFile {
+            throw notFound()
+        }
+    }
+
     func loadCatalog() async throws -> BooksCatalog {
         let url = resourcesURL.appendingPathComponent(catalogFileName)
-        guard FileManager.default.fileExists(atPath: url.path) else {
-            throw BookContentError.catalogNotFound
-        }
-        let data: Data
-        do {
-            data = try Data(contentsOf: url)
-        } catch {
-            throw BookContentError.catalogNotFound
-        }
+        let data = try readData(at: url, notFound: BookContentError.catalogNotFound)
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .custom { decoder in
             let raw = try decoder.singleValueContainer().decode(String.self)
@@ -69,15 +68,7 @@ final class BundledBookSource: BookContentSource, @unchecked Sendable {
 
     func loadManifest(bookId: String) async throws -> BookManifest {
         let url = resourcesURL.appendingPathComponent("\(booksDirectoryName)/\(bookId)/manifest.json")
-        guard FileManager.default.fileExists(atPath: url.path) else {
-            throw BookContentError.manifestNotFound(bookId: bookId)
-        }
-        let data: Data
-        do {
-            data = try Data(contentsOf: url)
-        } catch {
-            throw BookContentError.manifestNotFound(bookId: bookId)
-        }
+        let data = try readData(at: url, notFound: BookContentError.manifestNotFound(bookId: bookId))
         let manifest: BookManifest
         do {
             manifest = try JSONDecoder().decode(BookManifest.self, from: data)
@@ -95,15 +86,7 @@ final class BundledBookSource: BookContentSource, @unchecked Sendable {
 
         for shard in shards {
             let url = resourcesURL.appendingPathComponent("\(booksDirectoryName)/\(bookId)/\(shard)")
-            guard FileManager.default.fileExists(atPath: url.path) else {
-                throw BookContentError.chapterShardNotFound(bookId: bookId, shard: shard)
-            }
-            let data: Data
-            do {
-                data = try Data(contentsOf: url)
-            } catch {
-                throw BookContentError.chapterShardNotFound(bookId: bookId, shard: shard)
-            }
+            let data = try readData(at: url, notFound: BookContentError.chapterShardNotFound(bookId: bookId, shard: shard))
             let decoded: BookChapterShard
             do {
                 decoded = try JSONDecoder().decode(BookChapterShard.self, from: data)
