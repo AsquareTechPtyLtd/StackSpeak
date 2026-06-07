@@ -1,0 +1,601 @@
+{
+  "stack": "database-internals-advanced-2",
+  "words": [
+    {
+      "id": "dbi-ad2-0010-0000-0000-0000-000000000001",
+      "word": "Query Optimizer",
+      "pronunciation": "KWER-ee OP-tih-my-zur",
+      "partOfSpeech": "noun",
+      "shortDefinition": "The DBMS component that enumerates execution plans and selects the one with the lowest estimated cost.",
+      "simpleDefinition": "The query optimizer sits between the SQL parser and the executor. It takes a logical plan (what data you want) and searches for the cheapest physical plan (how to get it) — choosing which indexes to use, what join order to apply, and which algorithm to use for each join. It never runs the query; it estimates costs using statistics and picks the winner.",
+      "longDefinition": "The query optimizer is the most complex component in a relational DBMS. Given a parsed and rewritten query, it must search a combinatorially large space of equivalent execution plans and select the one with the lowest estimated cost. The optimizer works in two stages: a mandatory rule-based normalization pass (predicate pushdown, subquery flattening, constant folding) that simplifies the plan without statistics, followed by cost-based enumeration that uses table statistics to assign a numeric cost to each candidate plan. Postgres's planner module, Oracle's CBO, SQL Server's Query Optimizer, and CockroachDB's Cascades-based optimizer all follow this architecture. The enumeration problem for join ordering is NP-hard in the general case, so optimizers use dynamic programming for small join counts and genetic algorithms (Postgres GEQO) for large ones. The optimizer's output — a physical plan tree of concrete operators — is passed to the executor, which actually runs it. The central unsolved challenge, documented by Lohman (2014), is that cardinality estimation errors cascade through multi-join plans, causing the optimizer to choose catastrophically bad physical implementations.",
+      "connector": "Think of the query optimizer like a GPS routing engine: given a destination (the query result), it evaluates thousands of possible routes (plans) using traffic estimates (statistics), then commits to the one it believes is fastest — without actually driving any of them.",
+      "techContext": "After running ANALYZE to refresh statistics, the optimizer switched from a nested-loop join costing 45 seconds to a hash join completing in 200 milliseconds.",
+      "exampleSentence": "The optimizer's cardinality misestimate caused it to choose a nested-loop join over a hash join, turning a millisecond OLTP query into a multi-second table scan.",
+      "codeExample": {
+        "language": "sql",
+        "code": "-- Inspect what the optimizer chose\nEXPLAIN (ANALYZE, BUFFERS, FORMAT TEXT)\nSELECT o.id, c.name\nFROM   orders o\nJOIN   customers c ON o.cust_id = c.id\nWHERE  o.amount > 1000;\n\n-- Compare estimated vs actual rows at each node.\n-- A large gap (estimated 50, actual 50000) signals\n-- stale statistics or correlated columns the optimizer\n-- did not know about."
+      },
+      "etymology": "Optimizer from Latin optimum ('best'); the term entered database literature with the System R project at IBM (1979), whose Selinger et al. paper defined the cost-based approach that all modern optimizers descend from.",
+      "unlockLevel": 4,
+      "tags": ["query-optimizer", "query-execution", "performance"],
+      "category": "components"
+    },
+    {
+      "id": "dbi-ad2-0020-0000-0000-0000-000000000002",
+      "word": "Cost-Based Optimization",
+      "pronunciation": "KAWST-bayst op-tih-mih-ZAY-shun",
+      "partOfSpeech": "noun",
+      "shortDefinition": "Plan selection using a cost model fed by table statistics rather than fixed rule-based transformations.",
+      "simpleDefinition": "Cost-based optimization assigns a numeric cost — abstracting I/O pages read and CPU cycles consumed — to every candidate execution plan and picks the cheapest. The cost formula is only meaningful when fed accurate statistics: row counts, column histograms, and NDV. Without them, even a perfect cost model produces nonsense.",
+      "longDefinition": "Cost-based optimization (CBO) has three essential ingredients that must work together. First, a cost model: a formula that maps plan operators to a scalar cost value, weighting sequential page reads, random page reads, and CPU tuple processing separately (in Postgres: seq_page_cost=1.0, random_page_cost=4.0, cpu_tuple_cost=0.01). Second, statistics: per-table row counts and per-column summaries (histograms, NDV, null fractions, MCV lists) collected by ANALYZE or its equivalents. Third, an enumeration algorithm: a search strategy over the plan space, typically dynamic programming for join ordering. Postgres exposes its cost model through GUC parameters; tuning random_page_cost down to 1.1 on NVMe SSDs makes index scans far more attractive relative to sequential scans. CBO replaced rule-based optimization (RBO) because rules misfire when they have no knowledge of data size: a rule that always prefers an index scan over a sequential scan is catastrophic for broad predicates on large tables. Oracle deprecated its RBO in Oracle 10g (2003). Modern optimizers use a hybrid: mandatory rule-based normalization passes first (predicate pushdown, subquery flattening), then cost-based enumeration over the normalized plan space.",
+      "connector": "Think of cost-based optimization like comparison shopping with estimated shipping times: you look up the price and delivery speed of every option (cost model), check current stock levels (statistics), and pick the best deal — knowing the estimates may be slightly off.",
+      "techContext": "Lowering random_page_cost from 4.0 to 1.1 on our NVMe-backed RDS instance caused the optimizer to prefer index scans for queries that had been doing unnecessary sequential scans.",
+      "exampleSentence": "After enabling cost-based optimization and refreshing statistics, the optimizer discovered a covering index path that reduced query cost by 80% without any schema changes.",
+      "codeExample": {
+        "language": "sql",
+        "code": "-- Postgres cost model parameters (tune for your hardware)\nSHOW seq_page_cost;       -- 1.0  (baseline)\nSHOW random_page_cost;    -- 4.0  (lower to ~1.1 for NVMe SSDs)\nSHOW cpu_tuple_cost;      -- 0.01\nSHOW cpu_operator_cost;   -- 0.0025\n\n-- Total estimated cost of a sequential scan:\n-- cost = seq_page_cost * pages + cpu_tuple_cost * rows\n\n-- Update statistics to feed the cost model:\nANALYZE orders;"
+      },
+      "etymology": "Cost-based from the 1979 Selinger et al. System R paper, which introduced the concept of choosing access paths by estimating I/O cost rather than applying deterministic rules.",
+      "unlockLevel": 4,
+      "tags": ["query-optimizer", "performance", "statistics"],
+      "category": "concepts"
+    },
+    {
+      "id": "dbi-ad2-0030-0000-0000-0000-000000000003",
+      "word": "Histogram",
+      "pronunciation": "HIS-toh-gram",
+      "partOfSpeech": "noun",
+      "shortDefinition": "A statistical summary of column value distribution used by the optimizer to estimate how many rows a predicate matches.",
+      "simpleDefinition": "A histogram divides a column's value range into buckets and records the fraction of rows in each bucket. The optimizer uses it to estimate selectivity for range predicates: a query for amount BETWEEN 100 AND 200 spans certain histogram buckets, and the fraction of buckets spanned gives the estimated row count. Without histograms, the optimizer falls back to uniform distribution assumptions that are usually wrong.",
+      "longDefinition": "Postgres uses equi-depth (equi-height) histograms: bucket boundaries are chosen so each bucket contains approximately the same number of rows, making the boundary list the useful information. A query predicate spanning N of T total buckets gets a selectivity estimate of N/T, with linear interpolation within partially covered buckets. Postgres stores histograms in pg_statistic (STATISTIC_KIND_HISTOGRAM, kind=2) and exposes them through the pg_stats view as histogram_bounds. The default_statistics_target parameter (default 100) controls how many histogram buckets are stored per column; raising it to 500 on high-cardinality, skewed columns — for example, a timestamp column with heavy recent write activity — dramatically improves plan quality. Postgres uses a hybrid approach: high-frequency values are captured separately in the Most Common Values (MCV) list and excluded from the histogram, so the histogram accurately represents the non-frequent tail. Equi-width histograms (equal-width buckets, not equal-depth) are simpler to build but inaccurate for skewed data because a single hot bucket contains far more rows than its width implies. For multi-column predicates, single-column histograms compound errors multiplicatively; CREATE STATISTICS in Postgres 10+ adds multi-column extended statistics to address this.",
+      "connector": "Think of a histogram like a bar chart of your column's data spread across the value range — the optimizer can look up how crowded each bar is to estimate how many rows fall inside any given range query.",
+      "techContext": "After raising default_statistics_target to 500 on our order_date column, the optimizer's row estimates for monthly range queries became accurate enough to consistently choose the right index.",
+      "exampleSentence": "The histogram showed that 70% of orders had amounts under $50, so the optimizer correctly chose a sequential scan for a broad range query rather than wasting time on an index with poor selectivity.",
+      "codeExample": {
+        "language": "sql",
+        "code": "-- Inspect histogram bounds for a column in Postgres\nSELECT histogram_bounds\nFROM   pg_stats\nWHERE  tablename = 'orders'\n  AND  attname   = 'amount';\n\n-- Raise statistics resolution for a skewed column\nALTER TABLE orders\n  ALTER COLUMN amount SET STATISTICS 500;\nANALYZE orders;\n\n-- Each bucket in the equi-depth histogram holds\n-- approximately the same number of rows."
+      },
+      "etymology": "From Greek histos ('mast, web') + gramma ('something written'); in statistics, popularized by Karl Pearson (1895) to visualize frequency distributions; adopted into database query optimization in the System R era.",
+      "unlockLevel": 4,
+      "tags": ["query-optimizer", "statistics", "performance"],
+      "category": "concepts"
+    },
+    {
+      "id": "dbi-ad2-0040-0000-0000-0000-000000000004",
+      "word": "NDV",
+      "pronunciation": "EN-DEE-VEE",
+      "partOfSpeech": "noun",
+      "shortDefinition": "Number of Distinct Values: a column statistic used to estimate selectivity and group-by cardinality.",
+      "simpleDefinition": "NDV tells the optimizer how many unique values exist in a column. A column with NDV=1 is completely useless for equality predicates (every row matches or none does). A column with NDV equal to the row count is a candidate key. For equality predicates not in the MCV list, the optimizer assumes selectivity = 1/NDV.",
+      "longDefinition": "NDV (Number of Distinct Values) is one of the four core per-column statistics alongside null fraction, most-common values, and the histogram. Postgres stores it in pg_statistic as n_distinct; positive values are absolute counts, negative values are fractions of the row count (n_distinct = -0.95 means 95% of rows have distinct values). NDV drives two critical optimizer decisions. For equality predicates (col = const), if the constant is not in the MCV list, the optimizer assumes uniform distribution and estimates selectivity as 1/NDV. For GROUP BY cardinality, the estimated output row count of a grouping operator is NDV of the grouping columns. NDV is estimated by sampling — Postgres uses the HyperLogLog algorithm internally for large tables — so for columns with very high cardinality (UUID primary keys, timestamps) the estimate can be off by several percent. This matters for join selectivity formulas: the classic formula card(join) = card(outer) * card(inner) / max(NDV_outer_key, NDV_inner_key) uses NDV directly. An underestimated NDV causes an overestimated join cardinality, which can cause the optimizer to choose a hash join when a nested-loop index join would be far cheaper.",
+      "connector": "Think of NDV like counting the number of different flavors in a jar of mixed candy — it tells the optimizer how spread out the values are, which determines how precisely any single equality predicate can narrow the result.",
+      "techContext": "A low NDV on the status column (only 3 values: active, inactive, deleted) told the optimizer that an index on status would have poor selectivity, correctly choosing a sequential scan instead.",
+      "exampleSentence": "The optimizer estimated 50,000 rows for the join because it used an outdated NDV of 200 for the customer_id column, when the actual NDV was 2 million after a data migration.",
+      "codeExample": {
+        "language": "sql",
+        "code": "-- Inspect NDV for all columns on a table\nSELECT attname,\n       n_distinct,   -- positive = absolute count, negative = fraction\n       null_frac\nFROM   pg_stats\nWHERE  tablename = 'orders';\n\n-- n_distinct = -1   → every row is unique (candidate key)\n-- n_distinct =  4   → exactly 4 distinct values\n-- n_distinct = -0.5 → ~50% of rows are distinct"
+      },
+      "etymology": "Abbreviation coined in the database research community; appears prominently in Selinger et al. (1979) and subsequent cardinality estimation literature as a fundamental statistic for selectivity formulas.",
+      "unlockLevel": 4,
+      "tags": ["query-optimizer", "statistics", "performance"],
+      "category": "concepts"
+    },
+    {
+      "id": "dbi-ad2-0050-0000-0000-0000-000000000005",
+      "word": "Selectivity Estimation",
+      "pronunciation": "suh-LEK-tiv-ih-tee es-tih-MAY-shun",
+      "partOfSpeech": "noun",
+      "shortDefinition": "Predicting what fraction of rows satisfy a predicate; errors here cascade into bad join orders and wrong algorithms.",
+      "simpleDefinition": "Selectivity is a number between 0.0 and 1.0 representing the fraction of rows that pass a predicate. The optimizer multiplies selectivity by the table's row count to get cardinality. Every subsequent join order decision, algorithm choice, and memory budget depends on getting this estimate approximately right.",
+      "longDefinition": "Selectivity estimation uses different formulas depending on predicate type. For equality (col = const): if the constant appears in the MCV list, use its recorded frequency; otherwise assume 1/NDV. For range predicates (col BETWEEN a AND b): estimate the fraction of histogram buckets the range covers, with linear interpolation within partially covered buckets. For IS NULL: use null_frac directly. For LIKE 'prefix%': use the histogram if the data is alphabetically sortable; fall back to a magic constant (0.02 in Postgres) for mid-string patterns. For AND conjunctions: multiply individual selectivities — sel(A AND B) = sel(A) × sel(B) — assuming column independence. This independence assumption is the most dangerous source of error in practice: a predicate WHERE city = 'Paris' AND country = 'France' has selectivity driven entirely by city = 'Paris', but a naive conjunction multiplies both selectivities, underestimating row count. Postgres 10+ CREATE STATISTICS with the dependencies option detects functional dependencies between columns and corrects the conjunction estimate. For OR disjunctions: inclusion-exclusion applies: sel(A OR B) = sel(A) + sel(B) − sel(A) × sel(B). Lohman (2014) calls compound selectivity error the central unsolved problem of query optimization: errors multiply across join chains, turning small per-column misestimates into plan choices that are orders of magnitude off.",
+      "connector": "Think of selectivity estimation like estimating how many people in a crowd are wearing both a red hat and carrying an umbrella — you multiply the fractions separately if you assume they are independent, but if rainy weather caused both, multiplying underestimates the overlap.",
+      "techContext": "Adding CREATE STATISTICS with dependencies on (city, country) fixed a tenfold cardinality underestimate that was causing the optimizer to choose a nested-loop join instead of a hash join.",
+      "exampleSentence": "The selectivity estimation for the compound predicate on status and region was off by 100x because the optimizer assumed independence between two strongly correlated columns.",
+      "codeExample": {
+        "language": "sql",
+        "code": "-- Create extended statistics for correlated columns\nCREATE STATISTICS orders_status_region_stats (dependencies)\n  ON status, region\n  FROM orders;\nANALYZE orders;\n\n-- Postgres now detects the functional dependency\n-- and corrects the conjunction selectivity estimate\n-- for WHERE status = 'active' AND region = 'EU'."
+      },
+      "etymology": "Selectivity from Latin selectus ('chosen'); used in database literature since the System R era to describe the fraction of rows passing a filter; the compound estimation problem formalized in Lohman (2014).",
+      "unlockLevel": 4,
+      "tags": ["query-optimizer", "statistics", "performance"],
+      "category": "concepts"
+    },
+    {
+      "id": "dbi-ad2-0060-0000-0000-0000-000000000006",
+      "word": "Cardinality Estimation",
+      "pronunciation": "kar-dih-NAL-ih-tee es-tih-MAY-shun",
+      "partOfSpeech": "noun",
+      "shortDefinition": "Estimating the number of rows a plan node will output; the single biggest source of optimizer errors.",
+      "simpleDefinition": "Cardinality is the row count flowing out of a plan node. The optimizer estimates it bottom-up: start with table size times predicate selectivity at each scan, then propagate through joins and aggregations. If the estimate at any node is wrong, every node above it uses the wrong input size — errors compound multiplicatively across a multi-join plan.",
+      "longDefinition": "Cardinality estimation propagates from leaves to the root of the plan tree. At a base scan: card = reltuples × selectivity(predicates). At a join: card = card(outer) × card(inner) / max(NDV_outer_key, NDV_inner_key). The join selectivity formula assumes that each distinct value in the join key appears roughly uniformly in both relations — a reasonable assumption for primary-key/foreign-key joins but often wrong for multi-column or inequality joins. At a GROUP BY: card = NDV of the grouping columns. At LIMIT N: card = min(N, input_card). Errors compound: a 2× underestimate at a scan feeding into a join whose estimate is already off by 3× produces a 6× underestimate at the join output, which then affects every subsequent join and sort. Lohman (2014, \"Is Query Optimization a Solved Problem?\") documented that for a five-table join with typical statistics, cardinality estimates at the root can be off by five orders of magnitude. Research responses include: learned cardinality estimators (neural networks trained on query feedback), adaptive query execution (Apache Spark AQE, Orca runtime re-optimization), and runtime statistics collection that feeds back into the plan mid-execution.",
+      "connector": "Think of cardinality estimation like estimating the final audience size at a concert by counting people entering each gate — a wrong count at one gate multiplies into an increasingly bad total as you aggregate across all gates.",
+      "techContext": "EXPLAIN ANALYZE showed an estimated 80 rows at the hash join node but an actual 85,000 rows — the 1000× underestimate caused the planner to allocate an undersized hash table that spilled to disk.",
+      "exampleSentence": "The cardinality estimation for the five-table join was off by three orders of magnitude after a seasonal data spike, causing the optimizer to choose a plan that would have timed out in production.",
+      "codeExample": {
+        "language": "sql",
+        "code": "-- Find nodes with large estimation errors\nEXPLAIN (ANALYZE, FORMAT JSON)\nSELECT ...\nFROM   orders o\nJOIN   line_items li ON li.order_id = o.id\nJOIN   products p   ON p.id = li.product_id;\n\n-- In the JSON output, compare \"Plan Rows\" (estimate)\n-- vs \"Actual Rows\" (runtime). A ratio > 10 is a red flag.\n-- Fix: ANALYZE the tables, or use CREATE STATISTICS\n-- for correlated column pairs."
+      },
+      "etymology": "Cardinality from mathematics (the cardinality of a set is its element count); the term was applied to query plan row counts in the System R era and remains the core currency of cost-based optimization.",
+      "unlockLevel": 4,
+      "tags": ["query-optimizer", "statistics", "performance"],
+      "category": "concepts"
+    },
+    {
+      "id": "dbi-ad2-0070-0000-0000-0000-000000000007",
+      "word": "Dynamic Programming Join Enumeration",
+      "pronunciation": "dy-NAM-ik proh-GRAM-ing JOIN ee-noo-muh-RAY-shun",
+      "partOfSpeech": "noun",
+      "shortDefinition": "The optimizer algorithm that exhaustively finds the cheapest join order by building up from pairs to the full plan.",
+      "simpleDefinition": "When a query joins N tables, the optimizer must search through the many possible orderings to find the cheapest one. Dynamic programming solves this by computing the cheapest plan for every pair of tables, then every triple using those pairs, and so on — reusing subresults so each subproblem is only solved once.",
+      "longDefinition": "Dynamic programming for join ordering was introduced by Selinger et al. in their 1979 System R paper 'Access Path Selection in a Relational Database Management System', and remains the foundation of join enumeration in virtually every relational optimizer 45 years later. The key insight is optimal substructure: the cheapest plan for N tables contains within it the cheapest plan for every subset of those N tables. The algorithm builds a DP table indexed by subsets of tables, memoizing the cheapest plan for each subset and its estimated cost. It iterates: for each subset S of size k, try all ways to split S into (S1, S minus S1) where S1 is a previously computed cheaper subset, compute the cost of joining S1 with (S minus S1), and keep the minimum. The algorithm runs in O(3^N) time — enumerating over subsets and their complements — which is exponential but manageable for N ≤ 12. Postgres's planner implements this for left-deep trees (each join's right input is a base table); Cascades-based optimizers (SQL Server, CockroachDB) generalize it to a top-down memo-driven search that also explores bushy trees. For N > geqo_threshold (default 12 in Postgres), the planner switches to the GEQO genetic algorithm as a fallback. Selinger's paper also introduced 'interesting orders' — plans that produce already-sorted output may be worth a higher raw cost if they avoid a downstream sort operator.",
+      "connector": "Think of dynamic programming join enumeration like planning a road trip by first finding the best route between every pair of cities, then assembling the full trip from those precomputed segments — you never re-solve a subproblem you have already solved.",
+      "techContext": "The Postgres planner's dynamic programming algorithm evaluated 127 join subsets for our seven-table analytical query in under 2 milliseconds of planning time.",
+      "exampleSentence": "Dynamic programming join enumeration found that joining the heavily filtered orders table first reduced intermediate result size by 95%, cutting total query time from 8 seconds to 120 milliseconds.",
+      "codeExample": {
+        "language": "sql",
+        "code": "-- Force Postgres to use DP enumeration (disable GEQO)\nSET geqo = off;\n\n-- Show Postgres join reordering is active\nSET join_collapse_limit = 8;  -- reorder joins up to this count\n\n-- Disable reordering to use the FROM clause order as-is\nSET join_collapse_limit = 1;\n\n-- With DP enabled, EXPLAIN shows Postgres's chosen order\nEXPLAIN\nSELECT * FROM a JOIN b ON a.id = b.a_id\n             JOIN c ON c.b_id = b.id;"
+      },
+      "etymology": "Dynamic programming coined by Richard Bellman (1953); applied to join ordering by Selinger et al. (SIGMOD 1979), the paper that defined modern cost-based optimization.",
+      "unlockLevel": 4,
+      "tags": ["query-optimizer", "join-algorithms", "performance"],
+      "category": "algorithms"
+    },
+    {
+      "id": "dbi-ad2-0080-0000-0000-0000-000000000008",
+      "word": "Left-Deep Plan",
+      "pronunciation": "LEFT-DEEP PLAN",
+      "partOfSpeech": "noun",
+      "shortDefinition": "A join tree where the right input of every join is a base table; most optimizers default to left-deep trees.",
+      "simpleDefinition": "In a left-deep join tree, each join's right (inner) input is always a raw table scan, never an intermediate join result. This limits the search space to N! orderings instead of the Catalan-number explosion of bushy trees, and it enables pipelined execution because each join probes a fixed table rather than materializing an intermediate result.",
+      "longDefinition": "Selinger et al. (1979) chose left-deep trees deliberately to bound the search space. For N tables, there are N! left-deep trees versus the (2(N-1))!/(N-1)! bushy trees (the Catalan numbers). For N=8 this is 40,320 left-deep trees versus over 6 million bushy ones. The practical benefit of left-deep trees is pipeline compatibility: each join's inner side is a base table scan that can be probed on demand, row by row, as the outer side produces tuples. Hash join and index nested-loop join both exploit this property — they never need to fully materialize a large intermediate result. Postgres's standard planner restricts itself to left-deep trees; it is the dominant shape for OLTP databases. The cost of this restriction is that some join orders only available in bushy trees are never explored — specifically, running two independent subjoins in parallel on separate processors. MPP databases (Greenplum, Redshift, BigQuery) and Cascades-based optimizers explore bushy trees specifically to exploit inter-operator parallelism. Postgres's parallel query infrastructure handles limited forms of bushy execution via Gather/Gather Merge nodes but does not enumerate bushy shapes during planning.",
+      "connector": "Think of a left-deep join tree like a production line: each station (join) picks up a part from a fixed bin (base table), processes it with the running assembly (outer result), and passes the result to the next station — the bins never change, only the assembly grows.",
+      "techContext": "Setting join_collapse_limit = 1 in Postgres forces the planner to use the left-deep join order written in the FROM clause, useful for hinting a known-good order when the optimizer misbehaves.",
+      "exampleSentence": "The left-deep plan chosen by the optimizer was suboptimal for our eight-table star schema because the best plan required joining two dimension tables before the fact table — a bushy shape the planner never explored.",
+      "codeExample": {
+        "language": "sql",
+        "code": "-- Left-deep plan shape (each inner is a base table)\n--\n--       HashJoin\n--      /        \\\n--  HashJoin      Scan(D)   ← inner is always a base table\n--  /       \\\n-- HashJoin  Scan(C)\n-- /      \\\n-- Scan(A) Scan(B)\n\n-- To inspect shape: read EXPLAIN output bottom-up;\n-- the right child of each join node should be a Seq/Index Scan."
+      },
+      "etymology": "Left-deep describes the tree's shape when drawn with the outer (left) side recursively deeper — the left spine is all internal join nodes; the right leaves are all base table scans.",
+      "unlockLevel": 4,
+      "tags": ["query-optimizer", "join-algorithms", "performance"],
+      "category": "concepts"
+    },
+    {
+      "id": "dbi-ad2-0090-0000-0000-0000-000000000009",
+      "word": "Bushy Plan",
+      "pronunciation": "BUSH-ee PLAN",
+      "partOfSpeech": "noun",
+      "shortDefinition": "A join tree where intermediate results can feed both sides of a join; sometimes faster but harder to enumerate.",
+      "simpleDefinition": "A bushy join tree allows any intermediate join result to appear as either the left or right input of a subsequent join. This means two subjoins can run independently and in parallel before their results are combined. Bushy trees are harder to enumerate than left-deep trees but unlock parallelism that left-deep plans cannot express.",
+      "longDefinition": "In a bushy join tree, neither child of any join node is required to be a base table scan — both children may themselves be join results. This dramatically expands the search space (Catalan number growth versus N! for left-deep), but it also enables a form of parallelism unavailable in left-deep plans: two independent subjoins can be assigned to separate processors, and only their outputs are combined in the final join. MPP databases (Greenplum, Redshift, BigQuery) and Cascades-based optimizers explore bushy trees specifically to exploit this parallelism. For a four-table query A, B, C, D, a bushy plan might join A⋈B on one processor and C⋈D on another, then combine the two results — impossible in a left-deep plan where all joins form a single chain. The cost of bushy enumeration is exponential in N; Cascades-based optimizers use memoization and pruning to make this tractable. For single-core OLTP workloads, the overhead of materializing intermediate results for both sides of a join typically makes bushy plans slower than left-deep ones. For OLAP workloads on multi-core hardware with large tables, the parallelism gain can dominate.",
+      "connector": "Think of a bushy plan like a tournament bracket: two matches (subjoins) happen simultaneously in parallel rounds, and only the winners compete in the final — unlike a left-deep plan where matches are always sequential, one after another.",
+      "techContext": "Our MPP analytical database generated a bushy plan that ran the orders-by-region subjoin in parallel with the products-by-category subjoin, halving total wall-clock time on our 32-core cluster.",
+      "exampleSentence": "Enabling bushy plan enumeration in our Cascades-based optimizer revealed a parallel join shape that was 3× faster than the best left-deep plan on our multi-core OLAP workload.",
+      "etymology": "Bushy describes the tree's shape when drawn: both sides of every join node branch further, creating a wide, bush-like structure rather than the narrow left spine of a left-deep tree.",
+      "unlockLevel": 4,
+      "tags": ["query-optimizer", "join-algorithms", "performance"],
+      "category": "concepts"
+    },
+    {
+      "id": "dbi-ad2-0100-0000-0000-0000-000000000010",
+      "word": "Predicate Pushdown",
+      "pronunciation": "PRED-ih-kit PUSH-down",
+      "partOfSpeech": "noun",
+      "shortDefinition": "Moving filter predicates as close to the data source as possible to reduce rows flowing through the plan tree.",
+      "simpleDefinition": "Predicate pushdown relocates WHERE clause filters from a high position in the plan tree down to the lowest node where they can be legally evaluated — ideally into the scan operator itself. The earlier a row is rejected, the fewer I/O reads, CPU cycles, and memory allocations are wasted on it upstream.",
+      "longDefinition": "Predicate pushdown is a rule-based transformation — it is always semantically correct to move a predicate closer to its base table, as long as the predicate does not reference columns computed by the operator being pushed past. Modern optimizers apply it as a mandatory normalization step before cost-based enumeration begins. The benefit is substantial: without pushdown, a WHERE clause evaluated above a join forces the join to process all rows from both tables before filtering; with pushdown, the filter runs inside the scan and the join receives only the qualifying rows. For a table with 1 million rows and a predicate with 2% selectivity, pushdown reduces the join's input from 1,000,000 to 20,000 rows. Related transformations include join predicate pushdown (moving join conditions into index lookups), partition pruning (excluding entire partitions at planning time based on partition key predicates), and view predicate pushdown (pushing predicates through view definitions into base tables, also called view merging). Limits exist: predicates on window function output cannot be pushed inside the window computation; predicates referencing volatile functions (random(), now()) cannot always be safely pushed because re-evaluation may produce different results. In Postgres EXPLAIN output, a pushed-down predicate appears as a 'Filter:' annotation on the scan node rather than a separate Filter node above it.",
+      "connector": "Think of predicate pushdown like installing a water filter at the source tap rather than at the end of the pipe — you eliminate impurities (non-matching rows) at the earliest possible point rather than carrying them through the entire system.",
+      "techContext": "Predicate pushdown moved the WHERE status = 'active' filter inside the index scan, reducing the rows entering the hash join from 4 million to 180,000 and cutting query time by 95%.",
+      "exampleSentence": "Without predicate pushdown the optimizer joined two million-row tables before filtering; with it, the filter ran inside each scan and the join processed only 12,000 rows total.",
+      "codeExample": {
+        "language": "sql",
+        "code": "-- Without pushdown (filter above join):\n-- Filter (amount > 1000)           ← evaluated on 1M rows\n--   HashJoin (orders ⋈ customers)\n--     SeqScan(orders)              ← all 1M rows flow up\n--     SeqScan(customers)\n\n-- With pushdown (filter inside scan):\n-- HashJoin (orders ⋈ customers)\n--   Filter (amount > 1000)         ← pushes into scan\n--     SeqScan(orders)              ← 20K rows flow up\n--   SeqScan(customers)\n\n-- Postgres does this automatically.\n-- Verify via EXPLAIN: 'Filter:' appears on the scan node."
+      },
+      "etymology": "Push from Old English pūsian; down from Proto-Germanic; the term entered database optimization literature in the 1970s as a foundational algebraic transformation in relational algebra rewriting.",
+      "unlockLevel": 4,
+      "tags": ["query-optimizer", "query-execution", "performance"],
+      "category": "concepts"
+    },
+    {
+      "id": "dbi-ad2-0110-0000-0000-0000-000000000011",
+      "word": "Vectorised Execution",
+      "pronunciation": "VEK-tuh-ryzd ek-SEK-yoo-shun",
+      "partOfSpeech": "noun",
+      "shortDefinition": "Processing column batches of 1024–2048 values per operator call using SIMD, achieving far higher throughput than row-at-a-time.",
+      "simpleDefinition": "Vectorised execution changes the granularity of the Volcano model: instead of passing one row per next() call, each call passes a batch (a vector) of 1000+ rows stored in contiguous column arrays. Operators apply their logic as tight loops over those arrays — enabling CPU SIMD auto-vectorisation, eliminating per-row dispatch overhead, and maximizing cache efficiency.",
+      "longDefinition": "Peter Boncz's MonetDB/X100 paper (CIDR 2005) demonstrated that the Volcano model's one-tuple-at-a-time interface is the primary performance bottleneck for analytical queries. The solution is to amortize function call overhead over batches while keeping data in columnar arrays that the CPU can process efficiently. A vectorised operator receives a ColumnBatch containing, for example, an int array of 2048 IDs and a float array of 2048 amounts. A filter applies a branch-free comparison loop across the entire amount array, producing a selection bitmap. The next operator consumes only the selected rows. Three mechanisms make this dramatically faster than row-at-a-time: (1) CPU cache efficiency — a 2048-element int32 array is 8 KB, fitting in L1/L2 cache; row-at-a-time scatters across cache lines. (2) SIMD auto-vectorisation — tight loops over homogeneous arrays are recognized by GCC and Clang for AVX-512 vectorisation, processing 8–16 elements per clock cycle. (3) Amortized call overhead — one function call per 2048 rows instead of 2048 calls per 2048 rows. DuckDB uses 2048-row vectors as its default batch size; ClickHouse uses blocks of 65,536 rows. Postgres added vectorised expression evaluation via JIT in v11 but retains row-at-a-time tuple passing between operators; full vectorised execution is the domain of OLAP engines.",
+      "connector": "Think of vectorised execution like a bread-slicing machine versus cutting one slice at a time by hand — the machine slices an entire loaf in one pass; the per-row model requires a separate cut for every slice.",
+      "techContext": "Switching from Postgres to DuckDB for our 500M-row aggregation query reduced runtime from 4 minutes to 8 seconds, entirely due to DuckDB's vectorised execution over column-compressed data.",
+      "exampleSentence": "Vectorised execution reduced the analytical query's CPU time by 20× by processing column batches of 2048 values through tight SIMD loops instead of dispatching a function call per row.",
+      "codeExample": {
+        "language": "sql",
+        "code": "-- DuckDB: vectorised execution is the default\n-- Set batch size (vector size) explicitly\nPRAGMA threads=4;\n\n-- Check DuckDB's vectorised aggregate performance\nSELECT region,\n       SUM(amount)  AS total_sales,\n       COUNT(*)     AS order_count\nFROM   orders\nWHERE  order_date >= '2024-01-01'\nGROUP  BY region;\n\n-- DuckDB processes 2048-row column batches per operator call.\n-- Each operator loop is SIMD-vectorised by the compiler."
+      },
+      "etymology": "Vectorised from vector (Latin vector, 'carrier'); in processor architecture, SIMD vector instructions operate on arrays of values simultaneously; applied to query execution by Boncz, Zukowski, and Nes (MonetDB/X100, CIDR 2005).",
+      "unlockLevel": 4,
+      "tags": ["query-execution", "performance", "olap"],
+      "category": "concepts"
+    },
+    {
+      "id": "dbi-ad2-0120-0000-0000-0000-000000000012",
+      "word": "Compiled Execution",
+      "pronunciation": "kum-PYLD ek-SEK-yoo-shun",
+      "partOfSpeech": "noun",
+      "shortDefinition": "JIT-compiling a query plan to native machine code (LLVM) to eliminate interpreter overhead on hot loops.",
+      "simpleDefinition": "Compiled execution translates the query plan into native machine code at query start, fusing multiple operators — filter, projection, aggregation — into a single tight loop with no interpreter overhead between them. LLVM then optimises the combined code across operator boundaries just as it would optimise hand-written C.",
+      "longDefinition": "Thomas Neumann's HyPer paper (\"Efficiently Compiling Efficient Query Plans for Modern Hardware\", VLDB 2011) made the definitive case for compilation. Even vectorised execution still passes data through operator interfaces; compiled execution eliminates those interfaces entirely. The plan tree is translated into LLVM IR, with each operator contributing its logic as IR fragments. LLVM's optimization passes then run over the combined IR — inlining, constant folding, dead-code elimination, loop unrolling — treating the entire pipeline as a single compilation unit. The resulting native code is a single tight loop over pages with no virtual dispatch, no interpreter, and no per-row overhead. For a query scanning 500M rows with a filter and an aggregate, compiled execution eliminates 500M virtual function calls and enables the CPU's branch predictor to operate on a simple, predictable loop. HyPer (now Tableau Hyper) and SingleStore (MemSQL) use LLVM-based full pipeline compilation. Postgres added JIT in version 11 for expression evaluation only — not full operator fusion — using LLVM to compile WHERE clause and projection expressions. Full compilation remains the domain of specialized analytical engines. The main weakness of compilation is latency: generating and compiling LLVM IR takes 10–200ms for complex queries, making it unsuitable for OLTP queries touching few rows. Production systems hybridize: compile long-running analytical queries, interpret short OLTP ones.",
+      "connector": "Think of compiled execution like printing a custom-machined tool for a specific job versus using an adjustable wrench for every job — the custom tool is faster for that exact task but takes time to manufacture.",
+      "techContext": "Enabling JIT compilation in Postgres for our 100M-row aggregate reduced expression evaluation time by 40%, though the 15ms compilation overhead was too high for our OLTP latency budget.",
+      "exampleSentence": "Compiled execution fused the filter, projection, and aggregation into a single native loop, eliminating 300 million virtual function calls and cutting CPU time by 12× over the interpreted plan.",
+      "codeExample": {
+        "language": "sql",
+        "code": "-- Enable JIT compilation in Postgres (v11+)\nSET jit = on;\nSET jit_above_cost = 100000;   -- compile plans costlier than this\nSET jit_optimize_above_cost = 500000;  -- apply full LLVM optimizations\n\n-- EXPLAIN ANALYZE shows JIT stats when triggered:\n-- JIT:\n--   Functions: 8\n--   Options: Inlining true, Optimization true, Expressions true ...\n--   Timing: Generation 3.2ms, Inlining 4.1ms, Optimization 12.3ms ..."
+      },
+      "etymology": "Compiled from Latin compilare ('to pile together'); JIT (Just-In-Time) from manufacturing lean terminology, applied to dynamic native code generation in database systems by Neumann (VLDB 2011).",
+      "unlockLevel": 4,
+      "tags": ["query-execution", "performance", "olap"],
+      "category": "concepts"
+    },
+    {
+      "id": "dbi-ad2-0130-0000-0000-0000-000000000013",
+      "word": "Volcano Model",
+      "pronunciation": "vol-KAY-noh MOD-ul",
+      "partOfSpeech": "noun",
+      "shortDefinition": "The iterator/pull model where each plan node exposes a next() method that returns one row at a time from its subtree.",
+      "simpleDefinition": "In the Volcano model, every operator implements three methods: open(), next(), and close(). Calling next() on the root triggers a cascade of next() calls down to the scan leaf, which reads a page and returns one tuple. The tuple bubbles upward through filters, joins, and aggregates to the client. Simple, composable, and universally used — but one virtual call per row limits throughput for analytical workloads.",
+      "longDefinition": "Goetz Graefe introduced the Volcano model in his 1994 IEEE TKDE paper 'Volcano — An Extensible and Parallel Query Evaluation System'. The model gives every plan operator an identical iterator interface: open() initializes state and recursively opens children; next() returns the next qualifying row or EOF; close() releases resources. A query plan is a tree of these iterators. The root is called in a loop until EOF; each next() call cascades toward the leaf scan operators, which read pages from the buffer pool and return individual tuples that bubble back through filters, join probes, and aggregations. Postgres implements the Volcano model almost exactly — every executor node has an ExecProcNode function pointer that is the next() call, invoked by the main execution loop in execMain.c until TupIsNull returns true. The strengths of the Volcano model are simplicity and composability: adding a new operator requires only implementing the three-method interface; operators are independently testable and reusable across query types. The weakness is virtual dispatch overhead: every row triggers multiple virtual function calls up the operator stack. At millions of rows per second, these calls and the associated instruction-cache misses dominate CPU time. This fundamental overhead motivated vectorised execution (passing batches) and compiled execution (eliminating the interface entirely). For OLTP workloads touching hundreds or thousands of rows, Volcano's overhead is negligible; for OLAP workloads scanning hundreds of millions of rows, it is the bottleneck.",
+      "connector": "Think of the Volcano model like a bucket brigade — each person (operator) passes one bucket (row) at a time up the line when asked, and the requester at the top calls for the next bucket only after handling the previous one.",
+      "techContext": "Postgres uses the Volcano model for all query execution; its JIT compilation in v11+ reduces but does not eliminate the per-row overhead because it only compiles expression evaluation, not the full operator dispatch chain.",
+      "exampleSentence": "The Volcano model's one-row-at-a-time pull semantics caused 400 million virtual function calls for our full-table aggregation, which compiled execution reduced to a single native loop.",
+      "codeExample": {
+        "language": "pseudocode",
+        "code": "// Volcano iterator interface\ninterface Iterator {\n    open()         // initialise state; recursively open children\n    next() -> Row  // return next row, or EOF when exhausted\n    close()        // release resources; recursively close children\n}\n\n// Execution: client drives the loop\nroot.open()\nwhile true:\n    row = root.next()   // cascades down to scan leaves\n    if row == EOF: break\n    send_to_client(row)\nroot.close()"
+      },
+      "etymology": "Named after Graefe's Volcano project at the University of Colorado (1994); the name evokes the model's pull-based upward flow of data, like magma rising through volcanic conduits.",
+      "unlockLevel": 4,
+      "tags": ["query-execution", "performance", "architecture"],
+      "category": "concepts"
+    },
+    {
+      "id": "dbi-ad2-0140-0000-0000-0000-000000000014",
+      "word": "Hash Join",
+      "pronunciation": "HASH JOIN",
+      "partOfSpeech": "noun",
+      "shortDefinition": "A join algorithm that builds an in-memory hash table on the smaller relation and probes it with the larger.",
+      "simpleDefinition": "Hash join runs in two phases. Build: iterate the smaller (inner) relation, hashing each row's join key into a hash table. Probe: iterate the larger (outer) relation, hash each row's join key, and look up matches in the hash table. Both phases are O(N) — making hash join the dominant algorithm for large equi-joins when neither input is sorted.",
+      "longDefinition": "Hash join requires an equi-join predicate (r.key = s.key). The optimizer places the relation with the smaller estimated cardinality on the build side, because the hash table must fit in work_mem. Build phase: for each inner row, compute hash(join_key) mod num_buckets and append the row to that bucket's chain. Probe phase: for each outer row, compute the same hash, look up the bucket, and compare join keys for exact match. Complexity: O(|inner|) build + O(|outer|) probe, total O(N+M) with O(|inner|) memory. When the inner relation is too large for work_mem, Postgres uses hybrid hash join (derived from Grace hash join): keep the first partition in memory (no I/O for it), spill overflow partitions to temporary files, then process each spilled partition in a second pass. Postgres 13+ can spill hash aggregates the same way. A Bloom filter optimization reduces probe-phase CPU cost for low-selectivity joins: insert all inner keys into a Bloom filter before probing; if the filter says 'definitely absent,' skip the hash table lookup entirely. The optimizer chooses hash join over nested-loop join when the outer relation is large and the inner has no useful index, and over merge join when neither input is already sorted. For very large joins that must spill, merge join may be cheaper because it avoids writing both sides twice.",
+      "connector": "Think of hash join like checking into a hotel with a reservations desk organized by the first letter of your name — you build the reservation map first (build phase), then each arriving guest looks up their letter bucket (probe phase) for an instant match.",
+      "techContext": "The optimizer chose hash join over nested-loop join when estimated rows jumped from 500 to 50,000 after ANALYZE; the hash table fit comfortably in our 256MB work_mem setting.",
+      "exampleSentence": "Hash join reduced the eight-second nested-loop join to 400 milliseconds by building a hash table on the 100K-row customers table and probing it with the 10M-row orders relation.",
+      "codeExample": {
+        "language": "sql",
+        "code": "-- Encourage hash join by ensuring statistics are fresh\nANALYZE orders;\nANALYZE customers;\n\n-- Increase work_mem to keep hash table in memory\nSET work_mem = '256MB';\n\nEXPLAIN ANALYZE\nSELECT o.id, c.name\nFROM   orders o\nJOIN   customers c ON o.cust_id = c.id;\n\n-- Look for: Hash Join ... Hash Cond: (o.cust_id = c.id)\n-- Then:     Hash  (cost=... rows=100000 ...)\n--             SeqScan on customers  ← build side (smaller)"
+      },
+      "etymology": "Hash from Middle English hacchen ('to cut into pieces'); in computer science, hashing maps keys to buckets; join from Old French joindre ('to connect'); the algorithm appeared in System R (1979) and was popularized by DeWitt and Gray in parallel database research.",
+      "unlockLevel": 4,
+      "tags": ["join-algorithms", "query-execution", "performance"],
+      "category": "algorithms"
+    },
+    {
+      "id": "dbi-ad2-0150-0000-0000-0000-000000000015",
+      "word": "Merge Join",
+      "pronunciation": "MURJ JOIN",
+      "partOfSpeech": "noun",
+      "shortDefinition": "A join algorithm that reads two sorted inputs in lockstep; O(N+M) but requires sorted input from both sides.",
+      "simpleDefinition": "Merge join maintains two pointers advancing through two pre-sorted streams. When both pointers land on equal join keys, a match is emitted. When they differ, the pointer on the smaller key advances. A single sequential pass over both relations — O(N+M) — with O(1) memory (plus a mark/restore buffer for duplicate keys). When inputs are already sorted from index scans, merge join has no preprocessing cost.",
+      "longDefinition": "Merge join implements a two-pointer merge over sorted inputs — the same logic as the merge step of merge sort. Both inputs must be sorted on the join key before the merge phase begins. If they are not already sorted, the optimizer adds explicit Sort nodes above each input, adding O(N log N) cost per unsorted input. The merge phase advances two pointers through the sorted streams: if the outer key is smaller than the inner key, advance the outer pointer; if the inner is smaller, advance the inner; if equal, emit the matching pair. Duplicate key handling requires a mark/restore mechanism: when the outer key matches a group of identical inner keys, the inner pointer must rewind to the start of the matching group for each subsequent outer row with the same key — Postgres's merge join node maintains a mark position for this. When to prefer merge join: (1) both inputs are already sorted from index scans or a preceding ORDER BY — merge join is free once inputs are ordered; (2) the join key matches the output ORDER BY, so merge join produces already-sorted output without an extra Sort node; (3) the join is an inequality or range join where hash join cannot apply (hash join requires equi-join predicates). The optimizer compares merge join's sort cost plus O(N+M) merge cost against hash join's O(N+M) cost plus potential spill overhead when the hash table exceeds work_mem.",
+      "connector": "Think of merge join like merging two alphabetically sorted decks of cards — you look at the top card of each deck, emit the match when both show the same value, and advance whichever deck has the smaller top card.",
+      "techContext": "The optimizer chose merge join over hash join for our time-series correlation query because both inputs arrived sorted from range index scans, eliminating all sort overhead and making merge join the cheapest option.",
+      "exampleSentence": "Merge join completed the 10M × 5M row join in 6 seconds by exploiting the existing sort order from both index scans, avoiding the 4GB hash table that would have been needed for a hash join.",
+      "codeExample": {
+        "language": "sql",
+        "code": "-- Merge join is chosen when both inputs are already sorted\n-- Create indexes to give the optimizer sorted access paths\nCREATE INDEX ON orders (cust_id);\nCREATE INDEX ON customers (id);\n\nEXPLAIN\nSELECT o.id, c.name\nFROM   orders o\nJOIN   customers c ON o.cust_id = c.id\nORDER BY o.cust_id;   -- output sort matches join key\n\n-- Expected plan: Merge Join using both indexes;\n-- no separate Sort node because index provides order."
+      },
+      "etymology": "Merge from Latin mergere ('to dip, plunge together'); the algorithm descends from the merge step of John von Neumann's 1945 merge sort; applied to relational joins in the System R era.",
+      "unlockLevel": 4,
+      "tags": ["join-algorithms", "query-execution", "performance"],
+      "category": "algorithms"
+    },
+    {
+      "id": "dbi-ad2-0160-0000-0000-0000-000000000016",
+      "word": "Nested Loop Join",
+      "pronunciation": "NES-tid LOOP JOIN",
+      "partOfSpeech": "noun",
+      "shortDefinition": "For each row in the outer table, scan the inner table; O(N*M) but becomes fast with an index on the inner relation.",
+      "simpleDefinition": "Nested loop join iterates the outer relation once and, for each outer row, scans or probes the inner relation. Without an index: O(N×M) — catastrophic for large tables. With an index on the inner join key: O(N × log M) — the preferred algorithm for OLTP joins where a small outer result probes a large indexed inner table.",
+      "longDefinition": "Nested loop join is the simplest and most general join algorithm. For each outer row, it scans or probes the inner relation looking for matching rows. Without any index, the naive implementation requires |outer| × |inner| comparisons — O(N×M). For a 1M × 1M join this is 10^12 operations, making naive NLJ impractical for large tables. The optimizer only chooses NLJ for large inputs when there is a usable index on the inner relation's join key. With an index, each inner probe is O(log M): one B-tree traversal per outer row. For OLTP joins with a small outer result (for example, looking up a customer row for a single order — outer is 1 row, inner is 100K rows with a primary key index), NLJ cost is effectively O(1). Block nested loop join (BNLJ), used by MySQL before 8.0, batches a block of outer rows and scans the inner once per block instead of once per row, reducing I/O by the block factor. Postgres generates NLJ nodes for non-equi-join predicates (r.a < s.b, r.range OVERLAPS s.range) because hash join and merge join both require equi-join predicates and cannot handle arbitrary predicates. Cross joins (CROSS JOIN — no predicate) are also implemented as NLJ. The optimizer's decision between NLJ and hash join is primarily driven by cardinality: if the outer relation is small enough that the per-row inner probe cost is low, NLJ wins; if the outer is large and the inner is unindexed, hash join dominates.",
+      "connector": "Think of nested loop join like searching every drawer in a filing cabinet for each item on your shopping list — manageable if the list is short, catastrophic if both the list and the cabinet are large, but fast if the cabinet has a labeled index tab.",
+      "techContext": "The optimizer chose an index nested loop join for our primary-key lookup: 200 outer rows from orders × one B-tree lookup into customers per row — 200 index probes, sub-millisecond total.",
+      "exampleSentence": "Nested loop join was ideal for the OLTP pattern of looking up a customer's details for each order in a small batch, but switching to a 10K-row batch query required a hash join to avoid 10,000 individual index lookups.",
+      "codeExample": {
+        "language": "sql",
+        "code": "-- Nested loop join shines on primary-key lookups\nEXPLAIN\nSELECT o.id, c.email\nFROM   orders o\nJOIN   customers c ON c.id = o.cust_id\nWHERE  o.id IN (1001, 1002, 1003);  -- small outer set\n\n-- Expected plan:\n-- Nested Loop\n--   Index Scan on orders (id IN (...))\n--   Index Scan on customers using customers_pkey\n--     Index Cond: (id = o.cust_id)  ← one probe per outer row"
+      },
+      "etymology": "Nested from Latin nidus ('nest') via the concept of loop-within-loop; the algorithm is the natural computational analogue of the set-theory cross product, filtered by a join predicate.",
+      "unlockLevel": 4,
+      "tags": ["join-algorithms", "query-execution", "performance"],
+      "category": "algorithms"
+    },
+    {
+      "id": "dbi-ad2-0170-0000-0000-0000-000000000017",
+      "word": "Index Scan",
+      "pronunciation": "IN-deks SKAN",
+      "partOfSpeech": "noun",
+      "shortDefinition": "A plan node that traverses a B-tree index to find matching rows rather than scanning the whole table.",
+      "simpleDefinition": "An index scan navigates the B-tree to locate matching index entries, then follows each entry's tuple pointer (TID) to the heap page to fetch the full row. Each heap fetch is a random I/O. For highly selective predicates — ones matching only a few percent of rows — the random I/O cost of an index scan is far cheaper than reading every heap page sequentially.",
+      "longDefinition": "Index scan is the plan operator that exploits a B-tree (or other) index to avoid reading the entire heap file. It traverses the B-tree from the root to the first qualifying leaf entry, then follows the leaf chain for range predicates. For each qualifying index entry, it extracts the tuple ID (TID — page number and slot number within the page) and performs a random heap page fetch to retrieve the full row. The critical tradeoff is selectivity: each heap fetch is a random I/O, which on spinning disks is ~4× more expensive than a sequential read. On NVMe SSDs, the ratio shrinks to ~1.1×. When selectivity is low (many rows match), an index scan issues many random reads and a sequential scan — reading all pages in order — becomes cheaper. The optimizer's crossover point depends on random_page_cost / seq_page_cost. Postgres supports three related operators: IndexScan (as described), Bitmap Index Scan (builds a bitmap of matching TIDs, then reads heap pages in physical order to eliminate duplicate random I/Os — optimal for moderate selectivity of 5–20%), and Index-Only Scan (when all projected columns are in the index — no heap fetch needed, only the visibility map is consulted). The Index-Only Scan is particularly powerful for covering indexes: a query that projects only indexed columns never touches the heap file at all, making reads proportional to matched rows rather than heap pages.",
+      "connector": "Think of an index scan like using a book's index to find specific pages — efficient when you need only a few pages, but slower than reading the whole book sequentially if you need most of it.",
+      "techContext": "After adding an index on (region, order_date), the optimizer chose an index scan with 0.3% selectivity, reading 3,000 heap pages instead of doing a 1M-page sequential scan.",
+      "exampleSentence": "The index scan on the status column had poor selectivity — 60% of rows matched — so the optimizer correctly switched to a sequential scan after ANALYZE updated the statistics.",
+      "codeExample": {
+        "language": "sql",
+        "code": "-- Three scan operator variants in Postgres\nEXPLAIN\nSELECT id, amount\nFROM   orders\nWHERE  amount > 5000;       -- high selectivity → IndexScan\n\nEXPLAIN\nSELECT id, amount\nFROM   orders\nWHERE  amount > 100;        -- moderate selectivity → Bitmap Scan\n\nEXPLAIN\nSELECT amount               -- only indexed column\nFROM   orders\nWHERE  amount > 5000;       -- → Index-Only Scan (no heap fetch)"
+      },
+      "etymology": "Index from Latin index ('pointer, indicator'); scan from Norse skanna ('to examine'); the term entered database systems with the B-tree access method implementations of the early 1970s.",
+      "unlockLevel": 4,
+      "tags": ["query-execution", "indexing", "performance"],
+      "category": "components"
+    },
+    {
+      "id": "dbi-ad2-0180-0000-0000-0000-000000000018",
+      "word": "Seq Scan",
+      "pronunciation": "SEK SKAN",
+      "partOfSpeech": "noun",
+      "shortDefinition": "A full sequential read of all heap pages; faster than an index scan when selectivity is low or the table fits in cache.",
+      "simpleDefinition": "A sequential scan reads every heap page from the first to the last in physical order, applying predicates row by row. It has predictable, streaming I/O — no random seeks. For queries matching more than ~5–15% of rows, or for small tables that fit in the buffer pool, sequential scan is faster than the random I/O of an index scan.",
+      "longDefinition": "A sequential scan (SeqScan in Postgres EXPLAIN output) reads all pages of a heap file sequentially, evaluating predicates on every row encountered. Its I/O pattern is fully sequential: Postgres issues a posix_fadvise(POSIX_FADV_SEQUENTIAL) hint to the OS, enabling aggressive read-ahead that saturates disk bandwidth. Cost is proportional to table size, not to selectivity — SeqScan always reads all pages regardless of how many rows match. This makes it optimal when selectivity is low (many rows pass the predicate) or when the table is small enough that even a full read is cheap. The optimizer compares SeqScan cost (seq_page_cost × pages + cpu_tuple_cost × rows) against IndexScan cost (random_page_cost × index pages + random_page_cost × matching heap pages + cpu_tuple_cost × matching rows). On spinning disks, random I/O is ~4× more expensive than sequential, making IndexScan worthwhile only for highly selective predicates. On NVMe SSDs, random_page_cost drops to ~1.1, shifting the crossover toward index scans. A common performance pitfall is when ANALYZE has not been run after bulk data changes: the optimizer may believe a table has 10,000 rows (pre-load statistics) when it actually has 10 million, causing it to choose an index scan that issues 2 million random reads instead of a sequential scan. Postgres also uses SeqScan for parallel queries: multiple workers each claim non-overlapping blocks from a shared block-range queue, enabling parallel sequential scanning of a single table across many CPU cores.",
+      "connector": "Think of a sequential scan like reading an entire book cover to cover — efficient if you need most pages, wasteful if you only need chapter 3, where the index would have taken you there directly.",
+      "techContext": "After bulk-loading 50M rows, ANALYZE changed the plan from an index scan (stale statistics: 10K estimated rows) to a sequential scan, reducing query time from 8 minutes to 45 seconds.",
+      "exampleSentence": "The optimizer chose a sequential scan over the status index because ANALYZE showed 85% of rows had status='active' — the index would have added random I/O overhead for nearly the entire table.",
+      "codeExample": {
+        "language": "sql",
+        "code": "-- Force a sequential scan to compare cost\nSET enable_indexscan  = off;\nSET enable_bitmapscan = off;\n\nEXPLAIN ANALYZE\nSELECT * FROM orders WHERE status = 'active';\n-- Observe actual ms; re-enable and compare with index path.\n\nSET enable_indexscan  = on;\nSET enable_bitmapscan = on;\n\n-- Tune the crossover point for SSDs:\nSET random_page_cost = 1.1;   -- makes index scan more attractive"
+      },
+      "etymology": "Sequential from Latin sequi ('to follow'); scan from Norse skanna; sequential scan as a distinct plan node type was formalized in the System R implementation (1974–1979).",
+      "unlockLevel": 4,
+      "tags": ["query-execution", "performance", "storage"],
+      "category": "components"
+    },
+    {
+      "id": "dbi-ad2-0190-0000-0000-0000-000000000019",
+      "word": "Zone Map",
+      "pronunciation": "ZONE MAP",
+      "partOfSpeech": "noun",
+      "shortDefinition": "A min/max index per column segment in a columnar store that lets scans skip entire segments outside the query range.",
+      "simpleDefinition": "A zone map records the minimum and maximum value of every column for each fixed-size segment of a columnar table. When a query filters on that column, segments whose [min, max] range does not overlap the predicate value are skipped entirely without reading their data — this is called segment elimination or late materialization at the segment level.",
+      "longDefinition": "Zone maps (also called min-max indexes or small materialized aggregates / SMAs in some systems) are the dominant lightweight pruning structure in columnar OLAP databases. A table is divided into row groups (Parquet calls them 'row groups'; ORC calls them 'stripes'; Snowflake calls them 'micro-partitions'). For each column in each row group, the storage layer records the minimum and maximum values at write time. At query time, a range or equality predicate is compared against the zone map entries. Any row group where max < predicate_lower_bound or min > predicate_upper_bound cannot contain any matching rows and is entirely skipped without I/O. For temporally loaded data — append-only event tables where timestamps increase monotonically — zone maps on the timestamp column allow queries to skip all but a small fraction of segments, achieving near-index-like performance without maintaining a B-tree. Zone maps are cheap to maintain (computed during write/compaction, stored as metadata) and impose zero write amplification. Their weakness is low-selectivity or random-order data: if values are uniformly distributed across segments, every segment's [min, max] overlaps every predicate and no pruning occurs. Columnar engines pair zone maps with sort order — loading data sorted by the most queried column maximizes zone map pruning. Snowflake's micro-partition pruning and Parquet's row group statistics are the canonical production implementations.",
+      "connector": "Think of zone maps like the chapter summaries at the start of a textbook — each summary tells you the range of topics covered in that chapter; if your research topic is outside a chapter's range, you skip it without reading a single page.",
+      "techContext": "Loading our events table sorted by event_timestamp reduced scan time by 95% because the zone maps eliminated all but 3 of 200 row groups for any time-range query.",
+      "exampleSentence": "Zone maps on the order_date column allowed the columnar scan to skip 97% of micro-partitions for a monthly query, reducing I/O from 800 GB to under 25 GB.",
+      "codeExample": {
+        "language": "sql",
+        "code": "-- Parquet: zone maps (row group statistics) are automatic.\n-- Maximize pruning by writing data sorted on the filter column.\n\n-- DuckDB: inspect row group statistics\nSELECT *\nFROM parquet_metadata('orders.parquet');\n-- Shows: row_group_id, min_value, max_value per column\n\n-- Snowflake: ACCOUNT_USAGE.QUERY_HISTORY shows\n-- partitions_scanned vs partitions_total for each query."
+      },
+      "etymology": "Zone from Greek zone ('belt, girdle'); map as a data structure; the term 'zone map' was popularized by IBM's DB2 columnar extensions; equivalent to 'small materialized aggregates' (SMA) coined by Moerkotte (1998) and 'min-max index' in Vertica and Greenplum.",
+      "unlockLevel": 4,
+      "tags": ["olap", "storage", "performance"],
+      "category": "concepts"
+    },
+    {
+      "id": "dbi-ad2-0200-0000-0000-0000-000000000020",
+      "word": "DSM",
+      "pronunciation": "DEE-ES-EM",
+      "partOfSpeech": "noun",
+      "shortDefinition": "Decomposition Storage Model: column-oriented layout where each column is stored as a contiguous sequence across all rows.",
+      "simpleDefinition": "In DSM, the database stores each column as its own contiguous array on disk, separate from all other columns. A query reading only two columns of a 100-column table reads 2% of the data. Homogeneous arrays also compress 10–300× better than row-mixed pages, further reducing I/O. DSM is the layout behind all modern OLAP column stores.",
+      "longDefinition": "The Decomposition Storage Model was formally described by Copeland and Khoshafian in their 1985 SIGMOD paper. Each attribute (column) of a relation is stored as a separate, contiguous sequence of values across all rows — typically sorted by some cluster key. A reconstruction of full rows requires joining column arrays by position (usually an implicit row ID or positional index). DSM has three decisive advantages over NSM (N-ary Storage Model / row store) for analytical workloads. First, I/O efficiency: a query projecting 5 of 100 columns reads only 5% of the data, versus 100% in NSM. Second, compression: a contiguous array of values of the same type and similar range compresses dramatically better than an interleaved row of heterogeneous types. Dictionary encoding, run-length encoding, and delta encoding on sorted columns achieve 10–300× compression ratios, further multiplying the I/O savings. Third, SIMD vectorisation: tight loops over homogeneous arrays are auto-vectorisable by compilers, processing 8–16 values per clock cycle. The disadvantage of DSM is tuple reconstruction overhead for queries that project many columns, and poor performance for point lookups that need all columns of a single row (OLTP patterns). DSM is used by DuckDB, ClickHouse, Snowflake, Redshift, BigQuery, Vertica, and Parquet file format. The hybrid PAX (Partition Attributes Across) layout — DSM within a page-sized mini-column — is used by some systems to balance OLAP and OLTP access patterns.",
+      "connector": "Think of DSM like organizing a filing cabinet by topic rather than by person — all salary information is in one drawer, all addresses in another; finding everyone's salary is instant, but assembling one person's complete record requires opening every drawer.",
+      "techContext": "Switching our reporting database from Postgres (NSM) to ClickHouse (DSM) reduced our 50-column analytics table scan from reading 12 GB to reading 400 MB for queries that touch only 3 columns.",
+      "exampleSentence": "DSM's columnar layout compressed our 10TB fact table to 800 GB, because each homogeneous column array achieved 12× compression under dictionary encoding — impossible with interleaved row storage.",
+      "codeExample": {
+        "language": "sql",
+        "code": "-- DuckDB uses DSM (columnar) layout internally.\n-- Create a column-store table:\nCREATE TABLE orders (\n    id         BIGINT,\n    cust_id    BIGINT,\n    amount     DOUBLE,\n    region     VARCHAR,\n    order_date DATE\n);\n\n-- Query reads only 2 of 5 columns — 40% of data:\nSELECT region, SUM(amount)\nFROM   orders\nGROUP  BY region;\n-- In DSM: only 'region' and 'amount' arrays are read from disk."
+      },
+      "etymology": "Decomposition from Latin decomponere ('to separate into parts'); Storage Model coined by Copeland and Khoshafian (SIGMOD 1985), who proposed storing each attribute in a separate, independently scannable sequence.",
+      "unlockLevel": 4,
+      "tags": ["storage", "olap", "performance"],
+      "category": "concepts"
+    },
+    {
+      "id": "dbi-ad2-0210-0000-0000-0000-000000000021",
+      "word": "NSM",
+      "pronunciation": "EN-ES-EM",
+      "partOfSpeech": "noun",
+      "shortDefinition": "N-ary Storage Model: row-oriented layout where all columns of a row are stored contiguously.",
+      "simpleDefinition": "NSM stores each row as a contiguous byte sequence: id, name, amount, date, all packed together on the same page. Reading any column of a row requires reading the entire row. This is efficient for OLTP workloads that need all columns of a few rows, but wastes I/O for analytical queries that need one column of many rows.",
+      "longDefinition": "NSM (N-ary Storage Model) is the traditional row-store layout used by PostgreSQL, MySQL, SQL Server, and Oracle. Each row (tuple) is stored as a contiguous byte record on a heap page: all N attribute values packed together, prefixed by a tuple header containing MVCC metadata (xmin, xmax, ctid in Postgres). The slotted page format stores variable-length tuples with a slot directory at one end and tuples packed from the other end, providing O(1) access to any tuple by its slot index. NSM has three key strengths. Point lookups: reading a single row requires exactly one page access (given a heap TID), and all columns are available without further I/O. Write efficiency: INSERT and UPDATE add or replace one contiguous record — no column-by-column coordination. Cache locality for row access: reading a row touches a contiguous memory region, beneficial for OLTP patterns that need all columns. NSM's weakness is analytical projection: a scan reading only 2 of 50 columns must still read all 50 column values into the buffer pool for every row — the unused values consume I/O bandwidth, cache capacity, and CPU processing. At 10 TB table size with 50 columns and a 2-column analytical query, NSM reads 10 TB while DSM reads 400 GB. Postgres uses NSM exclusively; it adds DSM-style benefits through covering indexes (pre-projecting selected columns into an index) and TOAST (out-of-line storage for large values).",
+      "connector": "Think of NSM like a manila folder containing all of one person's documents — grabbing everything about one person is instant, but scanning for one specific type of document across thousands of people means opening every folder.",
+      "techContext": "Postgres's NSM layout caused our 80GB wide-column analytics table to read 8× more data than necessary for our 10-column reporting queries — the primary motivation for migrating hot reports to a columnar store.",
+      "exampleSentence": "NSM's row-contiguous layout gave our OLTP application sub-millisecond point lookups, but caused the analytical reporting query to read 40 GB when it only needed 2 GB of relevant column data.",
+      "codeExample": {
+        "language": "sql",
+        "code": "-- Postgres uses NSM (row store) by default.\n-- Inspect a raw page to see row layout:\nCREATE EXTENSION pageinspect;\n\nSELECT lp, t_xmin, t_xmax, t_data\nFROM   heap_page_items(get_raw_page('orders', 0))\nLIMIT  5;\n-- Each row's t_data contains ALL columns packed together.\n\n-- Covering index mimics DSM projection for specific queries:\nCREATE INDEX ON orders (region) INCLUDE (amount);\n-- Index-Only Scan reads only (region, amount) — no heap fetch."
+      },
+      "etymology": "N-ary from mathematics (N-ary relation — a relation with N attributes); Storage Model coined alongside DSM in Copeland and Khoshafian (SIGMOD 1985) to name the existing row-oriented default.",
+      "unlockLevel": 4,
+      "tags": ["storage", "oltp", "performance"],
+      "category": "concepts"
+    },
+    {
+      "id": "dbi-ad2-0220-0000-0000-0000-000000000022",
+      "word": "Column Compression",
+      "pronunciation": "KOL-um kum-PRESH-un",
+      "partOfSpeech": "noun",
+      "shortDefinition": "Applying dictionary, run-length, or delta encoding to column data; homogeneous columns compress 10–300× better than rows.",
+      "simpleDefinition": "Because a DSM column array holds values of the same type with similar or ordered values, specialized compression algorithms achieve ratios impossible on heterogeneous row data. Dictionary encoding maps repeated strings to short integers. Run-length encoding collapses repeated values to (value, count) pairs. Delta encoding stores differences between successive sorted values. The result: 10–300× compression, massively reducing I/O.",
+      "longDefinition": "Column compression is one of the primary performance advantages of columnar storage. Because a column array contains values of a single type — and often with low cardinality, sorted order, or monotonic sequences — compression algorithms exploit patterns that general-purpose compressors cannot. The main encoding schemes used in practice: (1) Dictionary encoding: replace each distinct string or high-cardinality value with a small integer code (1–4 bytes); store the dictionary separately. A VARCHAR region column with 20 distinct values compresses 10–20× this way; the optimizer can also apply predicates directly on the dictionary codes without decompressing. (2) Run-length encoding (RLE): replace runs of identical adjacent values with (value, repeat_count) pairs. For sorted columns with low NDV — status, region, product_category — entire segments collapse to a handful of RLE entries. ClickHouse and Vertica apply RLE automatically on sorted columns. (3) Delta encoding (frame-of-reference / FOR): store the difference between successive values rather than the values themselves. For a monotonically increasing timestamp column, deltas may all be the same small integer, compressing to near zero. (4) Bit-packing: if a column's max value fits in k bits (k < 64), pack multiple values into one 64-bit word. (5) ZSTD / LZ4 as a final pass over the encoded data for residual compression. Importantly, many of these encodings support operating on compressed data directly (late decompression), executing predicates and aggregations on dictionary codes or RLE pairs without fully decompressing first.",
+      "connector": "Think of column compression like packing a suitcase by category — folding all shirts together compresses far better than alternating shirts, shoes, and toiletries; homogeneous data lets the packing algorithm exploit repetition and patterns impossible in mixed rows.",
+      "techContext": "Dictionary encoding on our product_name column compressed 200,000 unique strings into 4-byte integer codes, reducing that column's storage from 18 GB to 1.2 GB and enabling predicate evaluation on codes directly.",
+      "exampleSentence": "Column compression with run-length encoding on the sorted region column collapsed 500 million rows of status values into 12 million RLE entries, reducing the column's on-disk size from 4 GB to 48 MB.",
+      "codeExample": {
+        "language": "sql",
+        "code": "-- ClickHouse: specify column-level compression codecs\nCREATE TABLE orders\n(\n    id         UInt64   CODEC(Delta, ZSTD),      -- monotonic IDs\n    order_date Date     CODEC(Delta, ZSTD),      -- delta on sorted dates\n    region     LowCardinality(String),           -- dictionary encoding\n    status     LowCardinality(String),           -- dictionary encoding\n    amount     Float64  CODEC(Gorilla, ZSTD)     -- float delta encoding\n)\nENGINE = MergeTree()\nORDER BY (region, order_date);"
+      },
+      "etymology": "Column from Latin columna ('pillar'); compression from Latin comprimere ('to press together'); the combination as a database technique was systematized in C-Store (Stonebraker et al., VLDB 2005) and commercialized in Vertica.",
+      "unlockLevel": 4,
+      "tags": ["storage", "olap", "performance"],
+      "category": "concepts"
+    },
+    {
+      "id": "dbi-ad2-0230-0000-0000-0000-000000000023",
+      "word": "ANALYZE",
+      "pronunciation": "AN-uh-lyz",
+      "partOfSpeech": "verb",
+      "shortDefinition": "SQL command that samples table data and updates column statistics used by the query optimizer.",
+      "simpleDefinition": "ANALYZE samples a fraction of a table's rows and computes per-column statistics: row count, NDV, null fraction, most-common values, and histogram bounds. The results are stored in pg_statistic and read by the optimizer at planning time. Without fresh statistics the optimizer guesses from outdated or default values, often choosing catastrophically bad plans.",
+      "longDefinition": "In Postgres, ANALYZE collects statistics by scanning a random sample of the heap (default sample size: 300 × default_statistics_target pages, targeting ~30,000 rows). For each column, it computes: reltuples (total live row count, stored in pg_class), null_frac (fraction of NULL values), n_distinct (NDV — positive for absolute count, negative for fraction), most_common_vals and most_common_freqs (the MCV list for high-frequency values), and histogram_bounds (equi-depth histogram for the remaining value range). ANALYZE updates pg_statistic atomically and the planner reads it on the next query. Postgres autovacuum runs ANALYZE automatically when a table's row count changes by more than autovacuum_analyze_threshold + autovacuum_analyze_scale_factor × reltuples (default: 50 + 0.2 × reltuples). This means a 10M-row table auto-analyzes after 2M row changes — too infrequent for fast-moving tables under heavy write load. In those cases, manual ANALYZE or a scheduled job is necessary. ANALYZE can target specific tables (ANALYZE orders) or specific columns (ANALYZE orders (amount, region)) to reduce overhead. The default_statistics_target parameter (default 100) controls the resolution of histograms and MCV lists; raising it to 500 for skewed columns dramatically improves plan quality at the cost of longer ANALYZE time. PostgreSQL 14+ ANALYZE also triggers refresh of extended statistics created with CREATE STATISTICS.",
+      "connector": "Think of ANALYZE like updating the inventory database in a warehouse — if the database says you have 100 units when you actually have 10,000, every downstream fulfillment decision is wrong; the optimizer makes the same category of error from stale statistics.",
+      "techContext": "After bulk-loading 20M rows without running ANALYZE, the optimizer estimated 10,000 rows (pre-load statistics) and chose a nested-loop join that timed out; ANALYZE fixed the estimates and the query completed in 2 seconds.",
+      "exampleSentence": "Running ANALYZE after the nightly ETL load reduced average query planning errors by 100× and eliminated three classes of optimizer regressions that had been causing production slowdowns.",
+      "codeExample": {
+        "language": "sql",
+        "code": "-- Full analyze of a single table\nANALYZE orders;\n\n-- Targeted analyze of specific columns (faster)\nANALYZE orders (amount, region, order_date);\n\n-- Raise statistics resolution for a skewed column\nALTER TABLE orders\n  ALTER COLUMN amount SET STATISTICS 500;\nANALYZE orders (amount);\n\n-- Check when a table was last analyzed\nSELECT relname, last_analyze, last_autoanalyze\nFROM   pg_stat_user_tables\nWHERE  relname = 'orders';"
+      },
+      "etymology": "Analyze from Greek analyein ('to unloose, dissolve into components'); as a SQL command, introduced in Postgres in the 1990s as the standard mechanism to refresh the statistics catalog.",
+      "unlockLevel": 4,
+      "tags": ["query-optimizer", "statistics", "performance"],
+      "category": "components"
+    },
+    {
+      "id": "dbi-ad2-0240-0000-0000-0000-000000000024",
+      "word": "Correlated Subquery",
+      "pronunciation": "KOR-uh-lay-tid SUB-kwer-ee",
+      "partOfSpeech": "noun",
+      "shortDefinition": "A subquery that references columns from the outer query, causing it to re-execute once per outer row.",
+      "simpleDefinition": "A correlated subquery contains a reference to a column from its enclosing (outer) query. Because the subquery depends on the outer row's value, it must be re-evaluated for every outer row — turning a single-pass query into an O(N²) operation. The optimizer attempts to flatten (decorrelate) the subquery into an equivalent join that executes once.",
+      "longDefinition": "A correlated subquery is syntactically placed inside a WHERE, SELECT, or HAVING clause and references one or more columns from an outer query block. The correlation means the subquery's result changes for each outer row, requiring the engine to evaluate it once per outer row. For a 1M-row outer table, this is 1M subquery executions. The optimizer's first response is subquery decorrelation (also called subquery unnesting or flattening): rewriting the correlated subquery into an equivalent join or lateral join that runs the inner query once, grouped by the correlation column. A correlated aggregate subquery (WHERE amount > (SELECT AVG(amount) FROM orders WHERE cust_id = o.cust_id)) decorrelates into a derived table grouped by cust_id, joined back to the outer query. This reduces O(N²) work to O(N). Decorrelation is not always possible: if the subquery contains volatile functions, LIMIT, or outer references in positions that prevent lifting, the optimizer must execute it row-by-row. In Postgres EXPLAIN output, a non-decorrelated correlated subquery appears as a 'SubPlan' node — a major performance warning sign. An 'InitPlan' node is an uncorrelated subquery evaluated once and substituted as a constant, which is safe. Manually rewriting correlated subqueries into explicit joins or CTEs is often necessary when the optimizer cannot decorrelate automatically.",
+      "connector": "Think of a correlated subquery like calling a specialist consultant for every single customer in your database — efficient if you have three customers, catastrophic if you have a million.",
+      "techContext": "A correlated subquery in our reporting dashboard ran the inner query 2.3 million times per report execution; rewriting it as a lateral join with GROUP BY reduced execution time from 18 minutes to 4 seconds.",
+      "exampleSentence": "The correlated subquery in the WHERE clause caused the query to execute 800,000 inner queries — one per customer — which subquery flattening reduced to a single grouped join in 300 milliseconds.",
+      "codeExample": {
+        "language": "sql",
+        "code": "-- Correlated subquery: re-executes once per outer row\nSELECT o.id, o.amount\nFROM   orders o\nWHERE  o.amount > (\n  SELECT AVG(o2.amount)\n  FROM   orders o2\n  WHERE  o2.cust_id = o.cust_id   -- correlation: references outer o\n);\n\n-- Manually decorrelated version (equivalent, O(N) not O(N²))\nSELECT o.id, o.amount\nFROM   orders o\nJOIN (\n  SELECT cust_id, AVG(amount) AS avg_amt\n  FROM   orders\n  GROUP  BY cust_id\n) avg ON avg.cust_id = o.cust_id\nWHERE  o.amount > avg.avg_amt;"
+      },
+      "etymology": "Correlated from Latin correlatus ('brought into a mutual relationship'); subquery — a query nested inside another query; the performance issue was documented in System R literature and remains a canonical SQL antipattern.",
+      "unlockLevel": 4,
+      "tags": ["query-optimizer", "query-execution", "performance"],
+      "category": "concepts"
+    },
+    {
+      "id": "dbi-ad2-0250-0000-0000-0000-000000000025",
+      "word": "Materialization",
+      "pronunciation": "muh-teer-ee-uh-lih-ZAY-shun",
+      "partOfSpeech": "noun",
+      "shortDefinition": "Writing intermediate query results to memory or disk before the next operator consumes them.",
+      "simpleDefinition": "Materialization is the act of fully computing and storing an intermediate result set — in memory or in a temporary file — before passing it to the next operator. It breaks the streaming pipeline but is necessary for blocking operators (Sort, Hash Join build phase) that must see all input before producing any output.",
+      "longDefinition": "In the Volcano pull model, most operators are streaming (pipelined): they produce output rows as they consume input rows, with O(1) memory. Materialization is the exception: it writes an entire intermediate result to a buffer or temporary file before any downstream consumption begins. Materialization is unavoidable for pipeline-breaking operators. Sort must see all input before emitting the globally smallest row. Hash join's build phase must load the entire inner relation into a hash table before any probe can begin. Hash aggregate must see all input before emitting any group result. A Materialize node in Postgres EXPLAIN represents an explicit materialization of a subquery or CTE result for reuse. The planner adds explicit Materialize nodes when the same subplan is referenced multiple times — materializing once is cheaper than executing it N times. CTEs in Postgres versions before 12 were always materialized (serving as optimization fences); from v12 onward, non-recursive CTEs can be inlined and pushed down. Materialization interacts with memory through work_mem: when the materialized intermediate exceeds work_mem, Postgres spills to disk via temporary files. This spill dramatically increases I/O cost — a query with a 500MB intermediate result and a 256MB work_mem incurs one additional write and read pass over the spilled portion. The optimizer accounts for spill probability in its cost model when estimating Sort and Hash Join costs.",
+      "connector": "Think of materialization like saving a spreadsheet to disk at an intermediate calculation step rather than keeping all computations in memory — sometimes you have to write it down before you can continue.",
+      "techContext": "EXPLAIN ANALYZE showed a Materialize node consuming 2 GB that spilled to disk, adding 40 seconds to query time; setting work_mem = '4GB' eliminated the spill and cut the query to 8 seconds.",
+      "exampleSentence": "Materialization of the CTE result forced a 3 GB intermediate write to disk because work_mem was insufficient; inlining the CTE as a subquery allowed streaming execution with no materialization overhead.",
+      "codeExample": {
+        "language": "sql",
+        "code": "-- Before Postgres 12: CTEs were always materialized\n-- (optimization fence)\nWITH expensive AS (\n  SELECT cust_id, SUM(amount) AS total\n  FROM   orders\n  GROUP  BY cust_id\n)\nSELECT * FROM expensive WHERE total > 10000;\n\n-- Postgres 12+: CTE is inlined by default (no materialization)\n-- Force materialization (pre-12 behavior) when needed:\nWITH expensive AS MATERIALIZED (\n  SELECT cust_id, SUM(amount) AS total\n  FROM   orders\n  GROUP  BY cust_id\n)\nSELECT * FROM expensive WHERE total > 10000;"
+      },
+      "etymology": "Materialize from Latin materia ('matter, substance'); in computing, to materialize is to render an abstract intermediate result as a concrete, stored data structure; the database-specific usage dates to the 1970s relational query processing literature.",
+      "unlockLevel": 4,
+      "tags": ["query-execution", "performance", "memory"],
+      "category": "concepts"
+    },
+    {
+      "id": "dbi-ad2-0260-0000-0000-0000-000000000026",
+      "word": "Pipelining",
+      "pronunciation": "PYP-lyne-ing",
+      "partOfSpeech": "noun",
+      "shortDefinition": "Passing rows directly from one operator to the next without materializing intermediate results.",
+      "simpleDefinition": "Pipelining means each operator forwards rows to the next operator as it produces them, row by row (or batch by batch in vectorised engines), with no intermediate buffer. The first result row arrives at the client as soon as it flows through the entire operator chain — no operator needs to complete before the next can begin.",
+      "longDefinition": "Pipelining is the streaming execution property of the Volcano model: operators other than blocking ones (Sort, Hash Join build phase, Hash Aggregate) pass rows to their parent immediately upon production. A pipelined chain of Filter → Project → Limit can return the tenth matching row to the client after reading only enough heap pages to find ten matches — regardless of how large the table is. This is why a LIMIT 10 query on a billion-row table can return almost instantly: the sequential scan, filter, and limit form a pipelined chain, and execution stops as soon as 10 rows satisfy the filter. Memory footprint of a fully pipelined plan is O(1): only the state of the current operator (not the entire intermediate result) resides in memory at any time. Pipeline-breaking operators force materialization and destroy this property. In vectorised engines (DuckDB, ClickHouse), pipelining is preserved at the vector batch level: a batch of 2048 rows flows through the filter, projection, and partial aggregation operators without being written to an intermediate buffer. DuckDB calls consecutive pipelined operators a 'pipeline segment', running the segment as a unit until it hits a pipeline-breaker. Push-based execution (used by DuckDB within pipeline segments) is often more CPU-efficient than pull-based pipelining because the scan drives a tight inner loop rather than being driven by recursive next() calls from above.",
+      "connector": "Think of pipelining like a water pipe — water flows from source to tap continuously without being stored in a tank at each valve; blocking operators are tanks that must fill before they release any flow.",
+      "techContext": "The pipelined plan for our LIMIT 100 query returned results in 3ms by stopping after finding 100 qualifying rows; a materializing plan would have sorted all 50M rows first.",
+      "exampleSentence": "Pipelining allowed the SELECT ... LIMIT 50 query to return results in milliseconds by stopping execution as soon as 50 rows passed the filter, without reading the remaining 999,950 table rows.",
+      "codeExample": {
+        "language": "sql",
+        "code": "-- Pipelined plan: stops early thanks to LIMIT\nEXPLAIN ANALYZE\nSELECT id, amount\nFROM   orders\nWHERE  region = 'EU'\nLIMIT  50;\n-- Plan: Limit → Filter → SeqScan\n-- Actual rows at SeqScan will be far fewer than total table size;\n-- execution stopped when 50 qualifying rows were found.\n\n-- Compare with a pipeline-breaking Sort:\nEXPLAIN ANALYZE\nSELECT id, amount\nFROM   orders\nWHERE  region = 'EU'\nORDER BY amount DESC\nLIMIT  50;\n-- Sort must materialize all 'EU' rows before returning top 50."
+      },
+      "etymology": "Pipeline from a manufacturing analogy coined for CPU instruction pipelines (1960s); applied to database query execution in the Volcano model (Graefe 1994) to describe the streaming property of iterator-based operator chains.",
+      "unlockLevel": 4,
+      "tags": ["query-execution", "performance", "architecture"],
+      "category": "concepts"
+    },
+    {
+      "id": "dbi-ad2-0270-0000-0000-0000-000000000027",
+      "word": "Partition Pruning",
+      "pronunciation": "par-TISH-un PROO-ning",
+      "partOfSpeech": "noun",
+      "shortDefinition": "Skipping partitions whose key range cannot contain any rows matching the query's WHERE clause.",
+      "simpleDefinition": "Partition pruning happens when the optimizer determines at planning time — or the executor determines at runtime — that one or more table partitions cannot contain any rows satisfying the query's predicates. Those partitions are excluded from the scan entirely: no I/O, no page reads, no CPU processing.",
+      "longDefinition": "Partition pruning is the partition-level analogue of predicate pushdown applied to a partitioned table's structure. A partitioned table divides its data across child tables (in Postgres) or physical segments based on a partition key — often a date range, a hash of a key, or a list of values. When a query's WHERE clause contains a predicate on the partition key, the optimizer checks each partition's range or list definition against the predicate. For range partitioning on order_date, a query WHERE order_date = '2024-06-01' touches only the partition covering that date — all others are pruned. Postgres calls this constraint exclusion (for CHECK-constraint-based inheritance partitioning) and partition pruning (for declarative partitioning, Postgres 10+). Planning-time pruning uses static predicate values; runtime pruning (Postgres 11+ with enable_partition_pruning) handles parameterized predicates and PREPARE/EXECUTE patterns where partition exclusion can only be resolved at execution time. Partition pruning is most powerful for time-series tables with range partitioning on a timestamp column, where range queries touch only a few of hundreds of partitions. Pruning also applies to parallel scans: each worker is assigned non-pruned partitions rather than all partitions. The benefit compounds with zone maps (min-max indexes within a partition) for sub-partition-level skipping.",
+      "connector": "Think of partition pruning like a library with books organized by decade — if you are looking for a book published in the 2000s, you walk directly to those shelves and skip every other decade's section entirely.",
+      "techContext": "Partition pruning on our monthly-partitioned events table reduced the query from scanning 36 partitions (3 years of data) to scanning 1 partition for any single-month time-range query.",
+      "exampleSentence": "Partition pruning eliminated 95% of I/O for our daily rollup queries by scanning only the current month's partition rather than 3 years of historical data.",
+      "codeExample": {
+        "language": "sql",
+        "code": "-- Create a range-partitioned table on order_date\nCREATE TABLE orders (\n    id         BIGINT,\n    order_date DATE,\n    amount     NUMERIC\n) PARTITION BY RANGE (order_date);\n\nCREATE TABLE orders_2024_01\n  PARTITION OF orders\n  FOR VALUES FROM ('2024-01-01') TO ('2024-02-01');\n\n-- Query that triggers partition pruning:\nEXPLAIN\nSELECT * FROM orders WHERE order_date = '2024-01-15';\n-- Postgres scans only orders_2024_01; other partitions pruned."
+      },
+      "etymology": "Partition from Latin partitio ('division'); pruning from Old French provigner ('to trim a vine'); as a database term, partition pruning entered common use with the spread of declarative table partitioning in commercial databases during the 2000s.",
+      "unlockLevel": 4,
+      "tags": ["query-optimizer", "storage", "performance"],
+      "category": "concepts"
+    },
+    {
+      "id": "dbi-ad2-0280-0000-0000-0000-000000000028",
+      "word": "GEQO",
+      "pronunciation": "GEE-koh",
+      "partOfSpeech": "noun",
+      "shortDefinition": "Genetic Query Optimizer: Postgres fallback for queries with more tables than join_collapse_limit; approximates optimal join order.",
+      "simpleDefinition": "When a query joins more than geqo_threshold tables (default 12), Postgres switches from exhaustive dynamic programming to GEQO, a genetic algorithm that heuristically explores the join-order space. It trades plan optimality for bounded planning time — essential when the DP table would take longer to compute than the query itself would take to execute.",
+      "longDefinition": "For N tables, the number of left-deep join trees is N!, which grows to 479 million for N=12 and becomes impractical for the dynamic programming algorithm beyond N=12–15. GEQO (Genetic Query OPtimizer) in Postgres is activated when the number of FROM-clause relations exceeds geqo_threshold (default 12). GEQO represents a join order as a chromosome — a permutation of table indices — and applies genetic operators (crossover, mutation, selection) to evolve a population of candidate join orders toward lower-cost plans. The algorithm runs for a bounded number of generations (geqo_generations, default 0 meaning auto-scaled) and returns the best plan found. GEQO does not guarantee the optimal plan — it approximates it. In practice, GEQO plans for 15–20 table queries are often within 10–30% of optimal, which is acceptable given that the alternative is minutes of planning time for hundreds of billions of plan alternatives. Engineers with queries in the GEQO regime can help the optimizer by: (1) lowering geqo_threshold (forces GEQO earlier, bounding planning time for many-table views); (2) raising geqo_pool_size (larger genetic population, better plans at the cost of planning time); (3) using explicit JOIN syntax and setting join_collapse_limit=1 to hint the optimizer toward a known-good order; or (4) rewriting the query to reduce the number of joined relations.",
+      "connector": "Think of GEQO like a naturalized selection tournament for route planning — instead of checking every possible route, you evolve a population of candidate routes by breeding the best ones together, hoping to converge on a good solution before time runs out.",
+      "techContext": "Our 18-table reporting view triggered GEQO every time it was queried; by materializing two intermediate CTEs we reduced the join count to 9, re-enabling exhaustive DP and improving plan quality by 40%.",
+      "exampleSentence": "GEQO was triggered for our 15-table star schema query, producing a plan 25% slower than the manually hinted optimal order — acceptable given that exhaustive DP would have taken minutes.",
+      "codeExample": {
+        "language": "sql",
+        "code": "-- Check if GEQO is active and its threshold\nSHOW geqo;             -- on\nSHOW geqo_threshold;   -- 12 (switch to GEQO for >= 12 tables)\n\n-- Lower threshold to bound planning time for complex views\nSET geqo_threshold = 8;\n\n-- Disable GEQO to force exhaustive DP (use for testing only)\nSET geqo = off;\n\n-- Force explicit join order (bypass both DP and GEQO)\nSET join_collapse_limit = 1;"
+      },
+      "etymology": "GEQO is Postgres-specific terminology for Genetic Query Optimizer; genetic algorithms were developed by John Holland (1960s–1970s) based on Darwinian natural selection; applied to query optimization in Postgres circa 1997.",
+      "unlockLevel": 4,
+      "tags": ["query-optimizer", "join-algorithms", "performance"],
+      "category": "components"
+    },
+    {
+      "id": "dbi-ad2-0290-0000-0000-0000-000000000029",
+      "word": "Expression Index",
+      "pronunciation": "eks-PRESH-un IN-deks",
+      "partOfSpeech": "noun",
+      "shortDefinition": "An index on an expression or function of a column, e.g., LOWER(email), rather than the raw column value.",
+      "simpleDefinition": "An expression index stores and indexes the result of an expression — like LOWER(email) or DATE_TRUNC('month', order_date) — rather than the raw column value. When a query's WHERE clause contains the same expression, the optimizer can use the index to find matching rows without computing the expression for every row during a full scan.",
+      "longDefinition": "Postgres supports indexes on arbitrary expressions, not just raw column values. The expression is evaluated for each row at index creation time, and the resulting value is stored in the index leaf page. The CREATE INDEX ON t (LOWER(email)) statement builds a B-tree over the lowercased email values. The critical requirement for the optimizer to use an expression index is that the query predicate must use exactly the same expression: WHERE LOWER(email) = 'alice@example.com' will use the index; WHERE email ILIKE 'alice%' will not. Expression indexes on functions must use only immutable functions — ones that always return the same result for the same input (LOWER, UPPER, DATE_TRUNC with fixed arguments, custom functions marked IMMUTABLE). Volatile or stable functions cannot be indexed because their result may change between index creation and query execution. Expression indexes solve the case-insensitive search problem (LOWER(email) index for case-insensitive equality lookups), the date truncation problem (DATE_TRUNC('month', ts) for monthly GROUP BY), and computed key problems (jsonb ->> 'user_id' for JSON attribute lookups without a separate column). The tradeoff: write overhead increases because the expression must be re-evaluated on every INSERT and UPDATE to maintain the index; the index occupies additional storage proportional to the indexed expression's output width.",
+      "connector": "Think of an expression index like building a separate sorted list of everyone's names in all-lowercase — when you search for a name case-insensitively, you look it up in the lowercase list rather than scanning the original directory and lowercasing every entry.",
+      "techContext": "Adding a LOWER(email) expression index on our users table allowed case-insensitive login lookups to use an index scan instead of a sequential scan, reducing login latency from 200ms to under 1ms.",
+      "exampleSentence": "The expression index on DATE_TRUNC('month', order_date) turned a 12-second full-table scan for monthly aggregations into a 30-millisecond index scan covering only the requested month's entries.",
+      "codeExample": {
+        "language": "sql",
+        "code": "-- Create an expression index for case-insensitive search\nCREATE INDEX users_email_lower_idx\n  ON users (LOWER(email));\n\n-- This query now uses the index:\nSELECT * FROM users WHERE LOWER(email) = 'alice@example.com';\n\n-- Expression index on JSON attribute:\nCREATE INDEX ON events ((payload ->> 'user_id'));\nSELECT * FROM events WHERE (payload ->> 'user_id') = '42';\n\n-- Partial expression index (combines both features):\nCREATE INDEX ON orders (DATE_TRUNC('month', order_date))\n  WHERE status = 'completed';"
+      },
+      "etymology": "Expression from Latin expressio ('a pressing out, representation'); index from Latin index ('pointer'); expression index as a feature was introduced in Postgres 6.x and formalized in the SQL:1999 standard as 'functional index'.",
+      "unlockLevel": 4,
+      "tags": ["indexing", "query-optimizer", "performance"],
+      "category": "components"
+    },
+    {
+      "id": "dbi-ad2-0300-0000-0000-0000-000000000030",
+      "word": "Phantom Read",
+      "pronunciation": "FAN-tum REED",
+      "partOfSpeech": "noun",
+      "shortDefinition": "An anomaly where a transaction re-executes a range query and finds new rows inserted by another committed transaction.",
+      "simpleDefinition": "A phantom read occurs when a transaction runs the same range query twice and gets a different set of rows — not because existing rows changed, but because another transaction inserted new rows (phantoms) that match the query's predicate in between the two reads. Standard row-level locking cannot prevent phantoms because the inserted rows did not exist when the first read was locked.",
+      "longDefinition": "Phantom reads are the highest-isolation concurrency anomaly defined by SQL-92 — the one that separates the REPEATABLE READ isolation level from SERIALIZABLE. A non-repeatable read involves a row changing value between two reads; a phantom read involves a new row appearing between two range scans. Example: transaction T1 reads all orders WHERE amount > 1000 (finds 5 rows). Transaction T2 inserts a new order with amount = 2000 and commits. T1 re-reads the same query and now finds 6 rows — the phantom. The anomaly cannot be prevented by locking existing rows because T2's new row did not exist during T1's first read. Two mechanisms prevent phantoms: predicate locks (also called range locks) — locking not just existing rows but the entire predicate range so that T2's INSERT conflicts with T1's lock; and MVCC snapshot isolation — T1 sees a consistent snapshot from its start time and never sees T2's new row at all. Postgres's REPEATABLE READ (which is actually Snapshot Isolation, stronger than the SQL-92 standard requires) prevents phantom reads because the snapshot is fixed at transaction start. Postgres's SERIALIZABLE isolation (SSI) goes further: it detects serialization anomalies that Snapshot Isolation allows (notably write skew). For REPEATABLE READ in MySQL's InnoDB, next-key locking (gap locks + record locks) prevents phantoms by locking the index range between existing rows, blocking INSERT into those gaps.",
+      "connector": "Think of a phantom read like re-reading a passenger manifest between boarding and takeoff — the manifest you locked earlier listed 150 passengers, but 10 more boarded after your count and before departure; phantoms are the new entrants who weren't there when you first looked.",
+      "techContext": "Our inventory reservation system suffered phantom reads at the REPEATABLE READ level because a concurrent INSERT of new inventory rows wasn't visible in T1's first scan but appeared in the second — Postgres Snapshot Isolation prevented this at no extra locking cost.",
+      "exampleSentence": "The phantom read caused the reservation system to believe zero seats were available on the first scan, but a concurrent insert of cancelled-and-reinstated seats made three seats visible on the second scan within the same transaction.",
+      "codeExample": {
+        "language": "sql",
+        "code": "-- Scenario: T1 runs at REPEATABLE READ level in Postgres\n-- (Postgres REPEATABLE READ = Snapshot Isolation — no phantoms)\n\nBEGIN ISOLATION LEVEL REPEATABLE READ;\n\n-- First range scan: finds 5 rows\nSELECT COUNT(*) FROM orders WHERE amount > 1000;\n-- Result: 5\n\n-- Meanwhile, T2 inserts a new row with amount = 2000 and COMMIT\n\n-- Second range scan within same transaction:\nSELECT COUNT(*) FROM orders WHERE amount > 1000;\n-- Postgres result: 5  (snapshot prevents phantom)\n-- MySQL READ COMMITTED result: 6  (phantom row visible)\n\nCOMMIT;"
+      },
+      "etymology": "Phantom from Greek phantasma ('apparition, ghost'); in database concurrency, the term was coined in the SQL-92 standard to describe rows that appear and disappear between range reads, as if they were spectral.",
+      "unlockLevel": 4,
+      "tags": ["concurrency", "transactions", "isolation"],
+      "category": "concepts"
+    }
+  ]
+}
