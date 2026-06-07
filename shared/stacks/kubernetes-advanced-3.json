@@ -1,0 +1,605 @@
+{
+  "stack": "kubernetes-advanced-3",
+  "words": [
+    {
+      "id": "k8s-ad3-0010-0000-0000-0000-000000000001",
+      "word": "WASM Workloads (SpinKube)",
+      "pronunciation": "WAZ-um WUR-kloadz SPIN-kyook",
+      "partOfSpeech": "noun",
+      "shortDefinition": "WebAssembly modules running on Kubernetes via containerd's runwasi shim; sub-millisecond cold starts, smaller attack surface than OCI containers.",
+      "simpleDefinition": "WASM workloads on Kubernetes let you run tiny, sandboxed WebAssembly binaries alongside regular containers on the same cluster. SpinKube is the operator that manages Fermyon Spin WASM apps as a CRD, while the runwasi containerd shim handles execution. WASM modules start in under 1 ms, weigh 1-10 MB instead of 50-300 MB for container images, and enforce capability-based sandboxing without relying on Linux cgroups or seccomp.",
+      "longDefinition": "WebAssembly (WASM) entered the Kubernetes world through two layers. At the bottom is runwasi — a CNCF sandbox containerd shim that routes OCI images annotated with `module.wasm.image/variant: compat` to a WASM runtime (Wasmtime or WASMedge) instead of runc. Kubernetes sees a normal pod; the runtime selects a different execution backend at the node level. SpinKube sits above this: it is a CNCF sandbox project providing a SpinApp CRD and operator for managing Fermyon Spin applications on Kubernetes, distributing WASM binaries as OCI artifacts and configuring the containerd-wasm-shim automatically. The core advantages of WASM over containers are cold-start latency (sub-1 ms versus 10-50 ms for a minimal container), image size (1-10 MB versus 50-300 MB), and the WASI capability sandbox — a WASM module without declared filesystem access cannot touch the filesystem regardless of kernel configuration. In 2026 WASM workloads on K8s are production-viable for stateless HTTP handlers and event processors written in Rust or Go. They are not suitable for workloads requiring POSIX threading, direct GPU access, or large language runtimes like Python or JVM.",
+      "connector": "Think of WASM workloads like a vending machine dispenser next to a full restaurant kitchen — the vending machine (WASM) dispenses a snack in under a second from a sealed compartment; the kitchen (container) can cook anything but takes much longer to set up.",
+      "techContext": "We switched our edge event processors from Alpine containers to SpinKube WASM modules and reduced cold-start latency from 40 ms to 0.8 ms while cutting image pull bandwidth by 95%.",
+      "exampleSentence": "After deploying SpinKube, our WASM-based API handlers started in under a millisecond and the cluster scheduler treated them identically to regular OCI pods.",
+      "codeExample": {
+        "language": "yaml",
+        "code": "# SpinApp CRD (SpinKube)\napiVersion: core.spinoperator.dev/v1alpha1\nkind: SpinApp\nmetadata:\n  name: event-processor\nspec:\n  image: ghcr.io/myorg/event-processor:latest  # WASM OCI artifact\n  replicas: 3\n  executor: containerd-shim-spin  # runwasi shim\n---\n# RuntimeClass wiring\napiVersion: node.k8s.io/v1\nkind: RuntimeClass\nmetadata:\n  name: spin\nhandler: spin  # containerd shim handler"
+      },
+      "etymology": "SpinKube: Spin is Fermyon's WASM framework; Kube is the standard abbreviation for Kubernetes. runwasi: run + WASI (WebAssembly System Interface), the system-call layer for WASM modules.",
+      "unlockLevel": 4,
+      "tags": ["kubernetes", "wasm", "frontier-2026", "runtime", "performance"],
+      "category": "runtimes"
+    },
+    {
+      "id": "k8s-ad3-0020-0000-0000-0000-000000000002",
+      "word": "eBPF Dataplane",
+      "pronunciation": "ee-BPF DAY-tuh-playn",
+      "partOfSpeech": "noun",
+      "shortDefinition": "Kernel-programmable networking and observability that replaces iptables/kube-proxy; XDP hooks give line-rate packet processing.",
+      "simpleDefinition": "eBPF (extended Berkeley Packet Filter) lets you load small verified programs into the Linux kernel at specific hook points — packet ingress, socket syscalls, tracepoints — without writing a kernel module. In Kubernetes, Cilium uses eBPF to replace kube-proxy's iptables chains with O(1) hash-map lookups, enforce NetworkPolicy inside the kernel where containers cannot bypass it, and capture detailed L3/L4/L7 flow telemetry without sidecars.",
+      "longDefinition": "The classical Kubernetes networking path sends every packet through iptables chains — a sequential linked list traversal. At 10,000 services and 50,000 pods a cluster can have hundreds of thousands of iptables rules; lookup time grows linearly with rule count. eBPF solves this at the kernel level: a restricted, safely-typed bytecode program is JIT-compiled and attached to kernel hook points (XDP for ingress before the network stack, TC for egress/ingress after, kprobes/tracepoints for observability). The kernel verifier guarantees the program terminates and cannot corrupt kernel memory. Cilium's eBPF-native implementation replaces kube-proxy with a BPF hash map for O(1) service IP lookup, compiles NetworkPolicy rules into BPF programs attached to each pod's veth interface (tamper-proof because enforcement is in the kernel), and captures L3/L4/L7 flow data via Hubble without any sidecar proxy. Cilium is the default CNI on GKE Dataplane V2 (since 2021), AWS EKS in eBPF mode (2023), and graduated from CNCF in 2023. It is the most significant low-level infrastructure shift in Linux networking since iptables replaced ipchains in 2001.",
+      "connector": "Think of eBPF like a toll plaza that was replaced by an RFID lane: the old iptables model queued every car through a single booth and checked a paper list; eBPF runs a hash lookup that finds the exit in constant time, regardless of how many cars are on the road.",
+      "techContext": "After replacing kube-proxy with Cilium's eBPF dataplane, our service-to-service latency at p99 dropped by 18% on a cluster with 8,000 services — the iptables chain traversal had been the hidden bottleneck.",
+      "exampleSentence": "The eBPF dataplane let us enforce NetworkPolicy at the kernel level, making it impossible for a compromised container to manipulate iptables rules and bypass its own isolation.",
+      "codeExample": {
+        "language": "bash",
+        "code": "# Install Cilium with kube-proxy replacement and Hubble\nhelm install cilium cilium/cilium \\\n  --namespace kube-system \\\n  --set kubeProxyReplacement=true \\\n  --set hubble.relay.enabled=true \\\n  --set hubble.ui.enabled=true \\\n  --set bpf.masquerade=true\n\n# Verify kube-proxy replacement is active\ncilium status --verbose | grep KubeProxyReplacement"
+      },
+      "etymology": "eBPF: extended Berkeley Packet Filter. BPF originated as a packet-filtering language in 1992 (Steven McCanne and Van Jacobson). The 'extended' prefix was added in Linux 3.18 (2014) when Alexei Starovoitov dramatically widened the instruction set and added the in-kernel JIT compiler.",
+      "unlockLevel": 4,
+      "tags": ["kubernetes", "networking", "ebpf", "cilium", "frontier-2026", "performance"],
+      "category": "networking"
+    },
+    {
+      "id": "k8s-ad3-0030-0000-0000-0000-000000000003",
+      "word": "Cilium Service Mesh",
+      "pronunciation": "SIL-ee-um SUR-vis MESH",
+      "partOfSpeech": "noun",
+      "shortDefinition": "eBPF-native service mesh that provides mTLS, L7 policy, and mutual authentication without sidecar proxies.",
+      "simpleDefinition": "Cilium Service Mesh extends Cilium's eBPF dataplane to provide service mesh capabilities — mutual TLS between pods, L7 traffic policies, retries, and observability — without injecting an Envoy sidecar into every pod. Instead, a single per-node Envoy proxy handles L7 traffic for all pods on that node, and pure L3/L4 features are handled entirely in eBPF with no userspace proxy at all.",
+      "longDefinition": "Traditional service meshes (Istio with per-pod Envoy sidecars) impose a measurable overhead: each sidecar container consumes 50-200 MB RAM and 0.5-2 vCPU per pod at scale. Cilium Service Mesh eliminates this by moving as much work as possible into eBPF kernel programs. For pure L3/L4 features (mTLS based on SPIFFE identities, connection-level policy), Cilium uses eBPF sockops programs that intercept socket calls directly — no userspace proxy in the datapath. For L7 features requiring HTTP/gRPC parsing, Cilium deploys one shared per-node Envoy proxy managed by Cilium itself, rather than one sidecar per pod; this reduces proxy instance count from O(pods) to O(nodes). Hubble provides full network flow visibility (DNS queries, HTTP method/status, gRPC service names) derived from eBPF hooks — the same observability signal that Istio's sidecar would provide, without the sidecar CPU/memory cost. Cilium Service Mesh targets teams that need mesh capabilities but cannot absorb the sidecar overhead, particularly at high pod densities or on memory-constrained edge nodes.",
+      "connector": "Traditional service meshes work like giving every employee their own personal assistant (sidecar) who handles all their calls. Cilium Service Mesh instead puts one floor receptionist (per-node Envoy) and uses the building's intercom system (eBPF) for simple calls — dramatically reducing headcount while covering the same duties.",
+      "techContext": "We moved from Istio sidecar injection to Cilium Service Mesh and reclaimed 40 GB of RAM across the cluster — the sidecar proxies had collectively consumed as much memory as our actual application containers.",
+      "exampleSentence": "Cilium Service Mesh gave us mTLS between all services and per-request HTTP observability from Hubble without adding a single sidecar container to the cluster.",
+      "codeExample": {
+        "language": "yaml",
+        "code": "# Enable Cilium mutual authentication (mTLS via SPIFFE)\napiVersion: cilium.io/v2\nkind: CiliumNetworkPolicy\nmetadata:\n  name: require-mtls\nspec:\n  endpointSelector:\n    matchLabels:\n      app: payments\n  ingress:\n    - fromEndpoints:\n        - matchLabels:\n            app: checkout\n      authentication:\n        mode: required  # enforce mTLS; deny unauthenticated"
+      },
+      "etymology": "Cilium: named after the hair-like cellular structures (cilia) that move fluids — a metaphor for the network traffic the project manages. First open-sourced by Thomas Graf at Covalent (acquired by Isovalent, later acquired by Cisco) in 2016.",
+      "unlockLevel": 4,
+      "tags": ["kubernetes", "networking", "service-mesh", "ebpf", "cilium", "frontier-2026"],
+      "category": "networking"
+    },
+    {
+      "id": "k8s-ad3-0040-0000-0000-0000-000000000004",
+      "word": "Ambient Mesh",
+      "pronunciation": "AM-bee-ent MESH",
+      "partOfSpeech": "noun",
+      "shortDefinition": "Istio architecture (stable 2024) that removes per-pod Envoy sidecars, replacing them with node-level ztunnel proxies.",
+      "simpleDefinition": "Ambient mesh is Istio's sidecar-free architecture. Instead of injecting an Envoy proxy into every pod, it deploys two components: a per-node ztunnel (zero-trust tunnel) that handles L4 mTLS and basic telemetry for all pods on the node, and an optional per-namespace waypoint proxy (also Envoy) for pods that need L7 features like HTTP routing and retries. Pods require no modification; ambient mesh is enabled at the namespace level.",
+      "longDefinition": "Istio's classic sidecar model injects an Envoy proxy container into every pod. At scale this is expensive: hundreds of sidecar containers per cluster, each consuming CPU and RAM, all needing version-coordinated upgrades alongside the data plane. The operational pain — especially the requirement to restart every pod to upgrade a sidecar — drove the ambient mesh design, which reached stable status in Istio 1.22 (2024). Ambient mesh uses a two-tier architecture: the ztunnel DaemonSet (one pod per node, written in Rust) captures all pod traffic via eBPF socket redirection and provides L4 mutual TLS using SPIFFE/SPIRE identities and encrypted HBONE (HTTP-Based Overlay Network Encapsulation) tunnels between nodes — with no pod restart required when the ztunnel is upgraded. For services that need L7 capabilities (header-based routing, retries, JWT validation, gRPC load balancing), a waypoint proxy — a full Envoy instance — is deployed per namespace or per service account; only those services pay the L7 proxy cost. The result: zero per-pod overhead for most workloads, targeted L7 cost for workloads that need it, and decoupled upgrade cycles for infrastructure versus application pods.",
+      "connector": "Think of ambient mesh like a city's bus system. Old Istio gave every commuter a personal driver (sidecar Envoy). Ambient mesh installs bus routes (ztunnel) that everyone shares for simple trips, and premium car service (waypoint proxy) for commuters who need door-to-door service — most people just use the bus.",
+      "techContext": "Migrating to ambient mesh eliminated our most painful Kubernetes upgrade ceremony: rolling restarts across 400 Deployments to update sidecar proxy versions now happens as a single DaemonSet rollout.",
+      "exampleSentence": "Ambient mesh let us enable mTLS across the entire cluster in minutes by labeling namespaces — no pod restarts, no sidecar injection, no per-pod resource overhead.",
+      "codeExample": {
+        "language": "bash",
+        "code": "# Enable ambient mesh for a namespace (no pod restarts)\nkubectl label namespace payments istio.io/dataplane-mode=ambient\n\n# Add a waypoint proxy for L7 features on the payments service account\nistioctl waypoint apply --service-account payments-sa --namespace payments\n\n# Verify ztunnel enrolled the pods\nkubectl get pods -n payments -o jsonpath='{.items[*].metadata.annotations}' \\\n  | grep -o 'ambient.istio.io/redirection: enabled'"
+      },
+      "etymology": "Ambient: from Latin ambire, to go around — implying the mesh infrastructure surrounds workloads without being embedded in them. The architecture was announced by Istio maintainers (Google, Solo.io) at KubeCon NA 2022 and reached stable status in 2024.",
+      "unlockLevel": 4,
+      "tags": ["kubernetes", "service-mesh", "istio", "networking", "frontier-2026"],
+      "category": "networking"
+    },
+    {
+      "id": "k8s-ad3-0050-0000-0000-0000-000000000005",
+      "word": "Karpenter",
+      "pronunciation": "KAR-pen-ter",
+      "partOfSpeech": "noun",
+      "shortDefinition": "AWS open-source node provisioner that launches right-sized EC2 instances within seconds of scheduling demand, replacing Cluster Autoscaler.",
+      "simpleDefinition": "Karpenter is a Kubernetes node provisioner (originally from AWS, now multi-cloud) that watches for unschedulable pods and launches the exact EC2 instance type that best fits them — within seconds, without pre-defined node groups. Unlike Cluster Autoscaler, Karpenter picks instance type and size at scheduling time, enabling spot-instance mixing, efficient bin-packing, and automatic consolidation of underutilised nodes.",
+      "longDefinition": "Cluster Autoscaler scales pre-configured Auto Scaling Groups (ASGs) — you define the instance types up front and Cluster Autoscaler adjusts the count. This means you need separate ASGs for each instance type combination you might need, and scale-out involves launching a node from that group's fixed configuration. Karpenter discards the ASG model entirely. It registers as a Kubernetes controller, watches for pending pods whose resource requirements cannot fit existing nodes, computes the cheapest instance type across the full EC2 family (including spot) that satisfies the pod's requirements, and calls the EC2 CreateFleet API directly — a new node is registered and scheduling begins in under 60 seconds. Karpenter also runs a consolidation loop that detects underutilised nodes, cordons and drains them, and terminates the EC2 instance — reducing idle capacity without manual intervention. NodePool and NodeClass CRDs declare constraints (instance families, availability zones, AMI families, spot/on-demand preference); pods annotate themselves with requirements using standard `nodeAffinity` or Karpenter-specific labels. In 2026 Karpenter is the recommended autoscaler for new EKS deployments; providers for GKE and AKS are in active development.",
+      "connector": "Cluster Autoscaler is like a restaurant that only has three fixed table sizes and calls the furniture store when every table of that size is full. Karpenter is like a restaurant that measures the arriving group and orders a custom table — no pre-set sizes, just the right fit.",
+      "techContext": "After switching from Cluster Autoscaler to Karpenter, our average node utilisation rose from 52% to 78% because Karpenter bins-packs pods onto right-sized instances instead of launching the next node in a fixed ASG.",
+      "exampleSentence": "Karpenter launched a c7g.4xlarge ARM spot instance within 45 seconds of a burst of unschedulable ML inference pods — three times faster than our old Cluster Autoscaler node group.",
+      "codeExample": {
+        "language": "yaml",
+        "code": "# Karpenter NodePool\napiVersion: karpenter.sh/v1\nkind: NodePool\nmetadata:\n  name: default\nspec:\n  template:\n    spec:\n      requirements:\n        - key: karpenter.sh/capacity-type\n          operator: In\n          values: [spot, on-demand]\n        - key: kubernetes.io/arch\n          operator: In\n          values: [amd64, arm64]\n      nodeClassRef:\n        apiVersion: karpenter.k8s.aws/v1\n        kind: EC2NodeClass\n        name: default\n  disruption:\n    consolidationPolicy: WhenEmptyOrUnderutilized\n    consolidateAfter: 30s"
+      },
+      "etymology": "Karpenter: portmanteau of Kubernetes and carpenter — the tool that builds and shapes the node fleet. Open-sourced by AWS at re:Invent 2021; donated to the CNCF as an Incubating project in 2024.",
+      "unlockLevel": 4,
+      "tags": ["kubernetes", "autoscaling", "aws", "node-management", "frontier-2026"],
+      "category": "scheduling"
+    },
+    {
+      "id": "k8s-ad3-0060-0000-0000-0000-000000000006",
+      "word": "KEDA (Kubernetes Event-Driven Autoscaling)",
+      "pronunciation": "KEE-duh",
+      "partOfSpeech": "noun",
+      "shortDefinition": "Extends HPA to scale pods to zero based on external event sources (Kafka lag, SQS depth, Prometheus metrics).",
+      "simpleDefinition": "KEDA is a CNCF-graduated Kubernetes controller that adds event-driven scaling to any Deployment, StatefulSet, or Job. Unlike the built-in HPA — which only understands CPU and memory — KEDA can scale workloads based on Kafka consumer lag, SQS queue depth, Redis list length, Prometheus query results, GitHub Actions queue size, and 60+ other sources. Critically, KEDA can scale all the way to zero replicas when the queue is empty, and back up when events arrive.",
+      "longDefinition": "The standard Kubernetes HPA has a hard limitation: it can only scale on CPU utilization, memory, or custom metrics from the Metrics API. Event-driven workloads — Kafka consumers, SQS processors, webhook handlers — are not CPU-bound at idle; their correct replica count is proportional to the event backlog, not CPU usage. A Kafka consumer with an empty topic should run zero replicas; one with a million-message lag should run dozens. KEDA solves this by implementing two K8s objects: ScaledObject (for Deployments/StatefulSets) and ScaledJob (for batch Jobs-on-demand). A ScaledObject references one or more scalers — each scaler connects to an external system, reads a metric (e.g. Kafka consumer group lag for topic X), and returns a target replica count. KEDA then manages an HPA resource internally, keeping it in sync with the external metric. Scale-to-zero is KEDA's key innovation: when the external metric hits zero, KEDA bypasses the HPA minimum and deletes all replicas; on the next event, it starts pods and queues incoming messages. KEDA graduated from CNCF in 2023 and is the standard event-driven autoscaling solution for new Kubernetes deployments. It integrates natively with Azure, AWS, GCP, and every major message broker.",
+      "connector": "KEDA is like a restaurant kitchen that reads the order queue — when there are 0 orders, all chefs go home; when 100 orders arrive, it calls in as many chefs as needed. The built-in HPA only knows how hot the stoves are, which is a poor proxy for how much cooking needs to be done.",
+      "techContext": "KEDA eliminated our always-on Kafka consumer Deployments — at night the replica count drops to zero and we save 40% on our EKS compute bill, scaling back up within 30 seconds when morning batch events arrive.",
+      "exampleSentence": "KEDA scaled our order processing Deployment from zero to twenty replicas within seconds of the first SQS message arriving, then back to zero once the queue drained.",
+      "codeExample": {
+        "language": "yaml",
+        "code": "# KEDA ScaledObject for a Kafka consumer\napiVersion: keda.sh/v1alpha1\nkind: ScaledObject\nmetadata:\n  name: order-processor\nspec:\n  scaleTargetRef:\n    name: order-processor\n  minReplicaCount: 0   # scale to zero\n  maxReplicaCount: 30\n  triggers:\n    - type: kafka\n      metadata:\n        bootstrapServers: kafka:9092\n        consumerGroup: order-processors\n        topic: orders\n        lagThreshold: '100'   # 1 replica per 100 messages of lag"
+      },
+      "etymology": "KEDA: Kubernetes Event-Driven Autoscaling. Created by Microsoft and Red Hat, first released in 2019, donated to CNCF as a Sandbox project in 2020, graduated in 2023.",
+      "unlockLevel": 4,
+      "tags": ["kubernetes", "autoscaling", "event-driven", "keda", "frontier-2026"],
+      "category": "scheduling"
+    },
+    {
+      "id": "k8s-ad3-0070-0000-0000-0000-000000000007",
+      "word": "Dynamic Resource Allocation (DRA)",
+      "pronunciation": "dy-NAM-ik REE-sors al-oh-KAY-shun DEE-ar-AY",
+      "partOfSpeech": "noun",
+      "shortDefinition": "K8s 1.26+ API for structured GPU/accelerator requests and sharing, replacing opaque device plugin integer counts.",
+      "simpleDefinition": "Dynamic Resource Allocation (DRA) is a Kubernetes API that lets workloads describe what they need from a hardware device — topology, capacity, sharing constraints — rather than just requesting an integer count. A ResourceClaim might ask for 'an NVIDIA GPU with at least 40 GB memory on the same PCIe fabric as the requested CPU socket.' The device driver's DRA plugin decides which specific device satisfies the claim, and multiple pods can share a device if the driver permits it.",
+      "longDefinition": "The Kubernetes device plugin model (introduced in 1.8) exposed hardware resources as schedulable integers: `nvidia.com/gpu: 1` requests one GPU. This works for simple cases but breaks down for modern accelerator clusters where you need: two GPUs on the same NVLink fabric, a fractional GPU slice (MIG partition), or a network adapter on the same NUMA node as the CPU. The integer model cannot express any of these constraints. DRA (KEP-3063, Alpha in 1.26, Beta in 1.31, GA in 1.32) replaces device plugin integers with ResourceClaim objects. A ResourceClaim describes desired device properties using structured parameters. The device driver's DRA plugin maintains a DeviceClass and publishes ResourceSlice objects that describe available devices and their attributes. The scheduler matches claims to slices and binds the claim to a specific device before the pod is scheduled — ensuring placement respects hardware topology. In 1.32 the scheduler itself can evaluate structured parameters without requiring a driver webhook, improving scheduling throughput for large GPU clusters. DRA is the foundation for GPU time-slicing, MIG partition allocation, and multi-device job scheduling in the 2026 Kubernetes ecosystem.",
+      "connector": "The old device plugin model is like a hotel that only tells you how many rooms are available. DRA is like a booking system that knows which rooms have a sea view, an interconnecting door, and are on the same floor — you describe what you need and the system finds the exact match.",
+      "techContext": "After enabling DRA, our ML training jobs could request two GPUs on the same NVLink fabric in a single ResourceClaim — something we had been working around with custom node labeling and affinity rules for two years.",
+      "exampleSentence": "DRA let our AI workload request a pair of NVLink-connected A100 slices in one ResourceClaim, and the scheduler bound it to the only node with that topology without any manual placement hints.",
+      "codeExample": {
+        "language": "yaml",
+        "code": "# DRA ResourceClaim for a GPU with topology constraint\napiVersion: resource.k8s.io/v1alpha3\nkind: ResourceClaim\nmetadata:\n  name: training-gpu\nspec:\n  devices:\n    requests:\n      - name: gpu\n        deviceClassName: nvidia.com/gpu\n        selectors:\n          - cel:\n              expression: device.attributes['memory.gib'].isGreaterThan(quantity('40Gi'))\n        count: 2\n        allocationMode: ExactCount"
+      },
+      "etymology": "Dynamic Resource Allocation: dynamic because the allocation decision happens at scheduling time based on live device inventory, not at cluster setup time. The KEP was authored by Patrick Ohly (Intel) and merged into K8s 1.26.",
+      "unlockLevel": 4,
+      "tags": ["kubernetes", "gpu", "scheduling", "dra", "frontier-2026", "accelerators"],
+      "category": "scheduling"
+    },
+    {
+      "id": "k8s-ad3-0080-0000-0000-0000-000000000008",
+      "word": "Confidential Containers",
+      "pronunciation": "kon-fih-DEN-shul kon-TAY-nerz",
+      "partOfSpeech": "noun",
+      "shortDefinition": "Workloads running inside hardware-enforced TEEs (AMD SEV, Intel TDX) so even the host hypervisor cannot inspect memory.",
+      "simpleDefinition": "Confidential containers run inside a hardware Trusted Execution Environment (TEE) — AMD SEV-SNP or Intel TDX — where the workload's memory is encrypted at the hardware level. Even the cloud provider, hypervisor, and cluster admin cannot read the container's in-use data. Remote attestation lets the tenant cryptographically verify that the workload is running on genuine TEE hardware before sending sensitive data to it.",
+      "longDefinition": "Standard Kubernetes security protects data at rest (etcd encryption) and in transit (mTLS), but leaves data in use exposed: anyone with physical access to the host hardware — including the cloud provider — can read the RAM of any running VM or container. For regulated workloads handling healthcare records, financial data, or cryptographic key material, 'trust the cloud provider' is often an unacceptable compliance position. Confidential containers (a CNCF Sandbox project combining cloud-hypervisor, Kata Containers, and an attestation agent) address this by running each pod inside a hardware-encrypted VM. AMD SEV-SNP (available on AWS, Azure, GCP since 2022-2023) and Intel TDX (Sapphire Rapids, 2023+) encrypt the entire guest VM's memory with a key that never leaves the CPU package — the VMM sees only ciphertext. Remote attestation allows the workload to prove to an external party that it is running on genuine SEV/TDX hardware with an unmodified measurement, before secrets are provisioned into the TEE. In 2026 confidential containers add 5-15% performance overhead (memory encryption) and require attestation infrastructure (a key broker service). They are in production at regulated financial services and healthcare organizations on Azure DCasv5 and AWS instances with SEV. They do not protect against application vulnerabilities or malicious code inside the trust domain — they are one layer in a defense-in-depth model.",
+      "connector": "Regular containers are like safety deposit boxes where the bank can read what is inside. Confidential containers are like a vault where the combination is inside your head — even the bank building's owner cannot access the contents, and you get a receipt proving the vault is genuine before you deposit anything.",
+      "techContext": "We moved our HIPAA PHI processing workloads to confidential containers on Azure DCasv5 nodes — our compliance audit now has hardware attestation receipts proving the data was processed inside a TEE that our cloud provider cannot inspect.",
+      "exampleSentence": "Confidential containers on AMD SEV-SNP nodes gave our fintech client the in-use encryption proof required by their financial regulator — something that neither RBAC nor encrypted etcd could provide.",
+      "codeExample": {
+        "language": "yaml",
+        "code": "# Pod using Kata Containers with confidential VM (TEE)\napiVersion: v1\nkind: Pod\nmetadata:\n  name: confidential-processor\n  annotations:\n    io.containerd.cri.runtime-handler: kata-cc  # confidential containers handler\nspec:\n  runtimeClassName: kata-cc\n  containers:\n    - name: processor\n      image: myorg/phi-processor:latest\n      resources:\n        limits:\n          memory: 4Gi\n          cpu: 2"
+      },
+      "etymology": "Confidential computing: the term coined by the Confidential Computing Consortium (CCC, Linux Foundation, 2019) to describe hardware-enforced data-in-use protection. TEE (Trusted Execution Environment) predates this, appearing in ARM TrustZone documentation circa 2004.",
+      "unlockLevel": 4,
+      "tags": ["kubernetes", "security", "tee", "confidential-computing", "frontier-2026"],
+      "category": "security"
+    },
+    {
+      "id": "k8s-ad3-0090-0000-0000-0000-000000000009",
+      "word": "vCluster",
+      "pronunciation": "VEE-klus-ter",
+      "partOfSpeech": "noun",
+      "shortDefinition": "Lightweight virtual Kubernetes cluster running inside a namespace of a host cluster — soft multi-tenancy without node isolation.",
+      "simpleDefinition": "vCluster creates a fully functional Kubernetes virtual cluster as a StatefulSet inside a host cluster namespace. Each virtual cluster runs its own API server (k3s or vanilla K8s), its own etcd, and its own controller manager — giving tenants a complete K8s API surface including CRDs, ClusterRoles, and admission webhooks. Workloads scheduled in the virtual cluster are synced down and actually run as pods on the host cluster's nodes.",
+      "longDefinition": "Multi-tenancy on a shared Kubernetes cluster hits a ceiling when tenants need cluster-scoped resources: CRDs, ClusterRoles, MutatingWebhooks, or custom admission policies. Namespaces cannot scope these — a CRD is global, and a ValidatingWebhook affects the entire cluster. vCluster (Loft Labs) solves this by running a lightweight virtual control plane (k3s or full K8s) as a StatefulSet inside a host namespace. The virtual cluster has its own API server, scheduler, and etcd. When a tenant creates a Deployment in the virtual cluster, vCluster's syncer translates the resource and creates it in the host namespace under a prefixed name. From the tenant's perspective they have a full cluster; from the host's perspective they have a set of namespaced pods. This enables ephemeral per-PR clusters for CI, developer sandboxes with full cluster admin access, and SaaS products that need to ship 'managed Kubernetes' to customers. vCluster's security model is softer than separate clusters: the syncer bridges the virtual and host API surfaces, and a misconfigured sync rule can over-expose host resources. The default node/PV sync rules should be reviewed carefully for production multi-tenant deployments.",
+      "connector": "vCluster is like a virtual machine running inside a VM: from inside the inner VM, you have the full OS experience; from outside, it is just a process. Virtual clusters give tenants the full Kubernetes API while remaining a workload from the host cluster's perspective.",
+      "techContext": "Our CI system creates a fresh vCluster for each pull request, giving the test suite cluster-admin access to install CRDs and operators without polluting the shared staging cluster.",
+      "exampleSentence": "The platform team provisioned vCluster instances for each product team — every team got cluster-admin access to install their own operators and CRDs without touching the shared host cluster.",
+      "codeExample": {
+        "language": "bash",
+        "code": "# Create a virtual cluster in namespace 'team-payments'\nvcluster create payments-dev \\\n  --namespace team-payments \\\n  --connect  # automatically kubeconfig to the virtual cluster\n\n# From inside the virtual cluster: full API access\nkubectl apply -f my-crd.yaml          # CRD scoped to virtual cluster\nkubectl create clusterrolebinding ...  # ClusterRole inside virtual cluster\n\n# Host cluster only sees synced pods in team-payments namespace\nkubectl get pods -n team-payments --context host-cluster"
+      },
+      "etymology": "vCluster: virtual cluster. Created by Loft Labs (now Loft) and open-sourced in 2021. The concept of virtual clusters was explored in Kubernetes SIG Multi-Tenancy from 2018 onward; vCluster was the first broadly adopted implementation.",
+      "unlockLevel": 4,
+      "tags": ["kubernetes", "multi-tenancy", "virtual-cluster", "frontier-2026", "platform"],
+      "category": "multi-tenancy"
+    },
+    {
+      "id": "k8s-ad3-0100-0000-0000-0000-000000000010",
+      "word": "Spegel (P2P Image Distribution)",
+      "pronunciation": "SPEH-ghel",
+      "partOfSpeech": "noun",
+      "shortDefinition": "OCI-compatible registry mirror that turns cluster nodes into a P2P layer to eliminate pull bottlenecks during mass deploys.",
+      "simpleDefinition": "Spegel is a peer-to-peer OCI registry mirror that runs as a DaemonSet. When a node needs to pull an image, Spegel checks whether any other node in the cluster already has the image layers, and serves them over a direct node-to-node connection instead of hitting the upstream registry. This eliminates the registry bandwidth bottleneck and rate limits during rolling deployments that restart hundreds of pods simultaneously.",
+      "longDefinition": "Container registries become bottlenecks during mass deployments: a rolling update across 500 nodes that all pull a 200 MB image in parallel can saturate the registry's egress bandwidth or hit rate limits (DockerHub pulls, ECR throughput). Traditional registry mirrors (pull-through caches) centralise traffic to one mirror node, which itself becomes a single point of failure. Spegel (Swedish: mirror) takes a peer-to-peer approach. It runs as a DaemonSet and registers itself as a local containerd registry mirror on each node. When containerd needs an image layer, it first queries Spegel, which advertises available layers across all nodes using a distributed hash table. If any node already has the layer, it is served directly over an in-cluster HTTP connection. Spegel uses OCI Distribution Spec semantics — it is transparent to containerd and requires no changes to pod specs or image references. This makes it especially valuable for: node scale-out events (new nodes can pull from existing nodes), rolling deployments (later nodes pull from earlier nodes that already pulled), and DR scenarios where registry connectivity is degraded. Spegel was open-sourced by Philip Laine at XebiaLabs in 2023 and gained significant traction in 2024-2025 as a zero-config bandwidth optimisation.",
+      "connector": "Spegel is like a neighbourhood WhatsApp group for software — instead of everyone ordering from the same pizza place at once and overwhelming it, you first check if a neighbour already has a pizza to share.",
+      "techContext": "During a cluster-wide image rollout to 800 nodes, Spegel reduced our ECR egress bandwidth by 85% — nodes past the first dozen pulled layers peer-to-peer from nodes that had already completed the pull.",
+      "exampleSentence": "Spegel's P2P distribution cut our rolling deployment time from 12 minutes to 3 minutes by letting later nodes in the rollout pull image layers directly from earlier nodes.",
+      "codeExample": {
+        "language": "yaml",
+        "code": "# Spegel DaemonSet install (helm)\nhelm install spegel oci://ghcr.io/spegel-org/helm-charts/spegel \\\n  --namespace spegel \\\n  --set spegel.registries[0]=https://ghcr.io \\\n  --set spegel.registries[1]=https://registry-1.docker.io \\\n  --set spegel.containerdRegistryConfigPath=/etc/containerd/certs.d\n\n# Spegel automatically patches containerd mirror config on each node\n# No changes to pod specs or image references required"
+      },
+      "etymology": "Spegel: Swedish word for mirror — the project name reflects both the mirroring function and the Swedish origin of its creator, Philip Laine.",
+      "unlockLevel": 4,
+      "tags": ["kubernetes", "images", "p2p", "performance", "frontier-2026", "registry"],
+      "category": "operations"
+    },
+    {
+      "id": "k8s-ad3-0110-0000-0000-0000-000000000011",
+      "word": "AI-Augmented Scheduling",
+      "pronunciation": "AY-eye AWG-men-ted SKED-yoo-ling",
+      "partOfSpeech": "noun",
+      "shortDefinition": "ML-driven scheduler extensions that predict resource demand and pre-provision nodes before workload spikes arrive.",
+      "simpleDefinition": "AI-augmented scheduling uses machine learning models to predict future resource demand and influence Kubernetes scheduling or node provisioning proactively — scaling nodes before pods become unschedulable, rather than reacting after. In 2026 this exists on a spectrum from proven (KEDA with time-series forecasting, VPA resource recommendations) to experimental (end-to-end ML schedulers that replace the kube-scheduler).",
+      "longDefinition": "The default Kubernetes scheduler is deterministic and stateless: it evaluates one pod at a time against current node capacity without any model of historical demand or predicted future load. This means it cannot anticipate that a batch ML training job arrives every weekday at 2am and could have nodes pre-provisioned and warmed. AI-augmented scheduling addresses this gap across several maturity levels. At the proven tier: KEDA with time-series forecasting (e.g., a Prometheus query that predicts Kafka lag 5 minutes ahead) can trigger node provisioning before the first pod goes Pending; VPA's recommender uses historical usage data to set accurate CPU/memory requests — closing the under-request gap that causes pod OOM kills and the over-request gap that wastes cluster capacity; the Descheduler rebalances pods post-scheduling. At the experimental tier: Volcano (CNCF Incubating, used by ByteDance for ML training) adds gang scheduling and queue fairness for multi-pod jobs; academic work (DeepRM, Decima) trains reinforcement-learning schedulers. As of 2026, no open-source production-grade full-replacement ML scheduler exists. The operational risk of an unexplainable scheduling decision in a production cluster is a strong reason to keep the deterministic kube-scheduler and add ML at the capacity-planning and resource-recommendation layers only.",
+      "connector": "The default scheduler is like a taxi dispatcher who only looks at which cars are currently available. AI-augmented scheduling is like a dispatcher who has studied three years of ride history and pre-positions cars in neighbourhoods where demand is about to spike — a few minutes ahead of the surge.",
+      "techContext": "We used KEDA's predictive scaler with a Prometheus-based forecast query to pre-warm GPU nodes 10 minutes before our daily batch training job — eliminating the 8-minute cold-start wait that had been blocking our ML pipeline.",
+      "exampleSentence": "AI-augmented scheduling in our cluster means node provisioning now starts ten minutes before our known traffic spike rather than three minutes after the first pod goes Pending.",
+      "codeExample": {
+        "language": "yaml",
+        "code": "# KEDA ScaledObject with Prometheus prediction query (AI-augmented)\napiVersion: keda.sh/v1alpha1\nkind: ScaledObject\nmetadata:\n  name: ml-training-prescaler\nspec:\n  scaleTargetRef:\n    name: training-job-queue\n  minReplicaCount: 0\n  maxReplicaCount: 10\n  triggers:\n    - type: prometheus\n      metadata:\n        serverAddress: http://prometheus:9090\n        # Forecast query: predict job_queue depth 10m ahead\n        query: predict_linear(job_queue_depth[30m], 600)\n        threshold: '1'"
+      },
+      "etymology": "AI-augmented scheduling: augment from Latin augere, to increase or enhance. The term distinguishes enhancement of the existing scheduler (adding ML signals) from replacement — a distinction that matters operationally in 2026.",
+      "unlockLevel": 4,
+      "tags": ["kubernetes", "scheduling", "ml", "ai", "autoscaling", "frontier-2026"],
+      "category": "scheduling"
+    },
+    {
+      "id": "k8s-ad3-0120-0000-0000-0000-000000000012",
+      "word": "Knative",
+      "pronunciation": "kuh-NAY-tiv",
+      "partOfSpeech": "noun",
+      "shortDefinition": "Serverless platform on Kubernetes that scales workloads to zero and back based on request traffic or event sources.",
+      "simpleDefinition": "Knative is a CNCF Incubating project that adds serverless primitives to Kubernetes: scale-to-zero based on concurrent HTTP requests, revision-based traffic splitting for canary deployments, and an event routing system (Knative Eventing) for CloudEvents-based pub-sub. When zero requests are in flight the replica count drops to zero; the Knative activator buffers the next incoming request while a pod starts.",
+      "longDefinition": "Knative consists of two largely independent components: Knative Serving and Knative Eventing. Knative Serving adds HTTP scale-to-zero to any container image. A Knative Service creates a Configuration (tracks desired state), a Route (traffic rules), and Revisions (immutable snapshots of the service configuration). Traffic is split across Revisions by percentage — the standard canary/A-B pattern without an Ingress controller plugin. Knative's autoscaler (KPA — Knative Pod Autoscaler) scales on concurrent requests per pod rather than CPU utilisation, which is a better signal for latency-sensitive HTTP handlers. The activator acts as a buffer: when all replicas are gone, it holds the next incoming connection while the first pod starts; once the pod is ready, the activator forwards the buffered request. Knative Eventing provides a CloudEvents broker-trigger model: producers emit events to a Broker; Triggers filter and route events to consumer services. This decouples producers from consumers via the CloudEvents standard, enabling event fan-out without tight coupling. The operational cost: Knative requires a networking layer (Istio, Kourier, or Contour) and adds 3-4 CRDs and controllers to the cluster. For teams that need HTTP traffic splitting and scale-to-zero, Knative is the mature answer; for teams that only need scale-to-zero from event queues, KEDA with the HTTP add-on is simpler.",
+      "connector": "Knative is like a restaurant with staff who go home when there are no customers and are called in the moment a reservation arrives — the hostess (activator) greets the first guest and delays seating by two minutes while the chef (pod) rushes in.",
+      "techContext": "Knative Serving let us ship ten low-traffic internal tools as scale-to-zero services — our idle compute bill for those tools dropped to near zero without changing a single line of application code.",
+      "exampleSentence": "Knative's revision-based traffic splitting let us shift 5% of production traffic to the new checkout revision and monitor error rates before expanding to 100%, all declared in a single YAML update.",
+      "codeExample": {
+        "language": "yaml",
+        "code": "# Knative Service with traffic split across revisions\napiVersion: serving.knative.dev/v1\nkind: Service\nmetadata:\n  name: checkout\nspec:\n  template:\n    metadata:\n      name: checkout-v2\n    spec:\n      containers:\n        - image: myorg/checkout:v2\n  traffic:\n    - revisionName: checkout-v1\n      percent: 95\n    - revisionName: checkout-v2\n      percent: 5"
+      },
+      "etymology": "Knative: K (for Kubernetes) + native. Created by Google, IBM, Red Hat, and SAP; announced at Google Cloud Next 2018. The name emphasises that it is a native Kubernetes extension, not a separate platform.",
+      "unlockLevel": 4,
+      "tags": ["kubernetes", "serverless", "autoscaling", "knative", "event-driven"],
+      "category": "serverless"
+    },
+    {
+      "id": "k8s-ad3-0130-0000-0000-0000-000000000013",
+      "word": "Istio",
+      "pronunciation": "IS-tee-oh",
+      "partOfSpeech": "noun",
+      "shortDefinition": "Service mesh that injects Envoy sidecars to provide mTLS, traffic management, retries, and distributed tracing cluster-wide.",
+      "simpleDefinition": "Istio is a CNCF-graduated service mesh for Kubernetes that automatically injects an Envoy proxy sidecar into every pod in labeled namespaces. The sidecar intercepts all in/outbound traffic, enforcing mutual TLS (mTLS) between services, applying L7 traffic policies (retries, timeouts, circuit breaking, traffic splitting), and emitting Prometheus metrics and distributed traces — without application code changes.",
+      "longDefinition": "Istio decomposes into a data plane (Envoy sidecars in each pod) and a control plane (istiod, a single binary combining Pilot for configuration, Citadel for certificate management, and Galley for config validation). istiod pushes xDS configuration to every Envoy proxy over gRPC, enabling cluster-wide changes — a new retry policy or a 10% canary weight shift — to propagate in seconds without pod restarts. Istio's key capabilities: automatic mTLS using SPIFFE X.509 certificates issued by istiod's built-in CA; VirtualService and DestinationRule CRDs that declare L7 routing rules (header matching, weight-based splitting, fault injection); AuthorizationPolicy CRDs for L4/L7 access control beyond Kubernetes NetworkPolicy; telemetry via Envoy access logs, Prometheus metrics, and W3C-standard distributed traces forwarded to Jaeger, Zipkin, or any OTLP backend. Istio graduated from CNCF in September 2022, affirming production readiness. Its primary operational challenge is the sidecar lifecycle: every Envoy version bump requires a rolling restart of all pods in the mesh. Ambient mesh (stable in 1.22) offers an escape from this constraint for teams running large pod fleets.",
+      "connector": "Istio is like a building's communication and security infrastructure: every room automatically gets a standardised phone (Envoy sidecar) with built-in call logging, access control, and rerouting capability — no occupant has to wire their own system.",
+      "techContext": "Istio's AuthorizationPolicy CRDs let us implement zero-trust networking in two days — we could enforce 'only the payments service may call the ledger service' without touching any application firewall rules or application code.",
+      "exampleSentence": "Istio's VirtualService let us route 1% of production traffic to the new recommendation engine and measure its latency and error rate before promoting it to 100%.",
+      "codeExample": {
+        "language": "yaml",
+        "code": "# Istio canary traffic split\napiVersion: networking.istio.io/v1beta1\nkind: VirtualService\nmetadata:\n  name: recommendations\nspec:\n  hosts:\n    - recommendations\n  http:\n    - route:\n        - destination:\n            host: recommendations\n            subset: stable\n          weight: 99\n        - destination:\n            host: recommendations\n            subset: canary\n          weight: 1"
+      },
+      "etymology": "Istio: from the Greek ιστίο (histio), meaning sail — evoking the steering and control of network traffic as a sail manages wind. Created by Google, IBM, and Lyft; open-sourced in 2017.",
+      "unlockLevel": 4,
+      "tags": ["kubernetes", "service-mesh", "networking", "istio", "observability"],
+      "category": "networking"
+    },
+    {
+      "id": "k8s-ad3-0140-0000-0000-0000-000000000014",
+      "word": "ArgoCD",
+      "pronunciation": "AR-goh SEE-dee",
+      "partOfSpeech": "noun",
+      "shortDefinition": "GitOps continuous delivery tool that continuously syncs Kubernetes cluster state to manifests stored in a Git repository.",
+      "simpleDefinition": "ArgoCD is a CNCF-graduated GitOps controller that watches Git repositories for Kubernetes manifests and continuously reconciles the live cluster to match. Any manual change to the cluster that diverges from Git is detected as drift. ArgoCD supports Helm, Kustomize, Jsonnet, and raw YAML, provides a rich web UI for deployment status, and supports multi-cluster sync from a single control plane.",
+      "longDefinition": "ArgoCD implements the GitOps principle by running a reconciliation loop that periodically (or on webhook trigger) compares the desired state in a Git repo against the live state of a Kubernetes cluster. When they diverge, ArgoCD can auto-sync (apply the Git state) or alert for manual remediation. The central objects are Application (one Git path to one cluster namespace) and AppProject (access control and source/destination scoping). The App of Apps pattern uses one Application to manage a directory of child Application manifests — enabling a fleet of apps to be bootstrapped from a single Git commit. ArgoCD's multi-cluster mode runs a central ArgoCD instance that manages spoke clusters, each authenticated via a ServiceAccount token or OIDC; this is the standard fleet management pattern for large Kubernetes deployments. Health checks are first-class: ArgoCD evaluates resource health using built-in checks for Deployments, StatefulSets, Services, and custom Lua health scripts for CRDs. RBAC is built-in: roles map to ArgoCD projects, limiting which teams can sync to which clusters and namespaces. ArgoCD graduated from CNCF in December 2022 and is the most widely adopted GitOps tool in the K8s ecosystem as of 2026.",
+      "connector": "ArgoCD is like a building manager who has a blueprint (Git) and walks the building every hour — if any room doesn't match the blueprint (someone moved a wall), the manager either calls maintenance to fix it or sends an alert.",
+      "techContext": "ArgoCD's multi-cluster sync lets our platform team manage 40 production clusters from a single ArgoCD instance — every cluster's state is declared in Git and any manual kubectl change triggers a drift alert within 3 minutes.",
+      "exampleSentence": "After a junior engineer accidentally deleted a CRD in production, ArgoCD detected the drift within two minutes and auto-synced it back from Git before any workloads were affected.",
+      "codeExample": {
+        "language": "yaml",
+        "code": "# ArgoCD Application syncing a Helm chart from Git\napiVersion: argoproj.io/v1alpha1\nkind: Application\nmetadata:\n  name: payments-api\n  namespace: argocd\nspec:\n  project: default\n  source:\n    repoURL: https://github.com/myorg/k8s-platform\n    targetRevision: HEAD\n    path: apps/payments-api\n    helm:\n      valueFiles:\n        - values-production.yaml\n  destination:\n    server: https://kubernetes.default.svc\n    namespace: payments\n  syncPolicy:\n    automated:\n      prune: true\n      selfHeal: true"
+      },
+      "etymology": "ArgoCD: Argo is the mythological ship sailed by Jason and the Argonauts — evoking delivery through navigation. CD stands for Continuous Delivery. Created at Applatix (acquired by Intuit) in 2017; donated to CNCF in 2020.",
+      "unlockLevel": 4,
+      "tags": ["kubernetes", "gitops", "cicd", "delivery", "argocd"],
+      "category": "gitops"
+    },
+    {
+      "id": "k8s-ad3-0150-0000-0000-0000-000000000015",
+      "word": "Flux",
+      "pronunciation": "FLUKS",
+      "partOfSpeech": "noun",
+      "shortDefinition": "CNCF GitOps toolkit that reconciles Kubernetes clusters to manifests in Git, with support for Helm and Kustomize sources.",
+      "simpleDefinition": "Flux is a CNCF-graduated GitOps toolkit composed of specialised controllers: the Source Controller watches Git repos, Helm repos, and OCI registries; the Kustomize Controller applies Kustomize overlays; the Helm Controller manages Helm releases; the Notification Controller triggers syncs from webhooks and sends alerts. Flux takes a composable toolkit approach rather than ArgoCD's monolithic application model.",
+      "longDefinition": "Flux v2 (2021) was a ground-up rewrite of the original Flux (2016) using the GitOps Toolkit — a set of independent CNCF APIs and controllers that can be used together or separately. The four main controllers are: Source Controller (polls Git repositories, Helm chart repositories, OCI registries, and S3 buckets, producing Artifact objects); Kustomize Controller (applies Kustomizations — paths within a source — to clusters, with dependency ordering and health gating); Helm Controller (manages HelmRelease objects, delegating to Helm for chart rendering and release lifecycle); Notification Controller (handles inbound webhooks from GitHub/GitLab to trigger immediate reconciliation, and sends outbound alerts to Slack, PagerDuty, GitHub commit status). Flux's multi-tenancy model uses Kustomization dependencies and service accounts to isolate tenant reconciliation — each tenant's Kustomization runs as a dedicated service account with scoped RBAC. Flux graduated from CNCF in November 2022. Compared to ArgoCD, Flux has a stronger multi-tenancy story and tighter OCI artifact support; ArgoCD has a richer UI and more established multi-cluster fleet management. Many large organisations run both — ArgoCD for the platform team's cluster management, Flux for tenant application delivery.",
+      "connector": "Flux is like a postal service with separate departments for each step — one team checks for new packages (Source Controller), one delivers Helm packages (Helm Controller), one assembles custom builds (Kustomize Controller), and one sends delivery notifications (Notification Controller).",
+      "techContext": "We use Flux's OCI Source Controller to consume our Helm charts directly from our container registry as OCI artifacts, eliminating the separate Helm repository infrastructure we maintained.",
+      "exampleSentence": "Flux's Kustomize Controller dependency ordering let us declare that the CRD Kustomization must reach Healthy status before any workload Kustomizations attempt to create CR instances.",
+      "codeExample": {
+        "language": "yaml",
+        "code": "# Flux HelmRelease\napiVersion: helm.toolkit.fluxcd.io/v2\nkind: HelmRelease\nmetadata:\n  name: cert-manager\n  namespace: cert-manager\nspec:\n  interval: 1h\n  chart:\n    spec:\n      chart: cert-manager\n      version: '>=1.14.0'\n      sourceRef:\n        kind: HelmRepository\n        name: jetstack\n  install:\n    crds: CreateReplace\n  upgrade:\n    crds: CreateReplace"
+      },
+      "etymology": "Flux: from Latin fluxus, meaning flow — the continuous flow of changes from Git to the cluster. Originally created by Weaveworks (2016); the v2 GitOps Toolkit was developed collaboratively with Microsoft and others; graduated from CNCF in 2022.",
+      "unlockLevel": 4,
+      "tags": ["kubernetes", "gitops", "cicd", "flux", "delivery"],
+      "category": "gitops"
+    },
+    {
+      "id": "k8s-ad3-0160-0000-0000-0000-000000000016",
+      "word": "OpenTelemetry (OTel)",
+      "pronunciation": "OH-pen-tel-uh-MET-ree OH-tel",
+      "partOfSpeech": "noun",
+      "shortDefinition": "CNCF standard for traces, metrics, and logs; the OTel Collector aggregates and routes telemetry to observability backends.",
+      "simpleDefinition": "OpenTelemetry is the CNCF standard API and SDK for emitting traces, metrics, and logs from applications — replacing vendor-specific agents like the Datadog tracer or Jaeger client. Applications instrument once against the OTel API; the OTel Collector receives telemetry over OTLP, processes it (sampling, enrichment, batching), and exports to any backend (Jaeger, Prometheus, Datadog, Grafana, Honeycomb).",
+      "longDefinition": "OpenTelemetry (OTel) emerged from the merger of OpenCensus (Google) and OpenTracing (CNCF) in 2019 to create a single, vendor-neutral telemetry standard. It defines three pillars: distributed traces (spans with parent-child relationships across service boundaries), metrics (OTLP metric data model compatible with Prometheus), and structured logs (in 2026 logs are the youngest OTel pillar, with log-to-trace correlation via trace_id injection). The OTel SDK is available in 11 languages (Go, Java, Python, .NET, JavaScript, Rust, C++, PHP, Ruby, Erlang, Swift); auto-instrumentation agents for Java and Python require zero code changes. The OTel Collector is a critical deployment component: a vendor-agnostic pipeline that receives telemetry (over OTLP, Zipkin, Jaeger, Prometheus scrape, Fluentd), processes it (attribute enrichment, sampling decisions, batching, filtering), and exports to multiple backends simultaneously. In Kubernetes deployments, the Collector runs as a DaemonSet (one per node, collecting host metrics and proxying pod telemetry) and/or a central gateway Deployment. The OTelOperator automates collector deployment and auto-instrumentation injection via annotation-based pod mutation. OTel graduated from CNCF in February 2023 and is the de-facto standard for new observability instrumentation in 2026.",
+      "connector": "OpenTelemetry is like USB-C for observability: before it, every device (vendor) had a proprietary charger (agent). OTel standardises the port — you instrument once and plug into any charging brick (backend) that supports the standard.",
+      "techContext": "After migrating all services to OTel auto-instrumentation, we added Honeycomb as a tracing backend alongside our existing Jaeger instance with zero application code changes — just an Collector pipeline update.",
+      "exampleSentence": "OpenTelemetry's Collector let us simultaneously ship traces to Jaeger for debugging, metrics to Prometheus for alerting, and raw telemetry to our security team's SIEM — all from a single pipeline configuration.",
+      "codeExample": {
+        "language": "yaml",
+        "code": "# OTel Collector pipeline (DaemonSet config)\nreceivers:\n  otlp:\n    protocols:\n      grpc:\n        endpoint: 0.0.0.0:4317\n      http:\n        endpoint: 0.0.0.0:4318\nprocessors:\n  batch:\n    timeout: 10s\n  resource:\n    attributes:\n      - key: k8s.cluster.name\n        value: production\n        action: upsert\nexporters:\n  otlp/jaeger:\n    endpoint: jaeger-collector:4317\n  prometheusremotewrite:\n    endpoint: http://prometheus:9090/api/v1/write\nservice:\n  pipelines:\n    traces:\n      receivers: [otlp]\n      processors: [batch, resource]\n      exporters: [otlp/jaeger]\n    metrics:\n      receivers: [otlp]\n      processors: [batch]\n      exporters: [prometheusremotewrite]"
+      },
+      "etymology": "OpenTelemetry: open (vendor-neutral) + telemetry (from Greek tele-, far, + metron, measure — remote measurement). Formed in 2019 by merging Google's OpenCensus and the CNCF's OpenTracing projects under CNCF.",
+      "unlockLevel": 4,
+      "tags": ["kubernetes", "observability", "tracing", "metrics", "opentelemetry"],
+      "category": "observability"
+    },
+    {
+      "id": "k8s-ad3-0170-0000-0000-0000-000000000017",
+      "word": "Prometheus",
+      "pronunciation": "pruh-MEE-thee-us",
+      "partOfSpeech": "noun",
+      "shortDefinition": "Pull-based metrics system and de-facto K8s monitoring standard; scrapes annotated pods and Services on configurable intervals.",
+      "simpleDefinition": "Prometheus is a CNCF-graduated time-series database and metrics collection system. It scrapes HTTP endpoints (format: text/plain key-value metrics) from pods and services on configurable intervals, stores data locally, and evaluates alerting rules. A rich query language (PromQL) aggregates and transforms metrics across labels. It is the de-facto monitoring standard for Kubernetes workloads.",
+      "longDefinition": "Prometheus (released by SoundCloud in 2012, CNCF-graduated in 2018) uses a pull model: it periodically scrapes a /metrics HTTP endpoint on each target, pulling all metric samples at that instant. This contrasts with push-based systems (StatsD, InfluxDB's Telegraf) — the pull model makes it trivial to detect unreachable targets (scrape fails) and avoids backpressure when the monitoring system is overloaded. Service discovery in Kubernetes is built-in: Prometheus queries the Kubernetes API for pods, services, nodes, and ingresses, reads annotations (prometheus.io/scrape: 'true', prometheus.io/port: '8080'), and automatically adds and removes scrape targets as pods come and go. The Prometheus Operator (kube-prometheus-stack Helm chart) manages Prometheus configuration via ServiceMonitor and PodMonitor CRDs, enabling each team to declare their own scrape configuration without editing the central Prometheus config file. AlertManager handles deduplication, grouping, and routing of alerts to PagerDuty, Slack, OpsGenie, etc. Thanos and Cortex/Mimir extend Prometheus to multi-cluster, long-retention scenarios by adding a global query layer and remote write to object storage. Prometheus metrics are also the primary scaling signal for KEDA and HPA custom metrics.",
+      "connector": "Prometheus is like a health inspector who visits every restaurant (service) on a schedule, takes a reading of current conditions, records it in a ledger, and triggers an alarm if conditions fall outside bounds — no restaurant needs to call the inspector proactively.",
+      "techContext": "The Prometheus Operator's ServiceMonitor CRD let our platform team delegate scrape configuration to application teams — each team declares which endpoints to scrape via a YAML manifest in their app's namespace, and Prometheus picks it up automatically.",
+      "exampleSentence": "Prometheus's PromQL let us write a single query across all pods in all namespaces to find every service with a p99 latency above 500ms, feeding directly into our SLO burn-rate alert.",
+      "codeExample": {
+        "language": "yaml",
+        "code": "# ServiceMonitor CRD (Prometheus Operator)\napiVersion: monitoring.coreos.com/v1\nkind: ServiceMonitor\nmetadata:\n  name: payments-api\n  namespace: payments\nspec:\n  selector:\n    matchLabels:\n      app: payments-api\n  endpoints:\n    - port: metrics\n      interval: 30s\n      path: /metrics\n---\n# PromQL: request error rate per service\n# sum(rate(http_requests_total{status=~\"5..\"}[5m])) by (service)\n# /\n# sum(rate(http_requests_total[5m])) by (service)"
+      },
+      "etymology": "Prometheus: the Greek Titan who stole fire from the gods to give to humanity — Matt Proud and Julius Volz chose the name at SoundCloud to evoke monitoring illuminating the darkness of production systems. Released as open source in 2012.",
+      "unlockLevel": 4,
+      "tags": ["kubernetes", "observability", "monitoring", "prometheus", "metrics"],
+      "category": "observability"
+    },
+    {
+      "id": "k8s-ad3-0180-0000-0000-0000-000000000018",
+      "word": "Falco",
+      "pronunciation": "FAL-koh",
+      "partOfSpeech": "noun",
+      "shortDefinition": "Runtime security tool using eBPF/kernel module to detect anomalous syscall behaviour inside running containers.",
+      "simpleDefinition": "Falco is a CNCF-graduated runtime security tool that monitors Linux system calls made by every container on a node. Using eBPF probes or a kernel module, it intercepts syscalls in real-time and evaluates them against a rule set. When a container does something unexpected — spawns a shell, reads /etc/shadow, opens a network socket from a binary that should not network — Falco emits an alert to Slack, PagerDuty, a SIEM, or any webhook.",
+      "longDefinition": "Static security scanning (image scanning, admission webhooks) catches known bad patterns at deploy time. Falco addresses what happens after deployment: detecting anomalous behaviour in running containers in real time. It instruments the kernel's system call interface using either a loadable kernel module or an eBPF probe (preferred since Falco 0.28, as eBPF probes are safer than kernel modules in production). Every container syscall — open(), execve(), connect(), read() — passes through Falco's probe, which applies a rules engine. Default rules detect: spawning a shell inside a container (`execve` to bash/sh), privilege escalation (`setuid` syscall), reading sensitive files (/etc/shadow, /etc/kubernetes/pki/), network connections from unexpected binaries, and writing to `/etc` or kernel directories. Custom rules can be written in YAML using a macro/list/rule syntax. Falco outputs alerts as JSON events with full context (container id, pod name, namespace, process lineage, syscall arguments). FalcoSidekick is the companion tool that routes these events to 50+ destinations. Falco graduated from CNCF in January 2024. It is the most widely adopted runtime security tool in the Kubernetes ecosystem and is commonly deployed as a DaemonSet.",
+      "connector": "Falco is like a building security guard who watches the cameras 24/7, not just at the entrance. Static security tools check ID at the door; Falco watches what everyone does once they are inside the building and raises an alarm if someone opens a server room they have no business in.",
+      "techContext": "Falco's eBPF probe caught a compromised container trying to read /etc/kubernetes/pki/ca.key within 200 milliseconds — the alert fired in Slack before the attacker could exfiltrate the credential.",
+      "exampleSentence": "After deploying Falco, we detected three containers spawning shells inside production within the first week — all turned out to be developer debug sessions via kubectl exec that should not have been happening in prod.",
+      "codeExample": {
+        "language": "yaml",
+        "code": "# Falco custom rule: detect kubectl exec into production pod\n- rule: Shell spawned in production container\n  desc: A shell was spawned inside a container in the production namespace\n  condition: >\n    spawned_process and\n    container.namespace = \"production\" and\n    proc.name in (shell_binaries)\n  output: >\n    Shell spawned in production container\n    (user=%user.name container=%container.name\n     pod=%k8s.pod.name ns=%k8s.ns.name\n     parent=%proc.pname cmd=%proc.cmdline)\n  priority: WARNING\n  tags: [container, shell, security]"
+      },
+      "etymology": "Falco: named after the falcon — a fast, sharp-eyed predator used historically for hunting. Sysdig (the creator) chose the name to evoke rapid detection and precise targeting of threats. Open-sourced in 2016; CNCF Sandbox in 2018; graduated in 2024.",
+      "unlockLevel": 4,
+      "tags": ["kubernetes", "security", "runtime-security", "ebpf", "falco", "frontier-2026"],
+      "category": "security"
+    },
+    {
+      "id": "k8s-ad3-0190-0000-0000-0000-000000000019",
+      "word": "cert-manager",
+      "pronunciation": "SURT-man-uh-jer",
+      "partOfSpeech": "noun",
+      "shortDefinition": "Kubernetes operator that automates TLS certificate issuance and renewal from Let's Encrypt and other ACME CAs.",
+      "simpleDefinition": "cert-manager is a Kubernetes operator that manages the full lifecycle of TLS certificates. It watches Certificate CRD objects, requests certificates from configured Issuers (Let's Encrypt, HashiCorp Vault, Venafi, self-signed), stores them as Kubernetes Secrets, and automatically renews them before expiry. It integrates with Ingress and Gateway API resources to provision TLS certificates based on hostname annotations.",
+      "longDefinition": "Manual TLS certificate management in Kubernetes is error-prone at scale: certificates expire silently, private keys are stored inconsistently, and rotation requires coordinated changes across services. cert-manager solves this by treating certificates as Kubernetes-native objects. An Issuer (namespace-scoped) or ClusterIssuer (cluster-scoped) defines a certificate authority and challenge mechanism — ACME DNS-01 or HTTP-01 for Let's Encrypt, CSR-based for internal CAs, or a Vault PKI secrets engine. A Certificate object declares the desired certificate: common name, SANs, duration, renewal threshold. cert-manager's controller watches for expiring certificates (default: renew at 2/3 of lifetime), sends a CertificateRequest to the Issuer, completes the ACME challenge (modifying a DNS TXT record or creating an HTTP challenge pod), and stores the resulting cert and key in a Kubernetes Secret. The annotationated Ingress controller integration means adding `cert-manager.io/cluster-issuer: letsencrypt-prod` to an Ingress triggers automatic certificate provisioning for all hostnames in that Ingress. cert-manager is deployed in the majority of production Kubernetes clusters that serve HTTPS traffic, and is the reference implementation for Kubernetes Certificate API (certificates.k8s.io). It reached v1.0 in October 2020 and is now a CNCF Incubating project.",
+      "connector": "cert-manager is like a passport renewal service that knows when your passport is about to expire, automatically submits the renewal application to the government, and places the new passport in your desk drawer before the old one runs out — you only had to file for the service once.",
+      "techContext": "cert-manager eliminated our quarterly certificate rotation fire drill — 200 service certificates across our clusters now renew automatically, and we get a Slack alert only if a renewal fails.",
+      "exampleSentence": "cert-manager's ClusterIssuer provisioned valid Let's Encrypt certificates for 45 Ingress hostnames automatically; our platform team went from spending 4 hours per quarter on cert rotation to zero.",
+      "codeExample": {
+        "language": "yaml",
+        "code": "# ClusterIssuer: Let's Encrypt production\napiVersion: cert-manager.io/v1\nkind: ClusterIssuer\nmetadata:\n  name: letsencrypt-prod\nspec:\n  acme:\n    server: https://acme-v02.api.letsencrypt.org/directory\n    email: platform@myorg.com\n    privateKeySecretRef:\n      name: letsencrypt-prod-account-key\n    solvers:\n      - http01:\n          ingress:\n            ingressClassName: nginx\n---\n# Ingress with automatic cert provisioning\napiVersion: networking.k8s.io/v1\nkind: Ingress\nmetadata:\n  name: api-gateway\n  annotations:\n    cert-manager.io/cluster-issuer: letsencrypt-prod\nspec:\n  tls:\n    - hosts: [api.myorg.com]\n      secretName: api-tls"
+      },
+      "etymology": "cert-manager: certificate manager. Created by Jetstack (acquired by Venafi in 2022) in 2017; CNCF Incubating project since 2022. The lowercase naming follows Kubernetes ecosystem conventions (kubectl, helm, etc.).",
+      "unlockLevel": 4,
+      "tags": ["kubernetes", "security", "tls", "certificates", "cert-manager"],
+      "category": "security"
+    },
+    {
+      "id": "k8s-ad3-0200-0000-0000-0000-000000000020",
+      "word": "Hubble Observability",
+      "pronunciation": "HUB-ul ob-zur-vuh-BIL-ih-tee",
+      "partOfSpeech": "noun",
+      "shortDefinition": "Cilium's eBPF-powered network observability layer providing packet-level flow telemetry and service dependency maps.",
+      "simpleDefinition": "Hubble is Cilium's built-in network observability component. It uses eBPF hooks to capture L3/L4/L7 flow data — TCP connections, HTTP requests, DNS queries, gRPC calls — from every pod on every node, without injecting any sidecar proxy. A central Hubble Relay aggregates flows from all nodes; the Hubble UI renders live service maps showing which services talk to which, with flow counts, error rates, and latency.",
+      "longDefinition": "Traditional Kubernetes network observability requires either sidecar proxies (Istio/Envoy collecting access logs) or packet capture (tcpdump, requiring privileged containers). Hubble provides the same depth of visibility using eBPF kernel hooks — at the kernel socket and network interface level, before packets reach userspace. The Hubble Observer runs as part of each Cilium agent DaemonSet pod; it taps into the same BPF maps that Cilium uses for policy enforcement, reading flow metadata (source/dest IP, port, HTTP method, gRPC service, DNS name, response code, latency). This data is aggregated by Hubble Relay into a cluster-wide gRPC API. Hubble CLI (`hubble observe`) provides tcpdump-style flow inspection filtered by namespace, pod, label, or protocol. Hubble UI auto-generates a service dependency map from observed flows — showing in real time which services communicate, with drop rates and error percentages on each edge. Critically, Hubble does not require application instrumentation: flows are captured at the network layer regardless of whether the application uses OTel, Envoy, or has any observability code at all. This makes it invaluable for auditing unknown traffic patterns, debugging intermittent connection drops, and generating service topology maps for legacy applications that were not designed with observability in mind.",
+      "connector": "Hubble is like a wiretap built into the building's telephone exchange — rather than asking each room to keep its own call log (sidecar), the exchange records all call metadata for every room automatically, at the infrastructure level.",
+      "techContext": "Hubble's service map revealed that a legacy batch job was making 50,000 direct database connections per minute — a pattern no one knew about, invisible to our application metrics, that was starving the database connection pool.",
+      "exampleSentence": "Hubble's flow observability showed us the exact TCP error code and latency spike between the payment service and the ledger API, without any application log changes — we diagnosed a network policy misconfiguration in 10 minutes.",
+      "codeExample": {
+        "language": "bash",
+        "code": "# Observe HTTP flows between namespaces in real time\nhubble observe \\\n  --namespace payments \\\n  --protocol http \\\n  --verdict DROPPED \\\n  --output json | jq '{src:.source.namespace, dst:.destination.namespace, url:.l7.http.url, status:.l7.http.code}'\n\n# Generate service dependency map for the payments namespace\nhubble observe --namespace payments --last 1000 \\\n  | jq -r '[.source.labels[\"k8s:app\"], .destination.labels[\"k8s:app\"]] | @csv' \\\n  | sort | uniq -c | sort -rn | head -20"
+      },
+      "etymology": "Hubble: named after astronomer Edwin Hubble, who mapped distant galaxies — Cilium's Hubble maps distant service-to-service connections across the cluster. The naming follows the Cilium team's space theme (Cilium itself refers to microscopic cilia; Hubble to cosmic observation).",
+      "unlockLevel": 4,
+      "tags": ["kubernetes", "observability", "networking", "ebpf", "cilium", "frontier-2026"],
+      "category": "observability"
+    },
+    {
+      "id": "k8s-ad3-0210-0000-0000-0000-000000000021",
+      "word": "Loki",
+      "pronunciation": "LOH-kee",
+      "partOfSpeech": "noun",
+      "shortDefinition": "Grafana's horizontally scalable log aggregation system designed to store and query logs indexed by labels, not content.",
+      "simpleDefinition": "Loki is Grafana Labs' log aggregation system optimised for Kubernetes. Unlike Elasticsearch (which full-text-indexes every log line), Loki only indexes metadata labels (namespace, pod, container) and stores compressed raw log chunks. This makes Loki dramatically cheaper to operate at scale. Logs are queried with LogQL — a PromQL-inspired query language — and rendered in Grafana alongside Prometheus metrics.",
+      "longDefinition": "Elasticsearch-based logging (EFK stack) indexes every word in every log line, enabling full-text search but at significant storage and CPU cost — a busy Kubernetes cluster generating 10 GB/day of logs requires a multi-node Elasticsearch cluster with hundreds of GB of index storage. Loki's key insight: most log queries are filtered by labels (pod name, namespace, service) first, and text search is a secondary filter applied to a smaller result set. By only indexing label metadata and storing log chunks as compressed blobs in object storage (S3, GCS, Azure Blob), Loki achieves dramatically lower storage costs (10-30x versus Elasticsearch) with trade-offs in query performance for unstructured full-text search. Loki's architecture in 2026 (Loki 3.x, microservices mode): Distributor (receives and validates log streams), Ingester (writes to object storage), Querier (executes LogQL queries against object storage), and Query Frontend (caching, query splitting). The Promtail DaemonSet (or the OTel Collector Loki exporter) collects pod logs from the node's /var/log/pods/ directory and ships them to Loki with Kubernetes metadata labels auto-attached. LogQL supports label filters, line filters (regex, string), and metrics extraction (`| rate()`, `| count_over_time()`) — turning log streams into Prometheus-compatible metrics for alerting on error rates without a separate pipeline. Loki integrates natively with Grafana for the full metrics/logs/traces correlation experience (Grafana exemplars link Prometheus metrics to Loki log lines).",
+      "connector": "Loki is like a library that catalogues books by author, genre, and year (labels) but does not index every word inside each book. Finding books by genre is instant; finding every book that mentions 'blue whale' on page 73 requires opening books one by one — a deliberate trade-off for a much cheaper library.",
+      "techContext": "Replacing our EFK stack with Loki cut our logging infrastructure cost by 65% — Loki's label-only index means we store 30 days of logs for the same cost that Elasticsearch stored 7 days.",
+      "exampleSentence": "Loki's LogQL metric extraction query let us build a real-time error-rate dashboard from application log lines without adding Prometheus instrumentation to the application.",
+      "codeExample": {
+        "language": "bash",
+        "code": "# LogQL: count error log lines per service over 5 minutes\n# (executed in Grafana Explore or via Loki API)\nsum by (app) (\n  count_over_time(\n    {namespace=\"production\"}\n      |= \"ERROR\"\n      | json\n      | level=\"error\"\n    [5m]\n  )\n)\n\n# LogQL: stream logs from a specific pod label in real time\n{namespace=\"payments\", app=\"checkout\"} |= \"payment_failed\""
+      },
+      "etymology": "Loki: named after the Norse trickster god — Grafana Labs' projects are named after Norse mythology (Grafana itself being a portmanteau of Grafana + Kana, with Norse aesthetics). Created by Tom Wilkie and Goutham Rao at Grafana Labs in 2018, announced at KubeCon NA 2018.",
+      "unlockLevel": 4,
+      "tags": ["kubernetes", "observability", "logging", "loki", "grafana"],
+      "category": "observability"
+    },
+    {
+      "id": "k8s-ad3-0220-0000-0000-0000-000000000022",
+      "word": "Linux Namespaces",
+      "pronunciation": "LIN-uks NAYM-spay-sez",
+      "partOfSpeech": "noun",
+      "shortDefinition": "Kernel primitives (pid, net, mnt, uts, ipc, user) that give each container an isolated view of processes, network, and filesystem.",
+      "simpleDefinition": "Linux namespaces are kernel features that partition global system resources so each process group sees its own isolated version. A container uses a set of namespaces to believe it is alone on the machine: its own process tree (pid namespace), its own network stack (net namespace), its own filesystem mounts (mnt namespace), its own hostname (uts namespace), its own IPC primitives (ipc namespace), and optionally its own user ID mapping (user namespace). All containers on a host share the same kernel — namespaces are the isolation layer, not virtualisation.",
+      "longDefinition": "Linux namespaces were introduced incrementally: mount namespaces in Linux 2.4.19 (2002), UTS and IPC in 2.6.19 (2006), PID and network in 2.6.24 (2008), user namespaces in 3.8 (2013), cgroup namespaces in 4.6 (2016), and time namespaces in 5.6 (2020). Each namespace type wraps a different class of kernel resource. The six types relevant to containers: PID namespace — process IDs start at 1 inside the container; processes outside cannot be seen or killed; NET namespace — the container has its own network interfaces, routing tables, and iptables rules; the veth pair bridges it to the host; MNT namespace — the container has its own mount table; the container image's overlay filesystem is mounted here; UTS namespace — hostname and domain name are isolated; each container can have a distinct hostname; IPC namespace — System V IPC primitives (semaphores, message queues, shared memory) are isolated; USER namespace — UIDs/GIDs inside the container map to different UIDs/GIDs on the host, enabling a rootless container where UID 0 inside maps to an unprivileged UID outside. Container runtimes (runc, containerd) call `clone(2)` with the appropriate `CLONE_NEW*` flags to create these namespaces before exec-ing the container process. Understanding namespaces is required to reason about container escape vulnerabilities — every container escape exploits a namespace isolation failure, typically in the kernel itself or in a misconfigured user namespace.",
+      "connector": "Linux namespaces are like the privacy screens in an open-plan office — each booth (container) has its own phone, its own desk layout, its own nameplate, and cannot see what the neighbouring booths are doing. All booths still share the same building structure (kernel).",
+      "techContext": "During a security audit we discovered a pod running with hostPID: true — it could see all processes on the node because it was in the host PID namespace rather than its own, a namespace isolation misconfiguration that bypassed our network policies entirely.",
+      "exampleSentence": "Understanding Linux namespaces explained why a container escape in our cluster reached the host — the runtime had been configured with shareProcessNamespace: true, placing two containers in the same PID namespace.",
+      "codeExample": {
+        "language": "bash",
+        "code": "# Demonstrate namespace isolation with unshare(1)\n# New PID + mount namespace: process tree starts at PID 1\nsudo unshare --pid --mount --fork --mount-proc /bin/bash\nps aux  # shows only this bash and ps — isolated PID namespace\n\n# Inspect namespaces of a running container\npid=$(docker inspect --format '{{.State.Pid}}' my-container)\nls -la /proc/$pid/ns/\n# lrwxrwxrwx 1 root root pid:[4026532199]\n# lrwxrwxrwx 1 root root net:[4026532201]\n# lrwxrwxrwx 1 root root mnt:[4026532197]"
+      },
+      "etymology": "Namespace: from the programming concept of a named scope for identifiers. Linux namespaces extend this to kernel resources. The term and initial implementation came from Eric Biederman's work on Linux VServers in the early 2000s.",
+      "unlockLevel": 4,
+      "tags": ["kubernetes", "linux", "containers", "security", "isolation", "core"],
+      "category": "internals"
+    },
+    {
+      "id": "k8s-ad3-0230-0000-0000-0000-000000000023",
+      "word": "cgroups (Control Groups)",
+      "pronunciation": "SEE-groop-z KUN-trohl GROOPZ",
+      "partOfSpeech": "noun",
+      "shortDefinition": "Linux kernel resource accounting hierarchy; enforces CPU, memory, and I/O limits for container processes.",
+      "simpleDefinition": "Control Groups (cgroups) are a Linux kernel mechanism for organising processes into hierarchical groups and enforcing resource limits on each group. Every container runs in its own cgroup subtree. The kernel tracks CPU time, memory usage, and block I/O for each cgroup and enforces the limits declared in the container spec — a container that exceeds its memory limit is OOM-killed; a container that exceeds its CPU limit is throttled.",
+      "longDefinition": "cgroups were merged into Linux 2.6.24 (2008) by Paul Menage and Rohit Seth from Google, who needed a way to enforce resource isolation for Google's internal container workloads. cgroups v1 organised resources by controller (cpu, memory, blkio, cpuset, devices, pids) with independent hierarchies per controller. cgroups v2 (merged in Linux 4.5, 2016; the default on modern distributions since ~2021) unifies all controllers into a single hierarchy with cleaner delegation semantics and improved memory accounting. In Kubernetes: the kubelet translates a pod's `resources.limits` into cgroup settings. A container with `memory: 512Mi` limit gets a `memory.max = 536870912` in its cgroup; when it exceeds this, the kernel's OOM killer terminates a process in the cgroup and Kubernetes logs an OOMKilled event. CPU limits are enforced via the CFS scheduler's `cpu.max` (v2) — a container limited to 0.5 CPU gets 50% of a core's time quota per scheduling period. CPU requests (not limits) set `cpu.shares` (v1) / `cpu.weight` (v2), which influence scheduling priority when the node is CPU-contended. cgroup namespaces (a separate kernel feature) give containers an isolated view of the cgroup hierarchy — a container cannot see that it is inside a parent cgroup. Understanding cgroups is essential for reasoning about QoS classes, OOM events, and CPU throttling — the three most common performance failure modes in Kubernetes workloads.",
+      "connector": "cgroups are like the utility meters in a block of apartments — each apartment (container) has its own electricity and water meter, and a circuit breaker (memory limit) that trips if the tenant exceeds their allowed draw, preventing one apartment from starving the whole building.",
+      "techContext": "After enabling cgroup v2 on our EKS nodes, our memory accounting became much more accurate — cgroup v2's unified memory accounting catches page cache attribution that v1's per-controller model missed, reducing spurious OOMKilled events by 40%.",
+      "exampleSentence": "The container was OOMKilled because its cgroup memory limit was set to 256 Mi but the JVM heap alone needed 400 Mi — a cgroup enforcement that appeared as an application crash rather than an out-of-memory error in the app logs.",
+      "codeExample": {
+        "language": "bash",
+        "code": "# Inspect cgroup v2 limits for a running container\npid=$(docker inspect --format '{{.State.Pid}}' my-java-app)\ncgroup_path=$(cat /proc/$pid/cgroup | awk -F: '{print $3}')\n\n# Memory limit enforced by kernel\ncat /sys/fs/cgroup${cgroup_path}/memory.max\n# 268435456  (256 MiB)\n\n# CPU quota: container gets 50% of one core per 100ms period\ncat /sys/fs/cgroup${cgroup_path}/cpu.max\n# 50000 100000  (50ms out of every 100ms)"
+      },
+      "etymology": "Control Groups: descriptive name for the resource grouping and control functionality. Originally called 'process containers' by Paul Menage in 2006; renamed to cgroups to avoid confusion with Linux Containers (LXC). cgroups v2 was designed by Tejun Heo and merged in 2016.",
+      "unlockLevel": 4,
+      "tags": ["kubernetes", "linux", "containers", "resource-management", "core", "internals"],
+      "category": "internals"
+    },
+    {
+      "id": "k8s-ad3-0240-0000-0000-0000-000000000024",
+      "word": "Multi-Tenancy Patterns (Namespace / vCluster / Cluster)",
+      "pronunciation": "MUL-tee-TEN-un-see PAT-urnz",
+      "partOfSpeech": "noun",
+      "shortDefinition": "Spectrum of K8s isolation strategies: shared namespace (soft), vCluster (virtual), separate cluster (hard).",
+      "simpleDefinition": "Kubernetes multi-tenancy exists on a spectrum of isolation strength. Namespace-level tenancy (soft) uses RBAC and ResourceQuota to scope teams on a shared cluster but offers no kernel isolation. vCluster (virtual) gives each tenant a full Kubernetes API surface including CRDs, running as a workload inside the host cluster. Separate clusters (hard) provide complete control-plane and node isolation at the cost of per-cluster operational overhead.",
+      "longDefinition": "Kubernetes was not designed for multi-tenancy — a namespace provides resource naming isolation but shares the control plane, API server, etcd, and underlying nodes. Choosing the right isolation tier requires matching the threat model and operational budget: Soft multi-tenancy (namespace per team) is appropriate for mutually trusting internal teams. RBAC restricts API access; ResourceQuota caps consumption; NetworkPolicy limits lateral movement; LimitRange enforces defaults. Does not prevent container escapes (a kernel exploit on one tenant's pod can affect all pods on the node) and does not prevent a privileged tenant from affecting cluster-level resources. Capsule (CNCF Sandbox, Clastix) groups namespaces into Tenant objects, allowing self-service namespace creation within tenant boundaries — a practical enhancement for large-enterprise soft tenancy. vCluster tenancy gives each tenant a full virtual Kubernetes cluster running as a StatefulSet in the host namespace. Tenants get their own API server, their own CRDs, their own ClusterRoles, their own admission webhooks — the full cluster API surface. Appropriate when tenants need cluster-scoped resources or full admin access without affecting other tenants. Still shares host nodes — a node-level exploit escapes the vCluster. Separate cluster tenancy provides the only true hard isolation: independent control planes, independent nodes, no shared fate. Managed by fleet tools (ArgoCD multi-cluster, Cluster API). The cost: each cluster requires its own upgrade, certificate management, and monitoring. The correct choice is the minimum isolation tier that satisfies the threat model, compliance requirements, and operational capacity — defaulting to separate clusters for all teams is often infeasible.",
+      "connector": "Multi-tenancy tiers are like housing arrangements: namespace tenancy is a shared house (same kitchen, separate bedrooms); vCluster is a studio apartment in a converted warehouse (your own front door but shared building); separate clusters are detached houses (complete independence, separate utility bills).",
+      "techContext": "Our internal platform uses namespace tenancy for product teams (trusted) and vCluster for external partners who need to install their own CRDs — we reserve separate clusters only for our regulated healthcare clients who require hard compliance boundaries.",
+      "exampleSentence": "When a product team needed to install a custom CRD without waiting for platform team review, we provisioned them a vCluster in under two minutes — giving full cluster-admin in their virtual environment without touching the shared cluster.",
+      "codeExample": {
+        "language": "yaml",
+        "code": "# Soft tenancy: Capsule Tenant with self-service namespace creation\napiVersion: capsule.clastix.io/v1beta2\nkind: Tenant\nmetadata:\n  name: team-payments\nspec:\n  owners:\n    - name: payments-team-admin\n      kind: User\n  namespaceOptions:\n    quota: 5           # max 5 namespaces for this tenant\n  resourceQuotas:\n    scope: Tenant\n    items:\n      - hard:\n          requests.cpu: '20'\n          requests.memory: 40Gi\n  networkPolicies:\n    items:\n      - podSelector: {}\n        policyTypes: [Ingress, Egress]\n        egress:\n          - to: [{namespaceSelector: {matchLabels: {capsule.clastix.io/tenant: team-payments}}}]"
+      },
+      "etymology": "Multi-tenancy: multi (many) + tenant (from Old French tenant, holder/occupant). The concept migrated from SaaS product design into Kubernetes platform engineering as clusters became shared infrastructure for multiple teams.",
+      "unlockLevel": 4,
+      "tags": ["kubernetes", "multi-tenancy", "platform", "security", "frontier-2026"],
+      "category": "multi-tenancy"
+    },
+    {
+      "id": "k8s-ad3-0250-0000-0000-0000-000000000025",
+      "word": "Linkerd",
+      "pronunciation": "LINK-erd",
+      "partOfSpeech": "noun",
+      "shortDefinition": "Lightweight CNCF service mesh using Rust-based micro-proxies; lower overhead than Envoy-based meshes, simpler ops model.",
+      "simpleDefinition": "Linkerd is a CNCF-graduated service mesh that injects a tiny Rust-based proxy (linkerd-proxy, ~10 MB, ~5 ms P99 latency overhead) as a sidecar into every pod. It provides automatic mTLS between all meshed services, per-route golden-signal metrics, retries, timeouts, and traffic splitting — without requiring Envoy, Lua, or complex CRDs. Its operational simplicity is its primary differentiator versus Istio.",
+      "longDefinition": "Linkerd 1.0 (2016, Scala/JVM) was the first service mesh for Kubernetes. Linkerd 2.0 (2018, Rust) was a complete rewrite targeting low overhead and operational simplicity. The proxy — linkerd-proxy — is a 10 MB Rust binary with a ~3-5 ms P99 latency addition (versus 10-30 ms for Envoy under load) and ~10 MB RAM per proxy versus 50-100 MB for Envoy. This makes Linkerd significantly cheaper at high pod densities. Feature set: automatic mTLS between all meshed pods using SPIFFE certificates issued by the Linkerd control plane's built-in CA; per-route HTTP/gRPC metrics (success rate, RPS, P99 latency) exposed as Prometheus metrics; configurable retries and timeouts on HTTPRoute objects; traffic splitting for canary deployments; multi-cluster support via the Linkerd multicluster extension. Linkerd deliberately excludes some Istio features: no Lua scripting, no ext_authz integration, no WebAssembly plugin filters, no complex VirtualService routing DSL. This is a feature for teams who find Istio's configurability to be operational complexity. The Linkerd control plane (destination, identity, proxy-injector) runs as a small Deployment set and has no external dependencies. Linkerd 2.12+ supports the Kubernetes Gateway API for HTTPRoute configuration. Graduated from CNCF in July 2021, Linkerd is the second most deployed service mesh after Istio, and is particularly popular in financial services and healthcare where the low-overhead proxy is a compliance-friendly choice.",
+      "connector": "Linkerd versus Istio is like choosing between a specialist scalpel (Linkerd — precise, lightweight, limited range) versus a surgical robot (Istio — more capable, dramatically more complex to operate). If your surgery needs the robot, use Istio. If the scalpel does the job, the simpler tool is the better choice.",
+      "techContext": "We chose Linkerd over Istio because our 2,000-pod cluster's memory budget was tight — Linkerd's micro-proxies added 10 MB each versus Envoy's 50-100 MB, saving 80+ GB of RAM across the fleet.",
+      "exampleSentence": "After injecting Linkerd, we had automatic mTLS between all services and golden-signal dashboards for every route in Grafana — our security and observability requirements were met with a one-line annotation per namespace.",
+      "codeExample": {
+        "language": "bash",
+        "code": "# Enable Linkerd injection for a namespace\nkubectl annotate namespace payments \\\n  linkerd.io/inject=enabled\n\n# Verify mesh injection and check mTLS status\nlinkerd check --proxy --namespace payments\nlinkerd viz stat deploy --namespace payments\n# NAME          MESHED   SUCCESS      RPS   LATENCY_P99   ...\n# checkout        1/1    99.82%   43.4rps        12ms\n# payments-api    1/1    99.95%   39.1rps         8ms"
+      },
+      "etymology": "Linkerd: a portmanteau of linker and daemon — the tool that links services together as a background process. Created by Buoyant Inc. (William Morgan and Oliver Gould) in 2016, the first tool to be called a 'service mesh'.",
+      "unlockLevel": 4,
+      "tags": ["kubernetes", "service-mesh", "networking", "linkerd", "observability"],
+      "category": "networking"
+    },
+    {
+      "id": "k8s-ad3-0260-0000-0000-0000-000000000026",
+      "word": "Cluster Autoscaler",
+      "pronunciation": "KLUS-ter AW-toh-skay-ler",
+      "partOfSpeech": "noun",
+      "shortDefinition": "Adjusts node count in a node group when pods are unschedulable (scale up) or nodes are underutilised (scale down).",
+      "simpleDefinition": "Cluster Autoscaler (CA) is a Kubernetes component that watches for pods that cannot be scheduled due to insufficient node resources (scale up) and for nodes that have been underutilised for a configurable period (scale down). It adjusts the size of a cloud provider's node group (AWS ASG, GCP MIG, Azure VMSS) and works with the cloud provider API to provision or terminate nodes.",
+      "longDefinition": "Cluster Autoscaler runs as a Deployment in the cluster and interfaces with both the Kubernetes API and the cloud provider's scaling API. Scale-up trigger: when the scheduler marks a pod as Unschedulable due to insufficient CPU, memory, or a required node label, CA identifies which node groups could accommodate the pod, simulates scheduling to verify, and increases the node group's desired count. A new node registers with the cluster in 1-5 minutes (depending on cloud provider and AMI). Scale-down trigger: CA periodically identifies nodes where all pods could be rescheduled onto other nodes while respecting PodDisruptionBudgets, taints, and affinity rules. A node that passes this check for the configurable `scale-down-unneeded-time` (default: 10 minutes) is drained and the cloud instance terminated. CA works with cloud-provider-specific node group configurations: AWS Auto Scaling Groups, GCP Managed Instance Groups, Azure VMSS. Its limitation versus Karpenter: CA scales within pre-defined node groups with fixed instance types — you must define separate groups for each instance family you want. This leads to over-provisioning (use a large instance family to handle any burst) or group sprawl (maintain many groups for different workload types). Karpenter addresses this by selecting instance type at scheduling time. CA remains the more mature solution for environments where node groups need to match specific compliance requirements or instance reservations.",
+      "connector": "Cluster Autoscaler is like a property manager for a parking lot — when cars (pods) can't find spaces, she calls the lot owner to open another section (scale up node group); when a section has been mostly empty for 10 minutes, she cones it off and returns it to the owner (scale down).",
+      "techContext": "Cluster Autoscaler's scale-down logic drained and terminated 12 underutilised nodes overnight, saving us 18% on our monthly EC2 bill without a single pod losing availability — the PodDisruptionBudget checks ensured minimum replicas were respected.",
+      "exampleSentence": "After a traffic spike spun up 20 extra nodes, Cluster Autoscaler drained and terminated them over the following hour once load dropped — our compute cost tracked traffic precisely rather than staying provisioned for peak.",
+      "codeExample": {
+        "language": "yaml",
+        "code": "# Cluster Autoscaler Deployment (AWS EKS)\napiVersion: apps/v1\nkind: Deployment\nmetadata:\n  name: cluster-autoscaler\n  namespace: kube-system\nspec:\n  template:\n    spec:\n      containers:\n        - name: cluster-autoscaler\n          image: registry.k8s.io/autoscaling/cluster-autoscaler:v1.30.0\n          command:\n            - ./cluster-autoscaler\n            - --cloud-provider=aws\n            - --node-group-auto-discovery=asg:tag=k8s.io/cluster-autoscaler/enabled,k8s.io/cluster-autoscaler/my-cluster\n            - --balance-similar-node-groups\n            - --skip-nodes-with-system-pods=false\n            - --scale-down-unneeded-time=10m"
+      },
+      "etymology": "Cluster Autoscaler: descriptive name for the component that automatically scales the cluster's node count. Originated as a Kubernetes community project in 2016; maintained by SIG Autoscaling.",
+      "unlockLevel": 4,
+      "tags": ["kubernetes", "autoscaling", "nodes", "cluster-autoscaler", "cost"],
+      "category": "scheduling"
+    },
+    {
+      "id": "k8s-ad3-0270-0000-0000-0000-000000000027",
+      "word": "GPU Scheduling",
+      "pronunciation": "JEE-pee-yoo SKED-yoo-ling",
+      "partOfSpeech": "noun",
+      "shortDefinition": "Kubernetes device plugin model that exposes GPU counts as schedulable resources; DRA in 1.26+ improves fractional sharing.",
+      "simpleDefinition": "GPU scheduling on Kubernetes uses the NVIDIA Device Plugin DaemonSet to advertise GPU devices as schedulable resources (`nvidia.com/gpu`). Pods request GPUs in their resource limits; the scheduler finds a node with available GPUs and the NVIDIA Container Runtime injects CUDA driver access. MIG (Multi-Instance GPU) hardware-partitions a single A100 into up to 7 isolated slices. DRA in 1.32+ extends this to richer allocation semantics including topology and sharing constraints.",
+      "longDefinition": "ML workloads on Kubernetes require a pipeline of GPU-specific infrastructure. The NVIDIA Device Plugin (a DaemonSet) uses the Kubernetes Device Plugin API to discover GPUs via the NVML library, advertise them as `nvidia.com/gpu: N` resources, and assign specific devices to scheduled pods via device binding. The NVIDIA Container Runtime (a containerd/CRI-O shim that wraps runc) injects NVIDIA driver mounts and device nodes into the container before start — without it, CUDA initialization fails even if a GPU device is assigned. MIG (Multi-Instance GPU, introduced with Ampere A100) allows hardware partitioning of a single GPU into up to 7 isolated MIG instances, each with its own memory slice and compute slice. MIG instances appear as separate resources to Kubernetes (e.g., `nvidia.com/mig-1g.10gb: 1`). This enables multiple inference workloads to share one $30,000 GPU with true hardware isolation. For pre-Ampere GPUs, time-slicing (advertising one GPU as N virtual GPUs sharing time) and NVIDIA MPS (Multi-Process Service, reducing context-switch overhead) provide sharing without hardware isolation. GPU fragmentation — a cluster with 8 GPUs but a pending pod requesting 8 on the same node, when GPUs are spread across 8 nodes — is a real operational problem. Volcano's gang scheduling and the NVIDIA GPU Operator's bin-packing scheduler plugin address fragmentation. The DRA API (GA in 1.32) replaces integer device counts with structured ResourceClaims, enabling topology-aware allocation such as 'two GPUs on the same NVLink fabric'.",
+      "connector": "GPU scheduling is like managing premium hotel suites: the device plugin is the concierge who tracks available suites; MIG is like splitting a penthouse into separate rooms each sold independently; DRA is a reservation system that books specific rooms based on guest requirements (window facing east, adjacent to room 101).",
+      "techContext": "After enabling MIG on our A100 nodes with the NVIDIA GPU Operator, we went from 4 concurrent training jobs (each consuming a whole GPU) to 28 concurrent inference jobs (each using a 1g.10gb MIG slice) — a 7x improvement in GPU utilisation.",
+      "exampleSentence": "GPU scheduling with MIG let us run 7 independent ML inference workloads on a single A100, each with hardware-isolated memory, instead of serialising them or buying 7 separate GPU instances.",
+      "codeExample": {
+        "language": "yaml",
+        "code": "# Pod requesting a MIG GPU slice (1g.10gb = 1/7 of an A100)\napiVersion: v1\nkind: Pod\nmetadata:\n  name: inference-server\nspec:\n  containers:\n    - name: server\n      image: nvcr.io/nvidia/tritonserver:24.01-py3\n      resources:\n        limits:\n          nvidia.com/mig-1g.10gb: 1  # one MIG slice\n      env:\n        - name: CUDA_VISIBLE_DEVICES\n          valueFrom:\n            fieldRef:\n              fieldPath: metadata.annotations['nvidia.com/gpu-assigned']"
+      },
+      "etymology": "GPU (Graphics Processing Unit): coined by NVIDIA's marketing team for the GeForce 256 launch in 1999 to distinguish the highly parallel compute chip from the CPU. GPU scheduling as a Kubernetes concept emerged with the device plugin API in Kubernetes 1.8 (2017).",
+      "unlockLevel": 4,
+      "tags": ["kubernetes", "gpu", "ml", "scheduling", "nvidia", "frontier-2026"],
+      "category": "scheduling"
+    },
+    {
+      "id": "k8s-ad3-0280-0000-0000-0000-000000000028",
+      "word": "Talos Linux",
+      "pronunciation": "TAY-lohs LIN-uks",
+      "partOfSpeech": "noun",
+      "shortDefinition": "Immutable, minimal Linux OS designed exclusively for Kubernetes nodes; managed entirely via API, no SSH shell.",
+      "simpleDefinition": "Talos Linux is an immutable Linux distribution whose only purpose is running Kubernetes nodes. The OS has no SSH daemon, no shell, no package manager, and no writable filesystem — every configuration change is made via an authenticated gRPC API (talosctl). This dramatically reduces the attack surface: there is no SSH vulnerability to exploit, no package to be compromised, and no interactive session for an attacker to persist in.",
+      "longDefinition": "Traditional Kubernetes nodes run a general-purpose Linux distribution (Ubuntu, RHEL, Amazon Linux) with all the associated attack surface: SSH daemons, cron jobs, package managers, and interactive login shells. Talos Linux (Sidero Labs, 2018) removes all of this. The OS image is a read-only squashfs partition containing only the Linux kernel, the container runtime (containerd), the kubelet, and the Talos API server (apid). All disk partitions except /var (ephemeral data) and /etc/kubernetes (config) are immutable. Node configuration (kubelet flags, network settings, cluster membership) is declared in a YAML machine config and applied via `talosctl apply-config` — delivered over the Talos API with mutual TLS. There is no persistent SSH daemon; emergency access is via the serial console only. Upgrades are atomic: Talos downloads a new OS image, writes it to the spare A/B partition, and reboots into it — if the new partition fails to boot, it falls back automatically. Integration with Cluster API (CAPI) and Omni (Sidero's hosted management plane) provides fleet management for Talos clusters. The immutable, API-driven model maps cleanly to GitOps workflows: the desired OS state is a version-controlled machine config file. Talos Linux is increasingly popular for air-gapped, security-sensitive, and edge environments where the attack surface of a general-purpose OS is unacceptable. It is not appropriate for nodes where engineers need interactive debugging sessions.",
+      "connector": "Talos Linux is like a car's ECU (Engine Control Unit) — you cannot pop the hood and reprogram it with a USB drive; all changes go through the official diagnostic interface with authenticated commands, and the firmware is read-only by design.",
+      "techContext": "After migrating to Talos Linux for our edge Kubernetes nodes, our quarterly security audit removed the entire SSH daemon vulnerability category from scope — there is no SSH to configure, patch, or exploit.",
+      "exampleSentence": "A Talos Linux node has no shell and no SSH, so when the security team ran their standard port scan looking for management interfaces, they found nothing — every config change goes through the authenticated Talos gRPC API.",
+      "codeExample": {
+        "language": "bash",
+        "code": "# Generate Talos machine config for a control-plane node\ntalosctl gen config my-cluster https://10.0.0.1:6443 \\\n  --config-patch-control-plane @patches/controlplane.yaml\n\n# Apply config to a node (mutual TLS, no SSH)\ntalosctl apply-config \\\n  --nodes 10.0.0.10 \\\n  --file controlplane.yaml\n\n# Upgrade node OS atomically (A/B partition flip)\ntalosctl upgrade \\\n  --nodes 10.0.0.10 \\\n  --image ghcr.io/siderolabs/installer:v1.8.0"
+      },
+      "etymology": "Talos: named after Talos, the giant bronze automaton of Greek mythology who guarded the island of Crete — an autonomous, unstoppable sentinel with no human-accessible interface. Created by Andrew Rynhard at Autonomy Squared (later Sidero Labs) in 2018.",
+      "unlockLevel": 4,
+      "tags": ["kubernetes", "linux", "security", "immutable", "talos", "frontier-2026"],
+      "category": "operations"
+    },
+    {
+      "id": "k8s-ad3-0290-0000-0000-0000-000000000029",
+      "word": "Kata Containers",
+      "pronunciation": "KAH-tuh kon-TAY-nerz",
+      "partOfSpeech": "noun",
+      "shortDefinition": "OCI-compatible runtime that wraps each container in a lightweight VM for hypervisor-level isolation without changing workload images.",
+      "simpleDefinition": "Kata Containers is an OCI-compatible container runtime that runs each pod inside a lightweight virtual machine (using QEMU, Firecracker, or cloud-hypervisor as the VMM). From Kubernetes' perspective, a Kata pod looks like any other container. From a security perspective, the container process runs inside a dedicated VM kernel — a container escape only reaches the lightweight VM, not the host.",
+      "longDefinition": "Standard containers share the host kernel — a kernel exploit inside a container is a host compromise. Kata Containers (CNCF Incubating, formed by merging Intel Clear Containers and Hyper.sh runV in 2017) solves this by using a hypervisor to give each pod its own kernel. The architecture: the Kata runtime (kata-runtime) implements the OCI runtime spec. When containerd creates a Kata pod, kata-runtime launches a VMM (QEMU, Firecracker, or cloud-hypervisor) that boots a stripped-down Linux kernel in a VM in ~100-200 ms. The container's rootfs is shared into the VM via virtio-fs or virtio-9p. A kata-agent process inside the VM's kernel manages container lifecycle on behalf of containerd outside the VM, communicating over vsock. To Kubernetes, this looks like a normal pod — the same YAML, the same kubectl commands, the same metrics. The isolation is transparent to the workload. Performance overhead: ~100-200 ms additional cold start, ~5-15% CPU overhead for I/O-heavy workloads due to virtio drivers, ~50-200 MB additional memory per pod for the VM kernel. Firecracker (AWS) reduces this to ~125 ms startup and ~5 MB overhead per microVM but lacks some Linux features. Kata is the runtime substrate for confidential containers — combining a Kata VM with AMD SEV-SNP or Intel TDX gives both VM isolation and memory encryption. RuntimeClass enables mixed workloads: most pods use runc; pods that handle untrusted user data or require strong isolation use kata-runtime, specified in `runtimeClassName: kata`.",
+      "connector": "Standard containers are like office cubicles — same building, shared walls, a determined person could climb over. Kata Containers are like individual offices with locked doors and separate ventilation — you still share the same building address (Kubernetes API), but a break-in to one office cannot directly access another.",
+      "techContext": "We use Kata Containers for our user-code execution service — customer-submitted scripts run in Kata pods, so a container escape reaches only the lightweight VM kernel, not our multi-tenant node's filesystem and credentials.",
+      "exampleSentence": "Switching our CI runner pods to Kata Containers eliminated the security concern about user-supplied Dockerfiles — a malicious build step that escapes the container is contained within a Kata microVM, not the build node.",
+      "codeExample": {
+        "language": "yaml",
+        "code": "# RuntimeClass for Kata (configured during node setup)\napiVersion: node.k8s.io/v1\nkind: RuntimeClass\nmetadata:\n  name: kata\nhandler: kata  # containerd runtime handler name\noverhead:\n  podFixed:\n    memory: 160Mi   # VM kernel overhead per pod\n    cpu: 250m\n---\n# Pod using Kata isolation\napiVersion: v1\nkind: Pod\nmetadata:\n  name: user-code-runner\nspec:\n  runtimeClassName: kata\n  containers:\n    - name: runner\n      image: myorg/code-runner:latest"
+      },
+      "etymology": "Kata: from the Japanese martial arts term for a structured practice form — implying a disciplined, structured approach to container isolation. The project merged Intel's Clear Containers project and Hyper.sh's runV at KubeCon 2017 under the OpenStack Foundation (now Open Infrastructure Foundation).",
+      "unlockLevel": 4,
+      "tags": ["kubernetes", "security", "runtime", "isolation", "kata-containers", "frontier-2026"],
+      "category": "runtimes"
+    },
+    {
+      "id": "k8s-ad3-0300-0000-0000-0000-000000000030",
+      "word": "Managed Kubernetes (EKS/GKE/AKS)",
+      "pronunciation": "MAN-ijd koo-BUR-ne-teez EE-kay-es JEE-kay-ee AY-kay-es",
+      "partOfSpeech": "noun",
+      "shortDefinition": "Cloud-provider-operated control planes that handle upgrades, etcd, and master HA so operators focus on node pools and workloads.",
+      "simpleDefinition": "Managed Kubernetes services (AWS EKS, Google GKE, Azure AKS) operate the Kubernetes control plane — API server, etcd, controller manager, scheduler — as a fully managed cloud service. The operator never SSHes into a control-plane node, manages etcd backups, or provisions master HA. The operator manages node pools (instance types, sizes, versions) and workloads. EKS, GKE, and AKS are the three dominant platforms and account for the majority of production Kubernetes deployments globally.",
+      "longDefinition": "Self-managed Kubernetes (kubeadm, k3s, Cluster API) requires the operator to manage etcd backups, control-plane HA (typically 3 master nodes), certificate rotation, API server load balancers, and version upgrades — a significant operational burden. Managed services eliminate this by running the control plane on cloud-provider infrastructure and billing per cluster-hour. Key differences across the three major providers: AWS EKS operates a multi-tenant control plane per region; etcd and API servers run in AWS-managed accounts. Node pools are EC2 instances (EKS Managed Node Groups, Karpenter, or Fargate for serverless). EKS typically lags the upstream K8s release by 1-3 months. EKS's strength is deep AWS service integration (IAM Roles for Service Accounts, ALB Ingress Controller, EBS/EFS CSI, Karpenter). Google GKE pioneered managed Kubernetes (GKE Alpha in 2014, GA in 2015) and remains the most feature-rich managed platform. Autopilot mode manages node pools automatically. GKE Dataplane V2 (Cilium eBPF) is the default since 2021. GKE has the fastest K8s version release cadence. Azure AKS provides the deepest integration with Azure Active Directory (OIDC federation for workload identity), Azure Policy (OPA Gatekeeper integration), and Azure Monitor. AKS has a free control-plane tier (only node VM costs). In 2026, the platform choice for most teams is cloud-native managed K8s unless there is a specific reason (air-gap, non-cloud bare-metal, multi-cloud portability) to operate the control plane directly.",
+      "connector": "Managed Kubernetes is like leasing office space versus owning a building. Self-managed Kubernetes means maintaining the HVAC, electricity, security, and elevators yourself. EKS/GKE/AKS are landlords who handle building infrastructure — you focus on what happens in your rented offices (node pools and workloads).",
+      "techContext": "Moving to GKE Autopilot eliminated our biggest operational toil: we no longer specify node pool instance types or manage cluster capacity — GKE provisions and scales nodes automatically per workload request, and we pay only for what pods actually consume.",
+      "exampleSentence": "EKS handled the Kubernetes 1.30 upgrade by live-upgrading the managed control plane with zero downtime — our only task was to update node groups on our own schedule within the 14-month support window.",
+      "codeExample": {
+        "language": "bash",
+        "code": "# Create an EKS cluster with managed node group (eksctl)\neksctl create cluster \\\n  --name production \\\n  --region us-east-1 \\\n  --version 1.30 \\\n  --nodegroup-name general \\\n  --node-type m7g.xlarge \\\n  --nodes 3 \\\n  --nodes-min 1 \\\n  --nodes-max 20 \\\n  --managed\n\n# Update control plane version (zero-downtime)\neksctl upgrade cluster --name production --version 1.31 --approve"
+      },
+      "etymology": "EKS: Elastic Kubernetes Service. GKE: Google Kubernetes Engine. AKS: Azure Kubernetes Service. All follow the cloud provider's naming conventions (Elastic/Google/Azure + Kubernetes + Service/Engine). GKE was the first managed Kubernetes service, launched in 2014 before Kubernetes 1.0.",
+      "unlockLevel": 4,
+      "tags": ["kubernetes", "cloud", "eks", "gke", "aks", "platform", "managed"],
+      "category": "platforms"
+    }
+  ]
+}
