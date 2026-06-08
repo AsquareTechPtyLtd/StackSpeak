@@ -213,7 +213,7 @@ Format constraints that are worth knowing:
 
 The failure mode: asking for a diff when the change is larger than the context window can produce reliably. Diffs for large files become inconsistent and hard to apply. For large transforms, code-only output with clear delimiters is more reliable than a diff.
 
-> [!info] As of 2026-Q2 — structured output modes (JSON schema, tool use) can enforce format more reliably than prose instructions for models that support them. For tooling integrations, structured output is worth the setup cost.
+> [!info] As of 2026-Q2 — structured output modes (JSON schema, tool use) can enforce format more reliably than prose instructions for models that support them. Azure OpenAI Service, Google Vertex AI, and AWS Bedrock all expose structured output or function-calling APIs that work well for pipeline integrations. For tooling integrations, structured output is worth the setup cost.
 
 @feynman
 

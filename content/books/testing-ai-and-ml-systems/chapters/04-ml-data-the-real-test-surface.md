@@ -228,7 +228,7 @@ teaser: PII in a training dataset is not just a compliance risk — it is a test
 
 @explanation
 
-Language models and other sequence-based models have been shown to memorize training data verbatim, including names, email addresses, phone numbers, and in some cases API keys and credentials. This is not a theoretical risk: researchers have demonstrated extraction of training data from GPT-2, GPT-3, and several open models by querying them with specially constructed prompts.
+Language models and other sequence-based models have been shown to memorize training data verbatim, including names, email addresses, phone numbers, and in some cases API keys and credentials. This is not a theoretical risk: researchers have demonstrated verbatim extraction of training data from multiple large language models across providers by querying them with specially constructed prompts.
 
 Privacy techniques at the data level:
 
@@ -243,6 +243,8 @@ Tester's role:
 - Audit training datasets for PII before they enter the pipeline, using automated scanning.
 - Verify that scrubbing coverage is reported and meets the acceptable residual rate.
 - For DP systems, verify that the privacy budget (epsilon) is documented and reviewed by a privacy team.
+
+> [!info] As of 2026-Q2, DP-SGD training integrations are available across major cloud platforms: AWS SageMaker, Azure Machine Learning, and Google Vertex AI all support privacy-preserving training workflows. For teams using hosted LLM fine-tuning services (Amazon Bedrock fine-tuning, Azure AI Foundry custom models, Vertex AI supervised fine-tuning), verify that the provider's data handling and retention policies satisfy your privacy requirements before submitting proprietary training data.
 
 @feynman
 
@@ -299,7 +301,7 @@ Tester responsibilities:
 - Run at least one pre-training audit tool and document group-level representation and label distribution by group.
 - Flag disparities in label rates across groups — e.g., if one demographic has a 40% higher false-positive label rate than another, that is a data defect, not a model defect.
 
-> [!info] As of 2026-Q2, several jurisdictions (EU AI Act, US Executive Order on AI) require documented bias assessments for high-risk ML systems. Pre-training dataset audits are the first step in that documentation chain.
+> [!info] As of 2026-Q2, several jurisdictions (EU AI Act, US Executive Order on AI) require documented bias assessments for high-risk ML systems. Pre-training dataset audits are the first step in that documentation chain. AWS SageMaker Clarify, Azure Machine Learning's Responsible AI dashboard, and Google Vertex AI's fairness evaluation features each provide platform-integrated tooling for this audit step, making cloud-hosted bias assessment feasible without deploying separate tooling.
 
 @feynman
 

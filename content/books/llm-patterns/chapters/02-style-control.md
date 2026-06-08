@@ -42,23 +42,22 @@ In 2026, structured outputs are a first-class API feature on every major provide
 
 ```python
 from pydantic import BaseModel
-from anthropic import Anthropic
+from openai import OpenAI
 
 class Decision(BaseModel):
     label: Literal["spam", "ham"]
     confidence: float
     reasoning: str
 
-response = client.messages.create(
-    model="claude-haiku-4-5",
-    tools=[{"name": "classify", "input_schema": Decision.model_json_schema()}],
-    tool_choice={"type": "tool", "name": "classify"},
+response = client.chat.completions.create(
+    model="gpt-4o-mini",
+    response_format=Decision,
     messages=[...],
 )
-result = Decision.model_validate(response.content[0].input)
+result = Decision.model_validate_json(response.choices[0].message.content)
 ```
 
-Same pattern with OpenAI's `response_format`, Gemini's `response_schema`, structured-outputs in open-weight models via grammars. The output is always parseable; the parser layer disappears.
+The same pattern is available via Anthropic's tool-choice API, Gemini's `response_schema`, and structured-output support in open-weight inference engines. The output is always parseable; the parser layer disappears.
 
 > [!tip] Structured outputs work best when the schema is small. A 30-field schema forces the model to fabricate values for fields it doesn't have evidence for. Mark optional what's optional.
 

@@ -134,7 +134,7 @@ What this does not catch:
 
 As of 2026-Q2, the most effective deployment of AI-assisted review is as a triage layer, not a decision layer. The reviewing model's output is a structured report (what it believes changed, whether it looks correct, any anomalies it detected) that the human reviewer reads alongside the diff — not a pass/fail gate that replaces human judgment.
 
-> [!warning] Using a reviewing model from the same model family as the generating model reduces the independence of the review. If your campaign uses Claude Sonnet as the generator, routing review through the same model may produce correlated errors. Where independence matters, use models from different providers or different families.
+> [!warning] Using a reviewing model from the same model family as the generating model reduces the independence of the review. For example, if your campaign uses GPT-4o as the generator, routing review through another GPT-4o instance may produce correlated errors. Where independence matters, use models from different providers or different families.
 
 @feynman
 

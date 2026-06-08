@@ -146,7 +146,9 @@ Model drift is the gradual or sudden degradation in a deployed model's relevance
 
 **Fiddler AI** includes drift detection as part of a broader explainability and model performance management platform. Strongest in regulated industries where explainability and audit trails are compliance requirements, not just engineering choices.
 
-> [!info] As of 2026-Q2, Evidently AI's open-source library is the pragmatic starting point for teams that want to own their monitoring stack. WhyLabs is the lowest-friction managed option for teams without dedicated MLOps engineers.
+Teams using major cloud platforms have native options: **Amazon SageMaker Model Monitor** detects data quality, model quality, feature attribution, and bias drift against baselines defined at model registration. **Azure Machine Learning model monitoring** provides dataset drift detection and custom signal monitoring integrated with Azure Monitor. **Google Vertex AI Model Monitoring** tracks input feature skew and prediction drift with configurable alerting thresholds.
+
+> [!info] As of 2026-Q2, Evidently AI's open-source library is the pragmatic starting point for teams that want to own their monitoring stack without cloud platform lock-in. For teams already on AWS, Azure, or GCP, the native monitoring integrations reduce operational overhead significantly.
 
 @feynman
 
@@ -301,7 +303,7 @@ For LLM systems, the tester's role expands beyond verification into evaluation d
 
 **Tester contribution:** A tester who understands the system's domain and failure modes is better positioned to author adversarial eval cases than a developer focused on the happy path. This is the primary way testing expertise adds value in LLM development beyond running an existing suite.
 
-> [!info] As of 2026-Q2, Promptfoo supports over 25 model providers including OpenAI, Anthropic, Google, Mistral, and local Ollama models, so eval suites are portable across provider evaluations.
+> [!info] As of 2026-Q2, Promptfoo supports over 25 model providers including OpenAI, Anthropic, Google Gemini, Meta Llama (via Ollama or Bedrock), Mistral, Cohere, and models hosted on AWS Bedrock and Azure AI Foundry, so eval suites are portable across provider evaluations.
 
 @feynman
 

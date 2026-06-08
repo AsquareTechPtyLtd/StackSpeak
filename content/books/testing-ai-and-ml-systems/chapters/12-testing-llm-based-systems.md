@@ -18,7 +18,7 @@ What is structurally new:
 
 - **Generativity.** LLMs produce open-ended text. There is no fixed label space. A classifier either outputs class 3 or it does not; an LLM generating a medical answer can be subtly wrong in a hundred ways a classifier could never be wrong.
 - **Instruction-following as an attack surface.** The model is explicitly designed to follow instructions in its input. That same property makes it possible to inject instructions through data it processes, a category the original adversarial testing chapter could not fully address.
-- **Emergent capability shifts.** The behavior of GPT-5, Claude 4.x, or Gemini 2.x at a given capability threshold was not predictable from smaller predecessors. The test suite that passed on the previous model version may not cover the failure modes of the next one.
+- **Emergent capability shifts.** The behavior of a GPT-5, Claude 4.x, Gemini 2.0, or Llama 4 model at a given capability threshold was not predictable from smaller predecessors. The test suite that passed on the previous model version may not cover the failure modes of the next one.
 - **Evaluation without a ground-truth oracle.** For most LLM outputs, there is no single correct answer to compare against. The evaluation problem is as hard as the generation problem.
 
 The rest of this chapter covers the techniques, tools, and patterns that have emerged specifically to address LLM failure modes. Each card carries an "as of 2026-Q2" callout because this is the fastest-moving area in the book.
@@ -46,12 +46,12 @@ Two testing paradigms:
 **Reference-free evaluation.** No ground truth is available. Approaches include:
 
 - **SelfCheckGPT.** Sample the same question multiple times; if the model produces consistent answers, hallucination is less likely than if answers diverge across samples. Consistency is a weak but tractable proxy for factuality.
-- **LLM-as-judge.** Ask a second model to assess factual accuracy. Claude 4.x, GPT-5, and Gemini 2.x are commonly used as judges. Biases in the judge model limit reliability (see card 7).
+- **LLM-as-judge.** Ask a second model to assess factual accuracy. Strong frontier models from multiple providers — e.g., GPT-5, Gemini 2.0, Claude 4.x, Llama 4 — are commonly used as judges. Biases in the judge model limit reliability (see card 7), and using a judge from the same provider as the system under test risks inflated scores.
 - **Retrieval-augmented verification.** Given a claim the model made, check whether it is supported by a retrieved corpus. Faithfulness to a source document is easier to measure than general world-truth.
 
 Gaps that remain honest to acknowledge: no hallucination metric is both reliable and cheap. Reference-based metrics require ground truth that is often unavailable in production; reference-free metrics are noisy. The standard practice is to combine both, pick thresholds manually, and re-evaluate when the model version changes.
 
-> [!info] As of 2026-Q2, hallucination rates for production LLMs (Claude 4.x, GPT-5, Gemini 2.x, Llama 3.x) vary significantly by domain, prompt format, and retrieval setup. Aggregate benchmark scores are not a reliable predictor of hallucination rate in your specific application — measure it on your own data.
+> [!info] As of 2026-Q2, hallucination rates vary significantly across production LLMs by domain, prompt format, and retrieval setup. Models from all major providers — OpenAI, Anthropic, Google, Meta, Mistral, and Cohere — show domain-specific variation that aggregate benchmark scores do not capture. Measure hallucination on your own application data; do not rely on published benchmark numbers alone.
 
 @feynman
 
@@ -94,7 +94,7 @@ teaser: Jailbreaks are prompts crafted to bypass safety training and elicit rest
 
 @explanation
 
-Safety training (RLHF, constitutional AI, DPO) trains models to refuse a class of requests: instructions to produce illegal content, dangerous technical details, hate speech, and similar categories. A jailbreak is a prompt that elicits that content anyway, by encoding the request in a way the safety training did not anticipate.
+Safety training approaches — including RLHF, DPO, and various instruction-tuning methods used across providers — train models to refuse a class of requests: instructions to produce illegal content, dangerous technical details, hate speech, and similar categories. A jailbreak is a prompt that elicits that content anyway, by encoding the request in a way the safety training did not anticipate.
 
 Common jailbreak patterns (describing the pattern, not providing working examples):
 
@@ -113,7 +113,7 @@ Red-team workflow:
 
 Tools: Garak (automated LLM vulnerability scanning, open-source) and PyRIT (Microsoft's Python Risk Identification Toolkit for LLMs) both run automated jailbreak attempt libraries and produce structured reports.
 
-> [!warning] As of 2026-Q2, no commercially deployed LLM — including Claude 4.x, GPT-5, Gemini 2.x, and Llama 3.x — is fully jailbreak-resistant across all known techniques. Red-teaming establishes a baseline and tracks regression; it does not produce a proof of safety. Budget for ongoing red-teaming at every major model version bump.
+> [!warning] As of 2026-Q2, no commercially deployed LLM — from any provider, including OpenAI, Anthropic, Google, Meta, or Mistral — is fully jailbreak-resistant across all known techniques. Red-teaming establishes a baseline and tracks regression; it does not produce a proof of safety. Budget for ongoing red-teaming at every major model version bump.
 
 @feynman
 
@@ -191,7 +191,7 @@ The known biases — you should mitigate all of them explicitly:
 
 - **Position bias.** When presented with two responses (A and B), judges favor the response in the first position. Mitigation: swap order and average.
 - **Verbosity bias.** Judges tend to prefer longer responses, independent of quality. A response padded with repetition scores higher than a concise, accurate one. Mitigation: include brevity as an explicit criterion; evaluate against rubrics, not free-floating preference.
-- **Self-enhancement bias.** Claude 4.x tends to favor Claude-style responses; GPT-5 tends to favor GPT-style responses. Using a single judge model that matches the system under test inflates scores. Mitigation: use a different model family as judge, or use multiple judges.
+- **Self-enhancement bias.** Judge models tend to favor outputs stylistically similar to their own training. A judge from the same provider family as the system under test will inflate scores. Mitigation: use a judge from a different provider (e.g., evaluate an Anthropic model with a Google judge, or an OpenAI model with a Mistral judge), or use multiple judges and average.
 - **Sycophancy.** Judges may give higher scores to responses that flatter them or agree with their priors, even when wrong. Mitigation: use reference-anchored rubrics rather than open-ended "which is better" prompts.
 
 Human calibration is not optional: before trusting LLM-as-judge scores at scale, compare judge scores against human annotations on a random sample. Measure agreement, identify systematic divergences, and adjust prompts or rubrics accordingly.
@@ -216,7 +216,7 @@ Automated metrics tell you whether things changed. Human evaluation tells you wh
 
 **Likert scales.** Ask evaluators to rate a single response on a 1–5 or 1–7 scale across specific dimensions: factual accuracy, helpfulness, safety, tone. More informative than pairwise when you want to understand why something is better or worse. Limitation: harder to calibrate across annotators; requires a rubric with examples anchoring each scale point.
 
-**Chatbot Arena pattern (LMSYS).** Real users interact with two anonymous models and choose a winner. The votes produce an Elo ranking. Strong points: uses real traffic, real user intent, and real distributional diversity; scale compensates for individual annotator noise. Limitation: requires production traffic volume, which most teams do not have during development. The public Chatbot Arena (as of 2026-Q2 still operated by LMSYS) provides reference rankings for Claude 4.x, GPT-5, Gemini 2.x, and Llama 3.x; teams can use these rankings to calibrate internal evaluations.
+**Chatbot Arena pattern (LMSYS).** Real users interact with two anonymous models and choose a winner. The votes produce an Elo ranking. Strong points: uses real traffic, real user intent, and real distributional diversity; scale compensates for individual annotator noise. Limitation: requires production traffic volume, which most teams do not have during development. The public Chatbot Arena (as of 2026-Q2 still operated by LMSYS) provides reference rankings across models from all major providers — OpenAI, Anthropic, Google, Meta, Mistral, Cohere, and others; teams can use these rankings to calibrate internal evaluations and contextualize their own model choices.
 
 For most teams, the practical workflow is: Likert-scale annotation on a fixed test set for baseline measurement, pairwise comparison for every model version update, and periodic calibration of automated metrics against human scores to keep the metrics honest.
 
@@ -264,9 +264,9 @@ Classical software testing optimizes for correctness. LLM system testing must op
 
 **Quality.** Accuracy, faithfulness, helpfulness — the metrics covered in earlier cards. Larger models, longer contexts, and chain-of-thought prompting generally improve quality.
 
-**Latency.** Time to first token and total generation time. Users notice latency above roughly 200ms for the first token and above roughly 1 second for total response time. Latency is directly controlled by model size, inference hardware, and context length. A GPT-5-class model with a 128k-token context is slower than a smaller model with a 4k-token context, all else equal.
+**Latency.** Time to first token and total generation time. Users notice latency above roughly 200ms for the first token and above roughly 1 second for total response time. Latency is directly controlled by model size, inference hardware, and context length. A frontier-class model with a 128k-token context is slower than a smaller model with a 4k-token context, all else equal.
 
-**Cost.** API pricing for hosted models (Claude 4.x, GPT-5, Gemini 2.x) is per-token. A complex RAG pipeline that passes 50k tokens of context per query at scale generates non-trivial cost. Self-hosted open-weight models (Llama 3.x) shift cost to inference infrastructure but introduce operational overhead.
+**Cost.** API pricing for hosted models varies by provider and tier — services such as Amazon Bedrock, Azure AI Foundry, and Google Vertex AI Model Garden offer hosted access to frontier models at per-token pricing, while providers like OpenAI, Anthropic, and Cohere have direct API tiers. A complex RAG pipeline that passes 50k tokens of context per query at scale generates non-trivial cost regardless of provider. Self-hosted open-weight models (Llama 4, Mistral, Gemma) shift cost to inference infrastructure but introduce operational overhead.
 
 Testing implications:
 
@@ -301,7 +301,7 @@ This is testable in ways open-ended generation is not: the tool call is a struct
 
 **Chained tool calls.** Agentic LLM systems may make sequential tool calls where each call's output becomes the next call's input. Test multi-step chains as integration tests: fix the inputs, stub the external tools, and verify the full trajectory — what was called, in what order, with what parameters, and what the final output was.
 
-> [!info] As of 2026-Q2, tool-calling accuracy varies significantly across models and catalog sizes. Claude 4.x and GPT-5 achieve high accuracy on small catalogs (under 20 tools) but degrade measurably as catalog size increases. Testing against a realistic catalog size for your application is non-optional.
+> [!info] As of 2026-Q2, tool-calling accuracy varies significantly across models and catalog sizes. Frontier models from OpenAI, Anthropic, Google, and Mistral achieve higher accuracy on small catalogs (under 20 tools) but degrade measurably as catalog size increases — the degradation rate differs by provider and model version. Testing against a realistic catalog size for your application is non-optional.
 
 @feynman
 
@@ -317,7 +317,7 @@ teaser: Automated eval, LLM-as-judge, and red-team frameworks have made LLM test
 
 This is the final chapter of "Testing AI and ML Systems," the final book of Phase 4b. It is also the chapter on the highest-volatility terrain in the entire series. The right closing note is not optimism or alarm — it is an accurate accounting of what the tools can and cannot do.
 
-What automated evaluation does well in 2026: it catches regressions at scale, runs continuously in CI, measures consistency across thousands of prompt variants, and surfaces failure modes that manual review would miss in the noise. Promptfoo, DeepEval, Inspect, OpenAI Evals, Ragas, TruLens, Garak, and PyRIT exist because those problems were real and the tools made them tractable.
+What automated evaluation does well in 2026: it catches regressions at scale, runs continuously in CI, measures consistency across thousands of prompt variants, and surfaces failure modes that manual review would miss in the noise. Promptfoo, DeepEval, Inspect, Ragas, TruLens, Garak, and PyRIT exist because those problems were real and the tools made them tractable — and they work against models from any provider.
 
 What stays human:
 

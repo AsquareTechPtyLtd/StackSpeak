@@ -36,12 +36,12 @@ The Unix pipeline lesson, transposed. `cat` plus `grep` plus `sort` plus `uniq` 
 @card
 id: llmp-ch10-c002
 order: 2
-title: The Anthropic Composition Philosophy
+title: The Composable-Patterns Philosophy
 teaser: "Build effective agents with composable patterns rather than complex frameworks." This is the philosophy that wins in 2026 — and it's been there in software engineering since pipes.
 
 @explanation
 
-Anthropic's "Building Effective Agents" guidance, published in 2024 and still right in 2026, makes a simple claim: the most successful production agents come from small, composable patterns rather than large opinionated frameworks. The patterns it describes — chained calls, routing, parallelisation, evaluator-optimiser, orchestrator-workers — all map onto the same instinct.
+Multiple teams across the industry have independently converged on the same observation: the most successful production agents come from small, composable patterns rather than large opinionated frameworks. The patterns they describe — chained calls, routing, parallelisation, evaluator-optimiser, orchestrator-workers — all map onto the same instinct.
 
 Why this works:
 
@@ -52,7 +52,7 @@ Why this works:
 
 Frameworks promise productivity at the cost of flexibility. By the time you need the flexibility — and you will — the framework is the problem.
 
-> [!info] Anthropic's recommendation isn't anti-framework; it's pro-clarity. If a framework helps you compose without obscuring the composition, use it. If it hides what's happening behind a "magic" layer, don't.
+> [!info] The recommendation isn't anti-framework; it's pro-clarity. If a framework helps you compose without obscuring the composition, use it. If it hides what's happening behind a "magic" layer, don't.
 
 @feynman
 
@@ -174,8 +174,8 @@ pipeline_version: 2026.04.28-1
 components:
   router:        v3
   retriever:     v7 (corpus 2026-04-25, model voyage-v3)
-  generator:     gpt-5-2026-03-14, prompt v12
-  verifier:      claude-haiku-4-5, prompt v4
+  generator:     frontier-model-pinned-version, prompt v12
+  verifier:      small-model-pinned-version, prompt v4
   policy_check:  classifier v9
 ```
 

@@ -15,12 +15,12 @@ teaser: A one-shot agent answers in a single forward pass. An iterative agent is
 
 A one-shot call gives the model the request, gets a completion, and returns. Whatever planning happens, happens implicitly inside that single forward pass. There's no chance to inspect a partial result, retry a failed tool, or adjust when the world disagrees with the model's prediction.
 
-An iterative agent runs the same model on a loop: read state, decide one action, execute, observe, decide again. Modern frontier models — Claude Opus 4.7, GPT-5, Gemini 2 — are strong enough that iteration matters more than scale. The same model running ten well-structured steps will routinely beat a larger model running once.
+An iterative agent runs the same model on a loop: read state, decide one action, execute, observe, decide again. Modern frontier models — GPT-5, Gemini 2 Pro, Claude Opus 4.7 — are strong enough that iteration matters more than scale. The same model running ten well-structured steps will routinely beat a larger model running once.
 
 - **One-shot** — single forward pass; cheap, but every assumption is final.
 - **Iterative** — N steps with state in between; expensive per task, but mistakes are recoverable.
 
-> [!info] Extended-thinking modes (Claude's `thinking`, OpenAI's reasoning models) compress a one-shot call into something that *behaves* like a loop, but the visible loop you build around the model still matters because it's where you wire in tools, memory, and human oversight.
+> [!info] Extended-thinking modes (OpenAI's o-series reasoning models, Gemini's deep-think, Claude's `thinking` parameter) compress a one-shot call into something that *behaves* like a loop, but the visible loop you build around the model still matters because it's where you wire in tools, memory, and human oversight.
 
 @feynman
 
@@ -86,19 +86,18 @@ teaser: The reason-act-observe loop is the spine of every modern agent. Today th
 
 ReAct — interleaving reasoning with action — was novel in 2023. In 2026 it's the default shape: the model produces a thought and a tool call together, the runtime executes the tool, the result lands back in the message stream, and the next turn reasons over the updated context.
 
-What's changed is that you no longer hand-roll the loop. The Anthropic Agent SDK, OpenAI's Responses API, Vercel AI SDK, and LangGraph all expose it as a primitive — you provide tools, the SDK runs the loop until the model stops requesting tools.
+What's changed is that you no longer hand-roll the loop. OpenAI's Responses API, the Google GenAI SDK, the Anthropic SDK, Vercel AI SDK, and LangGraph all expose it as a primitive — you provide tools, the SDK runs the loop until the model stops requesting tools.
 
 ```python
-from anthropic import Anthropic
+from openai import OpenAI
 
-client = Anthropic()
-response = client.messages.create(
-    model="claude-opus-4-7",
-    max_tokens=4096,
+client = OpenAI()
+response = client.responses.create(
+    model="gpt-5",
     tools=[search_tool, run_python_tool],
-    messages=[{"role": "user", "content": user_query}],
+    input=user_query,
 )
-# The SDK handles tool dispatch and loops until response.stop_reason == "end_turn".
+# The SDK handles tool dispatch and loops until response.status == "completed".
 ```
 
 > [!tip] Always set a max-iterations or max-tokens cap on the loop. A model in a degenerate state will call the same tool a thousand times if you let it.
@@ -135,13 +134,13 @@ The catch is dependency analysis. The model decides what's parallelizable, and i
 id: aiadg-ch02-c006
 order: 6
 title: Tools and the MCP Standard
-teaser: A tool is a function the model can call. The Model Context Protocol is the open standard for describing tools so they work across runtimes — Claude Desktop, IDE plugins, custom hosts.
+teaser: A tool is a function the model can call. The Model Context Protocol is the open standard for describing tools so they work across runtimes — IDE plugins, desktop apps, custom hosts.
 
 @explanation
 
 In the SDK you define a tool with three things: a name, a description (the "prompt" the model reads to decide whether to use it), and a JSON schema for arguments. The SDK takes care of presenting it to the model and parsing the call.
 
-What's changed in the last year is that tools are no longer locked to one app. The Model Context Protocol (MCP), introduced by Anthropic and now adopted across the ecosystem, defines a wire format so the same tool server can be plugged into Claude Desktop, Claude Code, an IDE, or a custom agent host. Write the tool once; expose it everywhere.
+What's changed in the last year is that tools are no longer locked to one app. The Model Context Protocol (MCP), originally introduced by Anthropic and now adopted across the ecosystem, defines a wire format so the same tool server can be plugged into any MCP-aware agent host — IDEs, desktop apps, custom runtimes. Write the tool once; expose it everywhere.
 
 ```json
 {
@@ -230,7 +229,7 @@ A useful taxonomy by what's at stake:
 - **Reversible / expensive** — call a paid API, write a draft to a shared doc. Optional gate; surface what happened, not what's about to happen.
 - **Irreversible** — send the email, charge the card, run the migration, deploy the build. Always gate. Show diff-style previews; require explicit confirmation.
 
-> [!info] The Claude Agent SDK and Computer Use exposed this as a first-class concept: tools can declare a `permission_mode` (auto, ask, deny) and the runtime enforces it before the tool runs.
+> [!info] Several modern agent runtimes expose this as a first-class concept: tools can declare a `permission_mode` (auto, ask, deny) and the runtime enforces it before the tool runs.
 
 @feynman
 

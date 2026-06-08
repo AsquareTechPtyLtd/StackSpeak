@@ -12,7 +12,7 @@ teaser: An LLM doesn't read your code the way you do — it predicts the next to
 
 @explanation
 
-When you send a function to Claude Sonnet 4.6 or GPT-5 and ask it to "convert to async/await," no internal AST is built. No semantic model of your codebase is constructed. The model generates tokens, one at a time, each conditioned on the prompt plus all prior output. The result looks like code because it was trained overwhelmingly on code, and because the surrounding context — your function signature, your variable names, your comments — strongly constrains what a plausible completion looks like.
+When you send a function to a coding model — GPT-4o via Azure OpenAI Service, Gemini Code Assist, Amazon Q Developer, or any other — and ask it to "convert to async/await," no internal AST is built. No semantic model of your codebase is constructed. The model generates tokens, one at a time, each conditioned on the prompt plus all prior output. The result looks like code because it was trained overwhelmingly on code, and because the surrounding context — your function signature, your variable names, your comments — strongly constrains what a plausible completion looks like.
 
 This matters because it explains the failure modes. The model doesn't know your function calls an API that doesn't support async. It doesn't know your project uses a custom event loop. It doesn't know the import you need doesn't exist in the version you're on. It generates what is statistically plausible given what it can see, and what it can see is limited to the context window.
 
@@ -37,7 +37,7 @@ teaser: The fundamental split in refactoring tools: rename a symbol in an IDE an
 
 Deterministic transforms have exactly one valid output for a given input. Your IDE's rename refactoring changes every reference in the project, respecting scope rules, and nothing else. jscodeshift codemods apply a fixed AST transformation: input A always produces output B. ast-grep pattern matches with surgical precision. These tools produce the same result every time you run them, and you can verify correctness by checking that the AST shape changed exactly as intended.
 
-Probabilistic transforms do not. Ask Claude Opus 4.7 to "extract the validation logic into a separate function" and you get one sample from the space of all plausible completions. Run it again and you may get a different function name, a different parameter order, or a different edge-case handling. The temperature setting controls how concentrated or diffuse the distribution is, but even at temperature 0 you are not guaranteed identical outputs across model versions or system prompt variations.
+Probabilistic transforms do not. Ask any frontier model to "extract the validation logic into a separate function" and you get one sample from the space of all plausible completions. Run it again and you may get a different function name, a different parameter order, or a different edge-case handling. The temperature setting controls how concentrated or diffuse the distribution is, but even at temperature 0 you are not guaranteed identical outputs across model versions or system prompt variations.
 
 The practical split:
 
@@ -46,7 +46,7 @@ The practical split:
 
 Neither category is superior. Deterministic tools are appropriate for exact structural transforms; probabilistic tools are appropriate for transforms that require semantic judgment. The error is using one where the other is warranted.
 
-> [!info] As of 2026-Q2 — "temperature 0" does not mean the same thing across providers. Anthropic and OpenAI both reserve the right to introduce non-determinism at the infrastructure level (load balancing, sampling implementation). Same temperature, different runs, occasionally different outputs.
+> [!info] As of 2026-Q2 — "temperature 0" does not mean the same thing across providers. OpenAI (including Azure OpenAI Service), Google (Vertex AI), AWS (Bedrock), and others all reserve the right to introduce non-determinism at the infrastructure level (load balancing, sampling implementation). Same temperature, different runs, occasionally different outputs.
 
 @feynman
 
@@ -64,7 +64,7 @@ AST tools operate on syntax trees. They are excellent at transforming code whose
 
 LLMs handle several classes of transform that AST tools cannot:
 
-- **Cross-language ports.** Translating Python business logic to Go, or a JavaScript utility to Rust, requires understanding intent, not just syntax. Claude Opus 4.7 with a full context window and the source idioms visible routinely produces usable first drafts of these ports — drafts that would take a human hours to write from scratch.
+- **Cross-language ports.** Translating Python business logic to Go, or a JavaScript utility to Rust, requires understanding intent, not just syntax. A capable frontier model with a full context window and the source idioms visible routinely produces usable first drafts of these ports — drafts that would take a human hours to write from scratch.
 - **Naming improvements.** Renaming `d` to `durationMs` or `tmp` to `filteredCandidates` is a semantic operation that requires understanding what the variable holds. No AST tool can infer that; an LLM conditioned on the surrounding code often can.
 - **Idiom translation.** "Rewrite these three nested if-statements as a guard clause pattern" is a structural pattern humans recognize as idiomatic but that no codemods encode for arbitrary cases.
 - **Comment-aware refactoring.** If a comment describes intended behavior that the code violates, an LLM can notice the discrepancy. An AST tool ignores comments entirely.
@@ -95,7 +95,7 @@ The categories where AST tools are the right default:
 - **Import organization and dead code removal.** Tools like `goimports`, TypeScript's `organizeImports`, or `autoflake` for Python do this precisely and at zero per-token cost.
 - **Formatting normalization.** Prettier, gofmt, rustfmt. No LLM should be in this loop.
 
-The cost argument matters at scale. Passing 40,000 files through Claude Sonnet 4.6 at current pricing to fix import ordering is expensive and slower than a one-second CLI run. Use the right tool for the cost profile, not just the capability profile.
+The cost argument matters at scale. Passing 40,000 files through any cloud LLM API at current pricing to fix import ordering is expensive and slower than a one-second CLI run. Use the right tool for the cost profile, not just the capability profile.
 
 > [!info] As of 2026-Q2 — Comby is underused for structural search-and-replace in mixed-language codebases. It operates on syntax patterns without a full AST and handles cases that simple regex cannot, without the overhead of a full language-specific toolchain.
 
@@ -116,7 +116,7 @@ Neither AST tools nor LLMs are universally better. The productive pattern is seq
 A worked example: you're migrating a Python codebase from `requests` to `httpx` with async support.
 
 1. **AST tool first.** Use a jscodeshift-equivalent (libcst in Python, for example) to mechanically replace `import requests` with `import httpx`, swap `requests.get(url)` for `httpx.get(url)`, and flag every call site for manual attention. This step is deterministic and reviewable.
-2. **LLM second.** Pass each flagged function to Claude Sonnet 4.6 with the context: "This function was synchronous and used requests. Convert it to use async httpx. The calling code already uses async/await." The LLM handles the semantic judgment — where to add `await`, how to handle connection pooling configuration, what to do with the `Session` object pattern.
+2. **LLM second.** Pass each flagged function to a coding model (GitHub Copilot, Amazon Q Developer, or any capable API) with the context: "This function was synchronous and used requests. Convert it to use async httpx. The calling code already uses async/await." The LLM handles the semantic judgment — where to add `await`, how to handle connection pooling configuration, what to do with the `Session` object pattern.
 3. **AST tool for verification.** Re-run a static analysis pass to confirm all call sites were converted and no synchronous `requests` calls remain.
 
 This sequence gets you the precision of deterministic tooling for the structural plumbing and the semantic flexibility of an LLM for the judgment layer, while using each tool only where it has an advantage.
@@ -137,19 +137,19 @@ teaser: What the model can see determines what it can refactor correctly — and
 
 @explanation
 
-Context window sizes have expanded dramatically. As of 2026-Q2, Claude Opus 4.7 and Sonnet 4.6 support 200K tokens; GPT-5 supports comparable context; Gemini 2.x leads with 1M+ tokens in certain configurations. In token terms, 200K tokens is roughly 150,000 words, or about 5,000–8,000 lines of code depending on density.
+Context window sizes have expanded dramatically. As of 2026-Q2, most frontier models support 200K tokens or more; Gemini 2.x leads with 1M+ tokens in certain configurations. In token terms, 200K tokens is roughly 150,000 words, or about 5,000–8,000 lines of code depending on density.
 
 This sounds large until you load a real codebase. A mid-size service with its models, services, controllers, test files, and configuration is easily 50,000+ lines. A monorepo is orders of magnitude more. The model sees a slice, not the whole.
 
 The practical consequences:
 
 - **Type drift.** If the type definition for a struct or interface is not in the context window, the model will invent one based on usage patterns. The invented type may be close enough to compile but wrong enough to fail at runtime.
-- **The needle-in-a-haystack problem.** Empirical research (including on Claude models specifically) shows that retrieval accuracy degrades when relevant context is buried deep in a large window. A 200K-token context where the key interface definition appears at position 150K is less reliable than a 20K-token context where it appears near the top.
+- **The needle-in-a-haystack problem.** Empirical research across multiple model families shows that retrieval accuracy degrades when relevant context is buried deep in a large window. A 200K-token context where the key interface definition appears at position 150K is less reliable than a 20K-token context where it appears near the top.
 - **Import paths.** Third-party packages, internal packages, and aliased imports that are not in the context window get invented. The invented path looks plausible but doesn't exist.
 
 The mitigation is not "use a bigger context window" — it's "curate the context deliberately." Include type definitions, import sections, call sites, and tests for the code you're refactoring. Exclude unrelated files.
 
-> [!info] As of 2026-Q2 — larger context windows are available but not free. A 200K-token request to Claude Opus 4.7 costs significantly more than a 20K-token request. Curation pays for itself both in cost and in output quality.
+> [!info] As of 2026-Q2 — larger context windows are available but not free. A 200K-token request to any frontier model costs significantly more than a 20K-token request to the same model. Curation pays for itself both in cost and in output quality.
 
 @feynman
 
@@ -192,12 +192,13 @@ When you're running a refactor across hundreds of files, inconsistency compounds
 **Temperature 0.** The primary lever. Setting temperature to 0 forces the model toward the highest-probability token at each step, producing the most consistent output for a given input. For refactoring tasks, this should always be your default.
 
 ```python
-# Anthropic Messages API — temperature 0 for deterministic output
-import anthropic
+# OpenAI-compatible API — temperature 0 for deterministic output
+# Works with OpenAI, Azure OpenAI Service, or any OpenAI-compatible endpoint
+from openai import OpenAI
 
-client = anthropic.Anthropic()
-response = client.messages.create(
-    model="claude-sonnet-4-6",
+client = OpenAI()  # or AzureOpenAI(), or point base_url at any compatible host
+response = client.chat.completions.create(
+    model="gpt-4o",   # swap for any model: gpt-4o, mistral-large, etc.
     max_tokens=4096,
     temperature=0,
     messages=[{"role": "user", "content": refactor_prompt}]
@@ -210,7 +211,7 @@ response = client.messages.create(
 
 **Same-prompt-same-output as a goal, not a guarantee.** Even at temperature 0, model updates, infrastructure changes, and system prompt variations can shift outputs. Treat determinism as a target you approach, not a property you achieve absolutely.
 
-> [!info] As of 2026-Q2 — Anthropic's prompt caching feature makes repeated identical prompt prefixes cheaper and faster. For large-file refactors where the system prompt and type definitions stay constant, caching the prefix meaningfully reduces latency and cost.
+> [!info] As of 2026-Q2 — several providers support prompt caching (Google Vertex AI, AWS Bedrock, and others), making repeated identical prompt prefixes cheaper and faster. For large-file refactors where the system prompt and type definitions stay constant, caching the prefix meaningfully reduces latency and cost.
 
 @feynman
 
@@ -224,21 +225,19 @@ teaser: Per-token pricing changes the calculus for large refactors — the right
 
 @explanation
 
-Token pricing as of 2026-Q2 (approximate, input/output per million tokens):
+Token pricing as of 2026-Q2 (approximate, input/output per million tokens; verify with each provider before budgeting):
 
-- **Claude Opus 4.7:** ~$15 / $75 — highest capability, highest cost
-- **Claude Sonnet 4.6:** ~$3 / $15 — strong capability, 5x cheaper than Opus
-- **Claude Haiku 4.5:** ~$0.80 / $4 — fast, cheapest in the Claude family
-- **GPT-5:** comparable to Opus pricing in most configurations
-- **Gemini 2.x Flash:** sub-$1 / sub-$3 — competitive with Haiku for many tasks
+- **GPT-5 / GPT-4o (OpenAI / Azure OpenAI Service):** ~$5–$15 input / $15–$60 output depending on tier
+- **Gemini 2.x Pro / Flash (Google Vertex AI / Gemini Code Assist):** ~$0.50–$3 input / $1.50–$12 output
+- **Top-tier models from other providers** (Anthropic, Mistral, Cohere, etc.): broadly similar top-tier/mid-tier split
 
-A single file refactor costs fractions of a cent. A 10,000-file refactor at 500 tokens per file (input + output) is 5 million tokens. At Opus pricing, that's ~$450. At Sonnet pricing, ~$90. At Haiku pricing, ~$20.
+A single file refactor costs fractions of a cent. A 10,000-file refactor at 500 tokens per file (input + output) is 5 million tokens. At a top-tier model price of ~$15/M input, that's roughly $75–$450 depending on output length. At a mid-tier model, the cost drops 5–15×.
 
 The model-selection decision for large refactors:
 
-- Use the smallest model that produces acceptable output for the task class. Mechanical transforms (import reordering, trivial idiom changes) often work well with Haiku 4.5. Semantic transforms (cross-language ports, complex restructuring) warrant Sonnet 4.6 or Opus 4.7.
+- Use the smallest model that produces acceptable output for the task class. Mechanical transforms (import reordering, trivial idiom changes) often work well with fast/cheap models. Semantic transforms (cross-language ports, complex restructuring) warrant a larger model.
 - **Local models earn their keep at volume.** A locally-hosted model (Llama 3.x, Qwen 2.5-Coder, DeepSeek-V3) has near-zero per-token cost after hardware. For a refactor campaign processing millions of tokens per day with acceptable quality from a smaller model, local deployment pays for itself.
-- **Batch API reduces cost.** Anthropic's Message Batches API and OpenAI's Batch API offer ~50% discounts for non-real-time workloads. A refactor pipeline running overnight qualifies.
+- **Batch APIs reduce cost.** AWS Bedrock's async inference, Azure OpenAI's batch endpoint, OpenAI's Batch API, and Google's Batch Prediction API all offer ~50% discounts for non-real-time workloads. A refactor pipeline running overnight qualifies.
 
 > [!info] As of 2026-Q2 — pricing changes frequently. The cost ratios above are directionally stable but the absolute numbers shift with model releases and competition. Check current pricing before committing a refactor budget.
 
@@ -286,7 +285,7 @@ The technology is new enough that there's social pressure to use it for everythi
 
 Do not use an LLM for:
 
-- **Symbol rename in a statically-typed language.** Your IDE's language server does this with full scope awareness in seconds for free. Claude Sonnet 4.6 will do it for dollars, occasionally incorrectly.
+- **Symbol rename in a statically-typed language.** Your IDE's language server does this with full scope awareness in seconds for free. Any cloud LLM will do it for dollars, occasionally incorrectly.
 - **Extracting a method with a specified name and signature.** "Extract Function" in IntelliJ, VS Code, or Xcode does this deterministically. An LLM introduces the possibility of naming drift and behavior drop.
 - **Mechanical AST-shape changes.** Moving a parameter from position 2 to position 3 across all call sites. Adding a required field to a struct and initializing it to a known default. These have fully specified outputs; jscodeshift or libcst handles them without hallucination risk.
 - **Formatting, import organization, dead code removal.** These are solved problems with zero-cost, zero-hallucination tools. Prettier, gofmt, autoflake, and their equivalents are the right answer.
@@ -313,8 +312,8 @@ The practical implication of LLMs as refactoring tools is that your toolchain de
 What has changed meaningfully in the last 18 months:
 
 - **Context window expansion.** File-level context was the constraint in 2024. Project-level context (200K–1M tokens) is the norm in 2026. Tasks that required retrieval-augmented generation workarounds in 2024 now fit in a single call.
-- **Structured output reliability.** Early models produced valid JSON intermittently; current Claude 4.x and GPT-5 family models produce valid structured output with near-100% reliability, making LLM output usable as direct pipeline input.
-- **Code-specific model quality.** The gap between code-capable and general models has narrowed. Claude Haiku 4.5 handles tasks in 2026 that required Opus-tier models in 2024.
+- **Structured output reliability.** Early models produced valid JSON intermittently; current frontier models from all major providers produce valid structured output with near-100% reliability, making LLM output usable as direct pipeline input.
+- **Code-specific model quality.** The gap between code-capable and general models has narrowed. Small/fast model tiers now handle tasks in 2026 that required the largest models in 2024.
 
 What will likely change in the next 18 months:
 
@@ -324,7 +323,7 @@ What will likely change in the next 18 months:
 
 The design principle: build your refactoring pipelines so the model is a pluggable component, not a hardcoded assumption. The prompt, the validation pipeline, and the diff review workflow are the durable parts.
 
-> [!info] As of 2026-Q2 — the Anthropic model family (Opus 4.7, Sonnet 4.6, Haiku 4.5) represents the current capability tiers. These identifiers will change; the tier structure — expensive/capable, balanced, fast/cheap — is likely to persist across generations.
+> [!info] As of 2026-Q2 — every major provider structures its model lineup in tiers: expensive/capable, balanced, and fast/cheap. OpenAI (GPT-5 / GPT-4o / GPT-4o-mini), Google (Gemini Pro / Flash), and AWS (Amazon Nova Pro / Lite / Micro via Bedrock) all follow this pattern. The specific identifiers will change; the tier structure is likely to persist across generations.
 
 @feynman
 

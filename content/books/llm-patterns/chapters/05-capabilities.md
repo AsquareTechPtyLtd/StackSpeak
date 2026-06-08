@@ -88,16 +88,18 @@ tools = [
     # more tools...
 ]
 
-response = client.messages.create(
-    model="claude-sonnet-4-6",
+response = client.chat.completions.create(
+    model="gpt-4o",
     tools=tools,
     messages=[{"role": "user", "content": user_query}],
 )
 
-for block in response.content:
-    if block.type == "tool_use":
-        result = dispatch(block.name, block.input)
-        # send result back, model continues
+for choice in response.choices:
+    msg = choice.message
+    if msg.tool_calls:
+        for tc in msg.tool_calls:
+            result = dispatch(tc.function.name, tc.function.arguments)
+            # send result back, model continues
 ```
 
 The runtime is a loop:
@@ -177,16 +179,16 @@ Most SDKs handle parallel dispatch automatically once the model emits multiple `
 id: llmp-ch05-c006
 order: 6
 title: MCP — Reusable Tool Servers
-teaser: A tool you write once should work in your custom agent, in Claude Desktop, in your IDE, and in tomorrow's host you haven't built yet. MCP is the standard that makes that work.
+teaser: A tool you write once should work in your custom agent, in your IDE, in any AI desktop app, and in tomorrow's host you haven't built yet. MCP is the standard that makes that work.
 
 @explanation
 
-The Model Context Protocol (MCP), introduced by Anthropic in late 2024 and now broadly adopted, defines a wire format for exposing tools, resources, and prompts to model hosts. You build an MCP server; any MCP-aware host can connect — Claude Desktop, Claude Code, IDE plugins, your own agent runtime, third-party agents.
+The Model Context Protocol (MCP), first published in late 2024 and now broadly adopted across the industry, defines a wire format for exposing tools, resources, and prompts to model hosts. You build an MCP server; any MCP-aware host can connect — desktop AI apps, IDE plugins, your own agent runtime, third-party agents.
 
 Why this matters for capability engineering:
 
 - **One implementation, many surfaces.** Your "search internal docs" tool runs in the IDE for engineers and in the support agent for customers, from the same code.
-- **Versioning at the boundary.** Bump the server, every host gets the new tool.
+- **Versioning at the boundary.** Bump the MCP server, every host gets the new tool automatically.
 - **Auth scoping per server.** Permissions live in one place, not in every host.
 
 A minimal MCP server in 2026:
@@ -220,7 +222,7 @@ teaser: Don't ask the model to do arithmetic; give it a Python interpreter. Don'
 
 Models hallucinate arithmetic. Models hallucinate API call results. Models invent data shapes. The fix is to let them write code that produces the answer, then run that code in a sandbox.
 
-In 2026, every major provider ships a "code interpreter" or "code execution" tool: Anthropic's code execution, OpenAI's tools-API code interpreter, Google's Python sandbox. Open-weight equivalents (E2B, Modal, Daytona, Replit's API) work with any model.
+In 2026, every major provider ships a "code interpreter" or "code execution" tool. AWS Bedrock supports code execution via agents; Azure AI Foundry and OpenAI ship it via their tools API; Google Vertex AI and Gemini include a Python sandbox. Open-weight equivalents (E2B, Modal, Daytona, Replit's API) work with any model.
 
 The pattern:
 
@@ -256,7 +258,7 @@ teaser: Frontier models read images, parse charts, transcribe handwriting, and a
 
 @explanation
 
-By 2026, multimodal input is table stakes. Claude, GPT-5, and Gemini all accept images, charts, and (with the right tier) video. The capability changes what you can hand a model:
+By 2026, multimodal input is table stakes. GPT-4o, Gemini 2.0, Claude, Llama 4 Scout, and most frontier models accept images, charts, and (with the right tier) video. The capability changes what you can hand a model:
 
 - **Screenshots** — debug a UI bug by showing the model the broken state.
 - **Charts and diagrams** — the model reads axes, extracts numbers, summarises trends.
@@ -267,12 +269,13 @@ By 2026, multimodal input is table stakes. Claude, GPT-5, and Gemini all accept 
 Common production uses:
 
 ```python
-client.messages.create(
-    model="claude-opus-4-7",
+# OpenAI vision call (same pattern applies to other providers)
+client.chat.completions.create(
+    model="gpt-4o",
     messages=[{
         "role": "user",
         "content": [
-            {"type": "image", "source": {"type": "base64", "data": image_b64}},
+            {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{image_b64}"}},
             {"type": "text", "text": "Describe what's wrong with this UI screenshot."},
         ],
     }],
@@ -293,7 +296,7 @@ teaser: When there's no API, give the model a screen, a keyboard, and a mouse. C
 
 @explanation
 
-Computer Use — Anthropic's primitive for letting the model see a screen and emit clicks and keystrokes — solves a specific class of problem: tasks where the API doesn't exist or the integration cost is too high. Filling in legacy enterprise software, navigating sites without public APIs, smoke-testing your own product.
+Computer use — the ability for a model to see a screen and emit clicks and keystrokes — solves a specific class of problem: tasks where the API doesn't exist or the integration cost is too high. Filling in legacy enterprise software, navigating sites without public APIs, smoke-testing your own product. Multiple providers support this pattern: Anthropic's Computer Use API, OpenAI's Operator, and Google's Project Mariner are all production-grade examples.
 
 The pattern (simplified):
 
@@ -348,7 +351,7 @@ When fine-tuning doesn't help:
 - The data is small (< 1000 high-quality examples) — gains are noise.
 - The task changes weekly — fine-tunes have a shelf life.
 
-In 2026, the fine-tuning UI on Anthropic, OpenAI, and Google handles the heavy lifting. You upload examples, pick a base model, get a tuned endpoint. LoRA adapters via open-weight stacks (Together, Fireworks) are similarly accessible.
+In 2026, the fine-tuning consoles on AWS Bedrock, Azure AI Foundry, OpenAI, and Google Vertex AI all handle the heavy lifting. You upload examples, pick a base model, get a tuned endpoint. LoRA adapters via open-weight stacks (Together, Fireworks) are similarly accessible.
 
 > [!info] Fine-tuning is the last resort because it's the most expensive thing to maintain. Every model upgrade means re-tuning. Every prompt iteration is now slower. Pay this cost only when prompting and tools have genuinely failed.
 

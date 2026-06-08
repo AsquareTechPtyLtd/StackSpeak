@@ -108,7 +108,7 @@ Two places PII matters:
 Patterns for redaction:
 
 - **Pre-prompt redaction** — replace sensitive fields with placeholders before sending: `account_id: [USER_ID]` instead of the real ID. The model reasons over the structure; the runtime swaps placeholders back into outputs (or doesn't).
-- **PII classifiers** — Anthropic, AWS Comprehend, Microsoft Presidio, open-weight detectors. Run on inputs and outputs; flag or redact.
+- **PII classifiers** — AWS Comprehend, Azure AI Language, Google Cloud DLP, Microsoft Presidio, open-weight detectors. Run on inputs and outputs; flag or redact.
 - **Tokenised references** — store sensitive values in a vault; pass the model an opaque token; the runtime resolves the token back when an action requires the actual value.
 
 ```python
@@ -181,7 +181,7 @@ The third tier is where most safety violations live. Output reads structurally f
 
 Tools that play here:
 
-- **Provider-native classifiers** — Anthropic's policy classifiers, OpenAI's moderation API, Perspective API for toxicity.
+- **Provider-native classifiers** — OpenAI's moderation API, AWS Bedrock Guardrails, Azure AI Content Safety, Google Vertex AI safety filters, Perspective API for toxicity.
 - **Guardrail libraries** — NeMo Guardrails, Guardrails AI, Lakera Guard. Compose multiple checks under one config.
 - **Custom classifiers** — fine-tuned small models for your specific policy (brand voice, regulatory keywords).
 
@@ -238,7 +238,7 @@ teaser: Write down the rules the model must follow. Make the model check its dra
 
 @explanation
 
-The pattern (Anthropic's term, but the technique generalises): you write down the principles in prose; the model checks each principle against its draft; violations get revised in-place.
+The pattern — sometimes called "constitutional AI" but broadly applicable: you write down the principles in prose; the model checks each principle against its draft; violations get revised in-place.
 
 ```text
 Principles:

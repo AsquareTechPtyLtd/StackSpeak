@@ -398,7 +398,7 @@ Minimum reproducibility record:
   "discovery_query": "config[\"$KEY\"]",
   "prompt_template": "prompts/dict-to-get.txt",
   "prompt_sha": "a3f9e2b",
-  "model": "claude-sonnet-4-6",
+  "model": "gpt-4o-2024-08-06",
   "temperature": 0,
   "max_tokens": 4096,
   "codebase_commit": "9fb85d5",

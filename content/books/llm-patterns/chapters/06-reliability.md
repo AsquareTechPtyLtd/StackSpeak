@@ -124,7 +124,7 @@ Specific biases to watch for:
 - **Self-preference** — a judge from the same family as the generator tends to score that generator higher.
 - **Position bias** — when judging A vs B, the judge often prefers whichever was shown first.
 
-> [!info] Use cross-model judging when possible. A Claude-judge for GPT outputs (or vice versa) reduces self-preference. Doesn't eliminate it; reduces it.
+> [!info] Use cross-model judging when possible. Using a judge from a different provider family than the generator reduces self-preference. Doesn't eliminate it; reduces it.
 
 @feynman
 
@@ -289,7 +289,7 @@ teaser: Encode the rules the output must follow as principles, then have the mod
 
 @explanation
 
-Anthropic's "constitutional AI" approach generalises into a useful pattern: you write down the principles the output must satisfy, and you make the model check itself against them.
+The "constitutional AI" approach — originally described in an Anthropic paper — generalises into a useful pattern: you write down the principles the output must satisfy, and you make the model check itself against them.
 
 ```text
 Principles:
@@ -325,7 +325,7 @@ teaser: A prompt is code. Treat it as code — version it, test it, optimise it 
 
 @explanation
 
-The 2024–25 wave of automated prompt optimisation tools — DSPy, OPRO, PromptHub, Anthropic's Prompt Improver — turn prompt engineering from intuition into search. You provide examples and an objective; the tool generates and tests prompt variants.
+The 2024–25 wave of automated prompt optimisation tools — DSPy, OPRO, PromptHub, and provider-side prompt improvers — turn prompt engineering from intuition into search. You provide examples and an objective; the tool generates and tests prompt variants.
 
 The general loop:
 
