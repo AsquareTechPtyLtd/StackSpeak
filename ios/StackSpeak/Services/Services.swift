@@ -69,8 +69,13 @@ struct UserProgressKey: EnvironmentKey {
     static let defaultValue: UserProgress? = nil
 }
 
-extension Services: @unchecked Sendable {}
+// Required, not duct tape: storing `UserProgress?` in `EnvironmentValues` needs
+// the type Sendable, and SwiftData's `@Model` macro emits only an *unavailable*
+// Sendable marker, so this explicit conformance is what actually satisfies the
+// requirement. (Services dropped its conformance — it's @MainActor, already
+// implicitly Sendable.)
 extension UserProgress: @unchecked Sendable {}
+
 
 extension EnvironmentValues {
     var services: Services? {

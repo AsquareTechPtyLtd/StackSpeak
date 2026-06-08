@@ -12,8 +12,8 @@ enum BookLockState: String, Sendable, Equatable {
 
 /// Loads the books catalog from a content source and computes per-book lock state.
 ///
-/// Catalog is small (one entry per book) so we cache the first load in-memory and
-/// reuse for the session. Phase 7's `RemoteBookSource` will refresh-on-launch.
+/// Catalog is small (one entry per book) so the first load is cached in-memory and
+/// reused for the session.
 @MainActor
 final class BookCatalogService {
     private let source: any BookContentSource
