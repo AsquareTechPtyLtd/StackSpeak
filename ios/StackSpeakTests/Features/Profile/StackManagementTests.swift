@@ -98,7 +98,7 @@ struct StackManagementProUserTests {
     @Test("Pro result is exact union of selected mandatory + optional")
     func proSavesExactSelection() {
         let progress = UserProgress()
-        let selMandatory: Set<String> = ["git-fundamentals", "communication-essentials"]
+        let selMandatory: Set<String> = ["git-basic", "communication-basic"]
         let selOptional: Set<String> = ["basic-system-design"]
 
         applyProUserSave(progress: progress,
@@ -118,17 +118,17 @@ struct StackManagementProUserTests {
 
         let saved = Set(progress.selectedStacks)
         // Verify known mandatory raw IDs are absent
-        #expect(!saved.contains("git-fundamentals"))
-        #expect(!saved.contains("communication-essentials"))
-        #expect(!saved.contains("programming-fundamentals"))
-        #expect(!saved.contains("networking-essentials"))
+        #expect(!saved.contains("git-basic"))
+        #expect(!saved.contains("communication-basic"))
+        #expect(!saved.contains("programming-basic"))
+        #expect(!saved.contains("networking-basic"))
     }
 
     @Test("Pro: all-mandatory selection saves only mandatory stacks")
     func proAllMandatory() {
         let progress = UserProgress()
-        let selMandatory: Set<String> = ["git-fundamentals", "communication-essentials",
-                                          "networking-essentials"]
+        let selMandatory: Set<String> = ["git-basic", "communication-basic",
+                                          "networking-basic"]
 
         applyProUserSave(progress: progress,
                          selectedMandatory: selMandatory,
