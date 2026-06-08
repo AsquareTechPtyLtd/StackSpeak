@@ -17,7 +17,7 @@
         "code": "import hashlib\n\ndef process_payment(order_id: str, amount_cents: int) -> dict:\n    # Deterministic idempotency key from content\n    idem_key = hashlib.sha256(f\"{order_id}:{amount_cents}\".encode()).hexdigest()\n\n    # Atomic check-and-set: skip if already processed\n    with db.transaction():\n        if db.query(\"SELECT 1 FROM processed_payments WHERE idem_key = %s\", idem_key):\n            return db.query(\"SELECT result FROM processed_payments WHERE idem_key = %s\", idem_key)\n        result = charge_card(amount_cents)\n        db.execute(\"INSERT INTO processed_payments (idem_key, result) VALUES (%s, %s)\",\n                   idem_key, result)\n        return result"
       },
       "etymology": "From Latin idempotens: idem ('same') + potens ('powerful, having effect'). The term was introduced in mathematics to describe functions where f(f(x)) = f(x), and adopted by distributed systems engineers in the 2000s.",
-      "unlockLevel": 4,
+      "unlockLevel": 26,
       "tags": [
         "transactions",
         "reliability",
@@ -42,7 +42,7 @@
         "code": "-- CAS: only deduct if balance hasn't changed since we read it\n-- We read: balance = 500 earlier in the transaction\nUPDATE accounts\nSET    balance = 400\nWHERE  account_id = 'alice'\n  AND  balance    = 500;   -- the compare\n\n-- rows_affected = 1 → success; balance was 500, now 400\n-- rows_affected = 0 → conflict; another transaction modified balance\n-- Application must check rows_affected and retry if 0"
       },
       "etymology": "Portmanteau of 'compare' (to check the current value) and 'set' (to write a new value). The hardware instruction CMPXCHG was introduced on Intel 486 processors in 1989; the term 'compare-and-swap' is the synonym used in hardware literature.",
-      "unlockLevel": 4,
+      "unlockLevel": 26,
       "tags": [
         "transactions",
         "concurrency",
@@ -67,7 +67,7 @@
         "code": "-- Both writes are inside ONE transaction — they commit or rollback together\nBEGIN;\n\n  INSERT INTO orders (id, user_id, total)\n  VALUES ('ord-abc', 'usr-123', 9900);\n\n  INSERT INTO outbox (id, aggregate_type, aggregate_id, event_type, payload)\n  VALUES (\n    gen_random_uuid(),\n    'Order',\n    'ord-abc',\n    'OrderPlaced',\n    '{\"orderId\": \"ord-abc\", \"total\": 9900}'\n  );\n\nCOMMIT;\n-- Debezium CDC relay picks up the outbox row and publishes to Kafka"
       },
       "etymology": "Named after the physical outbox tray on an office desk — the place where outgoing documents are placed before a courier collects them. The software pattern was popularized in microservices literature around 2017–2019.",
-      "unlockLevel": 4,
+      "unlockLevel": 26,
       "tags": [
         "distributed-systems",
         "messaging",
@@ -92,7 +92,7 @@
         "code": "# Temporal workflow: saga with compensation\nfrom temporalio import workflow, activity\n\n@workflow.defn\nclass OrderSaga:\n    @workflow.run\n    async def run(self, order_id: str) -> str:\n        reserved = False\n        try:\n            await workflow.execute_activity(reserve_inventory, order_id)\n            reserved = True\n            await workflow.execute_activity(charge_payment, order_id)\n            await workflow.execute_activity(dispatch_shipment, order_id)\n            return \"completed\"\n        except Exception:\n            if reserved:\n                # Compensating transaction: undo the reservation\n                await workflow.execute_activity(release_inventory, order_id)\n            raise"
       },
       "etymology": "Named after the Old Norse saga — a long sequential narrative of events. Garcia-Molina and Salem introduced the term in their 1987 paper 'Sagas' to describe long-lived transactions that could be broken into sub-transactions with compensating actions.",
-      "unlockLevel": 4,
+      "unlockLevel": 26,
       "tags": [
         "distributed-systems",
         "transactions",
@@ -117,7 +117,7 @@
         "code": "from confluent_kafka import Producer\n\n# Idempotent + transactional producer (Kafka exactly-once)\nproducer = Producer({\n    'bootstrap.servers': 'kafka:9092',\n    'enable.idempotence': True,          # dedup at broker level\n    'transactional.id': 'billing-svc-1', # enables transactions\n    'acks': 'all',\n})\nproducer.init_transactions()\n\ndef process_and_publish(event, output_topic):\n    producer.begin_transaction()\n    try:\n        result = compute_billing(event)\n        producer.produce(output_topic, key=event['id'], value=result)\n        producer.commit_transaction()   # atomic: publish + offset commit\n    except Exception:\n        producer.abort_transaction()\n        raise"
       },
       "etymology": "The phrase 'exactly-once' entered distributed systems vocabulary through message queue literature in the early 2000s; Kafka's exactly-once semantics feature was released in version 0.11 (2017) and popularized the term as a concrete engineering goal.",
-      "unlockLevel": 4,
+      "unlockLevel": 26,
       "tags": [
         "stream-processing",
         "messaging",
@@ -142,7 +142,7 @@
         "code": "StreamsBuilder builder = new StreamsBuilder();\n\n// KStream: every order event that ever occurred\nKStream<String, Order> orders =\n    builder.stream(\"orders\", Consumed.with(Serdes.String(), orderSerde));\n\n// KTable: current state of each user (derived from CDC topic)\nKTable<String, User> users =\n    builder.table(\"users-cdc\", Consumed.with(Serdes.String(), userSerde));\n\n// Stream-table join: enrich each order with current user tier\nKStream<String, EnrichedOrder> enriched =\n    orders.join(users,\n        (order, user) -> new EnrichedOrder(order, user.getTier()));\n\nenriched.to(\"enriched-orders\");"
       },
       "etymology": "The duality was articulated by Jay Kreps in his 2013 essay 'The Log: What every software engineer should know about real-time data's unifying abstraction', and formalized in the Kafka Streams API (2016) with the KStream/KTable distinction.",
-      "unlockLevel": 4,
+      "unlockLevel": 26,
       "tags": [
         "stream-processing",
         "kafka",
@@ -167,7 +167,7 @@
         "code": "// Flink: bounded-out-of-orderness watermark with 5-minute lag\nWatermarkStrategy<ClickEvent> strategy =\n    WatermarkStrategy\n        .<ClickEvent>forBoundedOutOfOrderness(Duration.ofMinutes(5))\n        .withTimestampAssigner((event, ts) -> event.getEventTime());\n\nDataStream<ClickEvent> clicks =\n    env.fromSource(kafkaSource, strategy, \"clicks\");\n\n// Window closes when watermark passes window end\nclicks\n    .keyBy(ClickEvent::getUserId)\n    .window(TumblingEventTimeWindows.of(Time.minutes(5)))\n    .allowedLateness(Time.minutes(1))  // handle stragglers\n    .aggregate(new CountAggregator())\n    .print();"
       },
       "etymology": "Borrowed from the physical watermark — a faint design pressed into paper during manufacture, visible when held to light. In stream processing the term was popularized by Google's Dataflow/Beam model (2015), where it serves as an invisible progress indicator embedded in the data flow.",
-      "unlockLevel": 4,
+      "unlockLevel": 26,
       "tags": [
         "stream-processing",
         "event-time",
@@ -192,7 +192,7 @@
         "code": "-- ksqlDB: tumbling window aggregate\nCREATE TABLE request_counts AS\n  SELECT\n    tenant_id,\n    COUNT(*) AS request_count,\n    WINDOWSTART AS window_start,\n    WINDOWEND   AS window_end\n  FROM api_events\n  WINDOW TUMBLING (SIZE 1 HOUR)\n  GROUP BY tenant_id\n  EMIT FINAL;"
       },
       "etymology": "Named for the physical motion of tumbling — rolling end-over-end in a straight line. Each window 'tumbles' forward, placing its leading edge exactly at the trailing edge of the previous window.",
-      "unlockLevel": 4,
+      "unlockLevel": 26,
       "tags": [
         "stream-processing",
         "windowing",
@@ -217,7 +217,7 @@
         "code": "// Flink: session window with 30-minute gap\nDataStream<PageView> pageViews = /* ... */;\n\nDataStream<SessionSummary> sessions = pageViews\n    .keyBy(PageView::getUserId)\n    .window(EventTimeSessionWindows.withGap(Time.minutes(30)))\n    .aggregate(new SessionAggregator());\n\n// SessionAggregator accumulates page count, first/last event time\n// Window closes when watermark passes (lastEventTime + 30min)"
       },
       "etymology": "Named after a computing session — a period of continuous interaction between a user and a system. The session window concept was included in the Apache Beam / Google Dataflow windowing model (2015) and adopted by Flink, Spark Structured Streaming, and Kafka Streams.",
-      "unlockLevel": 4,
+      "unlockLevel": 26,
       "tags": [
         "stream-processing",
         "windowing",
@@ -242,7 +242,7 @@
         "code": "// Flink: sliding (hopping) window — 15min size, 1min hop\nDataStream<RequestEvent> requests = /* ... */;\n\nrequests\n    .keyBy(RequestEvent::getService)\n    .window(SlidingEventTimeWindows.of(\n        Time.minutes(15),  // window size\n        Time.minutes(1)    // hop / advance interval\n    ))\n    .aggregate(new P99LatencyAggregator())\n    .print();"
       },
       "etymology": "Named for the hopping motion — short, repeated jumps that advance the window in steps. The term distinguishes it from 'sliding' (where the window moves continuously, per event) in some frameworks, though in everyday usage 'hopping' and 'sliding' are often used interchangeably.",
-      "unlockLevel": 4,
+      "unlockLevel": 26,
       "tags": [
         "stream-processing",
         "windowing",
@@ -267,7 +267,7 @@
         "code": "// Flink: assign event-time timestamps from payload, tolerate 2min lateness\nWatermarkStrategy<Transaction> strategy =\n    WatermarkStrategy\n        .<Transaction>forBoundedOutOfOrderness(Duration.ofMinutes(2))\n        .withTimestampAssigner(\n            // Extract event time from the event payload — NOT the system clock\n            (tx, recordTimestamp) -> tx.getOccurredAtEpochMs()\n        );\n\nDataStream<Transaction> txStream =\n    env.fromSource(kafkaSource, strategy, \"transactions\");"
       },
       "etymology": "The term 'event time' was formalized and contrasted with 'processing time' and 'ingestion time' in Google's Dataflow paper (2015) and the Apache Beam programming model, though the underlying concept appears in earlier academic stream processing literature.",
-      "unlockLevel": 4,
+      "unlockLevel": 26,
       "tags": [
         "stream-processing",
         "event-time",
@@ -292,7 +292,7 @@
         "code": "# Write side: command handler produces events\ndef place_order(command: PlaceOrderCommand) -> None:\n    order = Order.create(\n        user_id=command.user_id,\n        items=command.items\n    )\n    event = OrderPlaced(order_id=order.id, items=order.items, total=order.total)\n    event_store.append(event)  # persisted; triggers projection updates\n\n# Read side: projection built from events (separate process)\ndef on_order_placed(event: OrderPlaced) -> None:\n    # Denormalized, query-optimized document\n    db.upsert('order_summary', {\n        'id': event.order_id,\n        'user_name': users.get_name(event.user_id),  # denormalized join\n        'item_count': len(event.items),\n        'total': event.total,\n        'status': 'placed'\n    })"
       },
       "etymology": "CQRS was coined by Greg Young around 2010, building on Bertrand Meyer's Command-Query Separation (CQS) principle from 'Object-Oriented Software Construction' (1988). Young extended CQS from method-level to architectural level.",
-      "unlockLevel": 4,
+      "unlockLevel": 26,
       "tags": [
         "architecture",
         "event-sourcing",
@@ -317,7 +317,7 @@
         "code": "# Event log is the source of truth (append-only)\nclass EventStore:\n    def append(self, aggregate_id: str, event: DomainEvent) -> None:\n        db.execute(\n            \"INSERT INTO events (aggregate_id, event_type, payload, occurred_at) \"\n            \"VALUES (%s, %s, %s, NOW())\",\n            aggregate_id, type(event).__name__, json.dumps(event.to_dict())\n        )\n\n    def load(self, aggregate_id: str) -> list[DomainEvent]:\n        rows = db.query(\n            \"SELECT event_type, payload FROM events \"\n            \"WHERE aggregate_id = %s ORDER BY occurred_at\",\n            aggregate_id\n        )\n        return [deserialize_event(r['event_type'], r['payload']) for r in rows]\n\n# Current state: derived by replaying events\ndef get_account_balance(account_id: str) -> int:\n    events = event_store.load(account_id)\n    return sum(e.amount for e in events)"
       },
       "etymology": "The term 'event sourcing' was coined and popularized by Greg Young and Martin Fowler in the DDD (Domain-Driven Design) community around 2005–2010, though the underlying idea of storing a log of changes rather than current state appears in accounting ledgers and database transaction logs.",
-      "unlockLevel": 4,
+      "unlockLevel": 26,
       "tags": [
         "architecture",
         "patterns",
@@ -338,7 +338,7 @@
       "techContext": "We deprecated our Lambda Architecture after 18 months — maintaining synchronized Spark batch and Spark Streaming implementations of our revenue aggregation logic required duplicating every business rule change, and divergence caused a billing discrepancy that took three days to diagnose.",
       "exampleSentence": "The Lambda Architecture served us well at launch, but when we changed the definition of an 'active user' we had to update both the Hadoop batch job and the Kafka Streams processor simultaneously, and the week before the batch layer caught up the dashboard showed conflicting numbers.",
       "etymology": "Named after the Greek letter lambda (λ), used in Nathan Marz's presentation to represent the architecture's branching structure. Marz described it in his 2011 blog post and later in the book 'Big Data' (Manning, 2015).",
-      "unlockLevel": 4,
+      "unlockLevel": 26,
       "tags": [
         "architecture",
         "stream-processing",
@@ -359,7 +359,7 @@
       "techContext": "After migrating from Lambda to Kappa Architecture using Kafka with 90-day retention, we eliminated 40% of our data pipeline codebase and can now deploy corrections by replaying the Flink job from offset 0 against historical data.",
       "exampleSentence": "When our user-cohort definition changed, the Kappa Architecture let us replay six months of event history through the updated Flink job over a weekend, producing corrected read models without touching any batch infrastructure.",
       "etymology": "Named after the Greek letter kappa (κ), chosen by Jay Kreps to evoke a simpler version of Lambda (λ). Introduced in Kreps' 2014 blog post 'Questioning the Lambda Architecture.'",
-      "unlockLevel": 4,
+      "unlockLevel": 26,
       "tags": [
         "architecture",
         "stream-processing",
@@ -380,7 +380,7 @@
       "techContext": "The end-to-end argument guided our decision to implement idempotency keys at the service layer rather than relying on Kafka's exactly-once semantics: our Kafka-to-Postgres boundary and Postgres-to-Stripe boundary each required their own application-level deduplication.",
       "exampleSentence": "Applying the end-to-end argument, we realized that enabling Kafka transactions only solved the broker-to-broker segment — the database write and the HTTP webhook call each needed their own idempotency checks for the guarantee to hold across the full pipeline.",
       "etymology": "Coined and defined in the 1984 paper 'End-to-End Arguments in System Design' by Saltzer, Reed, and Clark at MIT. The 'end-to-end' refers to the communication endpoints — the application-layer entities at each end of a communication path.",
-      "unlockLevel": 4,
+      "unlockLevel": 26,
       "tags": [
         "distributed-systems",
         "reliability",
@@ -405,7 +405,7 @@
         "code": "# OpenLineage: emit lineage when a Spark job reads/writes\nfrom openlineage.client import OpenLineageClient\nfrom openlineage.client.run import RunEvent, Job, Run, Dataset\n\nclient = OpenLineageClient.from_environment()\n\n# Emit START event: this job reads from orders, writes to revenue_summary\nclient.emit(RunEvent(\n    eventType=\"START\",\n    job=Job(namespace=\"analytics\", name=\"revenue_aggregation\"),\n    run=Run(runId=\"run-uuid-123\"),\n    inputs=[Dataset(namespace=\"postgres\", name=\"public.orders\")],\n    outputs=[Dataset(namespace=\"redshift\", name=\"analytics.revenue_summary\")]\n))"
       },
       "etymology": "From Latin lineage ('descent, ancestry'). The term 'data lineage' was adopted from genealogy — tracing the ancestry of a piece of data through its transformations — and became widely used in the data engineering community in the 2010s with the rise of complex multi-stage analytics pipelines.",
-      "unlockLevel": 4,
+      "unlockLevel": 26,
       "tags": [
         "data-engineering",
         "governance",
@@ -426,7 +426,7 @@
       "techContext": "Understanding TrueTime helped us explain to stakeholders why Spanner can guarantee that a transaction committed at timestamp T is visible to all readers before T+10ms globally, a property that our previous Postgres-plus-Kafka architecture could not provide.",
       "exampleSentence": "Spanner's TrueTime API allows the database to assign monotonically increasing commit timestamps that respect real-world time ordering, so a transaction that observably committed before another will always have a strictly smaller timestamp in the global order.",
       "etymology": "A compound proper noun coined by Google engineers — 'True' (real, actual) + 'Time.' Introduced publicly in the 2012 OSDI paper 'Spanner: Google's Globally Distributed Database' by Corbett et al.",
-      "unlockLevel": 4,
+      "unlockLevel": 26,
       "tags": [
         "distributed-systems",
         "clocks",
@@ -447,7 +447,7 @@
       "techContext": "We chose Spanner for our global payment ledger specifically because external consistency guarantees that a debit and a subsequent balance check initiated from different data centers will always be in the correct causal order, which our previous multi-region Postgres setup could not guarantee.",
       "exampleSentence": "External consistency meant that a merchant's settlement query that started after a customer payment committed was guaranteed to reflect that payment, even when the payment was processed in a US data center and the query was served from Europe.",
       "etymology": "The term 'external consistency' was introduced and defined formally in the 2012 Spanner paper by Corbett et al., distinguishing it from other consistency models like linearizability and serializability that do not explicitly respect real-world time ordering.",
-      "unlockLevel": 4,
+      "unlockLevel": 26,
       "tags": [
         "distributed-systems",
         "consistency",
@@ -471,7 +471,7 @@
         "code": "// Flink: configure checkpoint interval and storage\nStreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();\n\n// Take a distributed snapshot every 30 seconds\nenv.enableCheckpointing(30_000);\n\n// Store checkpoints to S3 (durable, survives node failure)\nenv.getCheckpointConfig().setCheckpointStorage(\n    \"s3://my-bucket/flink-checkpoints\"\n);\n\n// At least-once or exactly-once mode (exactly-once requires barrier alignment)\nenv.getCheckpointConfig().setCheckpointingMode(\n    CheckpointingMode.EXACTLY_ONCE\n);"
       },
       "etymology": "The term 'distributed snapshot' and the foundational algorithm were introduced by K. Mani Chandy and Leslie Lamport in their 1985 ACM paper 'Distributed Snapshots: Determining Global States of Distributed Systems.' Lamport is also the inventor of Lamport clocks and the Paxos consensus algorithm.",
-      "unlockLevel": 4,
+      "unlockLevel": 26,
       "tags": [
         "distributed-systems",
         "stream-processing",
@@ -496,7 +496,7 @@
         "code": "# Monitor RocksDB write amplification via metrics\n# Write amplification = bytes written by compaction / bytes written by flush\n\n# Using RocksDB's built-in statistics (Python via rocksdb-python)\nimport rocksdb\ndb = rocksdb.DB('/data/mydb', rocksdb.Options(statistics=rocksdb.Statistics()))\nstats = db.options.statistics\n\n# Key counters\nbytes_written_by_compaction = stats.get_ticker_count(rocksdb.COMPACT_WRITE_BYTES)\nbytes_written_by_flush = stats.get_ticker_count(rocksdb.FLUSH_WRITE_BYTES)\nwrite_amp = bytes_written_by_compaction / bytes_written_by_flush\nprint(f\"Write amplification: {write_amp:.1f}x\")"
       },
       "etymology": "The term 'write amplification' (also 'write multiplication') entered SSD and flash memory engineering literature in the early 2000s to describe the phenomenon where flash cells are written more times than the host system requested, due to erase-before-write and garbage collection. The LSM-tree community adopted the term for the compaction-driven equivalent.",
-      "unlockLevel": 4,
+      "unlockLevel": 26,
       "tags": [
         "storage",
         "lsm-tree",
@@ -521,7 +521,7 @@
         "code": "# PostgreSQL point-in-time recovery configuration\n# 1. Restore a base backup from S3\naws s3 cp s3://backups/pg-base-2026-06-07.tar.gz /var/lib/postgresql/data/\ntar -xzf pg-base-2026-06-07.tar.gz -C /var/lib/postgresql/data/\n\n# 2. Configure recovery target in postgresql.conf\ncat >> /var/lib/postgresql/data/postgresql.conf <<EOF\nrestore_command = 'aws s3 cp s3://wal-archive/%f %p'\nrecovery_target_time = '2026-06-07 09:14:45 UTC'\nrecovery_target_action = 'promote'\nEOF\n\ntouch /var/lib/postgresql/data/recovery.signal\npg_ctl start -D /var/lib/postgresql/data"
       },
       "etymology": "The term 'point-in-time recovery' was popularized by the database industry in the early 2000s as WAL-based recovery became standard. PostgreSQL introduced built-in PITR in version 8.0 (2005), making the capability accessible without third-party tools.",
-      "unlockLevel": 4,
+      "unlockLevel": 26,
       "tags": [
         "storage",
         "wal",
@@ -546,7 +546,7 @@
         "code": "-- Publisher (source database): create a replication slot and publication\nSELECT pg_create_logical_replication_slot(\n  'my_slot',\n  'pgoutput'   -- standard logical decoding plugin\n);\n\nCREATE PUBLICATION my_pub\n  FOR TABLE orders, payments, customers;\n\n-- Subscriber (replica): create subscription pointing at publisher\nCREATE SUBSCRIPTION my_sub\n  CONNECTION 'host=source-db port=5432 dbname=prod user=repl'\n  PUBLICATION my_pub\n  WITH (slot_name = 'my_slot');\n\n-- The subscriber now receives row-level changes in real time"
       },
       "etymology": "The term 'logical replication' distinguishes this mode from 'physical replication' (raw byte-level copying). 'Logical' refers to the higher abstraction level — database operations rather than storage page mutations. PostgreSQL introduced built-in logical replication in version 10 (2017).",
-      "unlockLevel": 4,
+      "unlockLevel": 26,
       "tags": [
         "replication",
         "postgresql",
@@ -571,7 +571,7 @@
         "code": "# Simplified log-structured storage: always append, never overwrite\nclass LogStructuredStore:\n    def __init__(self, path):\n        self.log = open(path, 'ab+')\n        self.index = {}  # key -> byte offset of latest value\n\n    def set(self, key: str, value: str) -> None:\n        offset = self.log.tell()\n        record = f\"{key}:{value}\\n\".encode()\n        self.log.write(record)\n        self.index[key] = offset  # always points to latest\n\n    def get(self, key: str) -> str | None:\n        if key not in self.index:\n            return None\n        self.log.seek(self.index[key])\n        line = self.log.readline().decode()\n        return line.split(':', 1)[1].rstrip()"
       },
       "etymology": "The term 'log-structured' was introduced by Rosenblum and Ousterhout in their 1991 USENIX paper 'The Design and Implementation of a Log-Structured File System.' The structure is named for its similarity to a write-ahead log — an append-only record of operations.",
-      "unlockLevel": 4,
+      "unlockLevel": 26,
       "tags": [
         "storage",
         "lsm-tree",
@@ -596,7 +596,7 @@
         "code": "from confluent_kafka.avro import AvroProducer\nfrom confluent_kafka import avro\n\nvalue_schema_str = \"\"\"\n{\n  \"type\": \"record\",\n  \"name\": \"OrderEvent\",\n  \"fields\": [\n    {\"name\": \"order_id\",  \"type\": \"string\"},\n    {\"name\": \"amount\",    \"type\": \"int\"},\n    {\"name\": \"currency\",  \"type\": \"string\", \"default\": \"USD\"}  // new field with default\n  ]\n}\n\"\"\"\nvalue_schema = avro.loads(value_schema_str)\n\nproducer = AvroProducer(\n    {'bootstrap.servers': 'kafka:9092', 'schema.registry.url': 'http://registry:8081'},\n    default_value_schema=value_schema\n)\nproducer.produce(topic='orders', value={'order_id': 'o1', 'amount': 9900})"
       },
       "etymology": "Avro was named after the British aircraft manufacturer Avro (A.V. Roe and Company), following the Hadoop project's tradition of naming components after animals or aviation themes. It was created by Doug Cutting (also the creator of Hadoop and Lucene) and committed to the Apache Hadoop project in 2009.",
-      "unlockLevel": 4,
+      "unlockLevel": 26,
       "tags": [
         "serialization",
         "schema-evolution",
@@ -621,7 +621,7 @@
         "code": "// orders.proto\nsyntax = \"proto3\";\n\nmessage OrderEvent {\n  string order_id = 1;   // field tag 1 — never reuse tag numbers\n  int32  amount   = 2;\n  string currency = 3;   // added in v2; old decoders skip tag 3\n  // reserved 4;         // previously removed field — tag reserved to prevent reuse\n}\n\n// Old consumer receives new message: ignores tag 3 (currency) safely\n// New consumer receives old message: currency defaults to \"\" (empty string)"
       },
       "etymology": "The name 'Protocol Buffers' describes the format's purpose: buffering structured data for use in protocols (inter-service communication). It was created by engineers at Google for internal RPC systems and open-sourced in 2008; gRPC, released in 2015, popularized it further.",
-      "unlockLevel": 4,
+      "unlockLevel": 26,
       "tags": [
         "serialization",
         "schema-evolution",
@@ -646,7 +646,7 @@
         "code": "# Register a new Avro schema and check compatibility\n# Confluent Schema Registry REST API\n\n# Check if a new schema is backward-compatible with the existing subject\ncurl -X POST \\\n  http://schema-registry:8081/compatibility/subjects/orders-value/versions/latest \\\n  -H 'Content-Type: application/vnd.schemaregistry.v1+json' \\\n  -d '{\"schema\": \"{\\\"type\\\":\\\"record\\\",\\\"name\\\":\\\"Order\\\",\\\"fields\\\":[...]}\" }'\n# Response: {\"is_compatible\": true}\n\n# Register the schema (only if compatible)\ncurl -X POST \\\n  http://schema-registry:8081/subjects/orders-value/versions \\\n  -H 'Content-Type: application/vnd.schemaregistry.v1+json' \\\n  -d '{\"schema\": \"...\"}'\n# Response: {\"id\": 42}  <- schema ID embedded in each Kafka message"
       },
       "etymology": "The term 'schema registry' is descriptive — a registry (official record or repository) for schemas. The Confluent Schema Registry was introduced alongside Confluent Platform 1.0 in 2015, and the concept is now implemented by AWS Glue Schema Registry, Apicurio Registry, and others.",
-      "unlockLevel": 4,
+      "unlockLevel": 26,
       "tags": [
         "serialization",
         "kafka",
@@ -672,7 +672,7 @@
         "code": "# Avro schema evolution — backward-compatible change\n# Old schema (v1)\nold_schema = {\n  \"type\": \"record\",\n  \"name\": \"Payment\",\n  \"fields\": [\n    {\"name\": \"amount\",   \"type\": \"int\"},\n    {\"name\": \"order_id\", \"type\": \"string\"}\n  ]\n}\n\n# New schema (v2) — backward-compatible: new field has a default\nnew_schema = {\n  \"type\": \"record\",\n  \"name\": \"Payment\",\n  \"fields\": [\n    {\"name\": \"amount\",   \"type\": \"int\"},\n    {\"name\": \"order_id\", \"type\": \"string\"},\n    {\"name\": \"currency\", \"type\": \"string\", \"default\": \"USD\"}  # default required\n  ]\n}\n# New reader decoding old data: currency field → 'USD' (from default)\n# NOT backward-compatible: adding a field WITHOUT a default"
       },
       "etymology": "The adjective 'backward' (also 'backwards') refers to compatibility with older versions — looking 'back' toward what came before. The term is standard in software versioning and API design, used in contrast to 'forward compatibility' which looks ahead.",
-      "unlockLevel": 4,
+      "unlockLevel": 26,
       "tags": [
         "serialization",
         "schema-evolution",
@@ -697,7 +697,7 @@
         "code": "// Forward-compatible Protobuf schema evolution\n// v1: original schema\nmessage Payment {\n  string order_id = 1;\n  int32  amount   = 2;\n}\n\n// v2: new producer adds a field (forward-compatible)\nmessage Payment {\n  string order_id = 1;\n  int32  amount   = 2;\n  string currency = 3;  // NEW: old consumers skip tag 3 safely\n}\n\n// Old consumer (knows only v1) decoding v2 data:\n// - Reads tag 1 (order_id): known, decoded\n// - Reads tag 2 (amount):   known, decoded\n// - Reads tag 3 (currency): UNKNOWN, skipped using wire type\n// → No error; no data corruption"
       },
       "etymology": "The adjective 'forward' refers to compatibility with newer versions — looking 'forward' to what will come. The term is used in contrast to 'backward compatibility' and is standard across API design, file format specification, and data serialization literature.",
-      "unlockLevel": 4,
+      "unlockLevel": 26,
       "tags": [
         "serialization",
         "schema-evolution",
@@ -722,7 +722,7 @@
         "code": "# Impedance mismatch: user object vs normalized tables\n# Object model (what the application wants):\nclass User:\n    id: str\n    name: str\n    addresses: list[Address]   # nested collection\n    orders: list[Order]        # another nested collection\n\n# Relational model (what the DB stores): 3 separate tables + 2 joins\n# SELECT u.*, a.*, o.*\n# FROM users u\n# LEFT JOIN addresses a ON a.user_id = u.id\n# LEFT JOIN orders    o ON o.user_id = u.id\n# WHERE u.id = 'usr-123'\n# → multiple rows per user (cartesian between addresses and orders)\n# → ORM must de-duplicate and reconstruct nested collections\n\n# Alternative: store addresses as JSONB to reduce mismatch\n# SELECT id, name, addresses  FROM users WHERE id = 'usr-123'\n# → single row; addresses is already a list of dicts"
       },
       "etymology": "Borrowed from electrical engineering: impedance mismatch occurs when the impedance of a source and a load differ, causing signal reflection and power loss. Applied to object-relational mapping by Martin Fowler and Scott Ambler in the early 2000s ORM literature, later discussed by Kleppmann in the context of data model design.",
-      "unlockLevel": 4,
+      "unlockLevel": 26,
       "tags": [
         "data-models",
         "database",

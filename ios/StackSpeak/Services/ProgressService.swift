@@ -32,16 +32,13 @@ final class ProgressService: ProgressRepository {
             userProgress.reviewStates.append(ReviewState(wordId: wordId))
         }
 
-        // When skip or report buttons are used, immediately mark as mastered and count
-        // toward level progression so the word won't appear in future assessments.
+        // Skip/report marks the word mastered so it won't reappear. It does NOT
+        // grant level credit — progression comes only from assessment (see
+        // recordAssessmentResult). Mastering excludes a word; it isn't a shortcut.
         if markAsMastered {
             var mastered = userProgress.masteredWordIds
             mastered.insert(wordId)
             userProgress.masteredWordIds = mastered
-
-            var twoCorrect = userProgress.wordsWithTwoCorrectIds
-            twoCorrect.insert(wordId)
-            userProgress.wordsWithTwoCorrectIds = twoCorrect
         }
 
         try modelContext.save()
@@ -130,14 +127,21 @@ final class ProgressService: ProgressRepository {
         )
         userProgress.assessmentResults.append(result)
 
-        // Incrementally update the two-correct cache instead of rescanning all results.
+        // Incrementally update the caches instead of rescanning all results.
+        //   1st correct → credited toward level (the progression currency)
+        //   2nd correct → retention stat (no longer gates levels)
         if isCorrect {
             let correctCount = userProgress.assessmentResults
                 .filter { $0.wordId == wordId && $0.isCorrect }.count
+            if correctCount >= 1 {
+                var credited = userProgress.wordsCreditedForLevelIds
+                credited.insert(wordId)
+                userProgress.wordsCreditedForLevelIds = credited
+            }
             if correctCount >= 2 {
-                var updated = userProgress.wordsWithTwoCorrectIds
-                updated.insert(wordId)
-                userProgress.wordsWithTwoCorrectIds = updated
+                var twoCorrect = userProgress.wordsWithTwoCorrectIds
+                twoCorrect.insert(wordId)
+                userProgress.wordsWithTwoCorrectIds = twoCorrect
             }
         }
 
@@ -156,7 +160,7 @@ final class ProgressService: ProgressRepository {
     private func checkAndAdvanceLevel(userProgress: UserProgress) {
         while LevelDefinition.canAdvance(
             currentLevel: userProgress.level,
-            wordsAssessedCorrectlyTwice: userProgress.wordsAssessedCorrectlyTwice
+            wordsCredited: userProgress.wordsAssessedForLevel
         ) {
             userProgress.level += 1
             userProgress.addMandatoryStacks(for: userProgress.level)

@@ -81,7 +81,7 @@ struct ProfileView: View {
                         .foregroundColor(theme.colors.ink)
                     if let levelProgress = LevelDefinition.progressToNextLevel(
                         currentLevel: progress.level,
-                        wordsAssessedCorrectlyTwice: progress.wordsAssessedCorrectlyTwice
+                        wordsCredited: progress.wordsAssessedForLevel
                     ) {
                         ProgressView(value: levelProgress.progress)
                             .tint(theme.colors.accent)
