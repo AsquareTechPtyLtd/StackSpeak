@@ -30,6 +30,12 @@ struct LevelUpView: View {
         !WordStack.newOptionalStacks(for: newLevel).isEmpty
     }
 
+    /// The content tier newly opened at this level, if this is a tier-gate level.
+    /// `nil` for rank-only promotions (a new title but no new content).
+    var unlockedTier: ContentTier? {
+        ContentTier.unlockedAt(level: newLevel)
+    }
+
     var body: some View {
         ZStack {
             theme.colors.bg.ignoresSafeArea()
@@ -73,6 +79,15 @@ struct LevelUpView: View {
                     .foregroundColor(theme.colors.inkMuted)
                     .multilineTextAlignment(.center)
                     .padding(.horizontal, theme.spacing.lg)
+            }
+
+            // Tier-gate levels open a new band of content — call it out prominently.
+            if let tier = unlockedTier {
+                Text(String(format: String(localized: "levelUp.tierUnlocked.format"), tier.displayName))
+                    .font(TypographyTokens.headline)
+                    .foregroundColor(theme.colors.accent)
+                    .multilineTextAlignment(.center)
+                    .padding(.top, theme.spacing.sm)
             }
 
             // Mandatory stacks at the new level are auto-added by the progression
@@ -186,4 +201,22 @@ struct LevelUpStackPickerSheet: View {
             saveError = error
         }
     }
+}
+
+// L16 is a tier gate (advanced) — exercises the "New tier unlocked" callout.
+#Preview("Level Up — tier unlock (Light)") {
+    LevelUpView(newLevel: 16, userProgress: UserProgress())
+        .withTheme(ThemeManager())
+}
+
+#Preview("Level Up — tier unlock (Dark)") {
+    LevelUpView(newLevel: 16, userProgress: UserProgress())
+        .withTheme(ThemeManager())
+        .preferredColorScheme(.dark)
+}
+
+// L17 is a rank-only level — no tier callout, just the new title.
+#Preview("Level Up — rank only (Light)") {
+    LevelUpView(newLevel: 17, userProgress: UserProgress())
+        .withTheme(ThemeManager())
 }
