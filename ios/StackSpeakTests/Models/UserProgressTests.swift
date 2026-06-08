@@ -28,18 +28,54 @@ struct AssessmentCooldownTests {
         #expect(!progress.canAttemptAssessment(for: wordId))
     }
 
-    @Test("Attempted today (wrong) — not eligible until tomorrow")
-    func wrongTodayBlocksToday() {
+    @Test("Wrong answer — blocked during the retry cooldown")
+    func wrongWithinCooldownBlocks() {
         let progress = UserProgress()
         let wordId = UUID()
+        let now = Date()
         progress.assessmentResults.append(AssessmentResult(
             wordId: wordId,
-            attemptedAt: Date(),
+            attemptedAt: now,
             isCorrect: false,
             selectedAnswer: "wrong",
             correctAnswer: "right"
         ))
-        #expect(!progress.canAttemptAssessment(for: wordId))
+        // 5 minutes later — still inside the 15-minute cooldown.
+        #expect(!progress.canAttemptAssessment(for: wordId, now: now.addingTimeInterval(5 * 60)))
+    }
+
+    @Test("Wrong answer — retryable same session once the cooldown elapses")
+    func wrongAfterCooldownIsEligibleSameDay() {
+        let progress = UserProgress()
+        let wordId = UUID()
+        let now = Date()
+        progress.assessmentResults.append(AssessmentResult(
+            wordId: wordId,
+            attemptedAt: now,
+            isCorrect: false,
+            selectedAnswer: "wrong",
+            correctAnswer: "right"
+        ))
+        // 16 minutes later — cooldown elapsed, same calendar day. No full-day lockout.
+        let later = now.addingTimeInterval(16 * 60)
+        #expect(progress.canAttemptAssessment(for: wordId, now: later))
+        #expect(Calendar.current.isDate(later, inSameDayAs: now))
+    }
+
+    @Test("Correct answer — still spaced to a different day (retention)")
+    func correctSpacedToNextDay() {
+        let progress = UserProgress()
+        let wordId = UUID()
+        let now = Date()
+        progress.assessmentResults.append(AssessmentResult(
+            wordId: wordId,
+            attemptedAt: now,
+            isCorrect: true,
+            selectedAnswer: "a",
+            correctAnswer: "a"
+        ))
+        // Even hours later (same day), the second correct answer is not yet allowed.
+        #expect(!progress.canAttemptAssessment(for: wordId, now: now.addingTimeInterval(6 * 3600)))
     }
 
     @Test("Last attempt was yesterday — eligible")
