@@ -23,6 +23,7 @@ struct AssessmentView: View {
     @State private var options: [String] = []
     @State private var pendingLevelUp: Int?
     @State private var feedbackTrigger: FeedbackResult?
+    @State private var errorMessage: String?
 
     private static let distractorCount = 3
     private static let autoAdvanceDelay: Duration = .milliseconds(900)
@@ -56,6 +57,11 @@ struct AssessmentView: View {
             case .incorrect: return .error
             case nil: return nil
             }
+        }
+        .alert("Error", isPresented: .constant(errorMessage != nil), presenting: errorMessage) { _ in
+            Button("OK") { errorMessage = nil }
+        } message: { msg in
+            Text(msg)
         }
     }
 
@@ -125,33 +131,39 @@ struct AssessmentView: View {
     private func submit() {
         guard let selected = selectedAnswer, let progress = userProgress, let services else { return }
 
-        hasSubmitted = true
-        feedbackTrigger = isCorrect ? .correct : .incorrect
-
+        // Persist first: the save is the gate for resolving the UI. If recording
+        // the result fails, the card stays editable and shows a retryable error —
+        // we never present a resolved/auto-advanced state for an attempt that
+        // wasn't durably recorded (assessment is the progression currency).
+        let correct = isCorrect
         let newLevel: Int?
         do {
             newLevel = try services.progress.recordAssessmentResult(
                 wordId: word.id,
-                isCorrect: isCorrect,
+                isCorrect: correct,
                 selectedAnswer: selected,
                 correctAnswer: word.shortDefinition,
                 userProgress: progress
             )
         } catch {
             logger.error("Failed to record assessment result: \(error.localizedDescription, privacy: .public)")
-            newLevel = nil
+            errorMessage = error.localizedDescription
+            return
         }
+
+        hasSubmitted = true
+        feedbackTrigger = correct ? .correct : .incorrect
         pendingLevelUp = newLevel
 
         if let newLevel {
             // Level-up takes precedence: hand control to the parent immediately so
             // the celebration sheet appears and isn't lost on auto-advance.
-            onComplete(isCorrect, newLevel)
+            onComplete(correct, newLevel)
             return
         }
 
-        // A3 — correct answers auto-advance after a brief read-through.
-        if isCorrect {
+        // Correct answers auto-advance after a brief read-through.
+        if correct {
             Task {
                 try? await Task.sleep(for: Self.autoAdvanceDelay)
                 onComplete(true, nil)

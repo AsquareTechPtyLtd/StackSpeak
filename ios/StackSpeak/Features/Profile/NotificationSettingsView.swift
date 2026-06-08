@@ -17,6 +17,7 @@ struct NotificationSettingsView: View {
     @State private var authStatus: UNAuthorizationStatus = .notDetermined
     @State private var primaryTime: Date = Self.defaultPrimaryTime
     @State private var secondTime: Date = Self.defaultSecondTime
+    @State private var errorMessage: String?
 
     private static var defaultPrimaryTime: Date {
         Calendar.current.date(bySettingHour: 9, minute: 0, second: 0, of: Date()) ?? Date()
@@ -91,6 +92,11 @@ struct NotificationSettingsView: View {
         .background(theme.colors.bg)
         .navigationTitle("settings.notifications.navTitle")
         .navigationBarTitleDisplayMode(.inline)
+        .alert("Error", isPresented: .constant(errorMessage != nil), presenting: errorMessage) { _ in
+            Button("OK") { errorMessage = nil }
+        } message: { msg in
+            Text(msg)
+        }
         .task { await loadInitialState() }
     }
 
@@ -125,6 +131,43 @@ struct NotificationSettingsView: View {
         secondTime  = progress.secondReminderTime ?? Self.defaultSecondTime
     }
 
+    // The desired OS schedule derived from the (possibly just-mutated) model.
+    // `rescheduleNotifications(nil, nil)` cancels everything, which is exactly
+    // what we want when notifications are off.
+    private func desiredPrimary(_ progress: UserProgress) -> Date? {
+        progress.notificationEnabled ? (progress.notificationTime ?? primaryTime) : nil
+    }
+
+    private func desiredSecondary(_ progress: UserProgress) -> Date? {
+        (progress.notificationEnabled && progress.secondReminderEnabled)
+            ? (progress.secondReminderTime ?? secondTime)
+            : nil
+    }
+
+    /// Schedules notifications to match the already-mutated model, then persists
+    /// only if scheduling succeeded. On failure the in-memory change is reverted
+    /// and the OS is reconciled back to the last-saved settings — so the database
+    /// is never saved into a state iOS doesn't actually reflect, and we never
+    /// leave a partially-scheduled set behind.
+    private func scheduleThenSave(progress: UserProgress, revert: () -> Void) async {
+        do {
+            try await NotificationService.shared.rescheduleNotifications(
+                primary: desiredPrimary(progress),
+                secondary: desiredSecondary(progress)
+            )
+            try modelContext.save()
+        } catch {
+            logger.error("Failed to schedule/save notifications: \(error.localizedDescription, privacy: .public)")
+            revert()
+            // Best-effort reconcile to the reverted (last-saved) settings.
+            try? await NotificationService.shared.rescheduleNotifications(
+                primary: desiredPrimary(progress),
+                secondary: desiredSecondary(progress)
+            )
+            errorMessage = error.localizedDescription
+        }
+    }
+
     private func toggleNotifications(_ enabled: Bool) {
         guard let progress = userProgress else { return }
 
@@ -134,82 +177,64 @@ struct NotificationSettingsView: View {
                     let granted = try await NotificationService.shared.requestAuthorization()
                     authStatus = await NotificationService.shared.checkAuthorizationStatus()
                     guard granted else { return }
-
-                    progress.notificationEnabled = true
-                    progress.notificationTime = primaryTime
-                    do {
-                        try modelContext.save()
-                    } catch {
-                        logger.error("Failed to save notification enabled: \(error.localizedDescription, privacy: .public)")
-                    }
-                    try await NotificationService.shared.rescheduleNotifications(
-                        primary: primaryTime,
-                        secondary: progress.secondReminderEnabled ? secondTime : nil
-                    )
                 } catch {
                     authStatus = await NotificationService.shared.checkAuthorizationStatus()
+                    return
+                }
+                progress.notificationEnabled = true
+                progress.notificationTime = primaryTime
+                await scheduleThenSave(progress: progress) {
+                    progress.notificationEnabled = false
                 }
             }
         } else {
+            let wasSecondEnabled = progress.secondReminderEnabled
             progress.notificationEnabled = false
             progress.secondReminderEnabled = false
-            do {
-                try modelContext.save()
-            } catch {
-                logger.error("Failed to save notification disabled: \(error.localizedDescription, privacy: .public)")
+            Task {
+                await scheduleThenSave(progress: progress) {
+                    progress.notificationEnabled = true
+                    progress.secondReminderEnabled = wasSecondEnabled
+                }
             }
-            NotificationService.shared.cancelAllNotifications()
         }
     }
 
     private func savePrimaryTime(_ time: Date) {
         guard let progress = userProgress else { return }
+        let oldTime = progress.notificationTime
         progress.notificationTime = time
-        do {
-            try modelContext.save()
-        } catch {
-            logger.error("Failed to save primary notification time: \(error.localizedDescription, privacy: .public)")
-        }
         Task {
-            try? await NotificationService.shared.rescheduleNotifications(
-                primary: time,
-                secondary: progress.secondReminderEnabled ? secondTime : nil
-            )
+            await scheduleThenSave(progress: progress) {
+                progress.notificationTime = oldTime
+            }
         }
     }
 
     private func toggleSecondReminder(_ enabled: Bool) {
         guard let progress = userProgress else { return }
+        let wasEnabled = progress.secondReminderEnabled
+        let oldTime = progress.secondReminderTime
         progress.secondReminderEnabled = enabled
         if enabled {
             progress.secondReminderTime = secondTime
         }
-        do {
-            try modelContext.save()
-        } catch {
-            logger.error("Failed to save second reminder toggle: \(error.localizedDescription, privacy: .public)")
-        }
         Task {
-            try? await NotificationService.shared.rescheduleNotifications(
-                primary: progress.notificationEnabled ? primaryTime : nil,
-                secondary: enabled ? secondTime : nil
-            )
+            await scheduleThenSave(progress: progress) {
+                progress.secondReminderEnabled = wasEnabled
+                progress.secondReminderTime = oldTime
+            }
         }
     }
 
     private func saveSecondTime(_ time: Date) {
         guard let progress = userProgress, progress.secondReminderEnabled else { return }
+        let oldTime = progress.secondReminderTime
         progress.secondReminderTime = time
-        do {
-            try modelContext.save()
-        } catch {
-            logger.error("Failed to save second notification time: \(error.localizedDescription, privacy: .public)")
-        }
         Task {
-            try? await NotificationService.shared.rescheduleNotifications(
-                primary: progress.notificationEnabled ? primaryTime : nil,
-                secondary: time
-            )
+            await scheduleThenSave(progress: progress) {
+                progress.secondReminderTime = oldTime
+            }
         }
     }
 

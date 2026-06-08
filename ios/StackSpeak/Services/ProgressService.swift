@@ -10,6 +10,14 @@ final class ProgressService: ProgressRepository {
     }
 
     func markWordPracticed(wordId: UUID, sentence: String, inputMethod: InputMethod, markAsMastered: Bool, userProgress: UserProgress) throws {
+        applyWordPracticed(wordId: wordId, sentence: sentence, inputMethod: inputMethod, markAsMastered: markAsMastered, userProgress: userProgress)
+        try modelContext.save()
+    }
+
+    /// In-memory mutations for practicing a word. Does NOT save — callers that
+    /// bundle this with other writes (see `recordWordCompletion`) save once at
+    /// the end so the whole operation is atomic.
+    private func applyWordPracticed(wordId: UUID, sentence: String, inputMethod: InputMethod, markAsMastered: Bool, userProgress: UserProgress) {
         var practiced = userProgress.wordsPracticedIds
         practiced.insert(wordId)
         userProgress.wordsPracticedIds = practiced
@@ -40,8 +48,32 @@ final class ProgressService: ProgressRepository {
             mastered.insert(wordId)
             userProgress.masteredWordIds = mastered
         }
+    }
+
+    /// Atomically records a completed word for the day: practice state, the
+    /// daily-set completion flag, and — when this finishes the day — the streak
+    /// update, all committed in a single `save()`. This prevents the day from
+    /// being persisted as "complete" while streak credit is silently lost if a
+    /// later step fails. Returns `true` when this completion finished the day.
+    @discardableResult
+    func recordWordCompletion(
+        wordId: UUID,
+        sentence: String,
+        inputMethod: InputMethod,
+        markAsMastered: Bool,
+        dailySet: DailySet,
+        userProgress: UserProgress
+    ) throws -> Bool {
+        applyWordPracticed(wordId: wordId, sentence: sentence, inputMethod: inputMethod, markAsMastered: markAsMastered, userProgress: userProgress)
+        dailySet.markWordCompleted(wordId)
+
+        let dayComplete = dailySet.isComplete
+        if dayComplete {
+            applyDailySetCompletion(dailySet, userProgress: userProgress)
+        }
 
         try modelContext.save()
+        return dayComplete
     }
 
     func markWordMastered(_ wordId: UUID, userProgress: UserProgress) throws {
@@ -74,7 +106,15 @@ final class ProgressService: ProgressRepository {
 
     func completeDailySet(_ dailySet: DailySet, userProgress: UserProgress) throws {
         guard dailySet.isComplete else { return }
+        applyDailySetCompletion(dailySet, userProgress: userProgress)
+        try modelContext.save()
+    }
 
+    /// In-memory streak update for a completed day. Does NOT save and does NOT
+    /// re-check `isComplete` — callers guarantee the set is complete before
+    /// calling. Kept separate so `recordWordCompletion` can bundle it into a
+    /// single atomic save.
+    private func applyDailySetCompletion(_ dailySet: DailySet, userProgress: UserProgress) {
         // Use user's current timezone calendar for all date calculations
         // to properly handle DST transitions and timezone changes
         let calendar = Calendar.current
@@ -105,8 +145,6 @@ final class ProgressService: ProgressRepository {
 
         userProgress.lastCompletedDate = now
         userProgress.longestStreak = max(userProgress.longestStreak, userProgress.currentStreak)
-
-        try modelContext.save()
     }
 
     /// Records an assessment result and updates the denormalized two-correct cache.
@@ -167,5 +205,3 @@ final class ProgressService: ProgressRepository {
         }
     }
 }
-
-// StreakInfo removed - calculateStreak was unused; displayedCurrentStreak on UserProgress is the live source

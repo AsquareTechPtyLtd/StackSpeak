@@ -67,19 +67,23 @@ final class BookDetailViewModel {
         }
 
         // Fetch or create per-book progress.
-        let progress = fetchOrCreateProgress(bookId: bookId, modelContext: modelContext)
-        progress.lastOpenedAt = now
-        bookProgress = progress
+        do {
+            let progress = try fetchOrCreateProgress(bookId: bookId, modelContext: modelContext)
+            progress.lastOpenedAt = now
+            bookProgress = progress
 
-        // Streak toast: emit only when current streak is ≥ 2 AND hasn't fired
-        // already in this VM's lifetime (suppresses re-emission on re-open).
-        if progress.currentStreakDays >= 2 && !hasEmittedStreakToast {
-            pendingStreakToastDays = progress.currentStreakDays
-            hasEmittedStreakToast = true
+            // Streak toast: emit only when current streak is ≥ 2 AND hasn't fired
+            // already in this VM's lifetime (suppresses re-emission on re-open).
+            if progress.currentStreakDays >= 2 && !hasEmittedStreakToast {
+                pendingStreakToastDays = progress.currentStreakDays
+                hasEmittedStreakToast = true
+            }
+
+            try modelContext.save()
+            loadState = .loaded
+        } catch {
+            loadState = .failed(error.localizedDescription)
         }
-
-        try? modelContext.save()
-        loadState = .loaded
     }
 
     /// Consumes (and clears) the pending streak toast value. Caller animates and
@@ -94,14 +98,14 @@ final class BookDetailViewModel {
     /// rows re-render with new completion ratios.
     func refreshProgress(modelContext: ModelContext) {
         guard let manifest else { return }
-        bookProgress = fetchOrCreateProgress(bookId: manifest.id, modelContext: modelContext)
+        bookProgress = try? fetchOrCreateProgress(bookId: manifest.id, modelContext: modelContext)
     }
 
-    private func fetchOrCreateProgress(bookId: String, modelContext: ModelContext) -> BookProgress {
+    private func fetchOrCreateProgress(bookId: String, modelContext: ModelContext) throws -> BookProgress {
         let descriptor = FetchDescriptor<BookProgress>(
             predicate: #Predicate { $0.bookId == bookId }
         )
-        if let existing = try? modelContext.fetch(descriptor).first {
+        if let existing = try modelContext.fetch(descriptor).first {
             return existing
         }
         let new = BookProgress(bookId: bookId)

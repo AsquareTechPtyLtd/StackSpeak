@@ -1,60 +1,63 @@
 import SwiftUI
 import SwiftData
 import OSLog
+import UserNotifications
 
 private let logger = Logger(category: "App")
 
-@main
-struct StackSpeakApp: App {
-    let modelContainer: ModelContainer?
-    let themeManager = ThemeManager()
-    let services: Services?
-    let initError: Error?
+/// Owns the SwiftData container + services and the one-time launch initialization.
+/// Held as `@State` by the app so a store failure isn't terminal: the user can
+/// trigger a confirmed local reset (`resetAndRetry`) that wipes the store and
+/// rebuilds, rather than being stranded on a dead-end error screen.
+@MainActor
+@Observable
+final class AppBootstrap {
+    private(set) var container: ModelContainer?
+    private(set) var services: Services?
+    private(set) var initError: Error?
+
+    private static let schema = Schema([
+        Word.self,
+        DailySet.self,
+        UserProgress.self,
+        PracticedSentence.self,
+        ReviewState.self,
+        AssessmentResult.self,
+        WordReport.self,
+        BookProgress.self,
+        BookmarkedCard.self
+    ])
 
     init() {
-        var container: ModelContainer?
-        var error: Error?
+        build()
+    }
 
-        let schema = Schema([
-            Word.self,
-            DailySet.self,
-            UserProgress.self,
-            PracticedSentence.self,
-            ReviewState.self,
-            AssessmentResult.self,
-            WordReport.self,
-            BookProgress.self,
-            BookmarkedCard.self
-        ])
-
+    private func build() {
         do {
-            container = try Self.makeContainer(schema: schema)
-        } catch let firstError {
-            // Schema migration failed (e.g. after an app update added new model types).
-            // Wipe the store and retry so the app stays usable. Word data reloads from
-            // the bundle; user progress is lost, but a crash loop is worse.
-            logger.error("ModelContainer init failed, wiping store and retrying: \(firstError.localizedDescription, privacy: .public)")
-            Self.deleteStoreFiles()
-            do {
-                container = try Self.makeContainer(schema: schema)
-            } catch let secondError {
-                logger.error("ModelContainer retry failed: \(secondError.localizedDescription, privacy: .public)")
-                error = secondError
-            }
+            let container = try Self.makeContainer(schema: Self.schema)
+            self.container = container
+            self.services = Services(modelContext: container.mainContext)
+            self.initError = nil
+        } catch {
+            logger.error("ModelContainer init failed: \(error.localizedDescription, privacy: .public)")
+            self.container = nil
+            self.services = nil
+            self.initError = error
         }
+    }
 
-        self.modelContainer = container
-        self.initError = error
-        self.services = container.map { Services(modelContext: $0.mainContext) }
-
-        TypographyTokens.assertCustomFontsLoaded()
+    /// User-confirmed recovery for an unrecoverable store (e.g. an incompatible
+    /// schema after an app update). Wipes the local store and rebuilds. Word data
+    /// reloads from the bundle on next init; user progress is lost — but this is a
+    /// deliberate, confirmed action, not the silent wipe-and-retry it replaces.
+    func resetAndRetry() {
+        Self.deleteStoreFiles()
+        build()
     }
 
     private static func makeContainer(schema: Schema) throws -> ModelContainer {
         // Ensure the Application Support directory exists before SwiftData tries to use it
-        if let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first,
-           let bundleId = Bundle.main.bundleIdentifier {
-            let swiftDataDir = appSupport.appendingPathComponent(bundleId)
+        if let swiftDataDir = storeDirectory() {
             do {
                 try FileManager.default.createDirectory(at: swiftDataDir, withIntermediateDirectories: true)
                 logger.info("Ensured SwiftData directory exists at \(swiftDataDir.path, privacy: .public)")
@@ -81,53 +84,32 @@ struct StackSpeakApp: App {
         return container
     }
 
-    private static func deleteStoreFiles() {
-        // Delete the entire SwiftData directory for this app to ensure a clean slate.
-        // SwiftData stores files in Application Support/{bundle-id}/
-        guard let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first else { return }
-
-        // SwiftData uses the bundle identifier as a subdirectory
-        if let bundleId = Bundle.main.bundleIdentifier {
-            let swiftDataDir = appSupport.appendingPathComponent(bundleId)
-            do {
-                try FileManager.default.removeItem(at: swiftDataDir)
-                logger.info("Deleted SwiftData directory at \(swiftDataDir.path, privacy: .public)")
-            } catch {
-                logger.error("Failed to delete SwiftData directory: \(error.localizedDescription, privacy: .public)")
-            }
-        } else {
-            // Fallback: try to delete the default.store files directly
-            let storeBase = appSupport.appendingPathComponent("default.store")
-            for suffix in ["", "-wal", "-shm"] {
-                let url = URL(fileURLWithPath: storeBase.path + suffix)
-                try? FileManager.default.removeItem(at: url)
-            }
-        }
+    /// The directory SwiftData stores its files in (Application Support/<bundle id>).
+    private static func storeDirectory() -> URL? {
+        guard let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first,
+              let bundleId = Bundle.main.bundleIdentifier else { return nil }
+        return appSupport.appendingPathComponent(bundleId)
     }
 
-    var body: some Scene {
-        WindowGroup {
-            if let error = initError {
-                ErrorView(error: error)
-                    .withTheme(themeManager)
-            } else if let container = modelContainer, let services = services {
-                ContentView()
-                    .modelContainer(container)
-                    .withTheme(themeManager)
-                    .environment(\.services, services)
-                    .task {
-                        await initializeApp()
-                    }
-            } else {
-                ProgressView()
-                    .withTheme(themeManager)
+    /// Removes the SwiftData store files so the next container build starts clean.
+    private static func deleteStoreFiles() {
+        guard let dir = storeDirectory() else { return }
+        // SwiftData's default store is `default.store` plus its WAL/SHM sidecars.
+        for name in ["default.store", "default.store-wal", "default.store-shm"] {
+            let url = dir.appendingPathComponent(name)
+            do {
+                if FileManager.default.fileExists(atPath: url.path) {
+                    try FileManager.default.removeItem(at: url)
+                }
+            } catch {
+                logger.error("Failed to delete store file \(name, privacy: .public): \(error.localizedDescription, privacy: .public)")
             }
         }
     }
 
     @MainActor
-    private func initializeApp() async {
-        guard let container = modelContainer else { return }
+    func initialize(themeManager: ThemeManager) async {
+        guard let container = container else { return }
         let context = container.mainContext
 
         // Check if StackRegistry loaded successfully
@@ -136,28 +118,42 @@ struct StackSpeakApp: App {
             return
         }
 
-        let descriptor = FetchDescriptor<UserProgress>()
-        let progress = try? context.fetch(descriptor).first
+        do {
+            let descriptor = FetchDescriptor<UserProgress>()
+            if let progress = try context.fetch(descriptor).first {
+                themeManager.preference = progress.themePreference
 
-        if let progress {
-            themeManager.preference = progress.themePreference
+                // Rebuild the progress caches on launch in case they were lost or corrupted
+                // (e.g. the credited-for-level cache was added after some results existed).
+                if progress.wordsCreditedForLevelIds.isEmpty && !progress.assessmentResults.isEmpty {
+                    progress.rebuildProgressCaches()
+                    try context.save()
+                }
 
-            // Rebuild the progress caches on launch in case they were lost or corrupted
-            // (e.g. the credited-for-level cache was added after some results existed).
-            if progress.wordsCreditedForLevelIds.isEmpty && !progress.assessmentResults.isEmpty {
-                progress.rebuildProgressCaches()
-                do { try context.save() } catch { logger.error("Cache rebuild save failed: \(error.localizedDescription, privacy: .public)") }
-            }
-        } else {
-            // Race-safe singleton check: only insert if count is truly zero
-            let count = (try? context.fetchCount(descriptor)) ?? 0
-            if count == 0 {
+                // Heal stack selection for non-Pro users: a lapsed Pro who had
+                // deselected mandatory stacks would otherwise get no daily coverage
+                // from them. `effectiveSelectedStacks` also guards this at read time;
+                // persisting here keeps the stored selection honest too.
+                if !progress.isProActive {
+                    let mandatory = Set(WordStack.mandatoryStacks(for: progress.level).map(\.rawValue))
+                    if !mandatory.isSubset(of: progress.selectedStacks) {
+                        progress.selectedStacks = progress.selectedStacks.union(mandatory)
+                        try context.save()
+                    }
+                }
+
+                // Reconcile pending notifications with the stored settings so the OS
+                // schedule never drifts from the database (e.g. after an in-app
+                // schedule failed and left a partial/empty pending set).
+                await reconcileNotifications(for: progress)
+            } else if try context.fetchCount(descriptor) == 0 {
                 let newProgress = UserProgress()
                 context.insert(newProgress)
-                do { try context.save() } catch { logger.error("UserProgress init save failed: \(error.localizedDescription, privacy: .public)") }
-            } else {
-                logger.warning("UserProgress creation skipped - already exists (race avoided)")
+                try context.save()
             }
+        } catch {
+            logger.error("UserProgress load failed: \(error.localizedDescription, privacy: .public)")
+            return
         }
 
         if let services = services {
@@ -171,11 +167,64 @@ struct StackSpeakApp: App {
             }
         }
     }
+
+    /// Re-schedules notifications from the stored settings when enabled and
+    /// authorized, so the OS pending set matches what the DB claims.
+    private func reconcileNotifications(for progress: UserProgress) async {
+        guard progress.notificationEnabled else { return }
+        let status = await NotificationService.shared.checkAuthorizationStatus()
+        guard status == .authorized, let primary = progress.notificationTime else { return }
+        do {
+            try await NotificationService.shared.rescheduleNotifications(
+                primary: primary,
+                secondary: progress.secondReminderEnabled ? progress.secondReminderTime : nil
+            )
+        } catch {
+            logger.error("Notification reconciliation failed: \(error.localizedDescription, privacy: .public)")
+        }
+    }
+}
+
+@main
+struct StackSpeakApp: App {
+    @State private var bootstrap = AppBootstrap()
+    let themeManager = ThemeManager()
+
+    init() {
+        TypographyTokens.assertCustomFontsLoaded()
+    }
+
+    var body: some Scene {
+        WindowGroup {
+            if let error = bootstrap.initError {
+                ErrorView(error: error) {
+                    bootstrap.resetAndRetry()
+                }
+                .withTheme(themeManager)
+            } else if let container = bootstrap.container, let services = bootstrap.services {
+                ContentView()
+                    .modelContainer(container)
+                    .withTheme(themeManager)
+                    .environment(\.services, services)
+                    .task {
+                        await bootstrap.initialize(themeManager: themeManager)
+                    }
+            } else {
+                ProgressView()
+                    .withTheme(themeManager)
+            }
+        }
+    }
 }
 
 struct ErrorView: View {
     @Environment(\.theme) private var theme
     let error: Error
+    /// User-confirmed local-reset recovery. When provided, the screen offers a
+    /// "Reset Local Data" action as a last resort for an unrecoverable store.
+    var onReset: (() -> Void)?
+
+    @State private var showResetConfirm = false
 
     var body: some View {
         ZStack {
@@ -190,7 +239,7 @@ struct ErrorView: View {
                     .font(TypographyTokens.title1)
                     .foregroundColor(theme.colors.ink)
 
-                Text("StackSpeak encountered an error initializing the database. Please restart the app or reinstall if the problem persists.")
+                Text("StackSpeak encountered an error initializing the database. Please restart the app to try again.")
                     .font(TypographyTokens.body)
                     .foregroundColor(theme.colors.inkMuted)
                     .multilineTextAlignment(.center)
@@ -204,12 +253,32 @@ struct ErrorView: View {
                     .clipShape(.rect(cornerRadius: RadiusTokens.inline))
                     .padding(.horizontal, 32)
 
-                Text("Force-quit this app and relaunch to try again.")
-                    .font(TypographyTokens.callout)
-                    .foregroundColor(theme.colors.inkMuted)
-                    .multilineTextAlignment(.center)
-                    .padding(.horizontal, 32)
+                if onReset != nil {
+                    Text("If restarting doesn't help, you can reset local data. This erases your on-device progress and reloads the word catalog.")
+                        .font(TypographyTokens.callout)
+                        .foregroundColor(theme.colors.inkMuted)
+                        .multilineTextAlignment(.center)
+                        .padding(.horizontal, 32)
+
+                    Button(role: .destructive) {
+                        showResetConfirm = true
+                    } label: {
+                        Text("Reset Local Data")
+                            .font(TypographyTokens.body.weight(.semibold))
+                            .foregroundColor(theme.colors.bad)
+                    }
+                }
             }
+        }
+        .confirmationDialog(
+            "Reset local data?",
+            isPresented: $showResetConfirm,
+            titleVisibility: .visible
+        ) {
+            Button("Reset Local Data", role: .destructive) { onReset?() }
+            Button("Cancel", role: .cancel) { }
+        } message: {
+            Text("This permanently erases your on-device progress and starts fresh. This can't be undone.")
         }
     }
 }
@@ -283,11 +352,9 @@ struct MainTabView: View {
             .filter { progress.canAttemptAssessment(for: $0) }.count
     }
 
-    /// Standard iOS tab bar on both iPhone and iPad. The previous
-    /// .sidebarAdaptable style produced a 720pt island on iPad because the
-    /// destination views aren't wired through a NavigationSplitView. Once
-    /// the iPad split-view IA is designed (Phase 2 council), this can move
-    /// back to .sidebarAdaptable plus the matching split-view scaffolding.
+    /// Standard iOS tab bar on both iPhone and iPad. Uses .tabBarOnly style
+    /// because the destination views aren't wired through a NavigationSplitView.
+    /// Future: .sidebarAdaptable + split-view scaffolding for iPad.
     var body: some View {
         TabView {
             Tab("home.tab", systemImage: "house.fill") {

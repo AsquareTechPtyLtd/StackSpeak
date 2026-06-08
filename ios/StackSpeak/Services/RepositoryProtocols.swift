@@ -18,6 +18,8 @@ protocol WordRepository {
 @MainActor
 protocol ProgressRepository {
     func markWordPracticed(wordId: UUID, sentence: String, inputMethod: InputMethod, markAsMastered: Bool, userProgress: UserProgress) throws
+    @discardableResult
+    func recordWordCompletion(wordId: UUID, sentence: String, inputMethod: InputMethod, markAsMastered: Bool, dailySet: DailySet, userProgress: UserProgress) throws -> Bool
     func markWordMastered(_ wordId: UUID, userProgress: UserProgress) throws
     func unmarkWordMastered(_ wordId: UUID, userProgress: UserProgress) throws
     func toggleBookmark(_ wordId: UUID, userProgress: UserProgress) throws

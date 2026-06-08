@@ -103,28 +103,31 @@ final class CardFlowViewModel {
             return .chapterCompleted
         }
 
-        // Refresh the global cap counter against the current local day before checking.
-        userProgress.refreshBookCardsReadIfNeeded(now: now, calendar: calendar)
-
-        // Cap gate — only blocks when the user has opted into a limit and has hit it.
-        // The override flag punches through for one read.
-        if !override, let limit = userProgress.dailyBookCardLimit, userProgress.bookCardsReadToday >= limit {
-            return .capReached
-        }
-
-        // Streak: counts only on the first card read in a given local day.
-        let today = Self.dayString(from: now, calendar: calendar)
-        let yesterday = Self.dayString(
-            from: calendar.date(byAdding: .day, value: -1, to: now) ?? now,
-            calendar: calendar
-        )
-        if bookProgress.lastReadingDayString != today {
-            bookProgress.recordReadDay(today: today, yesterday: yesterday)
-        }
-
-        // Counters + completion (idempotent on the card ID).
+        // Re-reading an already-completed card must not touch the cap, streak, or
+        // counters — it isn't a new completion. Determine this BEFORE any of those
+        // gates so a revisit can never be cap-blocked or spuriously advance the
+        // streak; it only updates the resume position and navigates.
         let alreadyCompleted = bookProgress.completedCardIds.contains(card.id)
         if !alreadyCompleted {
+            // Refresh the global cap counter against the current local day before checking.
+            userProgress.refreshBookCardsReadIfNeeded(now: now, calendar: calendar)
+
+            // Cap gate — only blocks when the user has opted into a limit and has hit it.
+            // The override flag punches through for one read.
+            if !override, let limit = userProgress.dailyBookCardLimit, userProgress.bookCardsReadToday >= limit {
+                return .capReached
+            }
+
+            // Streak: counts only on the first card read in a given local day.
+            let today = Self.dayString(from: now, calendar: calendar)
+            let yesterday = Self.dayString(
+                from: calendar.date(byAdding: .day, value: -1, to: now) ?? now,
+                calendar: calendar
+            )
+            if bookProgress.lastReadingDayString != today {
+                bookProgress.recordReadDay(today: today, yesterday: yesterday)
+            }
+
             bookProgress.markCardCompleted(card.id)
             userProgress.recordBookCardRead(now: now, calendar: calendar)
         }

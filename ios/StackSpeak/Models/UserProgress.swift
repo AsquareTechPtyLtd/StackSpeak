@@ -80,6 +80,18 @@ final class UserProgress {
         set { selectedStacksStorage = newValue.sorted().joined(separator: ",") }
     }
 
+    /// The stacks that actually feed the daily set, accounting for entitlement.
+    /// Pro users keep exactly their saved selection; everyone else (free, or a
+    /// lapsed Pro whose subscription expired) always gets the mandatory set for
+    /// their level unioned in — so a former Pro who deselected mandatory stacks
+    /// still receives daily coverage. Use this, not raw `selectedStacks`, for
+    /// daily-word selection.
+    var effectiveSelectedStacks: Set<String> {
+        guard !isProActive else { return selectedStacks }
+        let mandatory = Set(WordStack.mandatoryStacks(for: level).map(\.rawValue))
+        return selectedStacks.union(mandatory)
+    }
+
     private static func uuidsFromCSV(_ csv: String) -> Set<UUID> {
         guard !csv.isEmpty else { return [] }
         return Set(csv.components(separatedBy: ",").compactMap { UUID(uuidString: $0) })

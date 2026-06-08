@@ -82,29 +82,25 @@ final class HomeViewModel {
         services: Services,
         userProgress: UserProgress
     ) {
+        guard let set = dailySet else { return }
+
+        // Practice state, daily-set completion, and the streak update are committed
+        // as one atomic save inside `recordWordCompletion`. If it throws, nothing is
+        // persisted — the day cannot end up "complete" without its streak credit.
         do {
-            try services.progress.markWordPracticed(
+            let dayComplete = try services.progress.recordWordCompletion(
                 wordId: wordId,
                 sentence: explanation,
                 inputMethod: inputMethod,
                 markAsMastered: markAsMastered,
+                dailySet: set,
                 userProgress: userProgress
             )
+            if dayComplete {
+                justCompletedDay = true
+            }
         } catch {
             errorMessage = error.localizedDescription
-            return
-        }
-
-        guard let set = dailySet else { return }
-        set.markWordCompleted(wordId)
-
-        if set.isComplete {
-            do {
-                try services.progress.completeDailySet(set, userProgress: userProgress)
-                justCompletedDay = true
-            } catch {
-                errorMessage = error.localizedDescription
-            }
         }
     }
 

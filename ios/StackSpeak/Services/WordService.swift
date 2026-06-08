@@ -62,12 +62,21 @@ final class WordService: WordRepository {
         // during save" assertion when a single save resolves more than a few
         // hundred newly-inserted models at once. Saving every `batchSize` inserts
         // forces SwiftData to commit temp-IDs before the next batch begins.
-        let existingIds = try fetchExistingWordIdSet()
+        // Seed `seenIds` with what's already in the store, then add each ID as we
+        // accept it this pass. This skips not just words already persisted but also
+        // duplicate IDs *within the incoming bundle* — two entries resolving to the
+        // same UUID would otherwise both insert and trip the `@Attribute(.unique)`
+        // constraint at save time, failing a whole chunk (and partially committing
+        // earlier ones) over a single content-authoring mistake.
+        var seenIds = try fetchExistingWordIdSet()
         let batchSize = 200
         var insertedInBatch = 0
         for (dto, stack) in allWords {
             let wordId = UUID(uuidString: dto.id) ?? deterministicUUID(from: dto.id)
-            guard !existingIds.contains(wordId) else { continue }
+            guard seenIds.insert(wordId).inserted else {
+                logger.warning("Skipping duplicate word id \(dto.id, privacy: .public) during bundle load")
+                continue
+            }
             let word = Word(from: dto, stack: stack)
             modelContext.insert(word)
             insertedInBatch += 1
@@ -218,6 +227,9 @@ final class WordService: WordRepository {
             .qualities
         ]
 
+        // Resolve the active stack set once (entitlement-aware) rather than per word.
+        let activeStacks = userProgress.effectiveSelectedStacks
+
         var selectedByCategory: [WordCategory: Word] = [:]
         var backfillPool: [Word] = []
         var cursor = startIndex % shuffled.count
@@ -231,7 +243,7 @@ final class WordService: WordRepository {
             cursor = (cursor + 1) % shuffled.count
             seen += 1
 
-            guard qualifies(word: word, for: userProgress) else { continue }
+            guard qualifies(word: word, for: userProgress, activeStacks: activeStacks) else { continue }
 
             let category = word.category
             if selectedByCategory[category] == nil {
@@ -264,10 +276,10 @@ final class WordService: WordRepository {
         return (Array(result.prefix(count)), cursor)
     }
 
-    private func qualifies(word: Word, for userProgress: UserProgress) -> Bool {
+    private func qualifies(word: Word, for userProgress: UserProgress, activeStacks: Set<String>) -> Bool {
         !userProgress.masteredWordIds.contains(word.id) &&
         word.unlockLevel <= userProgress.level &&
-        userProgress.selectedStacks.contains(word.stack)
+        activeStacks.contains(word.stack)
     }
 }
 
