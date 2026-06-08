@@ -6,11 +6,16 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const os = require('node:os');
+const path = require('node:path');
 const {
   parseMarkdown,
   parseInline,
   parseChapterFile,
   parseMetadataLines,
+  buildAllBooks,
+  hasMarkdownSource,
   validateCategories,
   validateFreshnessFields,
   BOOK_CATEGORIES,
@@ -481,4 +486,100 @@ test('validateFreshnessFields — inspiredBy.year non-number throws', () => {
     ),
     /inspiredBy.year/
   );
+});
+
+// ─────────────────────────────────────────────────────────────────
+// buildAllBooks — resilience (Option A): never abort or drop books that
+// lack a buildable .md source; pass their existing shared/ output through.
+// ─────────────────────────────────────────────────────────────────
+
+function makeFixture() {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'bb-fixture-'));
+  const content = path.join(root, 'content');
+  const shared = path.join(root, 'shared');
+
+  // 1) A normal book with a real .md source (gets built).
+  const goodCh = path.join(content, 'books', 'good', 'chapters');
+  fs.mkdirSync(goodCh, { recursive: true });
+  fs.writeFileSync(path.join(content, 'books', 'good', 'book.json'), JSON.stringify({
+    id: 'good', title: 'Good Book', summary: 'a', categories: ['architecture'],
+    coverIcon: 'book', tags: ['x'], freeForAll: true, manifestVersion: 1
+  }));
+  fs.writeFileSync(path.join(goodCh, '01-intro.md'),
+    '@chapter\nid: good-ch01\norder: 1\ntitle: Intro\n\n@card\nid: good-ch01-c1\norder: 1\ntitle: T\nteaser: ts\n\n@explanation\n\nHello world.\n');
+
+  // 2) A legacy book: content dir holds a .json shard (no .md) — must pass through.
+  const legacyCh = path.join(content, 'books', 'legacy', 'chapters');
+  fs.mkdirSync(legacyCh, { recursive: true });
+  fs.writeFileSync(path.join(content, 'books', 'legacy', 'book.json'), JSON.stringify({
+    id: 'legacy', title: 'Legacy', summary: 's', categories: ['architecture'],
+    volatileChapters: [{ chapterId: 'legacy-ch01', asOfDate: '2026-05', refreshCadence: '6mo' }],
+    asOfDate: '2026-05', refreshCadence: '12mo', manifestVersion: 1
+  }));
+  fs.writeFileSync(path.join(legacyCh, 'legacy-ch01.json'), JSON.stringify({ chapterId: 'legacy-ch01', shardIndex: 1, cards: [] }));
+
+  // 3) A shared-only book: exists in shared/ but has no content/ dir at all.
+  for (const id of ['legacy', 'sharedonly']) {
+    const sdir = path.join(shared, 'books', id, 'chapters');
+    fs.mkdirSync(sdir, { recursive: true });
+    fs.writeFileSync(path.join(shared, 'books', id, 'manifest.json'), JSON.stringify({
+      id, version: 1, title: id === 'legacy' ? 'Legacy' : 'Shared Only', author: null,
+      summary: 's', categories: ['architecture'],
+      chapters: [{ id: id + '-ch01', order: 1, title: 'C1', summary: '', icon: 'book', cardCount: 2, cardIds: ['a', 'b'], shards: ['chapters/' + id + '-ch01.json'] }]
+    }));
+    fs.writeFileSync(path.join(sdir, id + '-ch01.json'), JSON.stringify({ chapterId: id + '-ch01', shardIndex: 1, cards: [] }));
+  }
+
+  // Prior catalog with exact metadata for the pass-through books.
+  fs.writeFileSync(path.join(shared, 'books-catalog.json'), JSON.stringify({
+    version: 1, updatedAt: '2026-01-01T00:00:00.000Z', books: [
+      { id: 'legacy', title: 'Legacy', author: null, summary: 's', coverIcon: 'book', accentHex: '#111', tags: ['t'], categories: ['architecture'], chapterCount: 1, cardCount: 2, manifestVersion: 1, manifestPath: 'books/legacy/manifest.json', freeForAll: false, sizeBytes: 123 },
+      { id: 'sharedonly', title: 'Shared Only', author: null, summary: 's', coverIcon: 'book', accentHex: '#222', tags: ['t2'], categories: ['architecture'], chapterCount: 1, cardCount: 2, manifestVersion: 1, manifestPath: 'books/sharedonly/manifest.json', freeForAll: false, sizeBytes: 456 }
+    ]
+  }));
+
+  return { root, content, shared };
+}
+
+test('hasMarkdownSource — true only when chapters/ has a .md file', () => {
+  const { content } = makeFixture();
+  assert.equal(hasMarkdownSource(path.join(content, 'books', 'good'), fs, path), true);
+  assert.equal(hasMarkdownSource(path.join(content, 'books', 'legacy'), fs, path), false);
+});
+
+test('buildAllBooks — builds .md books, passes through legacy + shared-only, never aborts', () => {
+  const { content, shared } = makeFixture();
+
+  // Must not throw even though `legacy` has volatileChapters but no .md source.
+  assert.doesNotThrow(() => buildAllBooks(content, shared));
+
+  const catalog = JSON.parse(fs.readFileSync(path.join(shared, 'books-catalog.json'), 'utf8'));
+  const ids = catalog.books.map(b => b.id).sort();
+  assert.deepEqual(ids, ['good', 'legacy', 'sharedonly'], 'all three books present — none dropped');
+
+  // Built book reflects freshly parsed content.
+  const good = catalog.books.find(b => b.id === 'good');
+  assert.equal(good.chapterCount, 1);
+  assert.equal(good.cardCount, 1);
+
+  // Pass-through books keep their exact prior catalog metadata.
+  const legacy = catalog.books.find(b => b.id === 'legacy');
+  assert.equal(legacy.accentHex, '#111');
+  assert.equal(legacy.sizeBytes, 123);
+  const sharedonly = catalog.books.find(b => b.id === 'sharedonly');
+  assert.equal(sharedonly.accentHex, '#222');
+  assert.equal(sharedonly.sizeBytes, 456);
+});
+
+test('passThroughSummary fallback — synthesizes from manifest when no prior catalog entry', () => {
+  const { content, shared } = makeFixture();
+  // Remove the prior catalog so pass-through must synthesize from the manifest.
+  fs.rmSync(path.join(shared, 'books-catalog.json'));
+  assert.doesNotThrow(() => buildAllBooks(content, shared));
+  const catalog = JSON.parse(fs.readFileSync(path.join(shared, 'books-catalog.json'), 'utf8'));
+  const sharedonly = catalog.books.find(b => b.id === 'sharedonly');
+  assert.ok(sharedonly, 'shared-only book still present without a prior catalog');
+  assert.equal(sharedonly.chapterCount, 1);
+  assert.equal(sharedonly.cardCount, 2);  // from manifest chapter cardCount
+  assert.equal(sharedonly.manifestPath, 'books/sharedonly/manifest.json');
 });
