@@ -570,23 +570,116 @@ function buildBook(bookDir, sharedRoot, fs, path) {
   };
 }
 
+/** True when a content book dir has at least one `.md` chapter source — i.e. it
+ *  can actually be (re)built. Dirs that hold only pre-built `.json` shards, an
+ *  empty `chapters/`, or no `chapters/` at all are NOT buildable. */
+function hasMarkdownSource(bookDir, fs, path) {
+  const chaptersSrc = path.join(bookDir, 'chapters');
+  if (!fs.existsSync(chaptersSrc)) return false;
+  return fs.readdirSync(chaptersSrc).some(f => f.endsWith('.md'));
+}
+
+/** Catalog summary for a book passed through unchanged because it has no `.md`
+ *  authoring source (legacy content whose source-of-truth is the shipped
+ *  `shared/` output). Prefers the exact prior catalog entry; otherwise
+ *  synthesizes from the shared manifest (+ content/book.json if present).
+ *  Returns null when there is no `shared/` output to pass through. */
+function passThroughSummary(id, contentRoot, sharedRoot, existingById, fs, path) {
+  const bookSharedDir = path.join(sharedRoot, 'books', id);
+  const manifestPath = path.join(bookSharedDir, 'manifest.json');
+  if (!fs.existsSync(manifestPath)) return null;
+  if (existingById && existingById[id]) return existingById[id];
+
+  // Fallback synthesis (no prior catalog entry to copy).
+  const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
+  let totalSize = Buffer.byteLength(fs.readFileSync(manifestPath, 'utf8'), 'utf8');
+  let totalCards = 0;
+  for (const ch of manifest.chapters || []) {
+    totalCards += ch.cardCount || 0;
+    for (const shard of ch.shards || []) {
+      const sp = path.join(bookSharedDir, shard);
+      if (fs.existsSync(sp)) totalSize += Buffer.byteLength(fs.readFileSync(sp, 'utf8'), 'utf8');
+    }
+  }
+  let bookMeta = {};
+  const bookMetaPath = path.join(contentRoot, 'books', id, 'book.json');
+  if (fs.existsSync(bookMetaPath)) bookMeta = JSON.parse(fs.readFileSync(bookMetaPath, 'utf8'));
+  return {
+    id,
+    title: manifest.title,
+    author: manifest.author ?? null,
+    summary: manifest.summary,
+    coverIcon: bookMeta.coverIcon ?? 'book',
+    accentHex: bookMeta.accentHex ?? null,
+    tags: Array.isArray(bookMeta.tags) ? bookMeta.tags : [],
+    categories: [...(manifest.categories || [])],
+    chapterCount: (manifest.chapters || []).length,
+    cardCount: totalCards,
+    manifestVersion: manifest.version ?? 1,
+    manifestPath: `books/${id}/manifest.json`,
+    freeForAll: !!bookMeta.freeForAll,
+    sizeBytes: totalSize
+  };
+}
+
 function buildAllBooks(contentRoot, sharedRoot) {
   const fs = require('node:fs');
   const path = require('node:path');
   const booksRoot = path.join(contentRoot, 'books');
-  if (!fs.existsSync(booksRoot)) {
-    console.log(`No content/books/ at ${booksRoot} — nothing to build.`);
+  const sharedBooksRoot = path.join(sharedRoot, 'books');
+
+  // The prior catalog supplies exact shipped metadata for pass-through books.
+  const catalogPath = path.join(sharedRoot, 'books-catalog.json');
+  const existingById = {};
+  if (fs.existsSync(catalogPath)) {
+    try {
+      for (const b of (JSON.parse(fs.readFileSync(catalogPath, 'utf8')).books || [])) {
+        existingById[b.id] = b;
+      }
+    } catch { /* ignore an unreadable prior catalog */ }
+  }
+
+  const dirsIn = (root) => fs.existsSync(root)
+    ? fs.readdirSync(root).filter(n => fs.statSync(path.join(root, n)).isDirectory())
+    : [];
+  const contentIds = new Set(dirsIn(booksRoot));
+  // Union with shared/ so books that ship but have no content/ dir aren't dropped.
+  const allIds = [...new Set([...contentIds, ...dirsIn(sharedBooksRoot)])].sort();
+
+  if (allIds.length === 0) {
+    console.log(`No books found under ${booksRoot} or ${sharedBooksRoot} — nothing to build.`);
     return;
   }
   fs.mkdirSync(sharedRoot, { recursive: true });
 
   const summaries = [];
-  for (const name of fs.readdirSync(booksRoot).sort()) {
-    const dir = path.join(booksRoot, name);
-    if (!fs.statSync(dir).isDirectory()) continue;
-    const summary = buildBook(dir, sharedRoot, fs, path);
-    summaries.push(summary);
-    console.log(`built ${summary.id}: ${summary.chapterCount} chapters, ${summary.cardCount} cards`);
+  const passedThrough = [];
+  const skipped = [];
+
+  for (const id of allIds) {
+    const bookDir = path.join(booksRoot, id);
+    if (contentIds.has(id) && hasMarkdownSource(bookDir, fs, path)) {
+      const summary = buildBook(bookDir, sharedRoot, fs, path);
+      summaries.push(summary);
+      console.log(`built ${summary.id}: ${summary.chapterCount} chapters, ${summary.cardCount} cards`);
+    } else {
+      // No buildable `.md` source — keep the existing shared/ output untouched
+      // rather than aborting the whole build or silently dropping the book.
+      const summary = passThroughSummary(id, contentRoot, sharedRoot, existingById, fs, path);
+      if (summary) {
+        summaries.push(summary);
+        passedThrough.push(id);
+      } else {
+        skipped.push(id);
+      }
+    }
+  }
+
+  if (passedThrough.length) {
+    console.log(`passed through ${passedThrough.length} book(s) with no .md source (kept existing shared/ output): ${passedThrough.join(', ')}`);
+  }
+  if (skipped.length) {
+    console.log(`WARNING: skipped ${skipped.length} book(s) with neither a .md source nor shared/ output: ${skipped.join(', ')}`);
   }
 
   // Free book first, then alphabetical by title — gives the catalog a stable order.
@@ -600,11 +693,8 @@ function buildAllBooks(contentRoot, sharedRoot) {
     updatedAt: new Date().toISOString(),
     books: summaries
   };
-  fs.writeFileSync(
-    path.join(sharedRoot, 'books-catalog.json'),
-    JSON.stringify(catalog, null, 2)
-  );
-  console.log(`wrote ${summaries.length} books to ${path.join(sharedRoot, 'books-catalog.json')}`);
+  fs.writeFileSync(catalogPath, JSON.stringify(catalog, null, 2));
+  console.log(`wrote ${summaries.length} books to ${catalogPath}`);
 }
 
 module.exports = {
@@ -615,6 +705,8 @@ module.exports = {
   tokenizeSections,
   buildAllBooks,
   buildBook,
+  hasMarkdownSource,
+  passThroughSummary,
   validateCategories,
   validateFreshnessFields,
   BOOK_CATEGORIES,
