@@ -1,22 +1,22 @@
 import SwiftUI
 
-/// The "L3 · Junior Band 1" caption that previously appeared inline in
-/// FeynmanCardView, WordDetailView, and WordReportSheet with three slightly
-/// different treatments. One source of truth.
+/// The "Intermediate · noun" caption shown on word surfaces. A leading badge
+/// (e.g. the content tier name) plus an optional secondary tag. One source of
+/// truth for the treatment that previously appeared inline in several views.
 struct MetaCaption: View {
     @Environment(\.theme) private var theme
 
-    let level: Int
+    let badge: String
     let secondary: String?
 
-    init(level: Int, secondary: String? = nil) {
-        self.level = level
+    init(_ badge: String, secondary: String? = nil) {
+        self.badge = badge
         self.secondary = secondary
     }
 
     var body: some View {
         HStack(spacing: 6) {
-            Text("L\(level)")
+            Text(badge)
                 .font(TypographyTokens.mono)
                 .foregroundColor(theme.colors.inkFaint)
             if let secondary {

@@ -104,7 +104,7 @@ struct WordDetailView: View {
                     .accessibilityLabel(String(localized: "a11y.bookmarked"))
             }
             Spacer()
-            MetaCaption(level: word.unlockLevel,
+            MetaCaption(ContentTier.forUnlockLevel(word.unlockLevel).displayName,
                         secondary: word.partOfSpeech)
         }
     }
