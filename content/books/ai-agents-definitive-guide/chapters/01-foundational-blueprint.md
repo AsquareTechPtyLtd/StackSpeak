@@ -230,7 +230,7 @@ teaser: Save state at every node so the agent can resume — and use thread IDs 
 
 @explanation
 
-A **checkpointer** persists the graph's state after each node runs. On resume, the framework rebuilds the conversation from the last checkpoint. LangGraph's `MemorySaver` does this in-process; production setups use Postgres or Redis.
+A **checkpointer** persists the graph's state after each node runs. On resume, the framework rebuilds the conversation from the last checkpoint. LangGraph's `MemorySaver` does this in-process; production setups need a durable backend.
 
 ```python
 checkpointer = MemorySaver()
@@ -241,6 +241,8 @@ app.invoke({"messages": [HumanMessage("start")]}, config=cfg)
 ```
 
 The `thread_id` is the conversation's identity. Same id → continues the same memory. Different id → branches a new conversation that doesn't see the old one. Switching threads is how you let users explore alternatives without contaminating the main path.
+
+For production-grade state persistence you can bring your own store (Postgres, Redis, DynamoDB) or use a managed agent runtime that handles it for you: **Amazon Bedrock AgentCore** stores session state and memory natively; **Azure AI Foundry Agent Service** manages thread state through its Threads API; **Vertex AI Agent Engine** persists session state within Google Cloud's managed runtime. All three let you query past sessions without running your own database.
 
 @feynman
 

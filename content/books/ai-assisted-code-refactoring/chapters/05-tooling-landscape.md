@@ -14,8 +14,8 @@ teaser: Every AI-assisted refactoring tool in 2026 falls into one of four bucket
 
 The landscape has shaken out into four distinct categories, each with a different unit of work, a different level of autonomy, and a different trust model:
 
-- **IDE assistants** (Cursor, GitHub Copilot, JetBrains AI Assistant) — live inside your editor, operate on the code you have visible or selected, and hand you a diff to accept or reject. The human stays in the loop for every change.
-- **Agentic CLIs** (Claude Code, Aider, Cline) — run from the terminal or a panel, read your full codebase, plan a multi-file edit, and execute it. Autonomy is much higher; oversight requires discipline.
+- **IDE assistants** (Cursor, GitHub Copilot, JetBrains AI Assistant, Amazon Q Developer in the IDE) — live inside your editor, operate on the code you have visible or selected, and hand you a diff to accept or reject. The human stays in the loop for every change.
+- **Agentic CLIs** (Claude Code, Aider, Cline, Gemini CLI) — run from the terminal or a panel, read your full codebase, plan a multi-file edit, and execute it. Autonomy is much higher; oversight requires discipline.
 - **Hybrid AST+LLM systems** (OpenRewrite + LLM, ast-grep + LLM) — use a structural tool for deterministic transforms and bring the LLM in only for the judgment-heavy parts (naming, comment rewrites, edge cases). More reproducible, harder to set up.
 - **Managed services / build-bot integrations** — CI pipelines that run refactoring campaigns on pull requests automatically, triggered by a schedule or a new dependency version. The robot opens the PR; a human reviews it.
 
@@ -68,11 +68,11 @@ GitHub Copilot ships as a VS Code extension (and plugins for JetBrains and Neovi
 - **Copilot Edits (multi-file):** As of late 2024 and into 2025, Copilot added an edits mode that applies changes across multiple files. More limited in scope than Cursor Composer or Claude Code, but improving.
 - **Agent mode:** An agentic execution mode where Copilot can run terminal commands, read compiler errors, and iterate. Still less capable than dedicated agentic CLIs for complex multi-file campaigns.
 
-The core tradeoff: Copilot is deeply integrated into VS Code, GitHub PRs, and GitHub Actions. If your team lives in that ecosystem, the friction is lower than adopting a new editor or a separate CLI. The AI capability per dollar is slightly behind Cursor's headline models in most independent comparisons, but the gap is narrower than the marketing on either side suggests.
+The core tradeoff: Copilot is deeply integrated into VS Code, GitHub PRs, and GitHub Actions. If your team lives in that ecosystem, the friction is lower than adopting a new editor or a separate CLI. Copilot Enterprise routes requests through Azure OpenAI Service, which satisfies data-residency requirements important to enterprise and regulated-industry teams.
 
 What it cannot do well: long-horizon agentic tasks, refactors requiring understanding of runtime state, and changes that span a monorepo with many loosely coupled services.
 
-> [!info] As of 2026-Q2 — Copilot's agent mode capabilities have expanded significantly since its 2024 preview. The distinction between Copilot Edits and Cursor Composer is smaller than it was in 2025, but not gone.
+> [!info] As of 2026-Q2 — Copilot's agent mode capabilities have expanded significantly since its 2024 preview. The distinction between Copilot Edits and Cursor Composer is smaller than it was in 2025, but not gone. For teams already on Azure, Copilot's Azure OpenAI Service backing means code stays within their existing cloud trust boundary.
 
 @feynman
 
@@ -107,35 +107,40 @@ JetBrains AI Assistant is like a surgeon working in a hospital with a full instr
 @card
 id: aicr-ch05-c005
 order: 5
-title: Claude Code
-teaser: Claude Code is Anthropic's agentic CLI — it reads your entire codebase, makes a plan, runs multi-file edits, and executes terminal commands, with you setting the level of confirmation required.
+title: Agentic CLIs (Claude Code, Gemini CLI, and others)
+teaser: Agentic CLI tools read your entire codebase, make a plan, run multi-file edits, and execute terminal commands — with you setting the level of confirmation required.
 
 @explanation
 
-Claude Code (`claude` on the command line, or installed via npm) is an agentic coding assistant that operates at the project level, not the file level. You describe a change in natural language; it reads relevant files, writes a plan, applies edits across multiple files, and can run shell commands to check the result.
+Agentic coding CLIs operate at the project level, not the file level. You describe a change in natural language; the agent reads relevant files, writes a plan, applies edits across multiple files, and can run shell commands to check the result. Major options in 2026 include:
 
-Key behaviors for refactoring:
+- **Claude Code** (`claude` via npm) — Anthropic's CLI agent; deep multi-file context, confirmation-before-destructive-ops by default.
+- **Gemini CLI** (`gemini` via npm) — Google's CLI agent; backed by Gemini's large context window, integrates with Google Cloud workflows.
+- **Amazon Q Developer CLI** — AWS's agentic coding assistant; integrates with AWS services and IAM context.
+- **Aider** — open-source, bring-your-own-key; covered in the next card.
 
-- It reads the codebase before acting — you don't paste context manually.
+Key behaviors shared across this category:
+
+- The agent reads the codebase before acting — you don't paste context manually.
 - It can run your tests after a refactor and iterate if they fail.
-- It asks for confirmation before destructive operations unless you've configured autonomous mode.
+- It asks for confirmation before destructive operations unless configured for autonomous mode.
 - It tracks what it changed and why, which helps with review.
 
 ```bash
-# Ask Claude Code to refactor a module
+# Example with Claude Code — other CLI agents follow a similar pattern
 claude "convert all callbacks in src/api/ to async/await and run the test suite"
 
-# With a more targeted scope
+# Targeted scope
 claude "extract the database connection logic from app.js into its own module"
 ```
 
-The honest assessment: Claude Code is well-suited for complex, open-ended refactoring campaigns where you need multi-file understanding and agentic execution. It is not the right choice when you want a tight, single-file diff to review quickly — the IDE assistants are faster for that. It also requires trust in the tool's judgment about what files to touch; auditing the plan before confirming execution is non-optional for anything important.
+The honest assessment: agentic CLIs are well-suited for complex, open-ended refactoring campaigns where you need multi-file understanding. They are not the right choice when you want a tight, single-file diff to review quickly — the IDE assistants are faster for that. Auditing the plan before confirming execution is non-optional for anything important.
 
-> [!info] As of 2026-Q2 — Claude Code's agentic execution model is one of the more capable in the CLI category, but the CLI-agentic space as a whole is a 2025 phenomenon. The tooling will look substantially different by 2027, and Anthropic's positioning in this space is actively evolving.
+> [!info] As of 2026-Q2 — the CLI-agentic space is a 2025 phenomenon and moving fast. Claude Code, Gemini CLI, and Amazon Q Developer CLI all reached general availability within the same 12-month window. The tooling will look substantially different by 2027.
 
 @feynman
 
-Claude Code is like a senior contractor you brief once with the full requirements — they go off, read the blueprints, do the work across multiple rooms, and hand you a walk-through before calling it done.
+An agentic CLI is like a senior contractor you brief once with the full requirements — they go off, read the blueprints, do the work across multiple rooms, and hand you a walk-through before calling it done.
 
 @card
 id: aicr-ch05-c006
@@ -237,11 +242,13 @@ The hybrid pattern: run OpenRewrite for everything it knows how to do determinis
 # Run OpenRewrite for the structural migration
 ./gradlew rewrite:run -Drewrite.activeRecipes=org.openrewrite.java.migrate.Java17
 
-# Then pass the files OpenRewrite flagged as needing manual review to an LLM
-claude "the following files were not fully migrated — complete the migration for each one" < review-list.txt
+# Then pass the files OpenRewrite flagged as needing manual review to a CLI agent
+# (Claude Code, Gemini CLI, Amazon Q Developer CLI, or Aider all work here)
+cat review-list.txt | xargs -I{} \
+  aider --message "complete the Java 17 migration for this file" {}
 ```
 
-Why this matters: LLMs make mistakes on structural transforms. OpenRewrite does not. Using OpenRewrite for the 80% of changes that are purely mechanical, and the LLM only for the 20% requiring judgment, reduces both error rate and review burden.
+Why this matters: LLMs make mistakes on structural transforms. OpenRewrite does not. Using OpenRewrite for the 80% of changes that are purely mechanical, and the LLM only for the 20% requiring judgment, reduces both error rate and review burden. Any capable model API works for the LLM step — Amazon Bedrock (Nova Pro or Llama hosted), Google Vertex AI (Gemini Pro), or Azure OpenAI Service are natural choices for teams already operating in those clouds.
 
 The limitation: OpenRewrite's recipe catalog is primarily Java/JVM. The pattern generalizes — libCST for Python, ts-morph for TypeScript — but the tooling ecosystem is less mature outside the JVM world.
 
@@ -330,7 +337,7 @@ The practical stack in 2026:
 
 - **Ollama** — run any supported model locally with a single command. Exposes an OpenAI-compatible API on `localhost:11434`, which means Aider, Open WebUI, and many other tools work without modification.
 - **LM Studio** — GUI-first local model runner, useful for teams that want model selection without CLI overhead.
-- **Qwen-Coder** and **DeepSeek-Coder** — the two open-weight models most consistently competitive with commercial models on code-specific benchmarks as of early 2026. Neither matches GPT-4o or Claude Sonnet on complex reasoning tasks, but both are viable for constrained refactoring tasks.
+- **Qwen-Coder** and **DeepSeek-Coder** — the two open-weight models most consistently competitive with commercial models on code-specific benchmarks as of early 2026. Neither matches GPT-4o or Gemini Pro on complex reasoning tasks, but both are viable for constrained refactoring tasks.
 
 ```bash
 # Run DeepSeek-Coder locally via Ollama
@@ -341,7 +348,7 @@ ollama run deepseek-coder:33b
 aider --model ollama/deepseek-coder:33b src/legacy.py
 ```
 
-The honest limitation: local models in 2026 are still meaningfully behind the frontier cloud models on multi-step reasoning and long-context tasks. A complex, multi-file refactor that Claude or GPT-4o handles well will often stall or produce lower-quality output from a local model. For simpler, well-scoped refactors — renaming conventions, boilerplate replacement, single-function rewrites — the gap is manageable.
+The honest limitation: local models in 2026 are still meaningfully behind the frontier cloud models on multi-step reasoning and long-context tasks. A complex, multi-file refactor that GPT-4o, Gemini Pro, or Amazon Nova Pro handles well will often stall or produce lower-quality output from a local model. For simpler, well-scoped refactors — renaming conventions, boilerplate replacement, single-function rewrites — the gap is manageable.
 
 Hardware requirements are non-trivial: running a 33B parameter model at useful speed requires a machine with 32+ GB of VRAM or very fast unified memory. For most development laptops, 7B or 14B models are the practical ceiling.
 

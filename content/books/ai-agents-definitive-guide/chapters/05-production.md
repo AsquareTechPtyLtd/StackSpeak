@@ -40,7 +40,7 @@ teaser: Stop parsing free-form text. Every model worth using in 2026 supports sc
 Structured outputs are the single biggest reliability win available. You provide a schema; the model is constrained to produce a value that fits. No more `JSON.parse` failing on the trailing comma. No more "the model said 'sure thing!' before the JSON object."
 
 ```python
-from anthropic import Anthropic
+from openai import OpenAI
 from pydantic import BaseModel
 
 class TicketTriage(BaseModel):
@@ -48,16 +48,16 @@ class TicketTriage(BaseModel):
     owner_team: str
     summary: str
 
-response = client.messages.create(
-    model="claude-sonnet-4-6",
-    tools=[{"name": "triage", "input_schema": TicketTriage.model_json_schema()}],
-    tool_choice={"type": "tool", "name": "triage"},
+client = OpenAI()
+response = client.beta.chat.completions.parse(
+    model="gpt-5-mini",
+    response_format=TicketTriage,
     messages=[...],
 )
-triage = TicketTriage.model_validate(response.content[0].input)
+triage = response.choices[0].message.parsed
 ```
 
-The same pattern works on every major API: Anthropic tools with `tool_choice`, OpenAI's `response_format`, Gemini's `response_schema`. The output is a typed object you pass to the next stage. If the model can't produce something valid, the API errors out cleanly.
+The same pattern works on every major API: OpenAI's `response_format`, Gemini's `response_schema`, Anthropic tools with `tool_choice`. The output is a typed object you pass to the next stage. If the model can't produce something valid, the API errors out cleanly.
 
 > [!tip] Don't over-constrain. Schemas with 30 required fields force the model to make up information rather than admit "I don't know." Mark optional fields optional; let the model say nothing when nothing is the right answer.
 
@@ -158,13 +158,13 @@ Tool descriptions are the README the model reads before pressing buttons. A vagu
 id: aiadg-ch05-c006
 order: 6
 title: MCP for Reusable Tools
-teaser: The Model Context Protocol turned tools into pluggable services. Write the tool once; expose it across Claude Desktop, IDEs, your custom agent host, and tomorrow's runtime you haven't built yet.
+teaser: The Model Context Protocol turned tools into pluggable services. Write the tool once; expose it across IDEs, desktop apps, your custom agent host, and tomorrow's runtime you haven't built yet.
 
 @explanation
 
-Before MCP, every agent runtime had its own tool format. The same Slack-search function got rewritten for OpenAI tools, LangChain, LlamaIndex, and your homemade loop. MCP — Anthropic's open standard, now broadly adopted — makes tools portable.
+Before MCP, every agent runtime had its own tool format. The same Slack-search function got rewritten for OpenAI tools, LangChain, LlamaIndex, and your homemade loop. MCP — an open standard now broadly adopted across the ecosystem — makes tools portable.
 
-An MCP server exposes tools, resources, and prompts over a stable wire format (stdio for local, HTTP+SSE for remote). Any MCP-aware host can connect: Claude Desktop, Claude Code, IDE plugins, your own agent runtime. The server doesn't care who's calling.
+An MCP server exposes tools, resources, and prompts over a stable wire format (stdio for local, HTTP+SSE for remote). Any MCP-aware host can connect: IDE plugins, desktop apps, your own agent runtime. The server doesn't care who's calling.
 
 The structural wins for production:
 
@@ -172,7 +172,9 @@ The structural wins for production:
 - **Versioning at the boundary** — bump the server, every host gets the new tool.
 - **Auth scoping** — the server can apply per-user or per-host policies once instead of in every consumer.
 
-> [!info] You don't need to convert legacy tools day one. Run the SDK-native tools you already have alongside MCP. The migration is incremental.
+If you want a managed plane rather than self-hosted MCP servers, the major clouds offer it: **Amazon Bedrock Agents** lets you register Lambda functions as agent action groups with built-in auth and throttling; **Azure AI Foundry Agent Service** exposes tool integrations (Bing search, Azure Functions, code interpreter) through a managed tool catalog; **Vertex AI Agent Builder** connects tools as OpenAPI-described extensions hosted on Cloud Run. All three handle the tool-dispatch loop on your behalf — you write the function, the platform handles the agent wiring.
+
+> [!info] You don't need to convert legacy tools day one. Run the SDK-native tools you already have alongside MCP or a managed plane. The migration is incremental.
 
 @feynman
 
@@ -225,7 +227,7 @@ A useful trace captures, per run:
 - **Metadata** — model version, latency per step, token counts, cost.
 - **Outcome** — final answer, success/failure flag, downstream consumer feedback if any.
 
-LangSmith, Helicone, Braintrust, Logfire, OpenLLMetry, Anthropic's own tracing — all of them solve this. Pick one, integrate it, never look back. Building it yourself is months of yak-shaving for a problem that's a solved category.
+LangSmith, Helicone, Braintrust, Logfire, and OpenLLMetry are the popular OSS-adjacent options. The major clouds also ship native tracing: **AWS** surfaces agent traces through Amazon Bedrock AgentCore's built-in observability and CloudWatch; **Azure AI Foundry** provides run-level tracing for every agent step tied into Azure Monitor; **GCP** exposes Vertex AI Agent Engine traces in Cloud Trace and Cloud Logging. If your agents already run in one of these clouds, the native option is often the lowest-friction path. Pick one, integrate it, never look back. Building it yourself is months of yak-shaving for a problem that's a solved category.
 
 > [!tip] Save raw inputs and outputs in addition to summarised metrics. Six months from now you'll want to replay an old failure on a new model; only the raw trace lets you do that.
 
@@ -336,7 +338,7 @@ The minimum infrastructure:
 - Model + endpoint pinned per deployment. Don't rely on "the latest stable" — providers ship subtle changes.
 - Trace metadata records the bundle version that ran each step.
 
-> [!info] Anthropic, OpenAI, and Google all let you pin to specific dated model versions. Use them in production. "Latest" is a research convenience, not a deployment target.
+> [!info] OpenAI, Google, and Anthropic all let you pin to specific dated model versions. Use them in production. "Latest" is a research convenience, not a deployment target.
 
 @feynman
 

@@ -39,19 +39,20 @@ Most agent calls share most of their input: the system prompt, tool descriptions
 Prompt caching changes that. The provider stores the cached prefix for some TTL (typically 5 minutes); subsequent calls that start with the same prefix skip the re-processing and pay around 10% of the input price for the cached portion.
 
 ```python
-# Anthropic — cache_control on a stable block.
-client.messages.create(
-    model="claude-sonnet-4-6",
-    system=[
-        {"type": "text", "text": LONG_SYSTEM_PROMPT,
-         "cache_control": {"type": "ephemeral"}},
+# Example: provider-side caching (syntax varies by SDK)
+# OpenAI and Gemini cache automatically on repeated prefixes.
+# Anthropic uses explicit cache_control breakpoints.
+# Azure OpenAI, AWS Bedrock, and Vertex AI follow their provider's conventions.
+client.chat.completions.create(
+    model="gpt-4o",
+    messages=[
+        {"role": "system", "content": LONG_SYSTEM_PROMPT},
+        *conversation,
     ],
-    tools=tools,                           # also cacheable
-    messages=conversation,
 )
 ```
 
-OpenAI auto-caches; Google supports explicit caching; Anthropic uses cache breakpoints. The mechanics differ, the wins are similar.
+OpenAI and Google cache automatically on matching prefixes; Anthropic uses explicit cache-control breakpoints; Azure OpenAI inherits OpenAI's mechanism. The mechanics differ per provider, the wins are similar.
 
 What to put in the cache:
 
@@ -78,10 +79,10 @@ teaser: Most production traffic doesn't need the frontier model. A routed system
 Production traffic is fat-tailed: most queries are easy, a few are hard, and the average gets dragged up by the long tail. A flat "use frontier on every request" stack pays for the worst case on every call. A routed stack pays for it only when warranted.
 
 ```text
-Classify (haiku, ~50ms, $0.001 / call)
-   ├─ trivial   → answer with haiku            ($0.001)
-   ├─ standard  → solve with sonnet            ($0.05)
-   └─ hard      → solve with opus + thinking   ($0.50)
+Classify (small model, ~50ms, $0.001 / call)
+   ├─ trivial   → answer with small model       ($0.001)
+   ├─ standard  → solve with mid-tier model     ($0.05)
+   └─ hard      → solve with frontier + thinking ($0.50)
 ```
 
 The classifier is itself a cheap model. It reads the request, picks a tier, and dispatches. The classifier can also output a confidence score; below threshold, escalate one tier up.
@@ -117,7 +118,7 @@ The distilled model captures most of the task-specific reasoning quality of the 
 
 It does not generalise as broadly. It learns the patterns it saw, not new ones. That's fine for steady-state production — your agent does the same shape of work all day; broad generalisation isn't the point.
 
-In 2026, the platform fine-tuning UIs (Anthropic, OpenAI, Google, plus open-weight stacks via Together / Fireworks) handle the heavy lifting. The work is curating the training data, not running the training.
+In 2026, the platform fine-tuning consoles (AWS Bedrock, Azure AI Foundry, OpenAI, Google Vertex AI, plus open-weight stacks via Together / Fireworks) handle the heavy lifting. The work is curating the training data, not running the training.
 
 > [!info] Distillation is most effective on narrow, repetitive tasks. The customer-support agent that handles 50 categories of question is a great fit. The general assistant that handles anything is a bad one.
 
@@ -190,12 +191,15 @@ teaser: Total latency matters less than time-to-first-token. Streaming makes a 1
 A 15-second response that arrives all at once feels broken. The same 15-second response, streamed token by token, feels alive — the user reads as the model writes. The total time is identical; the experience is not.
 
 ```python
-with client.messages.stream(
-    model="claude-sonnet-4-6",
+# OpenAI streaming (equivalent APIs exist on Azure OpenAI, Vertex AI, Bedrock, etc.)
+stream = client.chat.completions.create(
+    model="gpt-4o",
     messages=messages,
-) as stream:
-    for chunk in stream.text_stream:
-        send_to_frontend(chunk)
+    stream=True,
+)
+for chunk in stream:
+    delta = chunk.choices[0].delta.content or ""
+    send_to_frontend(delta)
 ```
 
 Streaming changes the metric you optimise for: time-to-first-token (TTFT), not total time. The optimisation moves shift accordingly:
@@ -326,15 +330,14 @@ When not to:
 - **Volatile inputs** — if the input changes within the 24-hour window, the batch result is stale.
 
 ```python
-# Anthropic batch — submit, poll, retrieve.
-batch = client.messages.batches.create(
-    requests=[
-        {"custom_id": f"req-{i}",
-         "params": {"model": "claude-haiku-4-5", "messages": [{"role": "user", "content": q}]}}
-        for i, q in enumerate(queries)
-    ]
+# Batch API — submit, poll, retrieve (pattern is similar across providers).
+# AWS Bedrock, Azure AI, OpenAI, Google Vertex AI all support batch inference.
+batch = client.batches.create(
+    input_file_id=upload_jsonl(queries),   # JSONL of request objects
+    endpoint="/v1/chat/completions",
+    completion_window="24h",
 )
-# ... wait, then retrieve results ...
+# ... wait, then retrieve results via batch.output_file_id ...
 ```
 
 > [!info] Mix online and batch in your stack. Use batch for what can wait; reserve synchronous calls for what users see. Most production systems have plenty of work that can wait.

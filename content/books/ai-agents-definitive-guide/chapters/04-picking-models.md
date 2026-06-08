@@ -14,9 +14,9 @@ teaser: Three tiers do most of the work in production agents. Knowing which tier
 
 The 2026 model landscape lines up neatly into three buckets:
 
-- **Frontier** — Claude Opus 4.7, GPT-5, Gemini 2 Pro. Top reasoning, top tool use, top cost. Use for the steps where being right matters more than being fast.
-- **Mid** — Claude Sonnet 4.6, GPT-5 mini, Gemini 2 Flash. The workhorses. Good enough for most production traffic, fast, affordable.
-- **Small / fast** — Claude Haiku 4.5, GPT-5 nano, Gemini Flash-Lite. Sub-second responses, cents per million tokens. For routing, classification, and the first pass of anything.
+- **Frontier** — GPT-5, Gemini 2 Pro, Claude Opus 4.7. Top reasoning, top tool use, top cost. Use for the steps where being right matters more than being fast.
+- **Mid** — GPT-5 mini, Gemini 2 Flash, Claude Sonnet 4.6. The workhorses. Good enough for most production traffic, fast, affordable.
+- **Small / fast** — GPT-5 nano, Gemini Flash-Lite, Claude Haiku 4.5. Sub-second responses, cents per million tokens. For routing, classification, and the first pass of anything.
 
 Production agents almost never use one tier. They route: small models triage and dispatch, mid models do the steady work, frontier models handle the cases where the mid model is uncertain or the stakes are high.
 
@@ -34,7 +34,7 @@ teaser: A reasoning model thinks before it answers. A base model answers immedia
 
 @explanation
 
-Reasoning models — Claude with thinking enabled, GPT-5 with reasoning effort, DeepSeek-R1 lineage — produce internal chain-of-thought traces before final answers. They're disproportionately better at math, multi-step planning, and code reasoning. They're disproportionately worse at latency and per-call cost.
+Reasoning models — GPT-5 with reasoning effort, Gemini 2 Pro with deep-think, Claude with thinking enabled, DeepSeek-R1 lineage — produce internal chain-of-thought traces before final answers. They're disproportionately better at math, multi-step planning, and code reasoning. They're disproportionately worse at latency and per-call cost.
 
 Base (non-thinking) models respond from the first token. For chat, simple Q&A, formatting, classification, and most tool routing, they're actually better — cheaper, faster, and the extra thinking would be wasted on a one-step decision.
 
@@ -57,7 +57,7 @@ teaser: API models are easier to ship; open-weight models are easier to control.
 
 @explanation
 
-API models (Anthropic, OpenAI, Google) come with no infra cost, automatic upgrades, frontier capability, and a strict provider relationship. Open-weight models (Llama 4, Qwen 3, DeepSeek-V3, Mistral) come with no per-token bill, full control over deployment, custom fine-tuning, and an ops cost you have to staff for.
+API models (OpenAI, Google, Anthropic, Cohere) come with no infra cost, automatic upgrades, frontier capability, and a strict provider relationship. Open-weight models (Llama 4, Qwen 3, DeepSeek-V3, Mistral) come with no per-token bill, full control over deployment, custom fine-tuning, and an ops cost you have to staff for.
 
 The decision factors that actually matter:
 
@@ -103,7 +103,7 @@ teaser: A million-token context is impressive on paper and expensive in practice
 
 @explanation
 
-By 2026, 1M-token windows are standard at the frontier (Claude, Gemini 2 Pro, GPT-5). Some models go further. The temptation is to throw the whole codebase, the whole document, the whole knowledge base into the prompt every call.
+By 2026, 1M-token windows are standard at the frontier (Gemini 2 Pro, GPT-5, Claude Opus 4.7). Some models go further. The temptation is to throw the whole codebase, the whole document, the whole knowledge base into the prompt every call.
 
 The math fights back:
 
@@ -127,7 +127,7 @@ teaser: The prefix you reuse on every call should be cached. It's the single big
 
 @explanation
 
-Modern providers cache long prompt prefixes server-side. The next call that starts with the same prefix skips re-tokenising and re-attending to those tokens — you pay maybe 10% of the input cost on the cached portion. Anthropic, OpenAI, and Google all expose this; the API surface differs.
+Modern providers cache long prompt prefixes server-side. The next call that starts with the same prefix skips re-tokenising and re-attending to those tokens — you pay maybe 10% of the input cost on the cached portion. OpenAI, Google, and Anthropic all expose this; the API surface differs.
 
 For agents this is a giant win because most agent calls share massive structure:
 
@@ -139,15 +139,18 @@ For agents this is a giant win because most agent calls share massive structure:
 Only the new user message and the running tail of state are uncached. On a typical agent, you're paying full price for maybe 5% of the tokens.
 
 ```python
-# Anthropic example — cache_control on a stable block.
-messages.create(
-    model="claude-opus-4-7",
-    system=[
-        {"type": "text", "text": LONG_SYSTEM_PROMPT,
-         "cache_control": {"type": "ephemeral"}},
-    ],
-    tools=tools,  # also cacheable
-    messages=conversation,
+# Google GenAI example — CachedContent for a stable system instruction.
+from google import genai
+
+cache = client.caches.create(
+    model="gemini-2.0-flash",
+    config={"system_instruction": LONG_SYSTEM_PROMPT,
+            "tools": tools},   # also cached
+)
+response = client.models.generate_content(
+    model="gemini-2.0-flash",
+    config={"cached_content": cache.name},
+    contents=conversation,
 )
 ```
 
@@ -189,7 +192,7 @@ teaser: Embedding models aren't downsized chat models. They're a different tool,
 
 @explanation
 
-Embedding models — Voyage, OpenAI's `text-embedding-3`, Cohere Embed v4, Anthropic's voyage acquisition family — output dense vectors that capture semantic meaning. They're cheap (orders of magnitude cheaper per call than generation), small, and you cannot ask them to write a sonnet.
+Embedding models — OpenAI's `text-embedding-3`, Cohere Embed v4, Google's `text-embedding-005`, Voyage — output dense vectors that capture semantic meaning. They're cheap (orders of magnitude cheaper per call than generation), small, and you cannot ask them to write a sonnet.
 
 What agents use them for:
 
@@ -222,11 +225,11 @@ Routing is the single highest-leverage optimisation in any production agent. The
 Real production traffic is fat-tailed: most queries are easy, a few are hard, and the average gets dragged up by the long tail. A flat "use frontier for everything" stack pays for the worst case on every request. A routed stack pays for it only when needed.
 
 ```text
-classify       (haiku 4.5, ~50ms, $0.001)
+classify       (small fast model, ~50ms, ~$0.001)
    │
-   ├─ trivial  → answer directly                     (haiku, fast, ~$0.001)
-   ├─ standard → solve with tools                    (sonnet, ~$0.05)
-   └─ hard     → solve with thinking + verification  (opus 4.7 + check, ~$0.50)
+   ├─ trivial  → answer directly                     (small model, fast, ~$0.001)
+   ├─ standard → solve with tools                    (mid model, ~$0.05)
+   └─ hard     → solve with thinking + verification  (frontier + check, ~$0.50)
 ```
 
 > [!warning] Routing systems silently degrade. If the classifier drifts (model update, prompt change), traffic shifts between tiers and either cost or quality moves. Monitor tier distribution as a metric.

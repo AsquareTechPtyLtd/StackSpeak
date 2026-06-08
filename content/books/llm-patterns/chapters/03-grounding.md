@@ -82,7 +82,7 @@ Implementation patterns:
 
 - **Inline source IDs** — `[1]`, `[2]` in the model's output, mapping to the retrieved sources.
 - **Structured output with claim → source mapping** — each claim is a JSON object that names the supporting source.
-- **Provider-native citations** — Anthropic and a few others ship a citations API where the response carries source spans natively, with no parsing.
+- **Provider-native citations** — some providers ship a citations API where the response carries source spans natively, with no parsing; check your provider's documentation for availability.
 
 The citations should map to *spans*, not just whole documents. "According to the Refund Policy" is weaker than "According to section 3.2 of the Refund Policy, paragraph 2." Users who care will check; spans make checking fast.
 

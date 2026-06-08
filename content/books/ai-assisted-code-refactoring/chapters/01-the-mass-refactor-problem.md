@@ -218,7 +218,7 @@ The capability LLMs add is not raw transformation speed — codemods are faster 
 
 The cost: LLMs are probabilistic. The same prompt, given twice, may produce different outputs. They hallucinate APIs that don't exist. They silently introduce semantic drift. None of these are reasons to reject LLM-assisted refactoring — they are reasons to build validation pipelines around it. Chapter 06 covers this in detail.
 
-> [!warning] As of 2026-Q2 — no current model (Claude 4.x, GPT-5, Gemini 2.x) is reliable enough to apply LLM-generated refactoring changes directly to production without automated testing and human review at choke points. The discipline is non-negotiable.
+> [!warning] As of 2026-Q2 — no current model (GPT-5, Gemini 2.x, Claude 4.x, or any other frontier model) is reliable enough to apply LLM-generated refactoring changes directly to production without automated testing and human review at choke points. The discipline is non-negotiable.
 
 @feynman
 

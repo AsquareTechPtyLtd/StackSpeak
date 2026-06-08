@@ -131,7 +131,7 @@ Every AI-assisted refactoring campaign has a direct token cost that most teams d
 
 - **Token count per file.** Estimate prompt tokens (system prompt + context window for the file) plus completion tokens (the diff output). For a typical 200-line file with a 500-token system prompt, expect 1,000–2,500 tokens per file total.
 - **Files in scope.** The number of files the campaign will touch.
-- **Model pricing.** As of early 2026, GPT-4o costs approximately $5 per million input tokens and $15 per million output tokens. Claude 3.5 Sonnet is in a similar range. Costs shift frequently — verify before budgeting.
+- **Model pricing.** As of early 2026, mid-tier frontier models (GPT-4o, Gemini 2.x Flash, or equivalent balanced-tier models from other providers) cost roughly $1–$10 per million input tokens. Top-tier models run higher. Costs shift frequently — verify current pricing with your chosen provider before budgeting.
 - **Retry rate.** Files that fail validation on the first pass and are retried. A 20% retry rate adds 20% to your cost estimate.
 
 A rough formula for a campaign of 1,000 files:
@@ -255,7 +255,7 @@ teaser: The model you depend on today will be deprecated, repriced, or supersede
 
 @explanation
 
-AI-assisted refactoring tooling is built on a model provider relationship that is not stable. In the last two years: OpenAI has deprecated GPT-4 in favor of GPT-4o in favor of o3; Anthropic has released three Claude generations; Google has moved through Gemini variants; open-weight model quality has closed the gap with frontier models for constrained tasks. The model landscape in two years is not predictable.
+AI-assisted refactoring tooling is built on a model provider relationship that is not stable. In the last two years: OpenAI has deprecated GPT-4 in favor of GPT-4o in favor of o3; Google has moved through Gemini 1.5, 2.0, and 2.5 variants; Anthropic has released multiple Claude generations; open-weight model quality has closed the gap with frontier models for constrained tasks. The model landscape in two years is not predictable.
 
 The organizations that handle this well share a structural property: the model is behind an interface, not embedded in the campaign pipeline.
 
@@ -267,8 +267,9 @@ Practically, this means:
 - When a provider releases a new model, you can run your validation suite against it before migrating
 
 The vendor landscape as of early 2026 offers three broad options:
-- **Managed API services** (OpenAI, Anthropic, Google) — low ops overhead, no infrastructure, subject to pricing and availability changes
-- **Self-hosted open-weight models** (Llama 3, Mistral, Qwen) — full control, higher ops cost, lower per-token cost at scale
+- **Cloud-platform managed services** — low ops overhead, no infrastructure, subject to pricing and availability changes. Key options: AWS Bedrock (multiple model families, fine-tuning, private endpoints), Azure OpenAI Service (GPT and other models, data-residency controls, existing enterprise agreements), Google Vertex AI (Gemini Code Assist, fine-tuning, model garden). For teams already on a cloud platform, the existing trust boundary and billing relationship are often the deciding factor.
+- **Direct API services** (OpenAI, Anthropic, Mistral) — simpler integration, no cloud platform dependency, subject to provider terms and data-handling policies
+- **Self-hosted open-weight models** (Llama 3, Qwen, DeepSeek-Coder) — full control, higher ops cost, lower per-token cost at scale
 - **In-house fine-tuned models** — highest capability for your specific codebase conventions, highest investment, makes sense only above roughly 50 campaigns/year
 
 Custom fine-tunes and volume discount agreements with model providers become worth exploring once your campaign volume is high enough that per-token costs appear in quarterly budget reviews as a line item.

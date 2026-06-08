@@ -18,7 +18,9 @@ Shipping an agent is not a single milestone. It's a sequence of stages, each gat
 - **Alpha** — does it survive someone else using it? Containerised, traced, real auth, honest failure paths.
 - **Beta** — can a small set of real users trust it? Fallbacks wired in, human-in-the-loop on dangerous steps, design-partner feedback loop.
 - **Production** — can it run inside the actual product? SLOs, on-call, incident playbooks, integration with the rest of your system.
-- **Scale** — is the unit economics sustainable? Caching, model routing, autoscaling, possibly self-hosting.
+- **Scale** — is the unit economics sustainable? Caching, model routing, autoscaling, possibly self-hosting or a managed agent platform.
+
+At the scale stage, teams that are already deep in a cloud provider often move from a self-managed LangGraph or SDK loop to the provider's managed agent runtime: **Amazon Bedrock Agents** handles orchestration, memory, and action-group dispatch inside AWS; **Azure AI Foundry Agent Service** manages the agent loop, thread history, and tool integrations natively in Azure; **Vertex AI Agent Engine** runs agents with built-in autoscaling and session management in GCP. Each trades some flexibility for substantially less infrastructure to operate.
 
 The mistake is treating these as a single checklist to power through. Each stage answers a different question; if you skip the question, the answer arrives later in a more painful form.
 
@@ -36,7 +38,7 @@ teaser: Wire the agent against an interface, not against a vendor. The day a com
 
 @explanation
 
-The simplest way to lock yourself in is to call `anthropic.messages.create(...)` directly throughout your codebase. Every prompt, every tool, every retry depends on the exact shape of one provider's SDK. When you want to swap, you can't.
+The simplest way to lock yourself in is to call a single provider's SDK directly throughout your codebase. Every prompt, every tool, every retry depends on the exact shape of that one SDK. When you want to swap, you can't.
 
 The fix is one thin layer in your own code:
 
@@ -46,7 +48,7 @@ class LLMClient(Protocol):
                  tools: list[Tool] | None = None,
                  thinking: ThinkingConfig | None = None) -> Completion: ...
 
-# implementations: AnthropicClient, OpenAIClient, GeminiClient,
+# implementations: OpenAIClient, GeminiClient, AnthropicClient,
 # OpenRouterClient, plus a LocalvLLMClient for self-hosting.
 ```
 
@@ -58,7 +60,7 @@ The point isn't multi-vendor flexibility for its own sake — it's that the day 
 
 @feynman
 
-Database abstraction layers, applied to model providers. You don't write `mysql_connect` directly; you don't `anthropic.messages.create` directly. The principle is the same.
+Database abstraction layers, applied to model providers. You don't write `mysql_connect` directly; you don't call a vendor's SDK directly throughout your code. The principle is the same.
 
 @card
 id: aiadg-ch07-c003
@@ -72,7 +74,7 @@ A circuit breaker tracks the recent error rate for a downstream call. When error
 
 For agent stacks, breakers belong on:
 
-- **Each model provider** — track error rate per (model, endpoint). When Anthropic is degraded, fail fast and fall over to your secondary.
+- **Each model provider** — track error rate per (model, endpoint). When your primary provider is degraded, fail fast and fall over to your secondary.
 - **Each external tool** — third-party APIs go down. Stop the agent from looping on a 503.
 - **Each retrieval index** — embedding service down? Vector DB slow? Skip retrieval and let the agent answer with whatever context it has.
 
@@ -92,7 +94,7 @@ teaser: A fallback model isn't a config setting. It's tested, has its own prompt
 
 @explanation
 
-The instinct to wire a fallback — "if Claude is down, switch to GPT" — is correct. The execution is usually wrong. Teams add the fallback config, never test it, and discover during the actual outage that the prompt doesn't transfer cleanly, the tool format differs, the output schema doesn't quite match.
+The instinct to wire a fallback — "if the primary model is down, switch to the secondary" — is correct. The execution is usually wrong. Teams add the fallback config, never test it, and discover during the actual outage that the prompt doesn't transfer cleanly, the tool format differs, the output schema doesn't quite match.
 
 A working fallback has its own life:
 

@@ -85,7 +85,7 @@ teaser: Auto, ask, deny — three modes per tool, picked by what's at stake. The
 
 @explanation
 
-A useful pattern, popularised by Anthropic's Claude Agent SDK and Computer Use: every tool declares a permission mode that the runtime enforces before the tool runs.
+A useful pattern, now common across major agent runtimes: every tool declares a permission mode that the runtime enforces before the tool runs.
 
 - **Auto** — the agent can call this tool freely. Used for read-only or trivially reversible operations: search, fetch, render.
 - **Ask** — the runtime pauses and prompts the human before executing. Used for actions with real-world cost: send email, create record, charge card.
@@ -122,8 +122,9 @@ The 2026 toolbox for sandboxing:
 
 - **Containers (Docker, Podman)** — fast to spin up, decent isolation, fine for code execution that doesn't need real privilege boundaries.
 - **MicroVMs (Firecracker, Cloud Hypervisor)** — hardware-virt boundaries, milliseconds to start. The right call for multi-tenant code execution.
-- **Cloud sandbox services** (E2B, Modal, Daytona) — managed code interpreters that handle the lifecycle for you.
-- **Browser sandboxes** (Browserbase, Playwright clusters) — disposable browser sessions for Computer Use and web-driving agents.
+- **OSS-adjacent sandbox services** (E2B, Modal, Daytona) — managed code interpreters that handle the lifecycle for you.
+- **Managed cloud sandboxes** — **AWS** offers isolated Lambda execution environments and dedicated EC2 instances scoped per task via Bedrock AgentCore's code interpreter; **Azure** provides Azure Container Apps for ephemeral agent workers with VNet integration; **GCP** uses Cloud Run jobs for disposable execution with per-request identity and network scoping.
+- **Browser sandboxes** (Browserbase, Playwright clusters) — disposable browser sessions for computer-use and web-driving agents.
 
 What goes inside the sandbox: read-only mounts of the working files, scoped credentials, network egress allowlists, time and resource limits. What does *not* go inside: production credentials, customer data the agent doesn't need, anything you couldn't afford to lose.
 
@@ -316,7 +317,7 @@ The product implications:
 
 The agents that ship and stay shipped tend to err on the side of more boundaries, more pauses, more visible audit trails. The ones that try to feel "magic" by silently doing more often end up trusted less.
 
-> [!info] Pro-grade products are starting to compete on this surface — Computer Use products, IDE agents, voice assistants. The visible boundary is becoming a feature buyers ask about, not a footnote.
+> [!info] Pro-grade products are starting to compete on this surface — computer-use agents, IDE agents, voice assistants. The visible boundary is becoming a feature buyers ask about, not a footnote.
 
 @feynman
 

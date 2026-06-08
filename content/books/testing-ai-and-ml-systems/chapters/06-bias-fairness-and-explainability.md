@@ -361,7 +361,7 @@ What auditors check for high-risk systems (as of 2026-Q2):
 
 GDPR Article 22 adds a parallel requirement: individuals subject to solely automated decisions with legal or similarly significant effects have the right to a meaningful explanation and the right to contest the decision.
 
-Tools such as IBM AIF360, Fairlearn, Aequitas, and Microsoft's InterpretML are referenced in technical guidance as appropriate for generating the documented bias evaluations regulators expect.
+Tools such as IBM AIF360, Fairlearn, Aequitas, and Microsoft's InterpretML are referenced in technical guidance as appropriate for generating the documented bias evaluations regulators expect. Cloud platform integrations are also available: AWS SageMaker Clarify provides bias detection and feature attribution reporting, Azure Machine Learning includes a Responsible AI dashboard covering fairness metrics and counterfactual analysis, and Google Vertex AI provides model evaluation and Explainable AI features for bias and attribution auditing.
 
 > [!warning] As of 2026-Q2, GDPR's right-to-explanation obligation applies immediately upon deployment for any automated decision with legal or significant effects on individuals in the EU — it does not wait for a conformity assessment. A system without a working explanation pathway is non-compliant on day one.
 

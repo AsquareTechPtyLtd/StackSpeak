@@ -279,7 +279,7 @@ What to monitor in production:
 - **Input feature distributions.** Compare the statistical distribution of each feature against the training distribution. Population Stability Index (PSI) is a common metric; a PSI above 0.2 conventionally signals significant drift.
 - **Ground truth labels (where available).** For applications where labels are eventually observed (e.g., loan default 90 days after origination), compare the model's predicted probabilities against the realized outcomes. This is the most reliable signal of model degradation.
 
-As of 2026-Q2, tools such as Evidently AI, WhyLabs, and Arize provide production monitoring pipelines that automate distribution comparison and alerting. MLflow's model registry supports tagging models as "staging," "production," or "archived," providing a lifecycle management framework alongside experiment tracking.
+As of 2026-Q2, tools such as Evidently AI, WhyLabs, and Arize provide production monitoring pipelines that automate distribution comparison and alerting. MLflow's model registry supports tagging models as "staging," "production," or "archived," providing a lifecycle management framework alongside experiment tracking. Cloud platforms offer integrated options at scale: Amazon SageMaker Model Monitor detects data drift and model quality degradation against configurable baselines, Azure Machine Learning provides built-in model monitoring with dataset drift detection, and Google Vertex AI includes continuous model evaluation for detecting prediction distribution shifts.
 
 > [!info] Models do not fail — they degrade. A degrading model produces no errors, no exceptions, and no alerts unless monitoring is explicitly built to detect it.
 

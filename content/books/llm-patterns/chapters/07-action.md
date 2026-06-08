@@ -197,7 +197,7 @@ def schedule_provision(args):
     return {"job_id": job_id, "status": "started"}
 ```
 
-> [!info] Anthropic's Claude Code background bash is a good example: long-running commands run in the background, the agent gets notified when they complete, and the workflow doesn't block. Same pattern, generalisable to any async tool.
+> [!info] Agentic coding tools like Claude Code, GitHub Copilot Workspace, and Cursor's background-task mode are good examples: long-running commands run in the background, the agent gets notified when they complete, and the workflow doesn't block. Same pattern, generalisable to any async tool.
 
 @feynman
 

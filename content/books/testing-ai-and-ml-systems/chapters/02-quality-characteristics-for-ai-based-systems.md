@@ -217,7 +217,7 @@ Performance characteristics specific to AI:
 
 Resource usage is also a quality characteristic: memory footprint, GPU utilization, and inference cost per prediction should be reported as first-class outputs of performance testing, not afterthoughts.
 
-> [!info] As of 2026-Q2, large language model inference cost is typically reported per 1,000 tokens processed. Establishing cost-per-query baselines in performance testing lets teams detect regressions introduced by model updates.
+> [!info] As of 2026-Q2, large language model inference cost is typically reported per 1,000 tokens processed, with pricing varying across providers and deployment modes. AWS Bedrock, Azure AI Foundry, and Google Vertex AI all publish per-token pricing for hosted model tiers; self-hosted open-weight deployments shift cost to GPU instance hours. Establishing cost-per-query baselines in performance testing lets teams detect regressions introduced by model updates regardless of provider.
 
 @feynman
 

@@ -16,7 +16,7 @@ A reactive agent reads the state, picks the next tool, executes, repeats. It wor
 
 A deliberate agent inserts a planning phase: it sketches several possible plans, scores them, picks one, and only then begins execution. The cost is one extra model call. The benefit is that a doomed plan gets rejected before any tool is invoked.
 
-> [!info] On reasoning models (Claude Opus 4.7, GPT-5 with thinking, Gemini 2 Pro), much of "deliberate" planning happens inside the thinking budget — but it's still worth structuring the plan as an explicit artifact so the agent and the human can see it.
+> [!info] On reasoning models (GPT-5, Gemini 2 Pro, Claude Opus 4.7), much of "deliberate" planning happens inside the thinking budget — but it's still worth structuring the plan as an explicit artifact so the agent and the human can see it.
 
 @feynman
 
@@ -56,7 +56,7 @@ Outcome rewards grade only the final result: did the agent solve the task or not
 
 Process rewards grade individual steps: was the plan reasonable, did the tool call make sense, was the observation interpreted correctly. They're harder to compute (someone or something has to score every step), but they tell you *why* a trajectory succeeded or failed, which is the part you can actually fix.
 
-The 2025 generation of models — DeepSeek-R1's training, Anthropic's process supervision, OpenAI's o-series — all showed that step-level signals produce more capable reasoners than final-answer rewards alone. The same lesson holds for agent loops in production.
+The 2025 generation of models — DeepSeek-R1's training, OpenAI's o-series, Google's Gemini reasoning line — all showed that step-level signals produce more capable reasoners than final-answer rewards alone. The same lesson holds for agent loops in production.
 
 > [!warning] LLM-as-judge for process rewards has its own bias — judges prefer verbose answers. Calibrate your judge against a small human-graded set before trusting it.
 
@@ -80,7 +80,7 @@ This is *test-time compute scaling*: spending more tokens at inference instead o
 - **Hard task** — long thinking budget; the same model produces dramatically better answers at the cost of latency and tokens.
 - **Critical task** — very long budget plus self-verification; the model effectively gets a second-opinion pass for free.
 
-Modern SDKs let you set the budget per call: Claude's `thinking.budget_tokens`, OpenAI's reasoning models with effort levels, Gemini's deep-think modes. Treat it as a knob you tune per workload, not a global setting.
+Modern SDKs let you set the budget per call: OpenAI's reasoning effort levels, Gemini's deep-think modes, Claude's `thinking.budget_tokens`. Treat it as a knob you tune per workload, not a global setting.
 
 > [!info] On simple tool-routing decisions, thinking is wasted compute. Reserve it for steps where the choice has irreversible consequences.
 
@@ -189,7 +189,7 @@ teaser: Once you have thousands of trajectories, the good ones become training d
 
 @explanation
 
-The 2024–25 wave of "agent reinforcement training" frameworks (ART, RULER, rLLM, and Anthropic's internal pipelines) is built on a simple loop: run the agent on real tasks, score the trajectories, fine-tune the underlying model on the high-scoring ones. Repeat.
+The 2024–25 wave of "agent reinforcement training" frameworks (ART, RULER, rLLM, and frameworks from each major lab) is built on a simple loop: run the agent on real tasks, score the trajectories, fine-tune the underlying model on the high-scoring ones. Repeat.
 
 The mechanism uses preference learning rather than absolute rewards. Pair a winning trajectory with a losing one on the same task; train the model to prefer the winner. DPO, KTO, and their successors do this without the brittle reward-model machinery of classic RLHF.
 
@@ -213,7 +213,7 @@ teaser: A frontier model with thinking on solves the task; a small fast model tr
 
 @explanation
 
-Distillation is the most cost-efficient improvement path most teams miss. A frontier model — Claude Opus 4.7, GPT-5, Gemini 2 Pro — runs the agent flow with a generous thinking budget. The trajectories it produces are the curriculum. A small, fast model (Haiku 4.5, Mini, Flash) is fine-tuned on those trajectories.
+Distillation is the most cost-efficient improvement path most teams miss. A frontier model — GPT-5, Gemini 2 Pro, Claude Opus 4.7 — runs the agent flow with a generous thinking budget. The trajectories it produces are the curriculum. A small, fast model (GPT-5 mini, Gemini Flash, Claude Haiku) is fine-tuned on those trajectories.
 
 The result: the small model captures most of the reasoning quality of the big one on the specific tasks you trained for, at a fraction of the latency and cost. It won't generalise as broadly, but for production agents that do the same shape of work all day, you don't need broad generalisation.
 
@@ -224,7 +224,7 @@ The result: the small model captures most of the reasoning quality of the big on
 4. Deploy:                      small model takes prod traffic; frontier becomes evals + fallback.
 ```
 
-> [!tip] The cheapest way to do this in 2026 is the platform's managed fine-tuning UI — Anthropic's, OpenAI's, or Google's. You don't need a GPU.
+> [!tip] The cheapest way to do this in 2026 is the platform's managed fine-tuning UI — OpenAI's, Google's, or Anthropic's. You don't need a GPU.
 
 @feynman
 

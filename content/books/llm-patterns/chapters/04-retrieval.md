@@ -248,7 +248,7 @@ Plan:
 
 The model drives the loop: read what came back, decide what to retrieve next, repeat until the answer is complete or the budget is exhausted. This is structurally an agent (the previous book covers the loop mechanics).
 
-> [!info] Anthropic's deep-research pattern, OpenAI's "Deep Research" mode, and a wave of open-source equivalents all use this shape. They burn 10–100× the tokens of a single retrieval and produce dramatically better answers on hard questions.
+> [!info] Provider "deep research" modes from multiple vendors and a wave of open-source equivalents all use this shape. They burn 10–100× the tokens of a single retrieval and produce dramatically better answers on hard questions.
 
 @feynman
 
