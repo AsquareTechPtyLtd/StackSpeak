@@ -29,7 +29,7 @@ Native iOS vocabulary app for software developers and engineers. Delivers 5 tech
 9. **Library / Search** — search past words with filters (stack, level, mastered, bookmarked).
 10. **Profile (You)** — streak counter, level progress (percentage-based), assessed words count, mastered list, bookmarked list, stack management, notification settings.
 11. **Streak Tracking** — consecutive days of completed daily sets. For engagement only; doesn't affect level progression.
-12. **Level System** — assessment-based progression through 5 developer career levels (Intern → Staff Engineer). Each level unlocks new stacks (28 total).
+12. **Level System** — assessment-based progression through 60 levels across 12 IC career bands (Intern → Fellow). Content unlocks at 5 tier gates; the upper bands are prestige mastery. See the Level System section for the ladder and currency.
 13. **Stack Personalization** — 14 mandatory + 14 optional stacks. Users choose specializations at each level.
 14. **Daily Notification** — configurable reminder time with optional second reminder.
 15. **UI Preferences** — toggle light/dark/system theme; toggle card density (compact/roomy).
@@ -119,7 +119,7 @@ All custom fonts must be declared in `Info.plist` under `UIAppFonts`. Fallbacks:
 | `connector` | string | Everyday analogy that anchors the term to something the user already knows. Convention: *"Think of X like Y — …"*. Shown on the Feynman card's final reveal (after the user has explained it) so it sticks as a takeaway. |
 | `codeExample` | object | `{ language, code }` — `language` is a lowercase slug (`http`, `yaml`, `ts`, `hs`, `swift`, `sql`, `bash`, `py`, `go`, `rust`). |
 | `stack` | enum | One of the stacks defined in `Models/WordStack.swift`. |
-| `unlockLevel` | integer (1–5) | Which user level must be reached to unlock this word. |
+| `unlockLevel` | integer | The level at which this word's tier unlocks: basic→1, intermediate→6, advanced→16, advanced-2→26, advanced-3→36. Set from the stack's tier, not per-word. |
 | `tags` | array of strings | Free-form tags (lowercase-with-hyphens) for filtering/search. |
 
 All fields are **required** for MVP. No optional fields — if a word doesn't have a good code example, it doesn't belong in the bank yet.
@@ -128,7 +128,7 @@ All fields are **required** for MVP. No optional fields — if a word doesn't ha
 
 ### Word Bank Target
 
-MVP target: **~300 curated words** distributed across the 5 unlock levels.
+Current bank: **~2,500 words across 92 stacks**, distributed across the 5 content tiers (basic / intermediate / advanced / advanced-2 / advanced-3).
 
 ### Data Migration (Future words.json Updates)
 
@@ -141,19 +141,19 @@ MVP target: **~300 curated words** distributed across the 5 unlock levels.
 
 ## Stack System
 
-Words are organized into **stacks** — focused learning paths that unlock progressively as users level up from Intern to Staff Engineer. Stacks mirror real career progression: beginners start with fundamentals, seniors master advanced topics.
+Words are organized into **stacks** — focused learning paths that unlock progressively as users level up from Intern to Fellow. Stacks mirror real career progression: beginners start with fundamentals, seniors master advanced topics.
 
 Canonical stack list and level mappings live in `Models/WordStack.swift`. The sections below describe *behavior*; the code is authoritative for specific enum values, minimum levels, and mandatory/optional flags.
 
-### Level-Based Stack Progression (overview)
+### Level System (overview)
 
-Each level unlocks new mandatory and optional stacks. Mandatory stacks auto-add to the user's learning path; optional stacks can be selected for specialization.
+The ladder is **60 levels across 12 IC career bands**, each band split into 5 sub-levels (I–V): Intern → Junior Engineer → Engineer → Senior Engineer → Lead Engineer → Staff Engineer → Senior Staff → Principal Engineer → Senior Principal → Architect → Distinguished Engineer → Fellow. The canonical table (titles + thresholds) lives in `Models/Level.swift`.
 
-- **Level 1: Intern** — 4 mandatory + 2 optional (fundamentals: programming, web, code quality, engineering culture)
-- **Level 2: Junior Developer** — adds networking, version control, testing
-- **Level 3: Developer** — adds architecture, system design, performance, plus advanced frontend/backend/mobile/security as optional
-- **Level 4: Senior Developer** — adds advanced system design, advanced networking, interview prep
-- **Level 5: Staff Engineer** — adds leadership, architecture-at-scale, plus ML/security-architecture/data-platform as optional
+**Progression currency:** a word is *credited* toward leveling on its **first correct assessment answer** (`UserProgress.wordsAssessedForLevel`). The second correct answer (a later day) is tracked separately as a **retention** stat and does not gate levels. Skip/report marks a word mastered but grants **no** level credit; "mastered" is not progression currency. Streak does not affect leveling.
+
+**Content gates:** the 5 stack tiers unlock at fixed levels — basic→1, intermediate→6, advanced→16, advanced-2→26, advanced-3→36. All content is reachable by Principal Engineer (L36); the top four bands (Senior Principal → Fellow) are prestige mastery of the full catalog. Each level's word/stack availability is driven by `word.unlockLevel` / `stack.minimumLevel` (both set from the stack's tier).
+
+Mandatory stacks for a newly reached level auto-add to the learning path; optional stacks are offered in the level-up picker.
 
 **Do not invent new stacks.** If a word doesn't fit existing stacks, discuss before adding.
 
@@ -161,14 +161,14 @@ Each level unlocks new mandatory and optional stacks. Mandatory stacks auto-add 
 
 **Onboarding:**
 - User sees only Level 1 stacks (4 mandatory pre-checked + 2 optional toggleable)
-- Simpler, less overwhelming than showing all 28 stacks upfront
+- Simpler, less overwhelming than showing all 92 stacks upfront
 - Prompt: *"Core stacks are essential fundamentals. Add optional stacks to specialize your learning."*
 
 **Level-Up Modal:**
 - Triggered when user advances to next level
 - Shows newly unlocked mandatory stacks (auto-added, marked with checkmark)
 - Shows newly unlocked optional stacks (user can select/deselect)
-- Example: *"You're now a Developer! New stacks: Architecture, Basic System Design, Performance (core) + Advanced Frontend, Mobile, Security (optional)"*
+- Example: *"You're now a Senior Engineer! New stacks unlocked at the advanced tier."*
 
 **Stack Management (Profile → Manage Stacks):**
 - Shows all mandatory stacks for current level (locked, cannot disable)
@@ -178,7 +178,7 @@ Each level unlocks new mandatory and optional stacks. Mandatory stacks auto-add 
 
 ### Word Level Display
 
-Each word card displays its unlock level as `L<n> · <Career Title>` (e.g., `L3 · Developer`). The career title is derived from the Level System — so the display automatically updates if level names ever change.
+Each word card displays its unlock level as `L<n>` (the level at which the word's tier unlocks — e.g. `L16` for an advanced-tier word), optionally paired with a secondary caption. Rendered by `MetaCaption`, driven by `word.unlockLevel`.
 
 ## Word Rotation Algorithm
 
@@ -197,31 +197,28 @@ Each word card displays its unlock level as `L<n> · <Career Title>` (e.g., `L3 
 
 ## Level System
 
-Users progress through developer career-title levels by **mastering vocabulary through assessments**. Each level unlocks more words and stacks. Level progression is based on **words assessed correctly twice** — not time-based or streak-based.
+Users progress through a **60-level IC career ladder** (12 bands × 5 sub-levels, Intern → Fellow) by demonstrating vocabulary through assessments. Progression is **credit-based**, not time- or streak-based.
 
 ### Level Progression
 
-| Level | Title | Words Required (2× Correct Each) | Progression |
-|-------|-------|-----------------------------------|-------------|
-| 1 | Intern | 0 | Default at install |
-| 2 | Junior Developer | 20 | Practice → Assess → Master 20 words |
-| 3 | Developer | 50 | Total 50 words mastered |
-| 4 | Senior Developer | 120 | Total 120 words mastered |
-| 5 | Staff Engineer | 220 | Total 220 words mastered |
+- **Currency:** a word is *credited* on its **first correct assessment answer**. `wordsAssessedForLevel` = count of credited words; crossing a level's `wordsRequired` threshold advances the user (a single answer may cross several thresholds at once). Levels never decrease.
+- **Curve:** front-loaded — L2 needs 2 credited words, L6 (intermediate gate) needs 13, scaling to L60 (Fellow V) at 708. The full table is `LevelDefinition.levels` in `Models/Level.swift`.
+- **Career bands:** Intern, Junior Engineer, Engineer, Senior Engineer, Lead Engineer, Staff Engineer, Senior Staff, Principal Engineer, Senior Principal, Architect, Distinguished Engineer, Fellow.
+- **Content gates:** basic→L1, intermediate→L6, advanced→L16, advanced-2→L26, advanced-3→L36. Top four bands are prestige mastery.
 
 ### Rules
 
-- **"Words assessed correctly twice"** = words the user has answered correctly in the assessment quiz at least twice. This ensures mastery, not just exposure.
-- **Progression is mastery-based** — users must prove knowledge via multiple-choice quiz, not just practice by writing sentences.
-- **Streak is for engagement only** — daily streak motivates consistency but does NOT affect level progression.
-- **System is extensible** — future versions can add Level 6+ (e.g., Principal Engineer, Architect, Distinguished Engineer) without breaking existing progress.
-- **Level-up triggers after assessment** — when user reaches the threshold, a celebration modal appears showing newly unlocked stacks.
-- **Locked words** — visible in the Library (when filter "show locked" is on) with *"Reach Level N: [Title] to unlock"* message.
-- **Progress display** — shows percentage + words remaining (e.g., "67% • 10 words to level up").
+- **First correct = level credit; second correct = retention.** The second correct answer (a later day) feeds a separate retention stat (`wordsAssessedCorrectlyTwice`) and does not gate levels.
+- **Skip/report does not level you** — it marks the word mastered (excluded from future sets) but grants no credit.
+- **Mastered is not currency** — marking a word mastered removes it; it doesn't advance rank.
+- **Streak is for engagement only** — does NOT affect level progression.
+- **Level-up triggers after assessment** — a celebration modal appears, then a picker for any newly unlocked optional stacks.
+- **Locked words** — visible in the Library (when "show locked" is on) with *"Reach Level N: [Title] to unlock"*.
+- **Progress display** — percentage + words remaining within the current band (e.g., "67% • 3 words to Engineer II").
 
 ## Assessment System
 
-Users advance through levels by passing **multiple-choice quizzes** for practiced words. Each word must be answered correctly **at least twice** before it counts toward level progression.
+Users advance through levels by passing **multiple-choice quizzes** for practiced words. A word's **first correct answer credits it** toward level progression; a **second correct answer** (a later day) marks it retained for spaced-repetition tracking.
 
 ### Assessment Flow
 

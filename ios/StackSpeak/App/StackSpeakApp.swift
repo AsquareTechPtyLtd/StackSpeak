@@ -142,9 +142,10 @@ struct StackSpeakApp: App {
         if let progress {
             themeManager.preference = progress.themePreference
 
-            // Rebuild the two-correct cache on launch in case it was lost or corrupted.
-            if progress.wordsWithTwoCorrectIds.isEmpty && !progress.assessmentResults.isEmpty {
-                progress.rebuildTwoCorrectCache()
+            // Rebuild the progress caches on launch in case they were lost or corrupted
+            // (e.g. the credited-for-level cache was added after some results existed).
+            if progress.wordsCreditedForLevelIds.isEmpty && !progress.assessmentResults.isEmpty {
+                progress.rebuildProgressCaches()
                 do { try context.save() } catch { logger.error("Cache rebuild save failed: \(error.localizedDescription, privacy: .public)") }
             }
         } else {

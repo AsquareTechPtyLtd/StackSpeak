@@ -15,6 +15,9 @@ final class UserProgress {
     var shuffleSeed: UUID
     var wordQueueCursor: Int
     var wordsWithTwoCorrectIdsStorage: String
+    /// Words credited toward level progression (first correct assessment answer).
+    /// This is the level currency; `wordsWithTwoCorrectIds` is a retention stat.
+    var wordsCreditedForLevelIdsStorage: String = ""
     var didCompleteOnboarding: Bool
 
     var notificationEnabled: Bool
@@ -65,6 +68,13 @@ final class UserProgress {
         set { wordsWithTwoCorrectIdsStorage = Self.csvFromUUIDs(newValue) }
     }
 
+    /// Words credited toward level progression — one per word, on its first
+    /// correct assessment answer. Drives the level ladder.
+    var wordsCreditedForLevelIds: Set<UUID> {
+        get { Self.uuidsFromCSV(wordsCreditedForLevelIdsStorage) }
+        set { wordsCreditedForLevelIdsStorage = Self.csvFromUUIDs(newValue) }
+    }
+
     var selectedStacks: Set<String> {
         get { selectedStacksStorage.isEmpty ? [] : Set(selectedStacksStorage.components(separatedBy: ",")) }
         set { selectedStacksStorage = newValue.sorted().joined(separator: ",") }
@@ -87,6 +97,13 @@ final class UserProgress {
         wordsPracticedIds.count
     }
 
+    /// Level-progression currency: words credited (first correct answer).
+    var wordsAssessedForLevel: Int {
+        wordsCreditedForLevelIds.count
+    }
+
+    /// Retention stat: words answered correctly twice (on different days).
+    /// Displayed/celebrated but does not gate levels.
     var wordsAssessedCorrectlyTwice: Int {
         wordsWithTwoCorrectIds.count
     }
@@ -247,11 +264,13 @@ extension UserProgress {
         return !cal.isDateInToday(lastAttempt.attemptedAt)
     }
 
-    /// Rebuilds `wordsWithTwoCorrectIds` from raw results. Used for migration / testing only.
-    /// Normal updates happen incrementally in ProgressService.recordAssessmentResult.
-    func rebuildTwoCorrectCache() {
+    /// Rebuilds the credited (≥1 correct) and two-correct (≥2 correct) caches from
+    /// raw results. Used for migration / testing only. Normal updates happen
+    /// incrementally in ProgressService.recordAssessmentResult.
+    func rebuildProgressCaches() {
         let wordCorrectCounts = Dictionary(grouping: assessmentResults.filter { $0.isCorrect }) { $0.wordId }
             .mapValues { $0.count }
+        wordsCreditedForLevelIds = Set(wordCorrectCounts.filter { $0.value >= 1 }.keys)
         wordsWithTwoCorrectIds = Set(wordCorrectCounts.filter { $0.value >= 2 }.keys)
     }
 

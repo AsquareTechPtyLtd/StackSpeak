@@ -112,10 +112,10 @@ struct StreakDisplayTests {
     }
 }
 
-@Suite("UserProgress — wordsWithTwoCorrect cache")
-struct TwoCorrectCacheTests {
+@Suite("UserProgress — progress caches")
+struct ProgressCacheTests {
 
-    @Test("rebuildTwoCorrectCache is consistent with raw results")
+    @Test("rebuildProgressCaches splits credited (≥1) from two-correct (≥2)")
     func rebuildMatchesRawScan() {
         let progress = UserProgress()
         let wordA = UUID()
@@ -127,8 +127,14 @@ struct TwoCorrectCacheTests {
         // wordB gets 1 correct
         progress.assessmentResults.append(AssessmentResult(wordId: wordB, attemptedAt: Date(), isCorrect: true, selectedAnswer: "b", correctAnswer: "b"))
 
-        progress.rebuildTwoCorrectCache()
+        progress.rebuildProgressCaches()
 
+        // credited (level currency): both words count
+        #expect(progress.wordsCreditedForLevelIds.contains(wordA))
+        #expect(progress.wordsCreditedForLevelIds.contains(wordB))
+        #expect(progress.wordsAssessedForLevel == 2)
+
+        // retention stat: only the twice-correct word
         #expect(progress.wordsWithTwoCorrectIds.contains(wordA))
         #expect(!progress.wordsWithTwoCorrectIds.contains(wordB))
         #expect(progress.wordsAssessedCorrectlyTwice == 1)

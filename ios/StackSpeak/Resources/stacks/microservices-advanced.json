@@ -17,8 +17,13 @@
         "code": "// Resilience4j circuit breaker configuration\nCircuitBreakerConfig config = CircuitBreakerConfig.custom()\n    .slidingWindowType(SlidingWindowType.TIME_BASED)\n    .slidingWindowSize(10)                           // 10-second window\n    .failureRateThreshold(50)                        // trip at 50% errors\n    .slowCallRateThreshold(50)                       // also trip at 50% slow calls\n    .slowCallDurationThreshold(Duration.ofSeconds(2))\n    .waitDurationInOpenState(Duration.ofSeconds(30)) // stay open 30 s\n    .permittedNumberOfCallsInHalfOpenState(3)        // 3 probes in half-open\n    .recordExceptions(IOException.class, TimeoutException.class)\n    .ignoreExceptions(BadRequestException.class)     // don't count 400s\n    .build();\n\nCircuitBreaker breaker = CircuitBreakerRegistry.of(config)\n    .circuitBreaker(\"payment-service\");\n\n// Decorate the downstream call\nSupplier<PaymentResult> decorated = CircuitBreaker\n    .decorateSupplier(breaker, () -> paymentClient.charge(request));\n\ntry {\n    return decorated.get();\n} catch (CallNotPermittedException e) {\n    return fallbackResponse(); // circuit is OPEN — fast fail\n}"
       },
       "etymology": "Borrowed from electrical engineering — a circuit breaker is a device that interrupts current flow when it detects unsafe conditions. Applied to software by Michael Nygard in 'Release It!' (2007) and operationalized at scale by Netflix's Hystrix project.",
-      "unlockLevel": 4,
-      "tags": ["microservices", "resilience", "patterns", "distributed-systems"],
+      "unlockLevel": 16,
+      "tags": [
+        "microservices",
+        "resilience",
+        "patterns",
+        "distributed-systems"
+      ],
       "category": "patterns"
     },
     {
@@ -37,8 +42,13 @@
         "code": "// Resilience4j thread-pool bulkhead per downstream\nThreadPoolBulkheadConfig config = ThreadPoolBulkheadConfig.custom()\n    .maxThreadPoolSize(15)       // max concurrent calls to this dependency\n    .coreThreadPoolSize(10)\n    .queueCapacity(50)           // queue before rejecting\n    .keepAliveDuration(Duration.ofMillis(20))\n    .build();\n\nThreadPoolBulkhead bulkhead = ThreadPoolBulkheadRegistry\n    .of(config)\n    .bulkhead(\"fraud-service\");\n\n// Decorate a call to fraud service\nCompletableFuture<FraudResult> future = bulkhead\n    .executeSupplier(() -> fraudClient.check(order));\n\n// If fraud-service is slow, only its 15 threads fill up.\n// Payments and Inventory use separate bulkheads → unaffected."
       },
       "etymology": "Directly from naval architecture — a bulkhead is a watertight partition in a ship's hull that limits flooding to one compartment. Applied to software resilience by Michael Nygard in 'Release It!' (2007) and by Netflix's Hystrix team.",
-      "unlockLevel": 4,
-      "tags": ["microservices", "resilience", "patterns", "distributed-systems"],
+      "unlockLevel": 16,
+      "tags": [
+        "microservices",
+        "resilience",
+        "patterns",
+        "distributed-systems"
+      ],
       "category": "patterns"
     },
     {
@@ -57,8 +67,13 @@
         "code": "import uuid, requests\n\n# Client: generate key once per logical operation\nidempotency_key = str(uuid.uuid4())\n\nfor attempt in range(max_retries):\n    response = requests.post(\n        \"/v1/charges\",\n        json={\"amount\": 5000, \"currency\": \"usd\", \"customer\": \"cus_abc\"},\n        headers={\"Idempotency-Key\": idempotency_key},  # same key every retry\n    )\n    if response.status_code in (200, 201):\n        break\n    if response.status_code not in (500, 503, 429):\n        break  # non-retryable error\n\n# Server-side: check before executing\ndef create_charge(request):\n    key = request.headers[\"Idempotency-Key\"]\n    cached = redis.get(f\"idem:{key}\")\n    if cached:\n        return json.loads(cached)  # replay stored result\n    result = stripe_gateway.charge(request.body)\n    redis.set(f\"idem:{key}\", json.dumps(result), ex=86400)\n    return result"
       },
       "etymology": "Idempotent from Latin idem ('same') + potens ('powerful') — an operation whose repeated application produces the same result as a single application. Key refers to the unique identifier enabling server-side recognition of duplicates. The HTTP header name was standardized by Stripe and later adopted by the IETF draft RFC.",
-      "unlockLevel": 4,
-      "tags": ["microservices", "resilience", "api", "distributed-systems"],
+      "unlockLevel": 16,
+      "tags": [
+        "microservices",
+        "resilience",
+        "api",
+        "distributed-systems"
+      ],
       "category": "patterns"
     },
     {
@@ -77,8 +92,13 @@
         "code": "-- Outbox table schema\nCREATE TABLE outbox_events (\n  id             UUID PRIMARY KEY DEFAULT gen_random_uuid(),\n  aggregate_id   TEXT        NOT NULL,\n  aggregate_type TEXT        NOT NULL,\n  event_type     TEXT        NOT NULL,\n  payload        JSONB       NOT NULL,\n  created_at     TIMESTAMPTZ NOT NULL DEFAULT now(),\n  published_at   TIMESTAMPTZ          -- NULL until relayed\n);\n\n-- Application writes both records in ONE transaction\nBEGIN;\n  INSERT INTO orders (id, customer_id, total, status)\n    VALUES ($1, $2, $3, 'PENDING');\n\n  INSERT INTO outbox_events\n    (aggregate_id, aggregate_type, event_type, payload)\n    VALUES ($1, 'Order', 'OrderCreated',\n      json_build_object('orderId', $1, 'customerId', $2, 'total', $3));\nCOMMIT;\n-- Relay picks up and publishes to Kafka asynchronously"
       },
       "etymology": "Named for the physical office outbox tray — a container for items ready to leave the office. In software, coined and popularized by Chris Richardson in 'Microservices Patterns' (Manning, 2018) as the transactional messaging pattern.",
-      "unlockLevel": 4,
-      "tags": ["microservices", "messaging", "patterns", "distributed-systems"],
+      "unlockLevel": 16,
+      "tags": [
+        "microservices",
+        "messaging",
+        "patterns",
+        "distributed-systems"
+      ],
       "category": "patterns"
     },
     {
@@ -97,8 +117,13 @@
         "code": "// Debezium PostgreSQL connector config (Kafka Connect REST API)\n{\n  \"name\": \"order-service-cdc\",\n  \"config\": {\n    \"connector.class\": \"io.debezium.connector.postgresql.PostgresConnector\",\n    \"database.hostname\": \"postgres\",\n    \"database.port\": \"5432\",\n    \"database.user\": \"debezium\",\n    \"database.dbname\": \"orders\",\n    \"database.server.name\": \"orderdb\",\n    \"table.include.list\": \"public.outbox_events\",\n    \"plugin.name\": \"pgoutput\",\n    \"transforms\": \"outbox\",\n    \"transforms.outbox.type\":\n      \"io.debezium.transforms.outbox.EventRouter\",\n    \"transforms.outbox.route.by.field\": \"event_type\",\n    \"transforms.outbox.table.field.event.key\": \"aggregate_id\"\n  }\n}"
       },
       "etymology": "Change Data Capture is a long-established data integration term from the ETL industry, describing the process of identifying and capturing changes in a source data store. Popularized in the microservices context by Martin Fowler, Debezium documentation, and Chris Richardson's 'Microservices Patterns'.",
-      "unlockLevel": 4,
-      "tags": ["microservices", "messaging", "data", "distributed-systems"],
+      "unlockLevel": 16,
+      "tags": [
+        "microservices",
+        "messaging",
+        "data",
+        "distributed-systems"
+      ],
       "category": "patterns"
     },
     {
@@ -117,8 +142,13 @@
         "code": "# Saga orchestrator pseudocode for Order placement\nclass CreateOrderSaga:\n    steps = [\n        SagaStep(\n            action=lambda ctx: payment_svc.reserve(ctx.order_id, ctx.amount),\n            compensation=lambda ctx: payment_svc.cancel(ctx.payment_id)\n        ),\n        SagaStep(\n            action=lambda ctx: inventory_svc.reserve(ctx.items),\n            compensation=lambda ctx: inventory_svc.release(ctx.reservation_id)\n        ),\n        SagaStep(\n            action=lambda ctx: shipping_svc.schedule(ctx.order_id),\n            compensation=lambda ctx: shipping_svc.cancel(ctx.shipment_id)\n        ),\n    ]\n\n    def execute(self, ctx):\n        completed = []\n        for step in self.steps:\n            try:\n                step.action(ctx)\n                completed.append(step)\n            except Exception:\n                # run compensations in reverse\n                for done in reversed(completed):\n                    done.compensation(ctx)\n                raise SagaRolledBack()"
       },
       "etymology": "Borrowed from Old Norse saga ('narrative, story') — a long tale of sequential events. Applied to distributed systems by Hector Garcia-Molina and Kenneth Salem in a 1987 ACM SIGMOD paper titled 'Sagas', which described long-lived transactions in relational databases. Revived and adapted for microservices by Chris Richardson.",
-      "unlockLevel": 4,
-      "tags": ["microservices", "transactions", "patterns", "distributed-systems"],
+      "unlockLevel": 16,
+      "tags": [
+        "microservices",
+        "transactions",
+        "patterns",
+        "distributed-systems"
+      ],
       "category": "patterns"
     },
     {
@@ -137,8 +167,13 @@
         "code": "# Inventory service: choreography participant\n@kafka_consumer(topic=\"payment.reserved\")\ndef on_payment_reserved(event):\n    order_id = event[\"orderId\"]\n    items    = event[\"items\"]\n    try:\n        reservation = inventory.reserve(order_id, items)\n        kafka.publish(\"inventory.reserved\", {\n            \"orderId\": order_id,\n            \"reservationId\": reservation.id,\n        })\n    except InsufficientStockError:\n        kafka.publish(\"inventory.reservation.failed\", {\n            \"orderId\": order_id,\n            \"reason\": \"INSUFFICIENT_STOCK\",\n        })\n\n# Payment service: listens for failure and compensates\n@kafka_consumer(topic=\"inventory.reservation.failed\")\ndef on_inventory_failed(event):\n    payment.cancel(event[\"orderId\"])  # compensating transaction"
       },
       "etymology": "Choreography from Greek khoreia ('choral dance') + graphein ('to write') — a dance performed without a visible director, where each dancer knows their role. In software, contrasted with orchestration (which has a visible conductor).",
-      "unlockLevel": 4,
-      "tags": ["microservices", "transactions", "patterns", "messaging"],
+      "unlockLevel": 16,
+      "tags": [
+        "microservices",
+        "transactions",
+        "patterns",
+        "messaging"
+      ],
       "category": "patterns"
     },
     {
@@ -157,8 +192,13 @@
         "code": "# Temporal workflow: orchestrated Create Order saga\nfrom temporalio import workflow, activity\n\n@workflow.defn\nclass CreateOrderSaga:\n    @workflow.run\n    async def run(self, order: OrderInput) -> str:\n        # Step 1: reserve payment\n        payment_id = await workflow.execute_activity(\n            reserve_payment,\n            order.amount,\n            schedule_to_close_timeout=timedelta(seconds=30),\n        )\n        # Step 2: reserve inventory\n        try:\n            reservation_id = await workflow.execute_activity(\n                reserve_inventory, order.items,\n                schedule_to_close_timeout=timedelta(seconds=30),\n            )\n        except Exception:\n            # Compensation: cancel payment\n            await workflow.execute_activity(cancel_payment, payment_id)\n            raise\n        return reservation_id"
       },
       "etymology": "Orchestration from Italian orchester ('orchestra') — musicians playing under a conductor's direction. In software, contrasted with choreography; the term was adopted in workflow and microservice literature to describe centralized process coordination.",
-      "unlockLevel": 4,
-      "tags": ["microservices", "transactions", "patterns", "workflows"],
+      "unlockLevel": 16,
+      "tags": [
+        "microservices",
+        "transactions",
+        "patterns",
+        "workflows"
+      ],
       "category": "patterns"
     },
     {
@@ -173,8 +213,13 @@
       "techContext": "Every step in our order saga has a documented compensating transaction — cancelReservation for inventory, voidAuthorization for payments, and cancelShipmentRequest for shipping — so the saga can safely roll back from any step.",
       "exampleSentence": "The compensating transaction for the inventory reservation step released 50 reserved units back to available stock when the downstream shipping service returned a 503 during the saga's final step.",
       "etymology": "Compensate from Latin compensare ('to weigh together, to offset') — making up for a prior action by taking an equal and opposite action. Introduced to distributed transactions by Hector Garcia-Molina and Kenneth Salem (1987) and adapted to microservices by Chris Richardson's 'Microservices Patterns'.",
-      "unlockLevel": 4,
-      "tags": ["microservices", "transactions", "patterns", "distributed-systems"],
+      "unlockLevel": 16,
+      "tags": [
+        "microservices",
+        "transactions",
+        "patterns",
+        "distributed-systems"
+      ],
       "category": "patterns"
     },
     {
@@ -193,8 +238,13 @@
         "code": "import random, time\n\ndef retry_with_full_jitter(fn, max_retries=5, base=0.5, cap=30.0):\n    \"\"\"\n    Exponential backoff with full jitter (AWS recommended).\n    Wait on attempt k: uniform([0, min(cap, base * 2^k)])\n    \"\"\"\n    for attempt in range(max_retries + 1):\n        try:\n            return fn()\n        except TransientError:\n            if attempt == max_retries:\n                raise\n            # exponential cap, then full random jitter\n            ceiling = min(cap, base * (2 ** attempt))\n            time.sleep(random.uniform(0, ceiling))\n\n# Attempt 0 failure → sleep [0, 0.5]\n# Attempt 1 failure → sleep [0, 1.0]\n# Attempt 2 failure → sleep [0, 2.0]\n# Attempt 3 failure → sleep [0, 4.0]\n# Attempt 4 failure → sleep [0, 8.0]\n# Attempt 5 failure → raise (exhausted)"
       },
       "etymology": "Exponential from Latin exponere ('to expose, to set out') — referring to the mathematical exponential function. Backoff is an informal computing term for a delay before retrying. Jitter from electrical engineering — random noise added to a signal to break up periodicity. The combined pattern was formalized by Marc Brooker at AWS in 2015.",
-      "unlockLevel": 4,
-      "tags": ["microservices", "resilience", "patterns", "distributed-systems"],
+      "unlockLevel": 16,
+      "tags": [
+        "microservices",
+        "resilience",
+        "patterns",
+        "distributed-systems"
+      ],
       "category": "patterns"
     },
     {
@@ -213,8 +263,13 @@
         "code": "# Nginx: token bucket rate limiting — 100 req/s per API key,\n# burst of 20 before rejecting\nlimit_req_zone $http_x_api_key zone=per_key:10m rate=100r/s;\n\nserver {\n    location /api/ {\n        limit_req zone=per_key burst=20 nodelay;\n        limit_req_status 429;\n        add_header Retry-After 1 always;\n        proxy_pass http://backend_upstream;\n    }\n}"
       },
       "etymology": "Rate from Latin rata ('calculated, fixed share'); limit from Latin limes ('boundary'). Rate limiting as a term was standardized in network engineering (RFC 2475, 1998) and adapted to HTTP APIs as they became the dominant service interface.",
-      "unlockLevel": 4,
-      "tags": ["microservices", "resilience", "api", "security"],
+      "unlockLevel": 16,
+      "tags": [
+        "microservices",
+        "resilience",
+        "api",
+        "security"
+      ],
       "category": "patterns"
     },
     {
@@ -229,8 +284,13 @@
       "techContext": "We configure throttling on our analytics ingestion endpoint so that burst traffic from end-of-day batch uploads is queued and processed at 500 events/second, preventing the database write layer from being overwhelmed while still accepting all events.",
       "exampleSentence": "The throttling layer absorbed a 10x traffic spike from a viral product launch by queuing requests for up to 5 seconds, avoiding both rejection and backend overload during the peak.",
       "etymology": "Throttle from Old English þrotel ('throat, windpipe') — to throttle is to constrict flow, controlling speed by limiting the opening. In mechanical engineering, a throttle valve controls fuel or air flow; in software, it controls request flow.",
-      "unlockLevel": 4,
-      "tags": ["microservices", "resilience", "api", "patterns"],
+      "unlockLevel": 16,
+      "tags": [
+        "microservices",
+        "resilience",
+        "api",
+        "patterns"
+      ],
       "category": "patterns"
     },
     {
@@ -249,8 +309,13 @@
         "code": "# Envoy: retry policy with retry budget\nroute:\n  cluster: payment-service\n  retry_policy:\n    retry_on: 5xx,reset,connect-failure,retriable-4xx\n    num_retries: 3\n    per_try_timeout: 2s\n    retry_budget:\n      budget_percent:\n        value: 20.0   # at most 20% of active requests may be retries\n      min_retry_concurrency: 3  # always allow at least 3 concurrent retries"
       },
       "etymology": "Retry from re- (Latin 'again') + try; budget from Old French bougette ('small bag, pouch') — in this context, a fixed allocation that cannot be exceeded. The retry budget concept was formalized and popularized by the Envoy proxy team and documented by Lyft engineers.",
-      "unlockLevel": 4,
-      "tags": ["microservices", "resilience", "patterns", "distributed-systems"],
+      "unlockLevel": 16,
+      "tags": [
+        "microservices",
+        "resilience",
+        "patterns",
+        "distributed-systems"
+      ],
       "category": "patterns"
     },
     {
@@ -265,8 +330,13 @@
       "techContext": "Our early-stage monolith used 2PC across its billing and inventory databases; after decomposing into microservices we replaced it entirely with saga orchestration because Kafka does not support XA and the coordinator failure scenarios were unacceptable.",
       "exampleSentence": "Two-phase commit worked in our single-datacenter prototype but became a liability in production — a coordinator crash during a peak event left 300 in-doubt transactions locking both the payment and inventory services for 45 minutes.",
       "etymology": "Phase from Greek phasis ('appearance, stage'); commit from Latin committere ('to entrust, to bring together'). Two-Phase Commit was formalized by Jim Gray in the 1970s at IBM's San Jose Research Laboratory and is described in Gray & Reuter's 'Transaction Processing: Concepts and Techniques' (1992).",
-      "unlockLevel": 4,
-      "tags": ["microservices", "transactions", "distributed-systems", "patterns"],
+      "unlockLevel": 16,
+      "tags": [
+        "microservices",
+        "transactions",
+        "distributed-systems",
+        "patterns"
+      ],
       "category": "concepts"
     },
     {
@@ -281,8 +351,13 @@
       "techContext": "Implementing transactional messaging with the outbox pattern eliminated the class of customer complaints about orders that appeared in the UI but never triggered shipping or notification downstream.",
       "exampleSentence": "Transactional messaging guaranteed that every order commit produced exactly one durable OrderCreated event in the outbox, which the relay would eventually deliver to Kafka even if the broker was unreachable for hours.",
       "etymology": "Transaction from Latin transactionem ('settlement, accomplishment') — a complete unit of work. Messaging from Latin missus ('sent') — the act of sending a communication. The compound term was formalized in the enterprise messaging literature (IBM MQ, JMS) and adapted to microservices by Chris Richardson's 'Microservices Patterns'.",
-      "unlockLevel": 4,
-      "tags": ["microservices", "messaging", "patterns", "distributed-systems"],
+      "unlockLevel": 16,
+      "tags": [
+        "microservices",
+        "messaging",
+        "patterns",
+        "distributed-systems"
+      ],
       "category": "concepts"
     },
     {
@@ -297,8 +372,13 @@
       "techContext": "Every database.save() immediately followed by kafka.publish() in our codebase was a latent dual write bug — we discovered three such patterns in a code audit that would have corrupted our order pipeline under network partition.",
       "exampleSentence": "The dual write problem manifested as roughly 12 orders per day that appeared in the database but never triggered inventory reservation — each one was a race where the commit succeeded but the Kafka publish timed out.",
       "etymology": "Dual from Latin dualis ('containing two'); write from Old English wrītan ('to inscribe'). The problem is named descriptively — writing to two separate systems simultaneously. The term was popularized in microservices documentation by Martin Fowler, Gunnar Morling, and Chris Richardson.",
-      "unlockLevel": 4,
-      "tags": ["microservices", "messaging", "distributed-systems", "concepts"],
+      "unlockLevel": 16,
+      "tags": [
+        "microservices",
+        "messaging",
+        "distributed-systems",
+        "concepts"
+      ],
       "category": "concepts"
     },
     {
@@ -317,8 +397,13 @@
         "code": "-- Inbox pattern: idempotent consumer with transactional deduplication\nBEGIN;\n  -- Attempt to record this message ID\n  -- If duplicate: constraint violation → silent skip via ON CONFLICT\n  INSERT INTO inbox_events (message_id, event_type, payload)\n    VALUES ($message_id, $event_type, $payload)\n    ON CONFLICT (message_id) DO NOTHING;\n\n  -- Only execute business logic if the insert produced a new row\n  -- (PostgreSQL: GET DIAGNOSTICS rows_affected = ROW_COUNT)\n  IF rows_affected = 1 THEN\n    -- Business logic here: upsert inventory, update order status, etc.\n    INSERT INTO shipments (order_id, status)\n      VALUES ($order_id, 'SCHEDULED')\n      ON CONFLICT (order_id) DO NOTHING;\n  END IF;\nCOMMIT;"
       },
       "etymology": "Idempotent from Latin idem ('same') + potens ('powerful, having effect') — an operation that yields the same result no matter how many times it is applied. Consumer from Latin consumere ('to take up, to use'). Applied to message processing in the context of distributed messaging and the outbox/inbox patterns.",
-      "unlockLevel": 4,
-      "tags": ["microservices", "messaging", "patterns", "distributed-systems"],
+      "unlockLevel": 16,
+      "tags": [
+        "microservices",
+        "messaging",
+        "patterns",
+        "distributed-systems"
+      ],
       "category": "patterns"
     },
     {
@@ -333,8 +418,13 @@
       "techContext": "We stopped trying to achieve true exactly-once and instead designed all our consumers to be idempotent — from the outside, our system behaves as if messages arrive exactly once, which is the only thing that matters for correctness.",
       "exampleSentence": "Kafka's exactly-once semantics handled duplicate avoidance for our stream processing topology, but we still needed idempotent consumers for the final PostgreSQL write because EOS does not cover external side effects.",
       "etymology": "Exactly-once is a precise compound term from distributed systems literature. Semantics from Greek semantikos ('significant, meaningful') — the meaning or contract of a behavior. Coined as a formal classification alongside at-most-once and at-least-once delivery guarantees in distributed messaging research.",
-      "unlockLevel": 4,
-      "tags": ["microservices", "messaging", "distributed-systems", "concepts"],
+      "unlockLevel": 16,
+      "tags": [
+        "microservices",
+        "messaging",
+        "distributed-systems",
+        "concepts"
+      ],
       "category": "concepts"
     },
     {
@@ -349,8 +439,13 @@
       "techContext": "After adding load shedding to our search service triggered at 85% queue depth, peak traffic spikes that used to crash the service now degrade gracefully — 15% of requests see a fast 503 while the remaining 85% complete within SLA.",
       "exampleSentence": "Load shedding prevented the total outage during the flash sale — by dropping 20% of catalog search requests with fast 503s, the checkout and payment services maintained full availability for the customers who mattered most.",
       "etymology": "Load from Old English lad ('way, course') — in engineering, the demand placed on a system. Shed from Old English sceadan ('to separate, divide off') — to remove a portion. Load shedding originated in electrical power grid management (deliberately de-energizing circuits to prevent total blackout) and was adopted in computer science for analogous overload protection.",
-      "unlockLevel": 4,
-      "tags": ["microservices", "resilience", "patterns", "distributed-systems"],
+      "unlockLevel": 16,
+      "tags": [
+        "microservices",
+        "resilience",
+        "patterns",
+        "distributed-systems"
+      ],
       "category": "patterns"
     },
     {
@@ -365,8 +460,13 @@
       "techContext": "After adding full jitter to all retry loops, we eliminated the repeating recovery cycle that had prevented our payment processor from staying up for more than 90 seconds after a restart under traffic.",
       "exampleSentence": "The thundering herd from 800 simultaneous clients retrying with fixed 5-second delays kept recrashing the just-recovered inventory service — switching to full jitter finally allowed it to stabilize.",
       "etymology": "Thundering herd from the image of a stampede — a large number of animals (or computing clients) moving together in a synchronized, overwhelming surge. In Unix systems programming, the thundering herd problem originally referred to multiple threads being woken up simultaneously to handle a single event. Applied to network systems in distributed systems literature.",
-      "unlockLevel": 4,
-      "tags": ["microservices", "resilience", "distributed-systems", "concepts"],
+      "unlockLevel": 16,
+      "tags": [
+        "microservices",
+        "resilience",
+        "distributed-systems",
+        "concepts"
+      ],
       "category": "concepts"
     },
     {
@@ -381,8 +481,13 @@
       "techContext": "The Fallacies of Distributed Computing are the mental model behind our mandatory resilience review checklist — every new service dependency is evaluated against all eight fallacies before the design is approved.",
       "exampleSentence": "The fallacy that the network is reliable explained the entire class of production incidents we had in our first year of microservices — every service lacked timeouts because we had designed assuming synchronous calls always returned.",
       "etymology": "Fallacy from Latin fallacia ('deception, trick') — a mistaken belief based on unsound reasoning. Distributed Computing refers to computation spread across multiple networked nodes. The eight fallacies were attributed to L. Peter Deutsch (and later partially to James Gosling) at Sun Microsystems, circa 1994, and have been cited in virtually every major distributed systems text since.",
-      "unlockLevel": 4,
-      "tags": ["microservices", "distributed-systems", "concepts", "resilience"],
+      "unlockLevel": 16,
+      "tags": [
+        "microservices",
+        "distributed-systems",
+        "concepts",
+        "resilience"
+      ],
       "category": "concepts"
     },
     {
@@ -397,8 +502,13 @@
       "techContext": "Switching from a polling publisher to Debezium transaction log tailing on our outbox table reduced end-to-end event latency from 800ms average to under 50ms and eliminated the SELECT load on our PostgreSQL primary.",
       "exampleSentence": "Transaction log tailing via Debezium captured the database commit and forwarded the event to Kafka in 18 milliseconds — the downstream inventory service updated its stock before the customer's browser had finished rendering the order confirmation.",
       "etymology": "Transaction from Latin transactionem ('settlement, accomplishment'). Log from Old Norse lag ('fallen tree') — the metaphor of a sequential record. Tailing from the concept of reading the tail (most recent end) of a file or stream. Transaction log tailing as a distinct pattern name was popularized by Chris Richardson in 'Microservices Patterns' (2018).",
-      "unlockLevel": 4,
-      "tags": ["microservices", "messaging", "data", "distributed-systems"],
+      "unlockLevel": 16,
+      "tags": [
+        "microservices",
+        "messaging",
+        "data",
+        "distributed-systems"
+      ],
       "category": "patterns"
     },
     {
@@ -417,8 +527,13 @@
         "code": "-- Saga state table for persistent tracking\nCREATE TABLE saga_state (\n  saga_id        UUID PRIMARY KEY,\n  saga_type      TEXT        NOT NULL,  -- e.g. 'CREATE_ORDER'\n  current_step   TEXT        NOT NULL,  -- e.g. 'RESERVE_INVENTORY'\n  status         TEXT        NOT NULL,  -- STARTED|IN_PROGRESS|COMPENSATING|COMPLETED|FAILED\n  context        JSONB       NOT NULL,  -- step results, IDs for compensation\n  created_at     TIMESTAMPTZ NOT NULL DEFAULT now(),\n  updated_at     TIMESTAMPTZ NOT NULL DEFAULT now()\n);\n\n-- Orchestrator updates state before sending each command\nUPDATE saga_state\n  SET current_step = 'RESERVE_INVENTORY',\n      status       = 'IN_PROGRESS',\n      context      = context || '{\"paymentId\": \"pay_abc\"}',\n      updated_at   = now()\nWHERE saga_id = $1;"
       },
       "etymology": "Saga from Old Norse saga ('narrative, story'); state machine from automata theory (Mealy/Moore, 1955) — a formal model of computation with a finite set of states and transition rules. Combined as a descriptor for the stateful coordination logic underlying distributed saga execution.",
-      "unlockLevel": 4,
-      "tags": ["microservices", "transactions", "patterns", "distributed-systems"],
+      "unlockLevel": 16,
+      "tags": [
+        "microservices",
+        "transactions",
+        "patterns",
+        "distributed-systems"
+      ],
       "category": "patterns"
     },
     {
@@ -433,8 +548,13 @@
       "techContext": "Our mobile BFF uses API aggregation to compose the product detail page in one call — it fans out to Catalog, Inventory, Pricing, and Reviews in parallel, completing in 120ms vs the 480ms the mobile app took when making all four calls sequentially.",
       "exampleSentence": "API aggregation at the BFF layer reduced the mobile app's homepage load from six sequential requests to one, cutting the perceived page load time by 70% for users on high-latency mobile connections.",
       "etymology": "API from Application Programming Interface; aggregation from Latin aggregare ('to add to the flock') — to collect into a group. The pattern was described in the microservices context by Sam Newman ('Building Microservices') and Chris Richardson as the API Gateway pattern's data composition capability.",
-      "unlockLevel": 4,
-      "tags": ["microservices", "api", "patterns", "architecture"],
+      "unlockLevel": 16,
+      "tags": [
+        "microservices",
+        "api",
+        "patterns",
+        "architecture"
+      ],
       "category": "patterns"
     },
     {
@@ -453,8 +573,13 @@
         "code": "from confluent_kafka import Producer, Consumer\n\n# Producer: append an event to a topic\nproducer = Producer({\"bootstrap.servers\": \"kafka:9092\"})\nproducer.produce(\n    topic=\"orders\",\n    key=order_id.encode(),       # partition key for ordering\n    value=json.dumps(event).encode(),\n)\nproducer.flush()  # wait for broker ack\n\n# Consumer: read at own offset, independent of other groups\nconsumer = Consumer({\n    \"bootstrap.servers\": \"kafka:9092\",\n    \"group.id\": \"inventory-service\",  # unique per consumer group\n    \"auto.offset.reset\": \"earliest\",\n    \"enable.auto.commit\": \"false\",    # manual commit for at-least-once\n})\nconsumer.subscribe([\"orders\"])\nwhile True:\n    msg = consumer.poll(timeout=1.0)\n    if msg and not msg.error():\n        process(json.loads(msg.value()))\n        consumer.commit()  # commit only after successful processing"
       },
       "etymology": "Named after the novelist Franz Kafka by its original developer Jay Kreps, who chose it partly because Kafka was 'a system optimized for writing' — an apt metaphor for an append-only log. The name was intended to sound technical and is now inseparably associated with the distributed streaming platform.",
-      "unlockLevel": 4,
-      "tags": ["microservices", "messaging", "infrastructure", "distributed-systems"],
+      "unlockLevel": 16,
+      "tags": [
+        "microservices",
+        "messaging",
+        "infrastructure",
+        "distributed-systems"
+      ],
       "category": "components"
     },
     {
@@ -473,8 +598,13 @@
         "code": "# Kubernetes: scale competing consumers horizontally\napiVersion: apps/v1\nkind: Deployment\nmetadata:\n  name: order-processor\nspec:\n  replicas: 12   # 12 competing consumers on the orders topic\n  selector:\n    matchLabels:\n      app: order-processor\n  template:\n    spec:\n      containers:\n        - name: worker\n          image: order-processor:v2.1.0\n          env:\n            - name: KAFKA_GROUP_ID\n              value: order-processing-group  # same group = competing\n            - name: KAFKA_TOPIC\n              value: orders"
       },
       "etymology": "Competing from Latin competere ('to strive together') — multiple parties seeking the same resource. Consumer from Latin consumere ('to take up, to use'). Pattern from the 'Enterprise Integration Patterns' catalog (Hohpe and Woolf, 2003), where it is listed as the Competing Consumers pattern.",
-      "unlockLevel": 4,
-      "tags": ["microservices", "messaging", "patterns", "scalability"],
+      "unlockLevel": 16,
+      "tags": [
+        "microservices",
+        "messaging",
+        "patterns",
+        "scalability"
+      ],
       "category": "patterns"
     },
     {
@@ -493,8 +623,13 @@
         "code": "# Producer: publish once to a topic\nproducer.produce(\n    topic=\"order-events\",\n    key=order_id.encode(),\n    value=json.dumps({\"type\": \"OrderCreated\", \"orderId\": order_id, ...}).encode()\n)\n# ONE publish → fanout to ALL consumer groups\n\n# Consumer group 1: Inventory Service\nconsumer_inventory = Consumer({\"group.id\": \"inventory-svc\", ...})\nconsumer_inventory.subscribe([\"order-events\"])  # gets ALL events\n\n# Consumer group 2: Billing Service (independent offset)\nconsumer_billing = Consumer({\"group.id\": \"billing-svc\", ...})\nconsumer_billing.subscribe([\"order-events\"])    # gets ALL events independently\n\n# Adding a new consumer group requires ZERO changes to the producer"
       },
       "etymology": "Fan from Dutch vaan ('banner') — something that spreads out from a central point. Fanout from electronics engineering, where fanout describes the number of logic gate inputs that can be driven by a single gate output. In messaging, adopted as a metaphor for one-to-many delivery.",
-      "unlockLevel": 4,
-      "tags": ["microservices", "messaging", "patterns", "architecture"],
+      "unlockLevel": 16,
+      "tags": [
+        "microservices",
+        "messaging",
+        "patterns",
+        "architecture"
+      ],
       "category": "patterns"
     },
     {
@@ -513,8 +648,13 @@
         "code": "# OpenTelemetry: automatic HTTP instrumentation propagates trace context\nfrom opentelemetry import trace\nfrom opentelemetry.instrumentation.requests import RequestsInstrumentor\nfrom opentelemetry.instrumentation.flask import FlaskInstrumentor\n\n# Auto-instrument: injects/extracts traceparent header on all HTTP calls\nFlaskInstrumentor().instrument()\nRequestsInstrumentor().instrument()\n\n# Manual span for business logic\ntracer = trace.get_tracer(\"order-service\")\n\n@app.post(\"/orders\")\ndef create_order():\n    with tracer.start_as_current_span(\"validate-order\") as span:\n        span.set_attribute(\"order.customer_id\", request.json[\"customerId\"])\n        validate(request.json)\n    # HTTP call to payment service automatically carries traceparent header\n    payment = requests.post(\n        \"http://payment-service/reserves\",\n        json={\"amount\": request.json[\"total\"]}\n    )"
       },
       "etymology": "Distributed from Latin distribuere ('to divide among'); tracing from Old French tracier ('to mark a path'). Distributed tracing as a concept was formalized in the Dapper paper (Sigelman et al., Google, 2010) and later popularized by the Zipkin and Jaeger open-source projects. The W3C Trace Context specification (2021) standardized the traceparent header format.",
-      "unlockLevel": 4,
-      "tags": ["microservices", "observability", "distributed-systems", "architecture"],
+      "unlockLevel": 16,
+      "tags": [
+        "microservices",
+        "observability",
+        "distributed-systems",
+        "architecture"
+      ],
       "category": "concepts"
     }
   ]
