@@ -35,6 +35,10 @@ struct ThemeKey: EnvironmentKey {
     static let defaultValue: ThemeManager = ThemeManager()
 }
 
+// Required: ThemeManager is stored in EnvironmentValues (which is Sendable), but
+// it's a mutable @Observable holding UI state. Full @MainActor isolation would
+// break `ThemeKey.defaultValue = ThemeManager()` (nonisolated static init). In
+// practice it's only ever mutated on the main actor via SwiftUI.
 extension ThemeManager: @unchecked Sendable {}
 
 extension EnvironmentValues {

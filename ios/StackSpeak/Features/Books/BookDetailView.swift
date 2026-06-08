@@ -127,7 +127,8 @@ struct BookDetailView: View {
     }
 
     private func openBook() async {
-        guard let services else { return }
+        // Don't open until app services are initialized (nil during the init-error state).
+        guard services != nil else { return }
         await viewModel.open(
             bookId: book.id,
             contentSource: BundledBookSource.main(),
