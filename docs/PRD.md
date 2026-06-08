@@ -22,7 +22,7 @@ Native iOS vocabulary app for software developers and engineers. Delivers 5 tech
 2. **Feynman Card Experience (Home / Today)** — 5 words per day as a horizontal swipeable card deck. Each card walks the user through staged reveals (plain-English definition → technical depth → their own explanation → everyday analogy as a takeaway). Explaining the word in their own words — typed or spoken — is what marks the card complete.
 3. **Word Detail Screen** — full view: short + long definition, pronunciation, tech context, code example, etymology, example sentence. Reachable from Library and Review; the Feynman card on Today already surfaces this content inline.
 4. **Self-Explanation (inside the Feynman card)** — the user types or speaks their own explanation of the word. Stored verbatim; no validation against the target word, no AI scoring. Submission makes the word eligible for assessment and completes the daily card.
-5. **Assessment Quiz** — multiple-choice quiz in Review tab. Each word needs 2 correct answers to count toward level progression. 24-hour cooldown on wrong attempts.
+5. **Assessment Quiz** — multiple-choice quiz in Review tab. The first correct answer credits a word toward level progression; a second correct answer (a different day) marks it retained. A wrong answer triggers a short retry cooldown (not a full-day lockout).
 6. **Review Flashcards** — tap-to-flip SRS flashcards for previously practiced words, scheduled by SM-2 algorithm. Optional for retention.
 7. **Mark as Mastered** — user excludes a word from future daily sets; reversible. Separate from assessment progression.
 8. **Bookmark / Save** — user stars a word to keep a reference list; does *not* exclude it from daily sets.
@@ -239,8 +239,8 @@ Users advance through levels by passing **multiple-choice quizzes** for practice
 
 ### Retry Logic
 
-- **Correct answer:** can attempt again immediately to get 2/2
-- **Wrong answer:** 24-hour cooldown before retry (prevents spam)
+- **Correct answer:** first correct credits the level immediately; the second (retention) correct is spaced to a different day
+- **Wrong answer:** short retry cooldown (`UserProgress.wrongAnswerRetryCooldown`, 15 min) — discourages blind re-guessing without a full-day lockout
 - **No point deduction:** wrong answers don't hurt progress, just don't help
 
 ### Assessment Eligibility

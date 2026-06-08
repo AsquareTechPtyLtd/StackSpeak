@@ -251,17 +251,26 @@ extension UserProgress {
         assessmentResults.filter { $0.wordId == wordId && $0.isCorrect }.count
     }
 
-    func canAttemptAssessment(for wordId: UUID) -> Bool {
+    /// Cooldown after a wrong answer before a word can be retried. Short enough that
+    /// a focused session can continue, long enough to discourage blindly cycling
+    /// through the four options.
+    static let wrongAnswerRetryCooldown: TimeInterval = 15 * 60
+
+    func canAttemptAssessment(for wordId: UUID, now: Date = Date()) -> Bool {
         let lastAttempt = assessmentResults
             .filter({ $0.wordId == wordId })
             .max(by: { $0.attemptedAt < $1.attemptedAt })
 
         guard let lastAttempt else { return true }
 
-        // One attempt per word per calendar day — correct or not.
-        // The second (and final) correct attempt must happen on a different day.
-        let cal = Calendar.current
-        return !cal.isDateInToday(lastAttempt.attemptedAt)
+        if lastAttempt.isCorrect {
+            // The first correct answer already credited the level. The second
+            // (retention) correct answer is spaced to a different day on purpose.
+            return !Calendar.current.isDateInToday(lastAttempt.attemptedAt)
+        }
+        // After a wrong answer, retry once a short cooldown has elapsed — no longer
+        // a full-day lockout, so a word can be earned within one session.
+        return now.timeIntervalSince(lastAttempt.attemptedAt) >= Self.wrongAnswerRetryCooldown
     }
 
     /// Rebuilds the credited (≥1 correct) and two-correct (≥2 correct) caches from
