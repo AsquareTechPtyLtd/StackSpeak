@@ -2,9 +2,8 @@ import SwiftUI
 import SwiftData
 import OSLog
 
-/// SM3 — three popular optional stacks come pre-selected on first launch so
-/// new users don't have to make decisions before they've seen the product.
-/// Easy to deselect.
+/// Three popular optional stacks come pre-selected on first launch so new users
+/// don't have to make decisions before they've seen the product. Easy to deselect.
 struct StackSelectionView: View {
     @Environment(\.theme) private var theme
     @Environment(\.userProgress) private var userProgress

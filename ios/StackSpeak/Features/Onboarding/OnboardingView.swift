@@ -14,6 +14,7 @@ struct OnboardingView: View {
     @State private var currentPage = 0
     @State private var showStackSelection = false
     @State private var showSkipConfirm = false
+    @State private var saveError: Error?
 
     private let pages: [OnboardingPage] = [
         OnboardingPage(
@@ -50,6 +51,12 @@ struct OnboardingView: View {
             Button("common.cancel", role: .cancel) { }
         } message: {
             Text("onboarding.skipConfirm.message")
+        }
+        .alert("saveError.title", isPresented: .constant(saveError != nil), presenting: saveError) { _ in
+            Button("common.ok") { saveError = nil }
+        } message: { error in
+            Text(String(format: String(localized: "saveError.stackSelection.format"),
+                        error.localizedDescription))
         }
     }
 
@@ -124,23 +131,33 @@ struct OnboardingView: View {
     /// Skips all onboarding, selects mandatory stacks, and goes straight to
     /// the home screen.
     private func skipAll() {
-        if let progress = userProgress {
-            let mandatory = Set(WordStack.mandatoryStacks(for: progress.level).map { $0.rawValue })
-            if progress.selectedStacks.isEmpty {
-                progress.selectedStacks = mandatory
-            } else {
-                var updated = progress.selectedStacks
-                updated.formUnion(mandatory)
-                progress.selectedStacks = updated
-            }
-            progress.didCompleteOnboarding = true
-            do {
-                try modelContext.save()
-            } catch {
-                logger.error("Failed to save onboarding skip: \(error.localizedDescription, privacy: .public)")
-            }
+        guard let progress = userProgress else {
+            // No progress row to persist into — nothing to lose by proceeding.
+            showOnboarding = false
+            return
         }
-        showOnboarding = false
+
+        let mandatory = Set(WordStack.mandatoryStacks(for: progress.level).map { $0.rawValue })
+        if progress.selectedStacks.isEmpty {
+            progress.selectedStacks = mandatory
+        } else {
+            var updated = progress.selectedStacks
+            updated.formUnion(mandatory)
+            progress.selectedStacks = updated
+        }
+        progress.didCompleteOnboarding = true
+
+        // Only leave onboarding once the completion state is durably saved. On
+        // failure, keep the user here and surface a retryable error — otherwise a
+        // relaunch could send them back through onboarding (same pattern as
+        // StackSelectionView).
+        do {
+            try modelContext.save()
+            showOnboarding = false
+        } catch {
+            logger.error("Failed to save onboarding skip: \(error.localizedDescription, privacy: .public)")
+            saveError = error
+        }
     }
 }
 

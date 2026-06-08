@@ -21,6 +21,7 @@ struct CardFlowView: View {
     @State private var viewModel = CardFlowViewModel()
     @State private var showCapReached = false
     @State private var bookmarkBump = false
+    @State private var saveError: Error?
 
     var body: some View {
         Group {
@@ -60,6 +61,11 @@ struct CardFlowView: View {
                 onDismiss: { showCapReached = false }
             )
             .presentationDetents([.medium])
+        }
+        .alert("Error", isPresented: .constant(saveError != nil), presenting: saveError) { _ in
+            Button("OK") { saveError = nil }
+        } message: { error in
+            Text(error.localizedDescription)
         }
         .task { await load() }
     }
@@ -161,7 +167,12 @@ struct CardFlowView: View {
         if let progress = fetchOrCreateBookProgress() {
             viewModel.recordChapterEntry(bookProgress: progress, chapterId: chapter.id)
             viewModel.resumeIfPossible(at: progress.currentCardId)
-            try? modelContext.save()
+            do {
+                try modelContext.save()
+            } catch {
+                logger.error("Failed to save chapter entry: \(error.localizedDescription, privacy: .public)")
+                saveError = error
+            }
         }
     }
 
@@ -189,10 +200,20 @@ struct CardFlowView: View {
     private func applyAdvance(_ result: CardFlowViewModel.AdvanceResult) {
         switch result {
         case .advanced:
-            try? modelContext.save()
+            do {
+                try modelContext.save()
+            } catch {
+                logger.error("Failed to save book progress: \(error.localizedDescription, privacy: .public)")
+                saveError = error
+            }
         case .chapterCompleted:
-            try? modelContext.save()
-            dismiss()
+            do {
+                try modelContext.save()
+                dismiss()
+            } catch {
+                logger.error("Failed to save book progress: \(error.localizedDescription, privacy: .public)")
+                saveError = error
+            }
         case .capReached:
             showCapReached = true
         }
@@ -202,10 +223,18 @@ struct CardFlowView: View {
         let descriptor = FetchDescriptor<BookProgress>(
             predicate: #Predicate { $0.bookId == bookId }
         )
-        if let existing = try? modelContext.fetch(descriptor).first { return existing }
-        let new = BookProgress(bookId: bookId)
-        modelContext.insert(new)
-        return new
+        do {
+            if let existing = try modelContext.fetch(descriptor).first {
+                return existing
+            }
+            let new = BookProgress(bookId: bookId)
+            modelContext.insert(new)
+            return new
+        } catch {
+            logger.error("Failed to fetch or create BookProgress: \(error.localizedDescription, privacy: .public)")
+            saveError = error
+            return nil
+        }
     }
 }
 

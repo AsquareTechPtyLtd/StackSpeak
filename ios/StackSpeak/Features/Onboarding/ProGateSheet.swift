@@ -60,6 +60,7 @@ struct ProGateSheet: View {
                     .foregroundColor(theme.colors.inkFaint)
             }
             Spacer()
+            #if DEBUG
             Toggle("", isOn: Binding(
                 get: { userProgress?.isProActive ?? false },
                 set: { on in
@@ -68,11 +69,17 @@ struct ProGateSheet: View {
                     progress.proExpiryDate = on
                         ? Calendar.current.date(byAdding: .year, value: 1, to: Date())
                         : nil
-                    try? modelContext.save()
-                    if on { dismiss() }
+                    do {
+                        try modelContext.save()
+                        if on { dismiss() }
+                    } catch {
+                        progress.isPro = !on
+                        progress.proExpiryDate = nil
+                    }
                 }
             ))
             .labelsHidden()
+            #endif
         }
         .padding(theme.spacing.md)
         .background(theme.colors.surfaceAlt)

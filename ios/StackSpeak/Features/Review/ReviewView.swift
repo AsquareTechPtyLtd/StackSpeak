@@ -3,20 +3,18 @@ import SwiftData
 
 /// Review — Assessment + Flashcards.
 ///
-/// R1 — custom hand-rolled segmented control replaced with native
-///   `Picker(.segmented)` placed in the navigation toolbar.
-/// R2 — stats card-bar removed; the same data lives in a quiet mono caption
-///   at the top of the deck.
-/// R3 — empty states use the shared `EmptyStateView` and offer a back-to-Today
-///   action so they're a launchpad, not a dead end.
+/// Uses native `Picker(.segmented)` in the navigation toolbar for tab switching.
+/// Empty states use the shared `EmptyStateView` and offer a back-to-Today action.
 struct ReviewView: View {
     @Environment(\.theme) private var theme
     @Environment(\.services) private var services
     @Environment(\.userProgress) private var userProgress
+    @Environment(\.modelContext) private var modelContext
 
     @State private var viewModel = ReviewViewModel()
     @State private var selectedTab: ReviewTab = .assessment
     @State private var levelUpDestination: LevelUpItem?
+    @State private var errorMessage: String?
 
     var body: some View {
         NavigationStack {
@@ -47,6 +45,11 @@ struct ReviewView: View {
                 if let progress = userProgress {
                     LevelUpView(newLevel: item.level, userProgress: progress)
                 }
+            }
+            .alert("Error", isPresented: .constant(errorMessage != nil), presenting: errorMessage) { _ in
+                Button("OK") { errorMessage = nil }
+            } message: { msg in
+                Text(msg)
             }
         }
     }
@@ -181,7 +184,12 @@ struct ReviewView: View {
     // MARK: - Handlers
 
     private func handleReview(reviewState: ReviewState, quality: ReviewQuality) {
-        try? services?.reviewScheduler.recordReview(reviewState: reviewState, quality: quality)
+        do {
+            try services?.reviewScheduler.recordReview(reviewState: reviewState, quality: quality)
+        } catch {
+            errorMessage = error.localizedDescription
+            return
+        }
 
         if viewModel.currentIndex < viewModel.dueReviews.count - 1 {
             withAnimation(MotionTokens.standard) { viewModel.currentIndex += 1 }

@@ -174,6 +174,44 @@ struct CardFlowViewModelMarkCompleteTests {
         #expect(userProgress.bookCardsReadToday == 1)
     }
 
+    @Test("Re-reading an already-completed card is not blocked by the cap")
+    func reReadNotBlockedByCap() async {
+        let vm = await loadVM(cardCount: 3)
+        let bookProgress = BookProgress(bookId: "book")
+        let userProgress = UserProgress()
+        // Complete c1 (counter → 1), advancing to c2.
+        _ = vm.markComplete(bookProgress: bookProgress, userProgress: userProgress)
+        // Now impose a cap we've already reached.
+        userProgress.dailyBookCardLimit = 1
+        // Revisit the already-completed c1.
+        vm.previous()
+        let result = vm.markComplete(bookProgress: bookProgress, userProgress: userProgress)
+        // A revisit isn't a new read, so the cap must not block it.
+        if case .capReached = result {
+            Issue.record("Re-reading a completed card should not be cap-blocked")
+        }
+        // And the counter must not move.
+        #expect(userProgress.bookCardsReadToday == 1)
+    }
+
+    @Test("Re-reading a completed card on a new day does not advance the book streak")
+    func reReadNewDayDoesNotAdvanceStreak() async {
+        let vm = await loadVM(cardCount: 3)
+        let bookProgress = BookProgress(bookId: "book")
+        let userProgress = UserProgress()
+        let cal = Calendar(identifier: .gregorian)
+        let day1 = Date(timeIntervalSince1970: 1_700_000_000)
+        let day2 = cal.date(byAdding: .day, value: 1, to: day1) ?? day1
+        // Complete c1 on day 1 → streak 1.
+        _ = vm.markComplete(bookProgress: bookProgress, userProgress: userProgress, now: day1, calendar: cal)
+        #expect(bookProgress.currentStreakDays == 1)
+        // Revisit the already-completed c1 on day 2.
+        vm.previous()
+        _ = vm.markComplete(bookProgress: bookProgress, userProgress: userProgress, now: day2, calendar: cal)
+        // No new card was completed, so the streak must not advance.
+        #expect(bookProgress.currentStreakDays == 1)
+    }
+
     @Test("Override punches through the cap and proceeds")
     func overrideBypassesCap() async {
         let vm = await loadVM(cardCount: 3)

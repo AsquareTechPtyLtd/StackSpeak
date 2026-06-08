@@ -69,11 +69,17 @@ struct UserProgressKey: EnvironmentKey {
     static let defaultValue: UserProgress? = nil
 }
 
-// Required, not duct tape: storing `UserProgress?` in `EnvironmentValues` needs
-// the type Sendable, and SwiftData's `@Model` macro emits only an *unavailable*
-// Sendable marker, so this explicit conformance is what actually satisfies the
-// requirement. (Services dropped its conformance — it's @MainActor, already
-// implicitly Sendable.)
+// SwiftUI's `EnvironmentValues` requires Sendable types, but SwiftData's `@Model`
+// macro emits only an *unavailable* Sendable marker. This explicit conformance
+// satisfies the requirement for storing `UserProgress?` in the environment.
+//
+// **Why @unchecked Sendable is safe here:**
+// UserProgress is always accessed on the MainActor via `@Environment(\.userProgress)`,
+// and SwiftData enforces that model mutations happen on the model context's actor.
+// The environment propagates the reference, not cross-actor copies, so no data races.
+//
+// **How to apply:** Only use UserProgress via `@Environment(\.userProgress)` or
+// MainActor-isolated contexts. Do not pass instances across actor boundaries.
 extension UserProgress: @unchecked Sendable {}
 
 

@@ -1,6 +1,7 @@
 import SwiftUI
 import SwiftData
 
+#if DEBUG
 extension ProfileView {
     /// Temporary developer section for toggling Pro access without a real IAP flow.
     /// Remove when StoreKit subscription is wired up.
@@ -32,7 +33,13 @@ extension ProfileView {
                             progress.proExpiryDate = on
                                 ? Calendar.current.date(byAdding: .year, value: 1, to: Date())
                                 : nil
-                            try? modelContext.save()
+                            do {
+                                try modelContext.save()
+                            } catch {
+                                // Revert on failure
+                                progress.isPro = !on
+                                progress.proExpiryDate = nil
+                            }
                         }
                     ))
                     .labelsHidden()
@@ -41,3 +48,4 @@ extension ProfileView {
         }
     }
 }
+#endif

@@ -1,8 +1,8 @@
 import Foundation
 
-/// SM1 — derives a coarse category from a stack's id prefix (`basic-`,
-/// `intermediate-`, `advanced-`). Lets the picker group 12+ flat stacks into
-/// three scannable sections without a schema change.
+/// Derives a coarse category from a stack's id prefix (`basic-`, `intermediate-`,
+/// `advanced-`). Lets the picker group 12+ flat stacks into three scannable
+/// sections without a schema change.
 enum StackCategory: String, CaseIterable, Hashable {
     case foundations
     case intermediate
