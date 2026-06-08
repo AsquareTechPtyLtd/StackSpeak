@@ -391,4 +391,50 @@ struct WordDTOTests {
         #expect(dto.codeExample == nil)
         #expect(dto.word == "concise")
     }
+
+    @Test("Decodes backingCard and maps it onto Word")
+    func decodesBackingCard() throws {
+        let json = """
+        {
+          "id": "msv-adv-0010-0000-0000-0000-000000000001",
+          "word": "Saga",
+          "pronunciation": "SAH-gah",
+          "partOfSpeech": "noun",
+          "shortDefinition": "test",
+          "longDefinition": "long",
+          "unlockLevel": 16,
+          "tags": [],
+          "backingCard": { "bookId": "microservices-patterns", "chapterId": "msv-ch07-saga-pattern", "cardId": "msv-ch07-c001" }
+        }
+        """.data(using: .utf8)!
+
+        let dto = try JSONDecoder().decode(WordDTO.self, from: json)
+        #expect(dto.backingCard?.bookId == "microservices-patterns")
+        #expect(dto.backingCard?.chapterId == "msv-ch07-saga-pattern")
+
+        let word = Word(from: dto, stack: "microservices-advanced")
+        #expect(word.backingCard?.bookId == "microservices-patterns")
+        #expect(word.backingCard?.chapterId == "msv-ch07-saga-pattern")
+        #expect(word.backingCard?.cardId == "msv-ch07-c001")
+    }
+
+    @Test("backingCard is nil when absent")
+    func backingCardNilWhenAbsent() throws {
+        let json = """
+        {
+          "id": "test-001",
+          "word": "test",
+          "pronunciation": "TEST",
+          "partOfSpeech": "noun",
+          "shortDefinition": "test",
+          "longDefinition": "long",
+          "unlockLevel": 1,
+          "tags": []
+        }
+        """.data(using: .utf8)!
+
+        let dto = try JSONDecoder().decode(WordDTO.self, from: json)
+        #expect(dto.backingCard == nil)
+        #expect(Word(from: dto, stack: "api-basic").backingCard == nil)
+    }
 }

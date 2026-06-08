@@ -40,6 +40,9 @@ struct WordDetailView: View {
                     if !word.exampleSentence.isEmpty { exampleBlock }
                     if !word.codeExampleCode.isEmpty { codeBlock }
                     if !word.etymology.isEmpty { etymologyBlock }
+                    if let backingCard = word.backingCard {
+                        BackingCardLink(backingCard: backingCard)
+                    }
                     Spacer(minLength: theme.spacing.xxxl)
                 }
                 .frame(maxWidth: 720, alignment: .leading)

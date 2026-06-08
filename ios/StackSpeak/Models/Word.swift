@@ -44,6 +44,11 @@ final class Word {
     var connector: String = ""
     var codeExampleLanguage: String
     var codeExampleCode: String
+    /// Source book card this word was authored from (optional — only book-backed
+    /// words have it). Stored flat; use `backingCard` for a typed view.
+    var backingBookId: String? = nil
+    var backingChapterId: String? = nil
+    var backingCardId: String? = nil
     /// Stored as the stack's raw id (e.g. "basic-web"). Use `wordStack` for a typed view.
     var stack: String
     var unlockLevel: Int
@@ -54,6 +59,12 @@ final class Word {
     var tags: [String] {
         get { tagsStorage.isEmpty ? [] : tagsStorage.components(separatedBy: ",") }
         set { tagsStorage = newValue.joined(separator: ",") }
+    }
+
+    /// Typed view of the source book card, if this word came from a book.
+    var backingCard: BackingCardRef? {
+        guard let backingBookId else { return nil }
+        return BackingCardRef(bookId: backingBookId, chapterId: backingChapterId, cardId: backingCardId)
     }
 
     var wordStack: WordStack { WordStack(rawValue: stack) }
@@ -77,6 +88,9 @@ final class Word {
         connector: String,
         codeExampleLanguage: String,
         codeExampleCode: String,
+        backingBookId: String? = nil,
+        backingChapterId: String? = nil,
+        backingCardId: String? = nil,
         stack: String,
         unlockLevel: Int,
         tags: [String],
@@ -96,6 +110,9 @@ final class Word {
         self.connector = connector
         self.codeExampleLanguage = codeExampleLanguage
         self.codeExampleCode = codeExampleCode
+        self.backingBookId = backingBookId
+        self.backingChapterId = backingChapterId
+        self.backingCardId = backingCardId
         self.stack = stack
         self.unlockLevel = unlockLevel
         self.tagsStorage = tags.joined(separator: ",")
@@ -118,6 +135,9 @@ final class Word {
             connector: dto.connector,
             codeExampleLanguage: dto.codeExample?.language ?? "",
             codeExampleCode: dto.codeExample?.code ?? "",
+            backingBookId: dto.backingCard?.bookId,
+            backingChapterId: dto.backingCard?.chapterId,
+            backingCardId: dto.backingCard?.cardId,
             stack: stack,
             unlockLevel: dto.unlockLevel,
             tags: dto.tags,
@@ -164,6 +184,7 @@ struct WordDTO: Codable {
     let etymology: String
     let connector: String
     let codeExample: CodeExampleDTO?
+    let backingCard: BackingCardRef?
     let unlockLevel: Int
     let tags: [String]
     let category: WordCategory
@@ -188,6 +209,7 @@ struct WordDTO: Codable {
         etymology = try c.decodeIfPresent(String.self, forKey: .etymology) ?? ""
         connector = try c.decodeIfPresent(String.self, forKey: .connector) ?? ""
         codeExample = try c.decodeIfPresent(CodeExampleDTO.self, forKey: .codeExample)
+        backingCard = try c.decodeIfPresent(BackingCardRef.self, forKey: .backingCard)
         unlockLevel = try c.decode(Int.self, forKey: .unlockLevel)
         tags = try c.decode([String].self, forKey: .tags)
         // Default to concepts if not specified (for backwards compatibility)
@@ -198,6 +220,14 @@ struct WordDTO: Codable {
 struct CodeExampleDTO: Codable {
     let language: String?
     let code: String?
+}
+
+/// Reference to the book card a word was authored from. `chapterId`/`cardId` are
+/// optional: ~all book-backed words resolve a chapter; an exact card is a bonus.
+struct BackingCardRef: Codable, Hashable {
+    let bookId: String
+    let chapterId: String?
+    let cardId: String?
 }
 
 struct WordsDatabaseDTO: Codable {
