@@ -282,78 +282,110 @@ function isBlockStart(line) {
   );
 }
 
+// Inline characters that a leading backslash escapes to a literal. Emphasis
+// (`*`), code (`` ` ``), and links (`[` `]`) plus the backslash itself. Escapes
+// let authored text contain literal `*`/`` ` ``/brackets that would otherwise be
+// parsed as markup — e.g. a bold branch name like `feature/*`.
+const INLINE_ESCAPABLE = new Set(['\\', '*', '`', '[', ']']);
+
+/** Removes escaping backslashes (`\X` -> `X`) for recognized specials. Applied
+ *  to emphasis/link text, NOT to code spans (which are verbatim). */
+function unescapeInline(s) {
+  return s.replace(/\\([\\*`[\]])/g, '$1');
+}
+
 function parseInline(text) {
   const runs = [];
+  let plain = '';
   let cursor = 0;
-  let plainStart = 0;
 
-  const flushPlain = (end) => {
-    if (end > plainStart) {
-      runs.push({ text: text.slice(plainStart, end) });
+  const flushPlain = () => {
+    if (plain.length > 0) {
+      runs.push({ text: plain });
+      plain = '';
     }
+  };
+
+  // Next index >= `from` where `needle` appears un-escaped (not preceded by a
+  // consumed backslash). Used for emphasis/link delimiters so escaped specials
+  // don't close a span.
+  const findUnescaped = (needle, from) => {
+    let j = from;
+    while (j < text.length) {
+      if (text[j] === '\\') { j += 2; continue; }
+      if (text.startsWith(needle, j)) return j;
+      j++;
+    }
+    return -1;
   };
 
   while (cursor < text.length) {
     const ch = text[cursor];
 
+    // Backslash escape: `\<special>` contributes the literal char to plain text.
+    if (ch === '\\' && cursor + 1 < text.length && INLINE_ESCAPABLE.has(text[cursor + 1])) {
+      plain += text[cursor + 1];
+      cursor += 2;
+      continue;
+    }
+
     if (ch === '*' && text[cursor + 1] === '*') {
-      const end = text.indexOf('**', cursor + 2);
+      const end = findUnescaped('**', cursor + 2);
       if (end > -1) {
-        flushPlain(cursor);
-        runs.push({ text: text.slice(cursor + 2, end), marks: ['bold'] });
+        flushPlain();
+        runs.push({ text: unescapeInline(text.slice(cursor + 2, end)), marks: ['bold'] });
         cursor = end + 2;
-        plainStart = cursor;
         continue;
       }
     }
 
     if (ch === '*' && text[cursor + 1] !== '*' && (cursor === 0 || text[cursor - 1] !== '*')) {
-      let end = text.indexOf('*', cursor + 1);
+      let end = findUnescaped('*', cursor + 1);
       while (end > -1 && text[end + 1] === '*') {
-        end = text.indexOf('*', end + 2);
+        end = findUnescaped('*', end + 2);
       }
       if (end > -1) {
-        flushPlain(cursor);
-        runs.push({ text: text.slice(cursor + 1, end), marks: ['italic'] });
+        flushPlain();
+        runs.push({ text: unescapeInline(text.slice(cursor + 1, end)), marks: ['italic'] });
         cursor = end + 1;
-        plainStart = cursor;
         continue;
       }
     }
 
     if (ch === '`') {
+      // Code spans are verbatim — keep the original indexOf (no escape handling)
+      // so existing code like `\\server\share` is preserved byte-for-byte.
       const end = text.indexOf('`', cursor + 1);
       if (end > -1) {
-        flushPlain(cursor);
+        flushPlain();
         runs.push({ text: text.slice(cursor + 1, end), marks: ['code'] });
         cursor = end + 1;
-        plainStart = cursor;
         continue;
       }
     }
 
     if (ch === '[') {
-      const labelEnd = text.indexOf(']', cursor + 1);
+      const labelEnd = findUnescaped(']', cursor + 1);
       if (labelEnd > -1 && text[labelEnd + 1] === '(') {
         const hrefEnd = text.indexOf(')', labelEnd + 2);
         if (hrefEnd > -1) {
-          flushPlain(cursor);
+          flushPlain();
           runs.push({
-            text: text.slice(cursor + 1, labelEnd),
+            text: unescapeInline(text.slice(cursor + 1, labelEnd)),
             marks: ['link'],
             href: text.slice(labelEnd + 2, hrefEnd)
           });
           cursor = hrefEnd + 1;
-          plainStart = cursor;
           continue;
         }
       }
     }
 
+    plain += ch;
     cursor++;
   }
 
-  flushPlain(text.length);
+  flushPlain();
   return runs;
 }
 

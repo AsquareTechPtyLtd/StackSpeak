@@ -583,3 +583,34 @@ test('passThroughSummary fallback — synthesizes from manifest when no prior ca
   assert.equal(sharedonly.cardCount, 2);  // from manifest chapter cardCount
   assert.equal(sharedonly.manifestPath, 'books/sharedonly/manifest.json');
 });
+
+// ─────────────────────────────────────────────────────────────────
+// parseInline — backslash escapes (lets authored text contain literal
+// *, `, [ ] that would otherwise be parsed as markup).
+// ─────────────────────────────────────────────────────────────────
+
+test('parseInline — escaped asterisk is literal, not emphasis', () => {
+  assert.deepEqual(parseInline('a \\* b'), [{ text: 'a * b' }]);
+});
+
+test('parseInline — bold whose content ends in an escaped asterisk', () => {
+  // Markdown: **feature/\***  ->  bold "feature/*"
+  assert.deepEqual(parseInline('**feature/\\***'), [{ text: 'feature/*', marks: ['bold'] }]);
+});
+
+test('parseInline — escaped brackets are literal, not a link', () => {
+  assert.deepEqual(parseInline('\\[not a link\\]'), [{ text: '[not a link]' }]);
+});
+
+test('parseInline — code spans are verbatim (no un-escaping inside)', () => {
+  // Backslashes inside a code span are preserved as-is.
+  assert.deepEqual(parseInline('`a\\b`'), [{ text: 'a\\b', marks: ['code'] }]);
+});
+
+test('parseInline — non-escaped emphasis behavior is unchanged', () => {
+  assert.deepEqual(parseInline('a*b*c'), [
+    { text: 'a' },
+    { text: 'b', marks: ['italic'] },
+    { text: 'c' }
+  ]);
+});
