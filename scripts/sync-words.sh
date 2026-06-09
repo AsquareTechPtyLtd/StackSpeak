@@ -23,6 +23,8 @@ echo "Syncing word data from shared/ to platform bundles..."
 
 # iOS — sync if the iOS project exists
 if [[ -d "$REPO_ROOT/ios" ]]; then
+  # Prune first so stacks renamed/removed in shared/ don't linger as orphans.
+  rm -rf "$IOS_RESOURCES/stacks"
   mkdir -p "$IOS_RESOURCES/stacks"
   cp "$SOURCE_INDEX" "$IOS_RESOURCES/"
   cp "$SOURCE_STACKS_DIR"/*.json "$IOS_RESOURCES/stacks/"
@@ -33,6 +35,7 @@ fi
 
 # Android — sync if the Android project exists (Phase 2)
 if [[ -d "$REPO_ROOT/android" ]]; then
+  rm -rf "$ANDROID_ASSETS/stacks"
   mkdir -p "$ANDROID_ASSETS/stacks"
   cp "$SOURCE_INDEX" "$ANDROID_ASSETS/"
   cp "$SOURCE_STACKS_DIR"/*.json "$ANDROID_ASSETS/stacks/"
