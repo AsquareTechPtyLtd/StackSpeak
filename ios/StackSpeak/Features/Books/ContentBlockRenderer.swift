@@ -4,7 +4,7 @@ import SwiftUI
 /// formatting decisions live entirely in tokens (`TypographyTokens`,
 /// `theme.colors`, `theme.spacing`).
 ///
-/// Block vocabulary v1: paragraph, heading, list, code, callout, image.
+/// Block vocabulary: paragraph, heading, list, code, callout, image, table, comparison.
 /// Inline marks v1: bold, italic, code, link.
 struct ContentBlockView: View {
     @Environment(\.theme) private var theme
@@ -27,6 +27,10 @@ struct ContentBlockView: View {
             callout(variant: variant, runs: runs)
         case .image(let asset, let caption):
             imageBlock(asset: asset, caption: caption)
+        case .table(let headers, let rows):
+            tableBlock(headers: headers, rows: rows)
+        case .comparison(let left, let right):
+            comparisonBlock(left: left, right: right)
         }
     }
 
@@ -66,7 +70,7 @@ struct ContentBlockView: View {
     private func bullet(for style: ContentBlock.ListStyle, index: Int) -> String {
         switch style {
         case .bulleted: return "•"
-        case .numbered: return "\(index + 1)."
+        case .numbered, .ordered: return "\(index + 1)."
         }
     }
 
@@ -143,6 +147,70 @@ struct ContentBlockView: View {
                     .foregroundColor(theme.colors.inkMuted)
             }
         }
+    }
+
+    // MARK: - Table
+
+    private func tableBlock(headers: [String], rows: [[String]]) -> some View {
+        // Horizontal scroll keeps wide tables usable on iPhone without truncating cells.
+        ScrollView(.horizontal, showsIndicators: true) {
+            Grid(alignment: .topLeading, horizontalSpacing: theme.spacing.md, verticalSpacing: theme.spacing.sm) {
+                GridRow {
+                    ForEach(Array(headers.enumerated()), id: \.offset) { _, header in
+                        Text(header)
+                            .font(TypographyTokens.footnote.weight(.semibold))
+                            .foregroundColor(theme.colors.ink)
+                            .frame(minWidth: 80, alignment: .leading)
+                    }
+                }
+                Divider().gridCellColumns(max(headers.count, 1))
+                ForEach(Array(rows.enumerated()), id: \.offset) { _, row in
+                    GridRow {
+                        ForEach(Array(row.enumerated()), id: \.offset) { _, cell in
+                            Text(cell)
+                                .font(TypographyTokens.footnote)
+                                .foregroundColor(theme.colors.inkMuted)
+                                .frame(minWidth: 80, alignment: .leading)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                    }
+                }
+            }
+            .padding(theme.spacing.md)
+        }
+        .background(theme.colors.surfaceAlt)
+        .clipShape(.rect(cornerRadius: RadiusTokens.inline))
+    }
+
+    // MARK: - Comparison
+
+    private func comparisonBlock(left: ComparisonColumn, right: ComparisonColumn) -> some View {
+        // Side-by-side when there's room; stacks on narrow widths / large type.
+        ViewThatFits(in: .horizontal) {
+            HStack(alignment: .top, spacing: theme.spacing.sm) {
+                comparisonColumn(left)
+                comparisonColumn(right)
+            }
+            VStack(alignment: .leading, spacing: theme.spacing.sm) {
+                comparisonColumn(left)
+                comparisonColumn(right)
+            }
+        }
+    }
+
+    private func comparisonColumn(_ column: ComparisonColumn) -> some View {
+        VStack(alignment: .leading, spacing: theme.spacing.xs) {
+            Text(column.label)
+                .font(TypographyTokens.footnote.weight(.semibold))
+                .foregroundColor(theme.colors.ink)
+            InlineRunsText(runs: column.runs)
+                .font(TypographyTokens.callout)
+                .foregroundColor(theme.colors.inkMuted)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(theme.spacing.md)
+        .background(theme.colors.surfaceAlt)
+        .clipShape(.rect(cornerRadius: RadiusTokens.inline))
     }
 }
 

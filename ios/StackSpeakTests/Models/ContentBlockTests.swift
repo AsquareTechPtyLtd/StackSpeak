@@ -103,6 +103,57 @@ struct ContentBlockCodableTests {
         #expect(runs.first?.href == "https://x.example")
         #expect(runs.first?.marks == [.link])
     }
+
+    @Test("ordered list style survives roundtrip")
+    func orderedListRoundtrip() throws {
+        let ordered = ContentBlock.list(style: .ordered, items: [
+            [InlineRun(text: "first")],
+            [InlineRun(text: "second")]
+        ])
+        #expect(try roundtrip(ordered) == ordered)
+    }
+
+    @Test("table survives roundtrip")
+    func tableRoundtrip() throws {
+        let table = ContentBlock.table(
+            headers: ["Policy", "Redo?", "Undo?"],
+            rows: [
+                ["Steal + No-Force", "Yes", "Yes"],
+                ["No-Steal + Force", "No", "No"]
+            ]
+        )
+        #expect(try roundtrip(table) == table)
+    }
+
+    @Test("comparison survives roundtrip")
+    func comparisonRoundtrip() throws {
+        let block = ContentBlock.comparison(
+            left: ComparisonColumn(label: "Locks", runs: [InlineRun(text: "logical, txn-duration")]),
+            right: ComparisonColumn(label: "Latches", runs: [InlineRun(text: "physical, microseconds")])
+        )
+        #expect(try roundtrip(block) == block)
+    }
+
+    @Test("legacy code block with a `text` key decodes as code")
+    func legacyCodeTextKeyDecodes() throws {
+        let json = #"{"type":"code","language":"sql","text":"SELECT 1;"}"#
+        let block = try JSONDecoder().decode(ContentBlock.self, from: Data(json.utf8))
+        #expect(block == .code(language: "sql", code: "SELECT 1;"))
+    }
+
+    @Test("table and comparison decode from on-disk JSON shape")
+    func tableAndComparisonDecodeFromJSON() throws {
+        let tableJSON = #"{"type":"table","headers":["A","B"],"rows":[["1","2"],["3","4"]]}"#
+        let t = try JSONDecoder().decode(ContentBlock.self, from: Data(tableJSON.utf8))
+        #expect(t == .table(headers: ["A", "B"], rows: [["1", "2"], ["3", "4"]]))
+
+        let cmpJSON = #"{"type":"comparison","left":{"label":"L","runs":[{"text":"a"}]},"right":{"label":"R","runs":[{"text":"b"}]}}"#
+        let c = try JSONDecoder().decode(ContentBlock.self, from: Data(cmpJSON.utf8))
+        #expect(c == .comparison(
+            left: ComparisonColumn(label: "L", runs: [InlineRun(text: "a")]),
+            right: ComparisonColumn(label: "R", runs: [InlineRun(text: "b")])
+        ))
+    }
 }
 
 @Suite("Book content types — Codable roundtrip")
