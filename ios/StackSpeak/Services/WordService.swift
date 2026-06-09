@@ -205,10 +205,11 @@ final class WordService: WordRepository {
     /// Walks the shuffled queue from `startIndex`, collects up to `count` qualifying words,
     /// and returns them along with the next cursor position.
     ///
-    /// Interleaving algorithm: aims for one word from each of the 5 categories
-    /// (concepts, components, processes, patterns, qualities). When a category has
-    /// no qualifying words for the user (e.g. they only selected stacks lacking that
-    /// category), backfill from other categories so the daily set always has `count` words.
+    /// Interleaving algorithm: aims for one word from each of `count` DISTINCT
+    /// categories (an open vocabulary — concepts, security, observability, …) for
+    /// cognitive variety. When fewer than `count` distinct categories qualify (e.g.
+    /// the user's stacks share categories), backfill from other words so the daily
+    /// set always has `count` words.
     ///
     /// Internal access for unit testing.
     func selectQualifyingWords(
@@ -219,55 +220,40 @@ final class WordService: WordRepository {
     ) -> (words: [Word], nextCursor: Int) {
         guard !shuffled.isEmpty else { return ([], 0) }
 
-        let targetCategories: [WordCategory] = [
-            .concepts,
-            .components,
-            .processes,
-            .patterns,
-            .qualities
-        ]
-
         // Resolve the active stack set once (entitlement-aware) rather than per word.
         let activeStacks = userProgress.effectiveSelectedStacks
 
-        var selectedByCategory: [WordCategory: Word] = [:]
+        // Interleaving for cognitive variety: take the first qualifying word from
+        // each DISTINCT category (open vocabulary — concepts, security, …) until we
+        // have `count` different categories. If fewer than `count` distinct
+        // categories qualify, backfill with extra words so the set is always full.
+        var firstPerCategory: [String: Word] = [:]
+        var categoryOrder: [String] = []   // first-seen order → stable output
         var backfillPool: [Word] = []
         var cursor = startIndex % shuffled.count
         var seen = 0
         let limit = shuffled.count  // one full pass maximum
 
-        // Pass 1: collect one word per category + build a backfill pool
-        // of additional qualifying words for categories already filled.
-        while seen < limit && (selectedByCategory.count < targetCategories.count || backfillPool.count < count) {
+        while seen < limit {
             let word = shuffled[cursor]
             cursor = (cursor + 1) % shuffled.count
             seen += 1
 
             guard qualifies(word: word, for: userProgress, activeStacks: activeStacks) else { continue }
 
-            let category = word.category
-            if selectedByCategory[category] == nil {
-                selectedByCategory[category] = word
+            if firstPerCategory[word.category] == nil {
+                firstPerCategory[word.category] = word
+                categoryOrder.append(word.category)
+                // Enough distinct categories for a full, varied set — stop scanning.
+                if categoryOrder.count >= count { break }
             } else {
                 backfillPool.append(word)
             }
         }
 
-        // Build ordered output: follow category sequence, backfill empty slots
-        // from the pool to ensure the daily set always returns `count` words.
-        var result: [Word] = []
+        // One word per distinct category (first-seen order), then backfill to `count`.
+        var result = categoryOrder.compactMap { firstPerCategory[$0] }
         var backfillIndex = 0
-        for category in targetCategories {
-            if let word = selectedByCategory[category] {
-                result.append(word)
-            } else if backfillIndex < backfillPool.count {
-                result.append(backfillPool[backfillIndex])
-                backfillIndex += 1
-            }
-        }
-
-        // Top up with backfill if we still have room (e.g. only 3 categories had words
-        // but user wants 5 — pull more from backfill).
         while result.count < count && backfillIndex < backfillPool.count {
             result.append(backfillPool[backfillIndex])
             backfillIndex += 1
