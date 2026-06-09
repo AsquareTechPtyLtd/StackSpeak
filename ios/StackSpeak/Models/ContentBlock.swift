@@ -23,12 +23,23 @@ struct InlineRun: Codable, Sendable, Hashable {
     }
 }
 
+/// One labelled column of a `comparison` block — a heading plus inline runs.
+struct ComparisonColumn: Codable, Sendable, Hashable {
+    let label: String
+    let runs: [InlineRun]
+
+    init(label: String, runs: [InlineRun]) {
+        self.label = label
+        self.runs = runs
+    }
+}
+
 /// Structured content blocks used by book cards. The on-disk JSON is a tagged
 /// union with a `"type"` discriminator — see plan `pro-and-books-plan.md`.
 ///
-/// Block vocabulary v1: paragraph, heading, list, code, callout, image.
-/// Adding new types is cheap; deprecating existing ones across an authored corpus
-/// is expensive — resist scope creep.
+/// Block vocabulary: paragraph, heading, list, code, callout, image, table,
+/// comparison. Adding new types is cheap; deprecating existing ones across an
+/// authored corpus is expensive — resist scope creep.
 enum ContentBlock: Codable, Sendable, Hashable {
     case paragraph(runs: [InlineRun])
     case heading(level: Int, text: String)
@@ -36,10 +47,14 @@ enum ContentBlock: Codable, Sendable, Hashable {
     case code(language: String, code: String)
     case callout(variant: CalloutVariant, runs: [InlineRun])
     case image(asset: String, caption: String?)
+    case table(headers: [String], rows: [[String]])
+    case comparison(left: ComparisonColumn, right: ComparisonColumn)
 
     enum ListStyle: String, Codable, Sendable {
         case bulleted
         case numbered
+        /// Legacy synonym for `numbered`; renders identically.
+        case ordered
     }
 
     enum CalloutVariant: String, Codable, Sendable {
@@ -60,6 +75,10 @@ enum ContentBlock: Codable, Sendable, Hashable {
         case variant
         case asset
         case caption
+        case headers
+        case rows
+        case left
+        case right
     }
 
     private enum BlockType: String, Codable {
@@ -69,6 +88,8 @@ enum ContentBlock: Codable, Sendable, Hashable {
         case code
         case callout
         case image
+        case table
+        case comparison
     }
 
     init(from decoder: Decoder) throws {
@@ -88,7 +109,9 @@ enum ContentBlock: Codable, Sendable, Hashable {
             self = .list(style: style, items: items)
         case .code:
             let language = try c.decode(String.self, forKey: .language)
-            let code = try c.decode(String.self, forKey: .code)
+            // Canonical key is `code`; legacy content stored it under `text`.
+            let code = try c.decodeIfPresent(String.self, forKey: .code)
+                ?? c.decode(String.self, forKey: .text)
             self = .code(language: language, code: code)
         case .callout:
             let variant = try c.decode(CalloutVariant.self, forKey: .variant)
@@ -98,6 +121,14 @@ enum ContentBlock: Codable, Sendable, Hashable {
             let asset = try c.decode(String.self, forKey: .asset)
             let caption = try c.decodeIfPresent(String.self, forKey: .caption)
             self = .image(asset: asset, caption: caption)
+        case .table:
+            let headers = try c.decode([String].self, forKey: .headers)
+            let rows = try c.decode([[String]].self, forKey: .rows)
+            self = .table(headers: headers, rows: rows)
+        case .comparison:
+            let left = try c.decode(ComparisonColumn.self, forKey: .left)
+            let right = try c.decode(ComparisonColumn.self, forKey: .right)
+            self = .comparison(left: left, right: right)
         }
     }
 
@@ -127,6 +158,14 @@ enum ContentBlock: Codable, Sendable, Hashable {
             try c.encode(BlockType.image, forKey: .type)
             try c.encode(asset, forKey: .asset)
             try c.encodeIfPresent(caption, forKey: .caption)
+        case .table(let headers, let rows):
+            try c.encode(BlockType.table, forKey: .type)
+            try c.encode(headers, forKey: .headers)
+            try c.encode(rows, forKey: .rows)
+        case .comparison(let left, let right):
+            try c.encode(BlockType.comparison, forKey: .type)
+            try c.encode(left, forKey: .left)
+            try c.encode(right, forKey: .right)
         }
     }
 }
