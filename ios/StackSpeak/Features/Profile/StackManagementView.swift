@@ -26,9 +26,9 @@ struct StackManagementView: View {
             .sorted(by: { $0.displayName < $1.displayName })
     }
 
-    private var optionalStacksByCategory: [(StackCategory, [WordStack])] {
+    private var optionalStacksByCategory: [(StackTopic, [WordStack])] {
         let stacks = Array(WordStack.availableOptionalStacks(for: currentLevel))
-        return Dictionary(grouping: stacks, by: \.category)
+        return Dictionary(grouping: stacks, by: \.topic)
             .map { ($0.key, $0.value.sorted(by: { $0.displayName < $1.displayName })) }
             .sorted { $0.0.sortOrder < $1.0.sortOrder }
     }
@@ -139,7 +139,7 @@ struct StackManagementView: View {
             .padding(.horizontal, theme.spacing.sm)
     }
 
-    private func optionalSection(category: StackCategory, stacks: [WordStack]) -> some View {
+    private func optionalSection(category: StackTopic, stacks: [WordStack]) -> some View {
         VStack(alignment: .leading, spacing: theme.spacing.sm) {
             Text(category.displayName)
                 .font(TypographyTokens.subheadline.weight(.medium))
