@@ -154,6 +154,51 @@ struct ContentBlockCodableTests {
             right: ComparisonColumn(label: "R", runs: [InlineRun(text: "b")])
         ))
     }
+
+    private func decode(_ json: String) throws -> ContentBlock {
+        try JSONDecoder().decode(ContentBlock.self, from: Data(json.utf8))
+    }
+
+    @Test("legacy code block keys: `lang` and `content` decode as code")
+    func legacyCodeAliasKeysDecode() throws {
+        #expect(try decode(#"{"type":"code","lang":"py","code":"x=1"}"#) == .code(language: "py", code: "x=1"))
+        #expect(try decode(#"{"type":"code","language":"sh","content":"ls -la"}"#) == .code(language: "sh", code: "ls -la"))
+        // Missing language still decodes (defaults to empty).
+        #expect(try decode(#"{"type":"code","text":"plain"}"#) == .code(language: "", code: "plain"))
+    }
+
+    @Test("legacy comparison shape {headers,rows} normalizes to a table")
+    func comparisonHeadersRowsBecomesTable() throws {
+        let json = #"{"type":"comparison","headers":["A","B"],"rows":[["1","2"]]}"#
+        #expect(try decode(json) == .table(headers: ["A", "B"], rows: [["1", "2"]]))
+    }
+
+    @Test("legacy comparison shape {items:[{label,description}]} normalizes to a list")
+    func comparisonItemsBecomesList() throws {
+        let json = #"{"type":"comparison","items":[{"label":"Source","description":"authoritative"}]}"#
+        #expect(try decode(json) == .list(style: .bulleted, items: [[
+            InlineRun(text: "Source", marks: [.bold]),
+            InlineRun(text: " — authoritative")
+        ]]))
+    }
+
+    @Test("legacy comparison shape {items:[{name,description}]} normalizes to a list")
+    func comparisonNamedItemsBecomesList() throws {
+        let json = #"{"type":"comparison","items":[{"name":"Local","description":"one partition"}]}"#
+        #expect(try decode(json) == .list(style: .bulleted, items: [[
+            InlineRun(text: "Local", marks: [.bold]),
+            InlineRun(text: " — one partition")
+        ]]))
+    }
+
+    @Test("legacy comparison shape {rows:[{label,left,right}]} normalizes to a list")
+    func comparisonRowsBecomesList() throws {
+        let json = #"{"type":"comparison","rows":[{"label":"Latency","left":"low","right":"high"}]}"#
+        #expect(try decode(json) == .list(style: .bulleted, items: [[
+            InlineRun(text: "Latency", marks: [.bold]),
+            InlineRun(text: " — low  ·  high")
+        ]]))
+    }
 }
 
 @Suite("Book content types — Codable roundtrip")
@@ -172,6 +217,15 @@ struct BookContentTypesCodableTests {
         let data = try JSONEncoder().encode(card)
         let restored = try JSONDecoder().decode(BookCard.self, from: data)
         #expect(restored == card)
+    }
+
+    @Test("BookCard decodes when explanation/feynman are absent (legacy content)")
+    func bookCardMissingBlockListsDecode() throws {
+        let json = #"{"id":"c1","order":1,"title":"T","teaser":"ts","explanation":[]}"#
+        let card = try JSONDecoder().decode(BookCard.self, from: Data(json.utf8))
+        #expect(card.feynman.isEmpty)
+        #expect(card.explanation.isEmpty)
+        #expect(card.id == "c1")
     }
 
     @Test("ChapterSummary roundtrip preserves shards order")

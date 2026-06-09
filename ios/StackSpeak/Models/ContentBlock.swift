@@ -34,6 +34,30 @@ struct ComparisonColumn: Codable, Sendable, Hashable {
     }
 }
 
+/// Decode-only helper for legacy `comparison` blocks shaped as
+/// `{items:[{label|name, description}]}`. Flattened into a bulleted list item.
+private struct ComparisonItem: Decodable {
+    let label: String?
+    let name: String?
+    let description: String
+    var asRuns: [InlineRun] {
+        [InlineRun(text: label ?? name ?? "", marks: [.bold]),
+         InlineRun(text: " — " + description)]
+    }
+}
+
+/// Decode-only helper for legacy `comparison` blocks shaped as
+/// `{rows:[{label, left, right}]}`. Flattened into a bulleted list item.
+private struct ComparisonRow: Decodable {
+    let label: String
+    let left: String
+    let right: String
+    var asRuns: [InlineRun] {
+        [InlineRun(text: label, marks: [.bold]),
+         InlineRun(text: " — " + left + "  ·  " + right)]
+    }
+}
+
 /// Structured content blocks used by book cards. The on-disk JSON is a tagged
 /// union with a `"type"` discriminator — see plan `pro-and-books-plan.md`.
 ///
@@ -71,7 +95,9 @@ enum ContentBlock: Codable, Sendable, Hashable {
         case style
         case items
         case language
+        case lang      // legacy alias for `language`
         case code
+        case content   // legacy alias for `code`
         case variant
         case asset
         case caption
@@ -108,10 +134,13 @@ enum ContentBlock: Codable, Sendable, Hashable {
             let items = try c.decode([[InlineRun]].self, forKey: .items)
             self = .list(style: style, items: items)
         case .code:
-            let language = try c.decode(String.self, forKey: .language)
-            // Canonical key is `code`; legacy content stored it under `text`.
+            // Legacy content is inconsistent: language is `language` or `lang`;
+            // the source is `code`, `text`, or `content`. Be lenient on all.
+            let language = try c.decodeIfPresent(String.self, forKey: .language)
+                ?? c.decodeIfPresent(String.self, forKey: .lang) ?? ""
             let code = try c.decodeIfPresent(String.self, forKey: .code)
-                ?? c.decode(String.self, forKey: .text)
+                ?? c.decodeIfPresent(String.self, forKey: .text)
+                ?? c.decodeIfPresent(String.self, forKey: .content) ?? ""
             self = .code(language: language, code: code)
         case .callout:
             let variant = try c.decode(CalloutVariant.self, forKey: .variant)
@@ -126,9 +155,31 @@ enum ContentBlock: Codable, Sendable, Hashable {
             let rows = try c.decode([[String]].self, forKey: .rows)
             self = .table(headers: headers, rows: rows)
         case .comparison:
-            let left = try c.decode(ComparisonColumn.self, forKey: .left)
-            let right = try c.decode(ComparisonColumn.self, forKey: .right)
-            self = .comparison(left: left, right: right)
+            // "comparison" was an un-schema'd grab-bag in legacy content with six
+            // shapes. Normalize each onto a coherent block at decode time:
+            //   {left,right}                       -> two-column comparison
+            //   {headers,rows}                     -> table
+            //   {rows:[{label,left,right}]}        -> bulleted list (label — a · b)
+            //   {items:[{label|name,description}]} -> bulleted list (label — desc)
+            if c.contains(.left), c.contains(.right) {
+                let left = try c.decode(ComparisonColumn.self, forKey: .left)
+                let right = try c.decode(ComparisonColumn.self, forKey: .right)
+                self = .comparison(left: left, right: right)
+            } else if c.contains(.headers) {
+                let headers = try c.decode([String].self, forKey: .headers)
+                let rows = try c.decode([[String]].self, forKey: .rows)
+                self = .table(headers: headers, rows: rows)
+            } else if c.contains(.items) {
+                let items = try c.decode([ComparisonItem].self, forKey: .items)
+                self = .list(style: .bulleted, items: items.map(\.asRuns))
+            } else if c.contains(.rows) {
+                let rows = try c.decode([ComparisonRow].self, forKey: .rows)
+                self = .list(style: .bulleted, items: rows.map(\.asRuns))
+            } else {
+                throw DecodingError.dataCorruptedError(
+                    forKey: .type, in: c,
+                    debugDescription: "Unrecognized comparison block shape")
+            }
         }
     }
 
