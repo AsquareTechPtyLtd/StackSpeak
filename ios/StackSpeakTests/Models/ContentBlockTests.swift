@@ -228,6 +228,27 @@ struct BookContentTypesCodableTests {
         #expect(card.id == "c1")
     }
 
+    @Test("legacy vocabulary card adapts into a teaching card")
+    func vocabularyCardAdapts() throws {
+        let json = #"""
+        {"id":"epy-ch02-c001","word":"List Comprehension",
+         "definition":"A concise syntax for building lists. It is fast.",
+         "examples":[{"context":"Replacing map/filter","sentence":"use a comprehension"}],
+         "partOfSpeech":"noun","pronunciation":"...","stackIds":["python"],"tags":["x"]}
+        """#
+        let card = try JSONDecoder().decode(BookCard.self, from: Data(json.utf8))
+        #expect(card.id == "epy-ch02-c001")
+        #expect(card.title == "List Comprehension")
+        #expect(card.teaser == "A concise syntax for building lists.")
+        #expect(card.feynman.isEmpty)
+        // Definition paragraph + one example callout.
+        #expect(card.explanation.count == 2)
+        guard case .paragraph = card.explanation[0] else { Issue.record("expected paragraph"); return }
+        guard case .callout(let variant, let runs) = card.explanation[1] else { Issue.record("expected callout"); return }
+        #expect(variant == .info)
+        #expect(runs.first?.marks == [.bold])
+    }
+
     @Test("ChapterSummary roundtrip preserves shards order")
     func chapterSummaryRoundtrip() throws {
         let chapter = ChapterSummary(
