@@ -13,11 +13,11 @@ struct InterleavingTests {
     func balancedSetWhenAllCategoriesPresent() throws {
         let service = try makeService()
         let words = [
-            mockWord("concept-a", category: .concepts),
-            mockWord("component-a", category: .components),
-            mockWord("process-a", category: .processes),
-            mockWord("pattern-a", category: .patterns),
-            mockWord("quality-a", category: .qualities)
+            mockWord("concept-a", category: "concepts"),
+            mockWord("component-a", category: "components"),
+            mockWord("process-a", category: "processes"),
+            mockWord("pattern-a", category: "patterns"),
+            mockWord("quality-a", category: "qualities")
         ]
         let progress = mockProgress(stacks: ["test-stack"])
 
@@ -31,11 +31,11 @@ struct InterleavingTests {
         #expect(selected.count == 5)
         let categories = Set(selected.map { $0.category })
         #expect(categories.count == 5)
-        #expect(categories.contains(.concepts))
-        #expect(categories.contains(.components))
-        #expect(categories.contains(.processes))
-        #expect(categories.contains(.patterns))
-        #expect(categories.contains(.qualities))
+        #expect(categories.contains("concepts"))
+        #expect(categories.contains("components"))
+        #expect(categories.contains("processes"))
+        #expect(categories.contains("patterns"))
+        #expect(categories.contains("qualities"))
     }
 
     // MARK: - Backfill when category empty
@@ -45,11 +45,11 @@ struct InterleavingTests {
         let service = try makeService()
         // No "qualities" words present
         let words = [
-            mockWord("concept-a", category: .concepts),
-            mockWord("concept-b", category: .concepts),
-            mockWord("component-a", category: .components),
-            mockWord("process-a", category: .processes),
-            mockWord("pattern-a", category: .patterns)
+            mockWord("concept-a", category: "concepts"),
+            mockWord("concept-b", category: "concepts"),
+            mockWord("component-a", category: "components"),
+            mockWord("process-a", category: "processes"),
+            mockWord("pattern-a", category: "patterns")
         ]
         let progress = mockProgress(stacks: ["test-stack"])
 
@@ -62,7 +62,7 @@ struct InterleavingTests {
 
         #expect(selected.count == 5)
         // Should include both concepts to fill the missing qualities slot
-        let conceptCount = selected.filter { $0.category == .concepts }.count
+        let conceptCount = selected.filter { $0.category == "concepts" }.count
         #expect(conceptCount == 2)
     }
 
@@ -71,7 +71,7 @@ struct InterleavingTests {
         let service = try makeService()
         // Only concepts and components — 3 categories empty
         let words = (1...10).map { i in
-            mockWord("concept-\(i)", category: i.isMultiple(of: 2) ? .concepts : .components)
+            mockWord("concept-\(i)", category: i.isMultiple(of: 2) ? "concepts" : "components")
         }
         let progress = mockProgress(stacks: ["test-stack"])
 
@@ -95,7 +95,7 @@ struct InterleavingTests {
         let service = try makeService()
         // Words exist but user hasn't selected the stack
         let words = [
-            mockWord("concept-a", category: .concepts, stack: "other-stack")
+            mockWord("concept-a", category: "concepts", stack: "other-stack")
         ]
         let progress = mockProgress(stacks: ["test-stack"])
 
@@ -128,8 +128,8 @@ struct InterleavingTests {
     @Test("Excludes mastered words from selection")
     func excludesMasteredWords() throws {
         let service = try makeService()
-        let mastered = mockWord("concept-mastered", category: .concepts)
-        let unmastered = mockWord("concept-fresh", category: .concepts)
+        let mastered = mockWord("concept-mastered", category: "concepts")
+        let unmastered = mockWord("concept-fresh", category: "concepts")
         let words = [mastered, unmastered]
 
         let progress = mockProgress(stacks: ["test-stack"])
@@ -149,8 +149,8 @@ struct InterleavingTests {
     @Test("Excludes words above user level")
     func excludesAdvancedWords() throws {
         let service = try makeService()
-        let beginnerWord = mockWord("concept-easy", category: .concepts, level: 1)
-        let advancedWord = mockWord("concept-hard", category: .concepts, level: 5)
+        let beginnerWord = mockWord("concept-easy", category: "concepts", level: 1)
+        let advancedWord = mockWord("concept-hard", category: "concepts", level: 5)
         let words = [advancedWord, beginnerWord]
 
         let progress = mockProgress(stacks: ["test-stack"])
@@ -170,8 +170,8 @@ struct InterleavingTests {
     @Test("Respects user's selectedStacks")
     func respectsSelectedStacks() throws {
         let service = try makeService()
-        let inSelected = mockWord("concept-in", category: .concepts, stack: "selected-stack")
-        let notSelected = mockWord("concept-out", category: .concepts, stack: "other-stack")
+        let inSelected = mockWord("concept-in", category: "concepts", stack: "selected-stack")
+        let notSelected = mockWord("concept-out", category: "concepts", stack: "other-stack")
         let words = [inSelected, notSelected]
 
         let progress = mockProgress(stacks: ["selected-stack"])
@@ -194,11 +194,11 @@ struct InterleavingTests {
         let service = try makeService()
         // Insert in scrambled order
         let words = [
-            mockWord("quality-a", category: .qualities),
-            mockWord("concept-a", category: .concepts),
-            mockWord("pattern-a", category: .patterns),
-            mockWord("component-a", category: .components),
-            mockWord("process-a", category: .processes)
+            mockWord("quality-a", category: "qualities"),
+            mockWord("concept-a", category: "concepts"),
+            mockWord("pattern-a", category: "patterns"),
+            mockWord("component-a", category: "components"),
+            mockWord("process-a", category: "processes")
         ]
         let progress = mockProgress(stacks: ["test-stack"])
 
@@ -209,12 +209,9 @@ struct InterleavingTests {
             count: 5
         )
 
-        // Expected order: concepts, components, processes, patterns, qualities
-        #expect(selected[0].category == .concepts)
-        #expect(selected[1].category == .components)
-        #expect(selected[2].category == .processes)
-        #expect(selected[3].category == .patterns)
-        #expect(selected[4].category == .qualities)
+        // Open vocabulary: one word per distinct category, in first-seen (queue) order.
+        #expect(selected.map { $0.category } == ["qualities", "concepts", "patterns", "components", "processes"])
+        #expect(Set(selected.map { $0.category }).count == 5)
     }
 
     // MARK: - Helpers
@@ -229,7 +226,7 @@ struct InterleavingTests {
 
     private func mockWord(
         _ name: String,
-        category: WordCategory,
+        category: String,
         stack: String = "test-stack",
         level: Int = 1
     ) -> Word {
@@ -262,28 +259,29 @@ struct InterleavingTests {
     }
 }
 
-@Suite("WordCategory — schema compatibility")
-struct WordCategoryTests {
+@Suite("Word category — open vocabulary")
+struct WordCategoryOpenVocabTests {
 
-    @Test("Raw values match the category names used in JSON files")
-    func rawValuesMatchJSON() {
-        #expect(WordCategory.concepts.rawValue == "concepts")
-        #expect(WordCategory.components.rawValue == "components")
-        #expect(WordCategory.processes.rawValue == "processes")
-        #expect(WordCategory.patterns.rawValue == "patterns")
-        #expect(WordCategory.qualities.rawValue == "qualities")
+    @Test("an arbitrary (non-legacy) category string decodes and is preserved")
+    func arbitraryCategoryDecodes() throws {
+        let json = #"""
+        {"id":"sec-001","word":"CSRF","pronunciation":"see-surf","partOfSpeech":"noun",
+         "shortDefinition":"x","longDefinition":"y","unlockLevel":1,"tags":[],"category":"security"}
+        """#.data(using: .utf8)!
+        let dto = try JSONDecoder().decode(WordDTO.self, from: json)
+        #expect(dto.category == "security")
+        let word = Word(from: dto, stack: "web-security-basic")
+        #expect(word.category == "security")
     }
 
-    @Test("All 5 categories have unique emoji")
-    func emojiAreUnique() {
-        let emojis = [
-            WordCategory.concepts.emoji,
-            WordCategory.components.emoji,
-            WordCategory.processes.emoji,
-            WordCategory.patterns.emoji,
-            WordCategory.qualities.emoji
-        ]
-        #expect(Set(emojis).count == 5)
+    @Test("missing category defaults to concepts")
+    func missingCategoryDefaults() throws {
+        let json = #"""
+        {"id":"x","word":"w","pronunciation":"p","partOfSpeech":"noun",
+         "shortDefinition":"s","longDefinition":"l","unlockLevel":1,"tags":[]}
+        """#.data(using: .utf8)!
+        let dto = try JSONDecoder().decode(WordDTO.self, from: json)
+        #expect(dto.category == "concepts")
     }
 }
 
@@ -306,7 +304,7 @@ struct WordDTOTests {
         """.data(using: .utf8)!
 
         let dto = try JSONDecoder().decode(WordDTO.self, from: json)
-        #expect(dto.category == .concepts)
+        #expect(dto.category == "concepts")
     }
 
     @Test("Decodes category field when present")
@@ -326,7 +324,7 @@ struct WordDTOTests {
         """.data(using: .utf8)!
 
         let dto = try JSONDecoder().decode(WordDTO.self, from: json)
-        #expect(dto.category == .qualities)
+        #expect(dto.category == "qualities")
     }
 
     @Test("Defaults professionalContext to empty when absent")
@@ -367,7 +365,7 @@ struct WordDTOTests {
 
         let dto = try JSONDecoder().decode(WordDTO.self, from: json)
         #expect(dto.professionalContext == "Senior engineers articulate trade-offs.")
-        #expect(dto.category == .processes)
+        #expect(dto.category == "processes")
     }
 
     @Test("Decodes soft-skills word without codeExample")

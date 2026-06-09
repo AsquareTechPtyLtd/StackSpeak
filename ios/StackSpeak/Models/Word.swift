@@ -1,31 +1,10 @@
 import Foundation
 import SwiftData
 
-/// Interleaving categories for cognitive variety
-enum WordCategory: String, Codable {
-    case concepts        // Abstract ideas & principles (idempotent, polymorphism)
-    case components      // Concrete building blocks (pod, hook, container)
-    case processes       // Actions & workflows (reconciliation, sharding, articulate)
-    case patterns        // Repeatable approaches (singleton, observer, scrum)
-    case qualities       // Properties & characteristics (stateless, concise, distributed)
-
-    private static let emojiMap: [WordCategory: String] = [
-        .concepts: "🔵", .components: "🟢", .processes: "🟠",
-        .patterns: "🟣", .qualities: "🔴"
-    ]
-
-    var emoji: String { Self.emojiMap[self] ?? "🔵" }
-
-    var displayName: String {
-        switch self {
-        case .concepts: return "Concepts"
-        case .components: return "Components"
-        case .processes: return "Processes"
-        case .patterns: return "Patterns"
-        case .qualities: return "Qualities"
-        }
-    }
-}
+// Word categories are an open vocabulary (e.g. "concepts", "security",
+// "observability", …). They drive daily-set interleaving — the set is built from
+// up to five *distinct* categories for variety — not a fixed five-bucket taxonomy.
+// Stored as a raw string on `Word.categoryRaw`; any value is accepted.
 
 @Model
 final class Word {
@@ -53,8 +32,8 @@ final class Word {
     var stack: String
     var unlockLevel: Int
     var tagsStorage: String
-    /// Interleaving category for daily variety
-    var categoryRaw: String = WordCategory.concepts.rawValue
+    /// Interleaving category for daily variety (open vocabulary).
+    var categoryRaw: String = "concepts"
 
     var tags: [String] {
         get { tagsStorage.isEmpty ? [] : tagsStorage.components(separatedBy: ",") }
@@ -68,9 +47,9 @@ final class Word {
     }
 
     var wordStack: WordStack { WordStack(rawValue: stack) }
-    var category: WordCategory {
-        get { WordCategory(rawValue: categoryRaw) ?? .concepts }
-        set { categoryRaw = newValue.rawValue }
+    var category: String {
+        get { categoryRaw }
+        set { categoryRaw = newValue }
     }
 
     init(
@@ -94,7 +73,7 @@ final class Word {
         stack: String,
         unlockLevel: Int,
         tags: [String],
-        category: WordCategory = .concepts
+        category: String = "concepts"
     ) {
         self.id = id
         self.word = word
@@ -116,7 +95,7 @@ final class Word {
         self.stack = stack
         self.unlockLevel = unlockLevel
         self.tagsStorage = tags.joined(separator: ",")
-        self.categoryRaw = category.rawValue
+        self.categoryRaw = category
     }
 
     convenience init(from dto: WordDTO, stack: String) {
@@ -187,7 +166,7 @@ struct WordDTO: Codable {
     let backingCard: BackingCardRef?
     let unlockLevel: Int
     let tags: [String]
-    let category: WordCategory
+    let category: String
     // `stack` is intentionally absent — it is injected from StackFileDTO.stack by the loader.
 
     init(from decoder: Decoder) throws {
@@ -212,8 +191,8 @@ struct WordDTO: Codable {
         backingCard = try c.decodeIfPresent(BackingCardRef.self, forKey: .backingCard)
         unlockLevel = try c.decode(Int.self, forKey: .unlockLevel)
         tags = try c.decode([String].self, forKey: .tags)
-        // Default to concepts if not specified (for backwards compatibility)
-        category = try c.decodeIfPresent(WordCategory.self, forKey: .category) ?? .concepts
+        // Open vocabulary — any category string is accepted (defaults to "concepts").
+        category = try c.decodeIfPresent(String.self, forKey: .category) ?? "concepts"
     }
 }
 
