@@ -37,6 +37,17 @@ if [[ -d "$IOS_RESOURCES" ]]; then
       status=1
     fi
   done
+
+  # Flag bundle-only orphans (e.g. stacks renamed/removed in shared/ but left behind).
+  if [[ -d "$IOS_RESOURCES/stacks" ]]; then
+    for ios_stack in "$IOS_RESOURCES/stacks"/*.json; do
+      filename="$(basename "$ios_stack")"
+      if [[ ! -f "$SOURCE_STACKS_DIR/$filename" ]]; then
+        echo "iOS stacks/$filename is orphaned (not in shared/)"
+        status=1
+      fi
+    done
+  fi
 fi
 
 # Check Android
@@ -60,6 +71,17 @@ if [[ -d "$ANDROID_ASSETS" ]]; then
       status=1
     fi
   done
+
+  # Flag bundle-only orphans.
+  if [[ -d "$ANDROID_ASSETS/stacks" ]]; then
+    for android_stack in "$ANDROID_ASSETS/stacks"/*.json; do
+      filename="$(basename "$android_stack")"
+      if [[ ! -f "$SOURCE_STACKS_DIR/$filename" ]]; then
+        echo "Android stacks/$filename is orphaned (not in shared/)"
+        status=1
+      fi
+    done
+  fi
 fi
 
 if [[ $status -eq 0 ]]; then
