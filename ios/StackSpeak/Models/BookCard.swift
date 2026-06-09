@@ -10,6 +10,28 @@ struct BookCard: Codable, Sendable, Identifiable, Hashable {
     let teaser: String
     let explanation: [ContentBlock]
     let feynman: [ContentBlock]
+
+    init(id: String, order: Int, title: String, teaser: String,
+         explanation: [ContentBlock], feynman: [ContentBlock]) {
+        self.id = id
+        self.order = order
+        self.title = title
+        self.teaser = teaser
+        self.explanation = explanation
+        self.feynman = feynman
+    }
+
+    // Legacy content occasionally omits `explanation`/`feynman` on a card; treat a
+    // missing block list as empty rather than failing the whole chapter's decode.
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decode(String.self, forKey: .id)
+        order = try c.decode(Int.self, forKey: .order)
+        title = try c.decode(String.self, forKey: .title)
+        teaser = try c.decode(String.self, forKey: .teaser)
+        explanation = try c.decodeIfPresent([ContentBlock].self, forKey: .explanation) ?? []
+        feynman = try c.decodeIfPresent([ContentBlock].self, forKey: .feynman) ?? []
+    }
 }
 
 /// Decoded shape of a chapter shard file (e.g. `chapters/ch01.json`).
