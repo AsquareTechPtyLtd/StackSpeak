@@ -11,7 +11,7 @@ import Foundation
 /// each stack's `minimumLevel` at authoring time: basic→1, intermediate→6,
 /// advanced→16, advanced-2→26, advanced-3→36. All content is reachable by Principal
 /// (L36); the top four bands (Senior Principal → Fellow) are prestige mastery.
-struct LevelDefinition {
+struct LevelDefinition: Codable {
     let level: Int
     let title: String
     let wordsRequired: Int
@@ -118,7 +118,7 @@ struct LevelDefinition {
     }
 }
 
-struct LevelProgress {
+struct LevelProgress: Codable {
     let progress: Double
     let wordsRemaining: Int
     let nextLevel: LevelDefinition

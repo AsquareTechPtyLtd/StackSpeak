@@ -36,7 +36,7 @@ enum WordReportReason: String, Codable, CaseIterable {
 
 @Model
 final class WordReport {
-    var id: UUID
+    @Attribute(.unique) var id: UUID
     var wordId: UUID
     var wordTerm: String
     var reason: String // Raw value of WordReportReason

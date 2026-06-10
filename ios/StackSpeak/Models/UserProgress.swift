@@ -48,31 +48,84 @@ final class UserProgress {
     var bookCardsReadToday: Int = 0
     var lastBookReadingResetDate: Date = Date.distantPast
 
+    // MARK: - Cached UUID-set views over CSV storage
+    // The decoded sets are memoized in @Transient properties — these getters are
+    // hit from view bodies on every render, and re-splitting a ~25 KB CSV string
+    // per access is O(n) work for nothing. Caches populate lazily on first read
+    // and are kept in sync by the setters (storage is never written directly
+    // outside init).
+
+    @Transient private var cachedWordsPracticedIds: Set<UUID>? = nil
+    @Transient private var cachedMasteredWordIds: Set<UUID>? = nil
+    @Transient private var cachedBookmarkedWordIds: Set<UUID>? = nil
+    @Transient private var cachedWordsWithTwoCorrectIds: Set<UUID>? = nil
+    @Transient private var cachedWordsCreditedForLevelIds: Set<UUID>? = nil
+
     var wordsPracticedIds: Set<UUID> {
-        get { Self.uuidsFromCSV(wordsPracticedIdsStorage) }
-        set { wordsPracticedIdsStorage = Self.csvFromUUIDs(newValue) }
+        get {
+            if let cachedWordsPracticedIds { return cachedWordsPracticedIds }
+            let parsed = Self.uuidsFromCSV(wordsPracticedIdsStorage)
+            cachedWordsPracticedIds = parsed
+            return parsed
+        }
+        set {
+            cachedWordsPracticedIds = newValue
+            wordsPracticedIdsStorage = Self.csvFromUUIDs(newValue)
+        }
     }
 
     var masteredWordIds: Set<UUID> {
-        get { Self.uuidsFromCSV(masteredWordIdsStorage) }
-        set { masteredWordIdsStorage = Self.csvFromUUIDs(newValue) }
+        get {
+            if let cachedMasteredWordIds { return cachedMasteredWordIds }
+            let parsed = Self.uuidsFromCSV(masteredWordIdsStorage)
+            cachedMasteredWordIds = parsed
+            return parsed
+        }
+        set {
+            cachedMasteredWordIds = newValue
+            masteredWordIdsStorage = Self.csvFromUUIDs(newValue)
+        }
     }
 
     var bookmarkedWordIds: Set<UUID> {
-        get { Self.uuidsFromCSV(bookmarkedWordIdsStorage) }
-        set { bookmarkedWordIdsStorage = Self.csvFromUUIDs(newValue) }
+        get {
+            if let cachedBookmarkedWordIds { return cachedBookmarkedWordIds }
+            let parsed = Self.uuidsFromCSV(bookmarkedWordIdsStorage)
+            cachedBookmarkedWordIds = parsed
+            return parsed
+        }
+        set {
+            cachedBookmarkedWordIds = newValue
+            bookmarkedWordIdsStorage = Self.csvFromUUIDs(newValue)
+        }
     }
 
     var wordsWithTwoCorrectIds: Set<UUID> {
-        get { Self.uuidsFromCSV(wordsWithTwoCorrectIdsStorage) }
-        set { wordsWithTwoCorrectIdsStorage = Self.csvFromUUIDs(newValue) }
+        get {
+            if let cachedWordsWithTwoCorrectIds { return cachedWordsWithTwoCorrectIds }
+            let parsed = Self.uuidsFromCSV(wordsWithTwoCorrectIdsStorage)
+            cachedWordsWithTwoCorrectIds = parsed
+            return parsed
+        }
+        set {
+            cachedWordsWithTwoCorrectIds = newValue
+            wordsWithTwoCorrectIdsStorage = Self.csvFromUUIDs(newValue)
+        }
     }
 
     /// Words credited toward level progression — one per word, on its first
     /// correct assessment answer. Drives the level ladder.
     var wordsCreditedForLevelIds: Set<UUID> {
-        get { Self.uuidsFromCSV(wordsCreditedForLevelIdsStorage) }
-        set { wordsCreditedForLevelIdsStorage = Self.csvFromUUIDs(newValue) }
+        get {
+            if let cachedWordsCreditedForLevelIds { return cachedWordsCreditedForLevelIds }
+            let parsed = Self.uuidsFromCSV(wordsCreditedForLevelIdsStorage)
+            cachedWordsCreditedForLevelIds = parsed
+            return parsed
+        }
+        set {
+            cachedWordsCreditedForLevelIds = newValue
+            wordsCreditedForLevelIdsStorage = Self.csvFromUUIDs(newValue)
+        }
     }
 
     var selectedStacks: Set<String> {
@@ -123,10 +176,16 @@ final class UserProgress {
     /// Returns the streak to display, accounting for whether the streak is still active.
     /// A streak that hasn't been extended today or yesterday is shown as 0.
     var displayedCurrentStreak: Int {
+        displayedCurrentStreak()
+    }
+
+    /// Injectable variant for tests (midnight/DST edges can't be exercised
+    /// against the wall clock). Same pattern as `resetDailyCounterIfNewDay`.
+    func displayedCurrentStreak(now: Date = Date(), calendar: Calendar = .current) -> Int {
         guard let lastCompleted = lastCompletedDate else { return 0 }
-        let today = Calendar.current.startOfDay(for: Date())
-        let last = Calendar.current.startOfDay(for: lastCompleted)
-        let days = Calendar.current.dateComponents([.day], from: last, to: today).day ?? 0
+        let today = calendar.startOfDay(for: now)
+        let last = calendar.startOfDay(for: lastCompleted)
+        let days = calendar.dateComponents([.day], from: last, to: today).day ?? 0
         return days > 1 ? 0 : currentStreak
     }
 
@@ -206,17 +265,19 @@ final class ReviewState {
     var dueDate: Date
     var lastReviewedAt: Date?
 
-    init(wordId: UUID) {
+    // `now`/`calendar` are injectable so interval scheduling is testable
+    // without mocking system time.
+    init(wordId: UUID, now: Date = Date(), calendar: Calendar = .current) {
         self.wordId = wordId
         self.easinessFactor = SM2.initialEasiness
         self.interval = SM2.firstInterval
         self.repetitions = 0
-        self.dueDate = Calendar.current.date(byAdding: .day, value: 1, to: Date()) ?? Date()
+        self.dueDate = calendar.date(byAdding: .day, value: 1, to: now) ?? now
         self.lastReviewedAt = nil
     }
 
-    func updateAfterReview(quality: Int) {
-        lastReviewedAt = Date()
+    func updateAfterReview(quality: Int, now: Date = Date(), calendar: Calendar = .current) {
+        lastReviewedAt = now
 
         if quality < SM2.qualityFailThreshold {
             repetitions = 0
@@ -235,13 +296,13 @@ final class ReviewState {
             repetitions += 1
         }
 
-        dueDate = Calendar.current.date(byAdding: .day, value: interval, to: Date()) ?? Date()
+        dueDate = calendar.date(byAdding: .day, value: interval, to: now) ?? now
     }
 }
 
 @Model
 final class AssessmentResult {
-    var id: UUID
+    @Attribute(.unique) var id: UUID
     var wordId: UUID
     var attemptedAt: Date
     var isCorrect: Bool

@@ -23,6 +23,10 @@ final class ReviewSchedulerService: ReviewRepository {
     }
 }
 
+/// Flashcard answer quality. `rawValue` maps directly onto the SM-2 quality
+/// scale (0–5) consumed by `ReviewState.updateAfterReview(quality:)`, which
+/// supports the full range — new cases (e.g. `hard = 3`, `easy = 5`) can be
+/// added here without touching the scheduling math.
 enum ReviewQuality: Int {
     case again = 2
     case good = 4

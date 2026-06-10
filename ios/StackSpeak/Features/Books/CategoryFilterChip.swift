@@ -16,8 +16,7 @@ struct CategoryFilterChip: View {
     let action: () -> Void
 
     private var accent: Color {
-        guard let category else { return theme.colors.accent }
-        return Color(hex: category.accentHex)
+        category?.accentColor ?? theme.colors.accent
     }
 
     private var bg: Color {

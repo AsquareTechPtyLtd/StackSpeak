@@ -108,6 +108,13 @@ final class DailySet {
 
     static func dayString(from date: Date) -> String {
         let c = Calendar.current.dateComponents([.year, .month, .day], from: date)
-        return String(format: "%04d-%02d-%02d", c.year ?? 0, c.month ?? 0, c.day ?? 0)
+        guard let year = c.year, let month = c.month, let day = c.day else {
+            // Never nil for a real Date on a Gregorian calendar. Fail loudly in
+            // debug rather than silently minting a "0000-00-00" unique key that
+            // would merge corrupted days into one ghost row.
+            assertionFailure("dayString: calendar returned nil components for \(date)")
+            return "0000-00-00"
+        }
+        return String(format: "%04d-%02d-%02d", year, month, day)
     }
 }

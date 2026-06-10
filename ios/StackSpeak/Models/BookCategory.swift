@@ -46,20 +46,8 @@ enum BookCategory: String, Codable, CaseIterable, Sendable, Hashable, Identifiab
         }
     }
 
-    /// Accent hex for the chip's selected-state tint. Independent of theme accent —
-    /// these colors are intentionally distinctive so each category reads at a glance.
-    /// Light/dark variants are handled by the chip's renderer mixing this with theme tokens.
-    var accentHex: String {
-        switch self {
-        case .aiML:         return "#7E57C2"
-        case .architecture: return "#1976D2"
-        case .codeCraft:    return "#8E44AD"
-        case .cloud:        return "#0078D4"
-        case .data:         return "#2A8C8B"
-        case .testing:      return "#2E7D32"
-        case .people:       return "#FF6B35"
-        }
-    }
+    // Category accent colors live in the design system, not the model —
+    // see DesignSystem/BookCategory+Accent.swift.
 
     /// Stable display order across the filter row and any category list.
     /// Matches the order of declaration in this enum so adding a new category

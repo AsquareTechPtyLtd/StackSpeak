@@ -10,6 +10,11 @@ final class StackRegistry: @unchecked Sendable {
     let loadError: (any Error)?
     private let stacksById: [String: StackDefinition]
 
+    // Threading note: this init does synchronous bundle I/O on whichever thread
+    // first touches `.shared`. The index is a small local file (sub-ms read) and
+    // first access happens during app bootstrap; if the index ever grows or the
+    // registry gains remote sources, convert this to an async `load()` entry
+    // point instead of widening the sync read.
     private init() {
         guard let url = Bundle.main.url(forResource: "words-index", withExtension: "json") else {
             let error = NSError(domain: "com.stackspeak.ios", code: 1, userInfo: [

@@ -137,6 +137,13 @@ extension Word {
 
 /// Converts an arbitrary string to a deterministic UUID via FNV-1a so that
 /// mnemonic IDs like "bw001000-…" always produce the same UUID across installs.
+///
+/// Stability contract: a word's mnemonic ID must NEVER be reformatted or
+/// normalized once shipped — the derived UUID would silently change and orphan
+/// every progress row pointing at the old one. Note the output does not set
+/// RFC 4122 version/variant bits; it is valid for Swift/SwiftData (all 128
+/// bits compared) but external tooling that enforces RFC 4122 may reject it.
+/// Prefer authoring real UUID strings for new words.
 func deterministicUUID(from string: String) -> UUID {
     var h1: UInt64 = 14695981039346656037
     var h2: UInt64 = 14695981039346656037 &+ 1

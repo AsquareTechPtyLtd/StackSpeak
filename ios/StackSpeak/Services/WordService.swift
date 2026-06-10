@@ -288,7 +288,9 @@ enum WordServiceError: LocalizedError {
     }
 }
 
-/// FNV-1a based PRNG. Produces stable output across Swift processes unlike String.hashValue.
+/// Linear Congruential Generator (Knuth's MMIX constants). Produces stable
+/// output across Swift processes unlike String.hashValue. Seeded from the
+/// FNV-1a `stableHash` below.
 struct SeededRandomGenerator: RandomNumberGenerator {
     private var state: UInt64
 

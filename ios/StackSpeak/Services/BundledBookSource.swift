@@ -24,17 +24,17 @@ final class BundledBookSource: BookContentSource, @unchecked Sendable {
         return BundledBookSource(resourcesURL: url)
     }
 
-    nonisolated(unsafe) private static let iso8601WithFractional: ISO8601DateFormatter = {
+    // Per-call formatters, not shared statics: ISO8601DateFormatter is not
+    // thread-safe, and this type is @unchecked Sendable with ad-hoc instances
+    // created from several views — shared mutable formatters could race.
+    // Construction cost is negligible for a one-shot catalog/manifest parse.
+    private static func makeISO8601Formatter(fractional: Bool) -> ISO8601DateFormatter {
         let f = ISO8601DateFormatter()
-        f.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        f.formatOptions = fractional
+            ? [.withInternetDateTime, .withFractionalSeconds]
+            : [.withInternetDateTime]
         return f
-    }()
-
-    nonisolated(unsafe) private static let iso8601Plain: ISO8601DateFormatter = {
-        let f = ISO8601DateFormatter()
-        f.formatOptions = [.withInternetDateTime]
-        return f
-    }()
+    }
 
     /// Reads file contents, mapping a genuine missing-file error to the caller's
     /// `notFound` case while letting permission/transient read errors surface as-is.
@@ -52,8 +52,8 @@ final class BundledBookSource: BookContentSource, @unchecked Sendable {
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .custom { decoder in
             let raw = try decoder.singleValueContainer().decode(String.self)
-            if let date = Self.iso8601WithFractional.date(from: raw) { return date }
-            if let date = Self.iso8601Plain.date(from: raw) { return date }
+            if let date = Self.makeISO8601Formatter(fractional: true).date(from: raw) { return date }
+            if let date = Self.makeISO8601Formatter(fractional: false).date(from: raw) { return date }
             throw DecodingError.dataCorrupted(.init(
                 codingPath: decoder.codingPath,
                 debugDescription: "Unrecognized ISO8601 date: \(raw)"

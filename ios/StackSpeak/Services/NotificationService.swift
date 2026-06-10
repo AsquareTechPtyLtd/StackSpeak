@@ -8,11 +8,11 @@ final class NotificationService: NotificationRepository {
     private let notificationCenter = UNUserNotificationCenter.current()
 
     private let notificationMessages = [
-        "5 new words are waiting.",
-        "Keep your streak alive — today's words are ready.",
-        "Time to level up your vocabulary.",
-        "Your daily words are here.",
-        "Ready to learn? Today's words await."
+        String(localized: "notification.body.1"),
+        String(localized: "notification.body.2"),
+        String(localized: "notification.body.3"),
+        String(localized: "notification.body.4"),
+        String(localized: "notification.body.5")
     ]
 
     init() {}
@@ -40,9 +40,14 @@ final class NotificationService: NotificationRepository {
                                                      second: 0,
                                                      of: targetDate) else { continue }
 
+            // Skip a day-0 slot whose time has already passed: a calendar trigger
+            // with a past date fires at the NEXT matching time (tomorrow), which
+            // would silently collide with day 1's slot under today's identifier.
+            guard scheduledDate > Date() else { continue }
+
             let dateString = DateFormatter.yyyyMMdd.string(from: scheduledDate)
             let content = UNMutableNotificationContent()
-            content.title = "StackSpeak"
+            content.title = String(localized: "notification.title")
             content.body = notificationMessages[dayOffset % notificationMessages.count]
             content.sound = .default
             content.badge = 1
