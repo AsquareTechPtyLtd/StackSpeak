@@ -74,7 +74,14 @@ struct StackManagementView: View {
                 .presentationDetents([.medium])
         }
         .sensoryFeedback(.success, trigger: saveSuccessTrigger)
-        .alert("saveError.title", isPresented: .constant(saveError != nil), presenting: saveError) { _ in
+        .alert(
+            "saveError.title",
+            isPresented: Binding(
+                get: { saveError != nil },
+                set: { if !$0 { saveError = nil } }
+            ),
+            presenting: saveError
+        ) { _ in
             Button("common.ok") { saveError = nil }
         } message: { error in
             Text(String(format: String(localized: "saveError.stackManagement.format"),

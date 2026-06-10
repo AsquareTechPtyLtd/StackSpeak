@@ -60,6 +60,11 @@ struct BookLockedSheet: View {
                 get: { userProgress?.isProActive ?? false },
                 set: { on in
                     guard let progress = userProgress else { return }
+                    // Capture pre-toggle state so a failed save restores BOTH
+                    // fields — nil-ing the expiry on revert would strand a
+                    // restored isPro=true with no expiry date.
+                    let oldIsPro = progress.isPro
+                    let oldExpiry = progress.proExpiryDate
                     progress.isPro = on
                     progress.proExpiryDate = on
                         ? Calendar.current.date(byAdding: .year, value: 1, to: Date())
@@ -68,8 +73,8 @@ struct BookLockedSheet: View {
                         try modelContext.save()
                         if on { dismiss() }
                     } catch {
-                        progress.isPro = !on
-                        progress.proExpiryDate = nil
+                        progress.isPro = oldIsPro
+                        progress.proExpiryDate = oldExpiry
                     }
                 }
             ))

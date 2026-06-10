@@ -29,6 +29,11 @@ extension ProfileView {
                     Toggle("", isOn: Binding(
                         get: { progress.isProActive },
                         set: { on in
+                            // Capture pre-toggle state so a failed save restores
+                            // BOTH fields — nil-ing the expiry on revert would
+                            // strand a restored isPro=true with no expiry date.
+                            let oldIsPro = progress.isPro
+                            let oldExpiry = progress.proExpiryDate
                             progress.isPro = on
                             progress.proExpiryDate = on
                                 ? Calendar.current.date(byAdding: .year, value: 1, to: Date())
@@ -36,9 +41,8 @@ extension ProfileView {
                             do {
                                 try modelContext.save()
                             } catch {
-                                // Revert on failure
-                                progress.isPro = !on
-                                progress.proExpiryDate = nil
+                                progress.isPro = oldIsPro
+                                progress.proExpiryDate = oldExpiry
                             }
                         }
                     ))
