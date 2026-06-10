@@ -243,13 +243,14 @@ struct BookCategoryTests {
         #expect(orders == orders.sorted())
     }
 
-    @Test("Each category has a non-empty SF Symbol icon and accent hex")
+    @Test("Each category has a non-empty SF Symbol icon and a distinct accent color")
     func iconAndAccentNonEmpty() {
         for category in BookCategory.allCases {
             #expect(!category.icon.isEmpty)
-            #expect(category.accentHex.hasPrefix("#"))
-            #expect(category.accentHex.count == 7)  // #RRGGBB
         }
+        // Accent colors are categorical identifiers — they must be distinct.
+        let accents = BookCategory.allCases.map(\.accentColor)
+        #expect(Set(accents).count == BookCategory.allCases.count)
     }
 
     @Test("Codable round-trip via raw string ID")

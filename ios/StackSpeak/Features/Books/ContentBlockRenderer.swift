@@ -44,7 +44,13 @@ struct ContentBlockView: View {
 
     @ViewBuilder
     private func heading(level: Int, text: String) -> some View {
-        let font: Font = level == 2 ? TypographyTokens.title2 : TypographyTokens.title3
+        // Level 1 (document title) must render larger than level 2; everything
+        // deeper than level 2 steps down to title3.
+        let font: Font = switch level {
+        case 1: TypographyTokens.title1
+        case 2: TypographyTokens.title2
+        default: TypographyTokens.title3
+        }
         Text(text)
             .font(font)
             .foregroundColor(theme.colors.ink)
@@ -228,24 +234,96 @@ private struct InlineRunsText: View {
         var result = AttributedString()
         for run in runs {
             var part = AttributedString(run.text)
-            for mark in run.marks ?? [] {
+            let marks = run.marks ?? []
+            // Accumulate font modifiers across marks instead of reassigning per
+            // mark — a [.bold, .italic] run previously kept only the last mark.
+            // A code mark sets the base typeface; bold/italic layer on top.
+            var font: Font? = marks.contains(.code) ? TypographyTokens.code : nil
+            for mark in marks {
                 switch mark {
                 case .bold:
-                    part.font = TypographyTokens.body.weight(.semibold)
+                    font = (font ?? TypographyTokens.body).weight(.semibold)
                 case .italic:
-                    part.font = TypographyTokens.body.italic()
+                    font = (font ?? TypographyTokens.body).italic()
                 case .code:
-                    part.font = TypographyTokens.code
+                    break  // handled as the base font above
                 case .link:
                     if let href = run.href, let url = URL(string: href) {
                         part.link = url
                     }
                 }
             }
+            if let font {
+                part.font = font
+            }
             result.append(part)
         }
         return result
     }
+}
+
+// MARK: - Previews
+
+private let previewBlocks: [ContentBlock] = [
+    .heading(level: 1, text: "Actors in Swift"),
+    .heading(level: 2, text: "Why Actors?"),
+    .heading(level: 3, text: "Under the Hood"),
+    .paragraph(runs: [
+        InlineRun(text: "An "),
+        InlineRun(text: "actor", marks: [.bold]),
+        InlineRun(text: " is a reference type that "),
+        InlineRun(text: "serialises", marks: [.italic]),
+        InlineRun(text: " access to its mutable state. Calling "),
+        InlineRun(text: "actor.doWork()", marks: [.code]),
+        InlineRun(text: " from outside the actor is always an "),
+        InlineRun(text: "async", marks: [.code, .italic]),
+        InlineRun(text: " operation.")
+    ]),
+    .list(style: .bulleted, items: [
+        [InlineRun(text: "Eliminates data races at compile time")],
+        [InlineRun(text: "Replaces locks and serial queues")],
+        [InlineRun(text: "Works with "), InlineRun(text: "async/await", marks: [.code])]
+    ]),
+    .code(language: "swift", code: "actor Counter {\n    var value = 0\n    func increment() { value += 1 }\n}"),
+    .callout(variant: .info, runs: [InlineRun(text: "Actors are reference types — they live on the heap.")]),
+    .callout(variant: .tip, runs: [InlineRun(text: "Prefer actors over classes when you need mutable shared state.")]),
+    .callout(variant: .warning, runs: [InlineRun(text: "Crossing actor boundaries always involves a suspend point.")]),
+    .table(
+        headers: ["Concept", "Description"],
+        rows: [
+            ["Actor isolation", "Access only from within the actor by default"],
+            ["nonisolated", "Opt out of isolation for pure computed properties"]
+        ]
+    ),
+    .comparison(
+        left: ComparisonColumn(label: "Actor", runs: [InlineRun(text: "Serialised access; safe by default")]),
+        right: ComparisonColumn(label: "Class", runs: [InlineRun(text: "Concurrent access; manual locking required")])
+    )
+]
+
+#Preview("Content Blocks — Light") {
+    ScrollView {
+        VStack(alignment: .leading, spacing: 16) {
+            ForEach(Array(previewBlocks.enumerated()), id: \.offset) { _, block in
+                ContentBlockView(block: block, bookId: "preview-book")
+            }
+        }
+        .padding()
+    }
+    .withTheme(ThemeManager())
+}
+
+#Preview("Content Blocks — Dark") {
+    ScrollView {
+        VStack(alignment: .leading, spacing: 16) {
+            ForEach(Array(previewBlocks.enumerated()), id: \.offset) { _, block in
+                ContentBlockView(block: block, bookId: "preview-book")
+            }
+        }
+        .padding()
+    }
+    .withTheme(ThemeManager())
+    .preferredColorScheme(.dark)
 }
 
 extension ContentBlockView {

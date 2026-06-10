@@ -47,6 +47,19 @@ check_dir_in_sync() {
       fi
     done < <(find "$SOURCE_BOOKS_DIR" -type f -print0)
   fi
+
+  # Reverse walk: flag orphans that exist in the platform bundle but no longer
+  # in shared/ (a book deleted from shared/ would otherwise linger silently).
+  # Mirrors check-words-sync.sh's bidirectional check.
+  if [[ -d "$platform_resources/books" ]]; then
+    while IFS= read -r -d '' platform_file; do
+      rel="${platform_file#$platform_resources/books/}"
+      if [[ ! -f "$SOURCE_BOOKS_DIR/$rel" ]]; then
+        echo "$platform_label books/$rel is an orphan (not in shared/books)"
+        status=1
+      fi
+    done < <(find "$platform_resources/books" -type f -print0)
+  fi
 }
 
 check_dir_in_sync "iOS" "$IOS_RESOURCES"

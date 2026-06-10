@@ -41,7 +41,7 @@ struct ProfileView: View {
                                 .font(TypographyTokens.caption.weight(.semibold))
                                 .foregroundColor(theme.colors.accent)
                                 .padding(.horizontal, theme.spacing.sm)
-                                .padding(.vertical, 4)
+                                .padding(.vertical, theme.spacing.xs)
                                 .background(theme.colors.accentBg)
                                 .clipShape(Capsule())
                         }
@@ -87,8 +87,12 @@ struct ProfileView: View {
                     ) {
                         ProgressView(value: levelProgress.progress)
                             .tint(theme.colors.accent)
-                            .accessibilityLabel("Level progress: \(Int(levelProgress.progress * 100))%")
-                        Text("\(Int(levelProgress.progress * 100))% • \(levelProgress.wordsRemaining) to \(levelProgress.nextLevel.title)")
+                            .accessibilityLabel(String(format: String(localized: "a11y.levelProgress.percent.format"),
+                                                       Int(levelProgress.progress * 100)))
+                        Text(String(format: String(localized: "profile.levelProgress.format"),
+                                    Int(levelProgress.progress * 100),
+                                    levelProgress.wordsRemaining,
+                                    levelProgress.nextLevel.title))
                             .font(TypographyTokens.footnote)
                             .foregroundColor(theme.colors.inkMuted)
                     }
@@ -109,8 +113,8 @@ struct ProfileView: View {
     }
 
     private func streakCell(value: Int, label: LocalizedStringKey, showFlame: Bool) -> some View {
-        VStack(spacing: 4) {
-            HStack(spacing: 4) {
+        VStack(spacing: theme.spacing.xs) {
+            HStack(spacing: theme.spacing.xs) {
                 if showFlame {
                     Image(systemName: "flame.fill")
                         .foregroundColor(theme.colors.streak)
@@ -191,19 +195,20 @@ struct ProfileView: View {
             VStack(spacing: 0) {
                 NavigationLink { StackManagementView() } label: {
                     settingsRow(icon: "square.stack.3d.up.fill", title: "profile.settings.manageStacks",
-                                subtitle: "\(progress.selectedStacks.count) active")
+                                subtitle: String(format: String(localized: "profile.settings.stacksActive.format"),
+                                                 progress.selectedStacks.count))
                 }
                 .buttonStyle(.plain)
                 Divider()
                 NavigationLink { NotificationSettingsView() } label: {
                     settingsRow(icon: "bell.fill", title: "profile.settings.notifications",
-                                subtitle: progress.notificationEnabled ? "On" : "Off")
+                                subtitle: String(localized: progress.notificationEnabled ? "common.on" : "common.off"))
                 }
                 .buttonStyle(.plain)
                 Divider()
                 NavigationLink { ThemeSettingsView() } label: {
                     settingsRow(icon: "paintbrush.fill", title: "profile.settings.theme",
-                                subtitle: progress.themePreference.rawValue.capitalized)
+                                subtitle: progress.themePreference.displayName)
                 }
                 .buttonStyle(.plain)
             }

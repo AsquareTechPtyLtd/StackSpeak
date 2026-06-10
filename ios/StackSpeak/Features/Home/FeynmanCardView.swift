@@ -65,10 +65,7 @@ struct FeynmanCardView: View {
         _stage = State(initialValue: isCompleted ? .done : .simple)
     }
 
-    var isComingSoon: Bool {
-        word.simpleDefinition.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-            || word.connector.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-    }
+    var isComingSoon: Bool { word.isComingSoon }
 
     var speechService: (any SpeechRepository)? { services?.speech }
 
@@ -124,7 +121,7 @@ struct FeynmanCardView: View {
                     .animation(reduceMotion ? nil : MotionTokens.standard, value: stageProgress)
             }
         }
-        .frame(height: 2)
+        .frame(height: theme.spacing.xxs)
         .accessibilityLabel(String(format: String(localized: "a11y.feynman.stageProgress.format"),
                                    visibleStageIndex, visibleStageTotal))
     }
@@ -153,7 +150,7 @@ struct FeynmanCardView: View {
             if previousStage(from: stage) != nil {
                 backButton
             }
-            VStack(alignment: .leading, spacing: 2) {
+            VStack(alignment: .leading, spacing: theme.spacing.xxs) {
                 Text(word.word)
                     .font(TypographyTokens.cardTitle)
                     .foregroundColor(theme.colors.ink)
@@ -227,4 +224,54 @@ struct FeynmanCardView: View {
             EmptyView()
         }
     }
+}
+
+// MARK: - Previews
+
+private func previewWord() -> Word {
+    Word(
+        id: UUID(),
+        word: "idempotent",
+        pronunciation: "/ˌaɪ.dəmˈpoʊ.tənt/",
+        partOfSpeech: "adjective",
+        shortDefinition: "Producing the same result no matter how many times it's applied.",
+        simpleDefinition: "Doing it once or a hundred times gives the same outcome.",
+        longDefinition: "An operation is idempotent if applying it multiple times has the same effect as applying it once.",
+        techContext: "REST APIs mark GET, PUT, and DELETE as idempotent; POST is generally not.",
+        exampleSentence: "A DELETE request is idempotent — deleting a resource twice is the same as deleting it once.",
+        etymology: "From Latin idem (same) + potent (powerful).",
+        connector: "Think of a light switch that only turns off — pressing it again changes nothing.",
+        codeExampleLanguage: "swift",
+        codeExampleCode: "func setActive(_ active: Bool) { isActive = active }",
+        stack: "basic-web",
+        unlockLevel: 1,
+        tags: ["api", "http"]
+    )
+}
+
+#Preview("Feynman Card — Light") {
+    let word = previewWord()
+    FeynmanCardView(
+        word: word,
+        userProgress: UserProgress(),
+        isCompleted: false,
+        latestExplanation: nil,
+        onSubmit: { _, _, _ in }
+    )
+    .padding()
+    .withTheme(ThemeManager())
+}
+
+#Preview("Feynman Card — Dark") {
+    let word = previewWord()
+    FeynmanCardView(
+        word: word,
+        userProgress: UserProgress(),
+        isCompleted: false,
+        latestExplanation: nil,
+        onSubmit: { _, _, _ in }
+    )
+    .padding()
+    .withTheme(ThemeManager())
+    .preferredColorScheme(.dark)
 }

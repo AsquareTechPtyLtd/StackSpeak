@@ -1,6 +1,23 @@
 import SwiftUI
 import SwiftData
 
+private let previewBookSummary = BookSummary(
+    id: "preview-book",
+    title: "Swift Concurrency",
+    author: "Robin Swift",
+    summary: "Actors, async/await, and structured concurrency for iOS developers.",
+    coverIcon: "gearshape.2.fill",
+    accentHex: "#0A84FF",
+    tags: ["swift", "concurrency"],
+    categories: [.mobileDev],
+    chapterCount: 5,
+    cardCount: 38,
+    manifestVersion: 1,
+    manifestPath: "books/preview-book/manifest.json",
+    freeForAll: false,
+    sizeBytes: 204_800
+)
+
 /// Book Detail screen — pushed from the Books tab. Header (title/author/summary)
 /// + ordered chapter list with `X / N` completion indicators.
 struct BookDetailView: View {
@@ -103,7 +120,7 @@ struct BookDetailView: View {
                 .foregroundColor(theme.colors.accent)
                 .frame(width: 24)
                 .accessibilityHidden(true)
-            VStack(alignment: .leading, spacing: 2) {
+            VStack(alignment: .leading, spacing: theme.spacing.xxs) {
                 Text(chapter.title)
                     .font(TypographyTokens.headline)
                     .foregroundColor(theme.colors.ink)
@@ -140,4 +157,25 @@ struct BookDetailView: View {
             }
         }
     }
+}
+
+#Preview("Book Detail — Light") {
+    NavigationStack {
+        BookDetailView(book: previewBookSummary)
+    }
+    .withTheme(ThemeManager())
+    .environment(\.userProgress, UserProgress())
+    .modelContainer(for: [BookProgress.self, BookmarkedCard.self, UserProgress.self],
+                    inMemory: true)
+}
+
+#Preview("Book Detail — Dark") {
+    NavigationStack {
+        BookDetailView(book: previewBookSummary)
+    }
+    .withTheme(ThemeManager())
+    .environment(\.userProgress, UserProgress())
+    .modelContainer(for: [BookProgress.self, BookmarkedCard.self, UserProgress.self],
+                    inMemory: true)
+    .preferredColorScheme(.dark)
 }

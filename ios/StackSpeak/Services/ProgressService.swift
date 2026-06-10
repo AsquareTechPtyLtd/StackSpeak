@@ -65,15 +65,18 @@ final class ProgressService: ProgressRepository {
         userProgress: UserProgress
     ) throws -> Bool {
         applyWordPracticed(wordId: wordId, sentence: sentence, inputMethod: inputMethod, markAsMastered: markAsMastered, userProgress: userProgress)
-        dailySet.markWordCompleted(wordId)
 
-        let dayComplete = dailySet.isComplete
-        if dayComplete {
+        // Streak credit fires only on the transition to complete — a Pro batch
+        // word completed after the base 5 are done must not re-run completion.
+        let wasComplete = dailySet.isComplete
+        dailySet.markWordCompleted(wordId)
+        let justCompleted = dailySet.isComplete && !wasComplete
+        if justCompleted {
             applyDailySetCompletion(dailySet, userProgress: userProgress)
         }
 
         try modelContext.save()
-        return dayComplete
+        return justCompleted
     }
 
     func markWordMastered(_ wordId: UUID, userProgress: UserProgress) throws {
@@ -165,18 +168,18 @@ final class ProgressService: ProgressRepository {
         )
         userProgress.assessmentResults.append(result)
 
-        // Incrementally update the caches instead of rescanning all results.
+        // Incrementally update the caches instead of rescanning all results —
+        // assessmentResults grows unboundedly and this runs on the main actor.
         //   1st correct → credited toward level (the progression currency)
         //   2nd correct → retention stat (no longer gates levels)
+        // The cached sets already encode the correct count: not yet credited
+        // means this is the first correct; already credited means it's at
+        // least the second.
         if isCorrect {
-            let correctCount = userProgress.assessmentResults
-                .filter { $0.wordId == wordId && $0.isCorrect }.count
-            if correctCount >= 1 {
-                var credited = userProgress.wordsCreditedForLevelIds
-                credited.insert(wordId)
+            var credited = userProgress.wordsCreditedForLevelIds
+            if credited.insert(wordId).inserted {
                 userProgress.wordsCreditedForLevelIds = credited
-            }
-            if correctCount >= 2 {
+            } else {
                 var twoCorrect = userProgress.wordsWithTwoCorrectIds
                 twoCorrect.insert(wordId)
                 userProgress.wordsWithTwoCorrectIds = twoCorrect

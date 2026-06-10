@@ -98,7 +98,6 @@ Apple frameworks only. **No Swift Package Manager dependencies.**
 - Daily set completion (all 5 words practiced before marking complete)
 - Level progression (threshold met before advancing; streak break does not drop level)
 - SRS scheduling (SM-2 formulas produce expected intervals)
-- Sentence validation (whole-word match with inflection handling)
 - UserProgress persistence (survives app relaunch)
 
 ## Definition of Done

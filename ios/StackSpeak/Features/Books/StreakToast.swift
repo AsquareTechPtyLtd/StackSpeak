@@ -19,7 +19,20 @@ struct StreakToast: View {
         .padding(.vertical, theme.spacing.sm)
         .background(theme.colors.surface)
         .clipShape(.rect(cornerRadius: RadiusTokens.pill))
-        .shadow(color: .black.opacity(0.12), radius: 8, y: 2)
+        .shadow(color: theme.colors.ink.opacity(0.12), radius: 8, y: 2)
         .accessibilityLabel(String(format: String(localized: "a11y.book.streak.toast.format"), days))
     }
+}
+
+#Preview("Streak Toast — Light") {
+    StreakToast(days: 5)
+        .padding()
+        .withTheme(ThemeManager())
+}
+
+#Preview("Streak Toast — Dark") {
+    StreakToast(days: 5)
+        .padding()
+        .withTheme(ThemeManager())
+        .preferredColorScheme(.dark)
 }

@@ -1,44 +1,34 @@
 import SwiftUI
 import SwiftData
 import UserNotifications
-import OSLog
 
 /// NS1 — Form-shaped data presented as a Form. The previous nested-cards
 /// layout was hand-rolling exactly what `Form { Section { ... } }` does for
 /// free, with worse a11y and worse Dynamic Type behavior.
+/// Pure presentation — scheduling/persistence logic lives in
+/// `NotificationSettingsViewModel`.
 struct NotificationSettingsView: View {
     @Environment(\.theme) private var theme
     @Environment(\.userProgress) private var userProgress
     @Environment(\.modelContext) private var modelContext
     @Environment(\.openURL) private var openURL
 
-    private let logger = Logger(category: "Settings")
-
-    @State private var authStatus: UNAuthorizationStatus = .notDetermined
-    @State private var primaryTime: Date = Self.defaultPrimaryTime
-    @State private var secondTime: Date = Self.defaultSecondTime
-    @State private var errorMessage: String?
-
-    private static var defaultPrimaryTime: Date {
-        Calendar.current.date(bySettingHour: 9, minute: 0, second: 0, of: Date()) ?? Date()
-    }
-
-    private static var defaultSecondTime: Date {
-        Calendar.current.date(bySettingHour: 20, minute: 0, second: 0, of: Date()) ?? Date()
-    }
+    @State private var viewModel = NotificationSettingsViewModel()
 
     var body: some View {
         Form {
-            if authStatus == .denied {
+            if viewModel.authStatus == .denied {
                 Section { permissionDeniedRow }
             }
 
             Section {
                 Toggle(isOn: Binding(
                     get: { userProgress?.notificationEnabled ?? false },
-                    set: { toggleNotifications($0) }
+                    set: { enabled in
+                        Task { await viewModel.toggleNotifications(enabled, userProgress: userProgress, modelContext: modelContext) }
+                    }
                 )) {
-                    VStack(alignment: .leading, spacing: 2) {
+                    VStack(alignment: .leading, spacing: theme.spacing.xxs) {
                         Text("settings.notifications.enable")
                             .font(TypographyTokens.body)
                             .foregroundColor(theme.colors.ink)
@@ -50,23 +40,27 @@ struct NotificationSettingsView: View {
                 .tint(theme.colors.accent)
             }
 
-            if let progress = userProgress, progress.notificationEnabled, authStatus == .authorized {
+            if let progress = userProgress, progress.notificationEnabled, viewModel.authStatus == .authorized {
                 Section {
                     DatePicker(
-                        selection: $primaryTime,
+                        selection: $viewModel.primaryTime,
                         displayedComponents: .hourAndMinute
                     ) {
                         Text("settings.notifications.primaryTime")
                             .font(TypographyTokens.body)
                             .foregroundColor(theme.colors.ink)
                     }
-                    .onChange(of: primaryTime) { _, newValue in savePrimaryTime(newValue) }
+                    .onChange(of: viewModel.primaryTime) { _, newValue in
+                        Task { await viewModel.savePrimaryTime(newValue, userProgress: userProgress, modelContext: modelContext) }
+                    }
                 }
 
                 Section {
                     Toggle(isOn: Binding(
                         get: { userProgress?.secondReminderEnabled ?? false },
-                        set: { toggleSecondReminder($0) }
+                        set: { enabled in
+                            Task { await viewModel.toggleSecondReminder(enabled, userProgress: userProgress, modelContext: modelContext) }
+                        }
                     )) {
                         Text("settings.notifications.secondReminder")
                             .font(TypographyTokens.body)
@@ -76,14 +70,16 @@ struct NotificationSettingsView: View {
 
                     if progress.secondReminderEnabled {
                         DatePicker(
-                            selection: $secondTime,
+                            selection: $viewModel.secondTime,
                             displayedComponents: .hourAndMinute
                         ) {
                             Text("settings.notifications.secondTime")
                                 .font(TypographyTokens.body)
                                 .foregroundColor(theme.colors.ink)
                         }
-                        .onChange(of: secondTime) { _, newValue in saveSecondTime(newValue) }
+                        .onChange(of: viewModel.secondTime) { _, newValue in
+                            Task { await viewModel.saveSecondTime(newValue, userProgress: userProgress, modelContext: modelContext) }
+                        }
                     }
                 }
             }
@@ -92,12 +88,19 @@ struct NotificationSettingsView: View {
         .background(theme.colors.bg)
         .navigationTitle("settings.notifications.navTitle")
         .navigationBarTitleDisplayMode(.inline)
-        .alert("Error", isPresented: .constant(errorMessage != nil), presenting: errorMessage) { _ in
-            Button("OK") { errorMessage = nil }
+        .alert(
+            Text("saveError.title"),
+            isPresented: Binding(
+                get: { viewModel.errorMessage != nil },
+                set: { if !$0 { viewModel.errorMessage = nil } }
+            ),
+            presenting: viewModel.errorMessage
+        ) { _ in
+            Button("common.ok") { viewModel.errorMessage = nil }
         } message: { msg in
             Text(msg)
         }
-        .task { await loadInitialState() }
+        .task { await viewModel.loadInitialState(userProgress: userProgress) }
     }
 
     private var permissionDeniedRow: some View {
@@ -119,123 +122,7 @@ struct NotificationSettingsView: View {
         }
         .buttonStyle(.plain)
         .accessibilityLabel(String(localized: "settings.notifications.permissionDenied"))
-        .accessibilityHint("Opens iOS Settings")
-    }
-
-    // MARK: - Actions
-
-    private func loadInitialState() async {
-        authStatus = await NotificationService.shared.checkAuthorizationStatus()
-        guard let progress = userProgress else { return }
-        primaryTime = progress.notificationTime ?? Self.defaultPrimaryTime
-        secondTime  = progress.secondReminderTime ?? Self.defaultSecondTime
-    }
-
-    // The desired OS schedule derived from the (possibly just-mutated) model.
-    // `rescheduleNotifications(nil, nil)` cancels everything, which is exactly
-    // what we want when notifications are off.
-    private func desiredPrimary(_ progress: UserProgress) -> Date? {
-        progress.notificationEnabled ? (progress.notificationTime ?? primaryTime) : nil
-    }
-
-    private func desiredSecondary(_ progress: UserProgress) -> Date? {
-        (progress.notificationEnabled && progress.secondReminderEnabled)
-            ? (progress.secondReminderTime ?? secondTime)
-            : nil
-    }
-
-    /// Schedules notifications to match the already-mutated model, then persists
-    /// only if scheduling succeeded. On failure the in-memory change is reverted
-    /// and the OS is reconciled back to the last-saved settings — so the database
-    /// is never saved into a state iOS doesn't actually reflect, and we never
-    /// leave a partially-scheduled set behind.
-    private func scheduleThenSave(progress: UserProgress, revert: () -> Void) async {
-        do {
-            try await NotificationService.shared.rescheduleNotifications(
-                primary: desiredPrimary(progress),
-                secondary: desiredSecondary(progress)
-            )
-            try modelContext.save()
-        } catch {
-            logger.error("Failed to schedule/save notifications: \(error.localizedDescription, privacy: .public)")
-            revert()
-            // Best-effort reconcile to the reverted (last-saved) settings.
-            try? await NotificationService.shared.rescheduleNotifications(
-                primary: desiredPrimary(progress),
-                secondary: desiredSecondary(progress)
-            )
-            errorMessage = error.localizedDescription
-        }
-    }
-
-    private func toggleNotifications(_ enabled: Bool) {
-        guard let progress = userProgress else { return }
-
-        if enabled {
-            Task {
-                do {
-                    let granted = try await NotificationService.shared.requestAuthorization()
-                    authStatus = await NotificationService.shared.checkAuthorizationStatus()
-                    guard granted else { return }
-                } catch {
-                    authStatus = await NotificationService.shared.checkAuthorizationStatus()
-                    return
-                }
-                progress.notificationEnabled = true
-                progress.notificationTime = primaryTime
-                await scheduleThenSave(progress: progress) {
-                    progress.notificationEnabled = false
-                }
-            }
-        } else {
-            let wasSecondEnabled = progress.secondReminderEnabled
-            progress.notificationEnabled = false
-            progress.secondReminderEnabled = false
-            Task {
-                await scheduleThenSave(progress: progress) {
-                    progress.notificationEnabled = true
-                    progress.secondReminderEnabled = wasSecondEnabled
-                }
-            }
-        }
-    }
-
-    private func savePrimaryTime(_ time: Date) {
-        guard let progress = userProgress else { return }
-        let oldTime = progress.notificationTime
-        progress.notificationTime = time
-        Task {
-            await scheduleThenSave(progress: progress) {
-                progress.notificationTime = oldTime
-            }
-        }
-    }
-
-    private func toggleSecondReminder(_ enabled: Bool) {
-        guard let progress = userProgress else { return }
-        let wasEnabled = progress.secondReminderEnabled
-        let oldTime = progress.secondReminderTime
-        progress.secondReminderEnabled = enabled
-        if enabled {
-            progress.secondReminderTime = secondTime
-        }
-        Task {
-            await scheduleThenSave(progress: progress) {
-                progress.secondReminderEnabled = wasEnabled
-                progress.secondReminderTime = oldTime
-            }
-        }
-    }
-
-    private func saveSecondTime(_ time: Date) {
-        guard let progress = userProgress, progress.secondReminderEnabled else { return }
-        let oldTime = progress.secondReminderTime
-        progress.secondReminderTime = time
-        Task {
-            await scheduleThenSave(progress: progress) {
-                progress.secondReminderTime = oldTime
-            }
-        }
+        .accessibilityHint(String(localized: "a11y.opensSystemSettings"))
     }
 
     private func openAppSettings() {
@@ -243,4 +130,15 @@ struct NotificationSettingsView: View {
             openURL(url)
         }
     }
+}
+
+#Preview("Notification Settings — Light") {
+    NavigationStack { NotificationSettingsView() }
+        .withTheme(ThemeManager())
+}
+
+#Preview("Notification Settings — Dark") {
+    NavigationStack { NotificationSettingsView() }
+        .withTheme(ThemeManager())
+        .preferredColorScheme(.dark)
 }

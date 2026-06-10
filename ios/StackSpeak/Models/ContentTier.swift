@@ -3,7 +3,7 @@ import Foundation
 /// A content difficulty tier. Each tier's content unlocks at a fixed level on the
 /// 60-level ladder (see `LevelDefinition`); a word's tier is derived from its
 /// `unlockLevel`, which is set from the tier at authoring time.
-enum ContentTier: Int, CaseIterable {
+enum ContentTier: Int, CaseIterable, Codable {
     case basic = 1
     case intermediate = 6
     case advanced = 16

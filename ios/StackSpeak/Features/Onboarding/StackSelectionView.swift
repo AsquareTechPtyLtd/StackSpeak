@@ -91,7 +91,7 @@ struct StackSelectionView: View {
                         .font(TypographyTokens.caption.weight(.semibold))
                         .foregroundColor(theme.colors.accent)
                         .padding(.horizontal, theme.spacing.sm)
-                        .padding(.vertical, 4)
+                        .padding(.vertical, theme.spacing.xs)
                         .background(theme.colors.accentBg)
                         .clipShape(Capsule())
                 }
@@ -223,7 +223,7 @@ struct StackCard: View {
                 .background(iconBackground)
                 .clipShape(.rect(cornerRadius: RadiusTokens.inline))
 
-            VStack(alignment: .leading, spacing: 2) {
+            VStack(alignment: .leading, spacing: theme.spacing.xxs) {
                 Text(stack.displayName)
                     .font(TypographyTokens.headline)
                     .foregroundColor(isLocked ? theme.colors.inkMuted : theme.colors.ink)
@@ -263,4 +263,21 @@ struct StackCard: View {
     private var iconBackground: Color {
         cardState == .active ? theme.colors.accentBg : theme.colors.surfaceAlt
     }
+}
+
+// MARK: - Previews
+
+#Preview("Stack Selection — Light") {
+    StackSelectionView(showOnboarding: .constant(true))
+        .modelContainer(for: [Word.self, UserProgress.self], inMemory: true)
+        .environment(\.userProgress, UserProgress())
+        .withTheme(ThemeManager())
+}
+
+#Preview("Stack Selection — Dark") {
+    StackSelectionView(showOnboarding: .constant(true))
+        .modelContainer(for: [Word.self, UserProgress.self], inMemory: true)
+        .environment(\.userProgress, UserProgress())
+        .withTheme(ThemeManager())
+        .preferredColorScheme(.dark)
 }

@@ -8,9 +8,6 @@ final class HomeViewModel {
     var wordsById: [UUID: Word] = [:]
     var errorMessage: String?
     var currentIndex: Int = 0
-    /// Set when the user's submission of today's last card just completed the day.
-    /// The view reads this to trigger the level-up check and any end-of-day UI.
-    var justCompletedDay: Bool = false
 
     var todaysWords: [Word] {
         guard let set = dailySet else { return [] }
@@ -71,7 +68,7 @@ final class HomeViewModel {
     }
 
     /// Records a user explanation for a word, marks it complete in today's set, and
-    /// if the day is now fully complete, drives the streak/level pipeline.
+    /// if the day is now fully complete, drives the streak update.
     /// `explanation` may be empty — the coming-soon path calls this without content.
     /// `markAsMastered` when true immediately adds to masteredWordIds and wordsWithTwoCorrectIds.
     func submitExplanation(
@@ -88,7 +85,7 @@ final class HomeViewModel {
         // as one atomic save inside `recordWordCompletion`. If it throws, nothing is
         // persisted — the day cannot end up "complete" without its streak credit.
         do {
-            let dayComplete = try services.progress.recordWordCompletion(
+            try services.progress.recordWordCompletion(
                 wordId: wordId,
                 sentence: explanation,
                 inputMethod: inputMethod,
@@ -96,19 +93,8 @@ final class HomeViewModel {
                 dailySet: set,
                 userProgress: userProgress
             )
-            if dayComplete {
-                justCompletedDay = true
-            }
         } catch {
             errorMessage = error.localizedDescription
         }
-    }
-
-    /// True when the word is unbackfilled for the Feynman flow — either simpleDefinition
-    /// or connector is empty. Coming-soon cards are still completable but with a
-    /// shortened flow.
-    func isComingSoon(_ word: Word) -> Bool {
-        word.simpleDefinition.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-            || word.connector.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 }

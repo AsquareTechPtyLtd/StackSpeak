@@ -118,7 +118,7 @@ extension FeynmanCardView {
                     .frame(width: 36, height: 36)
                 Image(systemName: isRecording ? "mic.fill" : "mic")
                     .font(.system(.callout, weight: .semibold))
-                    .foregroundColor(isRecording ? .white : theme.colors.inkMuted)
+                    .foregroundColor(isRecording ? theme.colors.badInk : theme.colors.inkMuted)
                     .symbolEffect(.pulse, isActive: isRecording)
             }
         }

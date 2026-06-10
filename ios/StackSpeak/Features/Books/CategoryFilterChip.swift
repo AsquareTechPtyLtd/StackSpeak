@@ -16,8 +16,7 @@ struct CategoryFilterChip: View {
     let action: () -> Void
 
     private var accent: Color {
-        guard let category else { return theme.colors.accent }
-        return Color(hex: category.accentHex)
+        category?.accentColor ?? theme.colors.accent
     }
 
     private var bg: Color {
@@ -37,7 +36,7 @@ struct CategoryFilterChip: View {
             HStack(spacing: theme.spacing.xs) {
                 if let category {
                     Image(systemName: category.icon)
-                        .font(.system(size: 12, weight: .semibold))
+                        .scaledIcon(size: 12, weight: .semibold, relativeTo: .caption)
                         .accessibilityHidden(true)
                 }
                 Text(label)

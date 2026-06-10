@@ -25,6 +25,8 @@ struct TokenContrastTests {
     static let lightGood        = "2F6F47"
     static let lightStreak      = "E08A1E"
     static let lightStreakInk   = "15161A"
+    static let lightBad         = "C0392B"
+    static let lightBadInk      = "FFFFFF"  // .white
 
     // MARK: - Dark mode tokens
 
@@ -37,6 +39,8 @@ struct TokenContrastTests {
     static let darkAccentText  = "0B0C0E"
     static let darkStreak      = "F2A65A"
     static let darkStreakInk   = "0B0C0E"
+    static let darkBad         = "FF6B6B"
+    static let darkBadInk      = "0B0C0E"
 
     // MARK: - Light-mode body text (≥4.5:1)
 
@@ -87,6 +91,11 @@ struct TokenContrastTests {
         #expect(contrastRatio(Self.lightStreakInk, Self.lightStreak) >= 3.0)
     }
 
+    @Test("Light: badInk on bad ≥ 3:1 (recording mic icon)")
+    func lightBadInkOnBad() {
+        #expect(contrastRatio(Self.lightBadInk, Self.lightBad) >= 3.0)
+    }
+
     // MARK: - Dark-mode body text (≥4.5:1)
 
     @Test("Dark: ink vs bg ≥ 4.5:1")
@@ -124,6 +133,11 @@ struct TokenContrastTests {
     @Test("Dark: streakInk on streak ≥ 3:1")
     func darkStreakInkOnStreak() {
         #expect(contrastRatio(Self.darkStreakInk, Self.darkStreak) >= 3.0)
+    }
+
+    @Test("Dark: badInk on bad ≥ 3:1 (recording mic icon)")
+    func darkBadInkOnBad() {
+        #expect(contrastRatio(Self.darkBadInk, Self.darkBad) >= 3.0)
     }
 }
 

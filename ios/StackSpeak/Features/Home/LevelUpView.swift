@@ -220,3 +220,9 @@ struct LevelUpStackPickerSheet: View {
     LevelUpView(newLevel: 17, userProgress: UserProgress())
         .withTheme(ThemeManager())
 }
+
+#Preview("Level Up — rank only (Dark)") {
+    LevelUpView(newLevel: 17, userProgress: UserProgress())
+        .withTheme(ThemeManager())
+        .preferredColorScheme(.dark)
+}

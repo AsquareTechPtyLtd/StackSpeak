@@ -28,7 +28,11 @@ if [[ -d "$REPO_ROOT/ios" ]]; then
   rm -rf "$IOS_RESOURCES/books"
   mkdir -p "$IOS_RESOURCES/books"
   # Preserve directory structure so books/<bookId>/manifest.json + chapters/ + images/ keep their layout.
-  cp -R "$SOURCE_BOOKS_DIR"/* "$IOS_RESOURCES/books/" 2>/dev/null || true
+  # Guard on non-empty rather than `|| true` — that idiom also swallowed real
+  # copy failures (permissions, disk full) and reported a false "✓".
+  if [[ -n "$(ls -A "$SOURCE_BOOKS_DIR")" ]]; then
+    cp -R "$SOURCE_BOOKS_DIR"/* "$IOS_RESOURCES/books/"
+  fi
   book_count=$(find "$SOURCE_BOOKS_DIR" -mindepth 1 -maxdepth 1 -type d | wc -l | xargs)
   echo "  ✓ iOS: books-catalog.json + $book_count book(s)"
 else
@@ -40,7 +44,9 @@ if [[ -d "$REPO_ROOT/android" ]]; then
   cp "$SOURCE_CATALOG" "$ANDROID_ASSETS/"
   rm -rf "$ANDROID_ASSETS/books"
   mkdir -p "$ANDROID_ASSETS/books"
-  cp -R "$SOURCE_BOOKS_DIR"/* "$ANDROID_ASSETS/books/" 2>/dev/null || true
+  if [[ -n "$(ls -A "$SOURCE_BOOKS_DIR")" ]]; then
+    cp -R "$SOURCE_BOOKS_DIR"/* "$ANDROID_ASSETS/books/"
+  fi
   book_count=$(find "$SOURCE_BOOKS_DIR" -mindepth 1 -maxdepth 1 -type d | wc -l | xargs)
   echo "  ✓ Android: books-catalog.json + $book_count book(s)"
 else

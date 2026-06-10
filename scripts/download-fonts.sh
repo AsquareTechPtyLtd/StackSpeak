@@ -9,7 +9,7 @@
 
 set -euo pipefail
 
-REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 FONTS_DIR="$REPO_ROOT/ios/StackSpeak/Resources/Fonts"
 mkdir -p "$FONTS_DIR"
 
@@ -19,6 +19,9 @@ trap 'rm -rf "$TMP"' EXIT
 # ── Versions ─────────────────────────────────────────────────────────────────
 INTER_VERSION="4.0"
 JBM_VERSION="2.304"
+# Instrument Serif has no release tags — pin to a commit SHA so builds are
+# reproducible (main tip 2023-04-26).
+INSTRUMENT_COMMIT="65c0ef225f386a3c7e87570a4aa9cc0262c2fd81"
 
 echo "==> Downloading Inter $INTER_VERSION..."
 curl -fsSL \
@@ -52,9 +55,9 @@ for weight in Regular Medium SemiBold; do
   echo "    JetBrainsMono-${weight}.ttf"
 done
 
-echo "==> Downloading Instrument Serif (main branch)..."
+echo "==> Downloading Instrument Serif (pinned commit ${INSTRUMENT_COMMIT:0:7})..."
 curl -fsSL \
-  "https://github.com/Instrument/instrument-serif/archive/refs/heads/main.zip" \
+  "https://github.com/Instrument/instrument-serif/archive/${INSTRUMENT_COMMIT}.zip" \
   -o "$TMP/instrument.zip"
 unzip -q "$TMP/instrument.zip" -d "$TMP/instrument"
 

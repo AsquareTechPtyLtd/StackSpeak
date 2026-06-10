@@ -19,12 +19,17 @@ struct FlashcardView: View {
     @State private var isFlipped = false
     @State private var flipTrigger = 0
 
+    /// Deliberate fixed design height for the card surface; content is short
+    /// (term + definition + example) and a stable frame keeps the flip calm.
+    /// minHeight gives long definitions at large Dynamic Type room to grow.
+    private static let cardIdealHeight: CGFloat = 360
+
     var body: some View {
         VStack(spacing: theme.spacing.xl) {
             Spacer()
 
             cardSurface
-                .frame(height: 360)
+                .frame(minHeight: Self.cardIdealHeight)
                 .padding(.horizontal, theme.spacing.xl)
 
             if isFlipped {
@@ -53,13 +58,23 @@ struct FlashcardView: View {
         .cardChrome()
         .rotationEffect(.degrees(isFlipped ? 0 : -1))
         .animation(reduceMotion ? nil : MotionTokens.snappy, value: isFlipped)
-        .onTapGesture {
-            flipTrigger &+= 1
-            withAnimation(reduceMotion ? nil : MotionTokens.standard) {
-                isFlipped.toggle()
-            }
-            if !hasFlippedFlashcard { hasFlippedFlashcard = true }
+        .onTapGesture { flip() }
+        // Tap gestures are invisible to VoiceOver — expose the flip as a named
+        // action and describe the card's current side.
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel(isFlipped
+            ? Text(verbatim: "\(word.shortDefinition). \(word.exampleSentence)")
+            : Text(verbatim: "\(word.word). \(word.pronunciation)"))
+        .accessibilityHint(Text("a11y.flashcard.flip.hint"))
+        .accessibilityAction(named: Text("a11y.flashcard.flip")) { flip() }
+    }
+
+    private func flip() {
+        flipTrigger &+= 1
+        withAnimation(reduceMotion ? nil : MotionTokens.standard) {
+            isFlipped.toggle()
         }
+        if !hasFlippedFlashcard { hasFlippedFlashcard = true }
     }
 
     private var frontSide: some View {
@@ -81,7 +96,9 @@ struct FlashcardView: View {
                 .foregroundColor(theme.colors.ink)
                 .fixedSize(horizontal: false, vertical: true)
 
-            Divider().background(theme.colors.line)
+            // .overlay, not .background — background paints behind the
+            // divider's frame and leaves the line itself system gray.
+            Divider().overlay(theme.colors.line)
 
             Text(word.exampleSentence)
                 .font(TypographyTokens.callout)
@@ -108,6 +125,7 @@ struct FlashcardView: View {
                     .clipShape(.rect(cornerRadius: RadiusTokens.card))
             }
             .buttonStyle(.plain)
+            .accessibilityHint(Text("a11y.flashcard.again.hint"))
 
             Button {
                 onGood()
@@ -122,6 +140,7 @@ struct FlashcardView: View {
                     .clipShape(.rect(cornerRadius: RadiusTokens.card))
             }
             .buttonStyle(.plain)
+            .accessibilityHint(Text("a11y.flashcard.gotIt.hint"))
         }
         .padding(.horizontal, theme.spacing.xl)
     }
@@ -131,4 +150,46 @@ struct FlashcardView: View {
             isFlipped = false
         }
     }
+}
+
+// MARK: - Previews
+
+private func previewWord() -> Word {
+    Word(
+        id: UUID(),
+        word: "idempotent",
+        pronunciation: "/ˌaɪ.dəmˈpoʊ.tənt/",
+        partOfSpeech: "adjective",
+        shortDefinition: "Producing the same result no matter how many times it's applied.",
+        simpleDefinition: "Doing it once or a hundred times gives the same outcome.",
+        longDefinition: "An operation is idempotent if applying it multiple times has the same effect as applying it once.",
+        techContext: "REST APIs mark GET, PUT, and DELETE as idempotent; POST is generally not.",
+        exampleSentence: "A DELETE request is idempotent — deleting a resource twice is the same as deleting it once.",
+        etymology: "From Latin idem (same) + potent (powerful).",
+        connector: "Think of a light switch that only turns off — pressing it again changes nothing.",
+        codeExampleLanguage: "swift",
+        codeExampleCode: "func setActive(_ active: Bool) { isActive = active }",
+        stack: "basic-web",
+        unlockLevel: 1,
+        tags: []
+    )
+}
+
+#Preview("Flashcard — Light") {
+    FlashcardView(
+        word: previewWord(),
+        onAgain: {},
+        onGood: {}
+    )
+    .withTheme(ThemeManager())
+}
+
+#Preview("Flashcard — Dark") {
+    FlashcardView(
+        word: previewWord(),
+        onAgain: {},
+        onGood: {}
+    )
+    .withTheme(ThemeManager())
+    .preferredColorScheme(.dark)
 }

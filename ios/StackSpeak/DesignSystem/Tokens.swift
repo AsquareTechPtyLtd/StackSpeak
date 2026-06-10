@@ -33,6 +33,10 @@ struct ColorTokens {
     /// Near-black ink for icons/text drawn on top of `streak`. Fixed to a dark
     /// value in both modes because `streak` is a bright orange/amber in both.
     let streakInk: Color
+    /// Ink for icons/text drawn on top of a `bad` fill (e.g. the recording mic
+    /// button). Parallels `streakInk`/`accentText`: white on the dark light-mode
+    /// red, near-black on the lighter dark-mode red.
+    let badInk: Color
 
     static let light = ColorTokens(
         bg: Color(hex: "F6F5F2"),
@@ -57,7 +61,8 @@ struct ColorTokens {
         warn: Color(hex: "A85812"),
         bad: Color(hex: "C0392B"),
         streak: Color(hex: "E08A1E"),
-        streakInk: Color(hex: "15161A")
+        streakInk: Color(hex: "15161A"),
+        badInk: .white
     )
 
     static let dark = ColorTokens(
@@ -84,11 +89,14 @@ struct ColorTokens {
         warn: Color(hex: "E0A878"),
         bad: Color(hex: "FF6B6B"),
         streak: Color(hex: "F2A65A"),
-        streakInk: Color(hex: "0B0C0E")
+        streakInk: Color(hex: "0B0C0E"),
+        badInk: Color(hex: "0B0C0E")
     )
 }
 
 struct SpacingTokens {
+    /// Hairline gap for ultra-tight stacks (label/sublabel pairs, badge innards).
+    let xxs: CGFloat = 2
     let xs: CGFloat = 4
     let sm: CGFloat = 8
     let md: CGFloat = 12
@@ -112,6 +120,8 @@ struct SpacingTokens {
 enum IconSizeTokens {
     /// Empty-state illustrations.
     static let large: CGFloat = 56
+    /// Circular icon badge (e.g. the Pro-gate star disc).
+    static let avatar: CGFloat = 80
     /// Onboarding hero icons.
     static let xLarge: CGFloat = 72
     /// Level-up / single-celebration moments.

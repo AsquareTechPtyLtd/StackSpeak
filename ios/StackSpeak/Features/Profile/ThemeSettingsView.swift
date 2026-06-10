@@ -39,7 +39,7 @@ struct ThemeSettingsView: View {
         let isSelected = theme.preference == preference
         return Button(action: { apply(preference) }) {
             HStack(spacing: theme.spacing.md) {
-                VStack(alignment: .leading, spacing: 2) {
+                VStack(alignment: .leading, spacing: theme.spacing.xxs) {
                     Text(labelKey)
                         .font(TypographyTokens.body)
                         .foregroundColor(theme.colors.ink)
@@ -59,7 +59,9 @@ struct ThemeSettingsView: View {
         }
         .buttonStyle(.plain)
         .accessibilityLabel(labelKey)
-        .accessibilityValue(isSelected ? "selected" : "not selected")
+        .accessibilityValue(isSelected
+            ? String(localized: "a11y.option.selected")
+            : String(localized: "a11y.option.notSelected"))
     }
 
     private func apply(_ preference: ThemePreference) {

@@ -23,10 +23,6 @@ final class ThemeManager {
         case .dark:   return .dark
         }
     }
-
-    func colors(for colorScheme: ColorScheme) -> ColorTokens {
-        colorScheme == .dark ? .dark : .light
-    }
 }
 
 struct ThemeKey: EnvironmentKey {

@@ -165,3 +165,47 @@ struct WordReportSheet: View {
         }
     }
 }
+
+// MARK: - Previews
+
+private func previewWord() -> Word {
+    Word(
+        id: UUID(),
+        word: "idempotent",
+        pronunciation: "/ˌaɪ.dəmˈpoʊ.tənt/",
+        partOfSpeech: "adjective",
+        shortDefinition: "Producing the same result no matter how many times it's applied.",
+        simpleDefinition: "Doing it once or a hundred times gives the same outcome.",
+        longDefinition: "An operation is idempotent if applying it multiple times has the same effect as applying it once.",
+        techContext: "REST APIs mark GET, PUT, and DELETE as idempotent; POST is generally not.",
+        exampleSentence: "A DELETE request is idempotent — deleting a resource twice is the same as deleting it once.",
+        etymology: "From Latin idem (same) + potent (powerful).",
+        connector: "Think of a light switch that only turns off — pressing it again changes nothing.",
+        codeExampleLanguage: "swift",
+        codeExampleCode: "func setActive(_ active: Bool) { isActive = active }",
+        stack: "basic-web",
+        unlockLevel: 1,
+        tags: ["api"]
+    )
+}
+
+#Preview("Word Report Sheet — Light") {
+    WordReportSheet(
+        word: previewWord(),
+        userProgress: UserProgress(),
+        onSubmitted: {}
+    )
+    .modelContainer(for: [Word.self, UserProgress.self], inMemory: true)
+    .withTheme(ThemeManager())
+}
+
+#Preview("Word Report Sheet — Dark") {
+    WordReportSheet(
+        word: previewWord(),
+        userProgress: UserProgress(),
+        onSubmitted: {}
+    )
+    .modelContainer(for: [Word.self, UserProgress.self], inMemory: true)
+    .withTheme(ThemeManager())
+    .preferredColorScheme(.dark)
+}

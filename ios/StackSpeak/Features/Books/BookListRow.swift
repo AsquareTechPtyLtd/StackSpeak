@@ -22,7 +22,7 @@ struct BookListRow: View {
                 metaRow
             }
         }
-        .padding(.vertical, 2)
+        .padding(.vertical, theme.spacing.xxs)
         .accessibilityElement(children: .combine)
     }
 
@@ -71,7 +71,7 @@ struct BookListRow: View {
                 .foregroundColor(theme.colors.inkFaint)
             if let streak = currentStreak, streak >= 2 {
                 Spacer()
-                HStack(spacing: 2) {
+                HStack(spacing: theme.spacing.xxs) {
                     Image(systemName: "flame.fill")
                         .foregroundColor(theme.colors.streak)
                     Text(String(format: String(localized: "books.streak.day.format"), streak))
@@ -89,6 +89,79 @@ struct BookListRow: View {
     }
 }
 
+private func previewBook(
+    title: String,
+    summary: String,
+    freeForAll: Bool = false,
+    accentHex: String? = nil
+) -> BookSummary {
+    BookSummary(
+        id: "preview-book",
+        title: title,
+        author: "Jane Dev",
+        summary: summary,
+        coverIcon: "books.vertical.fill",
+        accentHex: accentHex,
+        tags: ["swift", "ios"],
+        categories: [.mobileDev],
+        chapterCount: 6,
+        cardCount: 42,
+        manifestVersion: 1,
+        manifestPath: "books/preview-book/manifest.json",
+        freeForAll: freeForAll,
+        sizeBytes: 204_800
+    )
+}
+
+#Preview("Book List Row — Light") {
+    List {
+        BookListRow(book: previewBook(title: "Swift Concurrency",
+                                     summary: "Actors, tasks and structured concurrency explained."),
+                    lockState: .unlocked,
+                    currentStreak: 4,
+                    completionRatio: 0.6)
+        BookListRow(book: previewBook(title: "Free Intro to SwiftUI",
+                                     summary: "First-class declarative UI for Apple platforms.",
+                                     freeForAll: true),
+                    lockState: .free,
+                    currentStreak: nil,
+                    completionRatio: nil)
+        BookListRow(book: previewBook(title: "Advanced Architecture",
+                                     summary: "TCA, MVVM, and clean-layer boundaries.",
+                                     accentHex: "#7C3AED"),
+                    lockState: .locked,
+                    currentStreak: nil,
+                    completionRatio: nil)
+    }
+    .listStyle(.insetGrouped)
+    .withTheme(ThemeManager())
+}
+
+#Preview("Book List Row — Dark") {
+    List {
+        BookListRow(book: previewBook(title: "Swift Concurrency",
+                                     summary: "Actors, tasks and structured concurrency explained."),
+                    lockState: .unlocked,
+                    currentStreak: 4,
+                    completionRatio: 0.6)
+        BookListRow(book: previewBook(title: "Free Intro to SwiftUI",
+                                     summary: "First-class declarative UI for Apple platforms.",
+                                     freeForAll: true),
+                    lockState: .free,
+                    currentStreak: nil,
+                    completionRatio: nil)
+        BookListRow(book: previewBook(title: "Advanced Architecture",
+                                     summary: "TCA, MVVM, and clean-layer boundaries.",
+                                     accentHex: "#7C3AED"),
+                    lockState: .locked,
+                    currentStreak: nil,
+                    completionRatio: nil)
+    }
+    .listStyle(.insetGrouped)
+    .withTheme(ThemeManager())
+    .preferredColorScheme(.dark)
+}
+
 private struct BookBadge: View {
     @Environment(\.theme) private var theme
     let text: LocalizedStringKey
@@ -96,7 +169,7 @@ private struct BookBadge: View {
     var leadingIcon: String? = nil
 
     var body: some View {
-        HStack(spacing: 4) {
+        HStack(spacing: theme.spacing.xs) {
             if let icon = leadingIcon {
                 Image(systemName: icon).font(.system(.caption2, weight: .semibold))
             }
@@ -104,8 +177,8 @@ private struct BookBadge: View {
                 .font(TypographyTokens.caption.weight(.semibold))
         }
         .foregroundColor(tint)
-        .padding(.horizontal, 8)
-        .padding(.vertical, 3)
+        .padding(.horizontal, theme.spacing.sm)
+        .padding(.vertical, theme.spacing.xxs)
         .background(tint.opacity(0.12))
         .clipShape(.rect(cornerRadius: RadiusTokens.pill))
     }

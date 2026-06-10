@@ -125,8 +125,25 @@ final class Word {
     }
 }
 
+extension Word {
+    /// True when the word is unbackfilled for the Feynman flow — either
+    /// simpleDefinition or connector is empty. Coming-soon cards are still
+    /// completable but with a shortened flow.
+    var isComingSoon: Bool {
+        simpleDefinition.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            || connector.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+}
+
 /// Converts an arbitrary string to a deterministic UUID via FNV-1a so that
 /// mnemonic IDs like "bw001000-…" always produce the same UUID across installs.
+///
+/// Stability contract: a word's mnemonic ID must NEVER be reformatted or
+/// normalized once shipped — the derived UUID would silently change and orphan
+/// every progress row pointing at the old one. Note the output does not set
+/// RFC 4122 version/variant bits; it is valid for Swift/SwiftData (all 128
+/// bits compared) but external tooling that enforces RFC 4122 may reject it.
+/// Prefer authoring real UUID strings for new words.
 func deterministicUUID(from string: String) -> UUID {
     var h1: UInt64 = 14695981039346656037
     var h2: UInt64 = 14695981039346656037 &+ 1
@@ -144,78 +161,4 @@ func deterministicUUID(from string: String) -> UUID {
         byte(h2, 32), byte(h2, 40), byte(h2, 48), byte(h2, 56)
     )
     return UUID(uuid: uuid)
-}
-
-// MARK: - DTO (matches words.json wire format)
-
-struct WordDTO: Codable {
-    let id: String  // may be a valid UUID string or a mnemonic like "bw001000-…"
-    let word: String
-    let pronunciation: String
-    let partOfSpeech: String
-    let shortDefinition: String
-    let simpleDefinition: String
-    let longDefinition: String
-    let techContext: String
-    /// Used by soft-skills words instead of techContext. Empty for technical words.
-    let professionalContext: String
-    let exampleSentence: String
-    let etymology: String
-    let connector: String
-    let codeExample: CodeExampleDTO?
-    let backingCard: BackingCardRef?
-    let unlockLevel: Int
-    let tags: [String]
-    let category: String
-    // `stack` is intentionally absent — it is injected from StackFileDTO.stack by the loader.
-
-    init(from decoder: Decoder) throws {
-        let c = try decoder.container(keyedBy: CodingKeys.self)
-        id = try c.decode(String.self, forKey: .id)
-        word = try c.decode(String.self, forKey: .word)
-        pronunciation = try c.decode(String.self, forKey: .pronunciation)
-        partOfSpeech = try c.decode(String.self, forKey: .partOfSpeech)
-        shortDefinition = try c.decode(String.self, forKey: .shortDefinition)
-        simpleDefinition = try c.decodeIfPresent(String.self, forKey: .simpleDefinition) ?? ""
-        longDefinition = try c.decode(String.self, forKey: .longDefinition)
-        // techContext / professionalContext / exampleSentence / etymology are tolerant:
-        // every UI surface already gates on `.isEmpty` before rendering them, so a word
-        // missing one of these still loads (it just doesn't render that section).
-        // Same pattern as simpleDefinition / connector.
-        techContext = try c.decodeIfPresent(String.self, forKey: .techContext) ?? ""
-        professionalContext = try c.decodeIfPresent(String.self, forKey: .professionalContext) ?? ""
-        exampleSentence = try c.decodeIfPresent(String.self, forKey: .exampleSentence) ?? ""
-        etymology = try c.decodeIfPresent(String.self, forKey: .etymology) ?? ""
-        connector = try c.decodeIfPresent(String.self, forKey: .connector) ?? ""
-        codeExample = try c.decodeIfPresent(CodeExampleDTO.self, forKey: .codeExample)
-        backingCard = try c.decodeIfPresent(BackingCardRef.self, forKey: .backingCard)
-        unlockLevel = try c.decode(Int.self, forKey: .unlockLevel)
-        tags = try c.decode([String].self, forKey: .tags)
-        // Open vocabulary — any category string is accepted (defaults to "concepts").
-        category = try c.decodeIfPresent(String.self, forKey: .category) ?? "concepts"
-    }
-}
-
-struct CodeExampleDTO: Codable {
-    let language: String?
-    let code: String?
-}
-
-/// Reference to the book card a word was authored from. `chapterId`/`cardId` are
-/// optional: ~all book-backed words resolve a chapter; an exact card is a bonus.
-struct BackingCardRef: Codable, Hashable {
-    let bookId: String
-    let chapterId: String?
-    let cardId: String?
-}
-
-struct WordsDatabaseDTO: Codable {
-    let words: [WordDTO]
-}
-
-// MARK: - Stack file DTO
-
-struct StackFileDTO: Codable {
-    let stack: String
-    let words: [WordDTO]
 }
