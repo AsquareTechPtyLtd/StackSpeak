@@ -162,7 +162,7 @@ struct HomeView: View {
             Text("·")
                 .font(TypographyTokens.subheadline)
                 .foregroundColor(theme.colors.inkFaint)
-            HStack(spacing: 4) {
+            HStack(spacing: theme.spacing.xs) {
                 Image(systemName: "flame.fill")
                     .font(.system(.caption))
                     .foregroundColor(theme.colors.streak)

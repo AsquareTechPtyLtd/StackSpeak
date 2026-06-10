@@ -19,7 +19,7 @@ struct TodayWordRow: View {
             }
             .accessibilityHidden(true)
 
-            VStack(alignment: .leading, spacing: 2) {
+            VStack(alignment: .leading, spacing: theme.spacing.xxs) {
                 Text(word.word)
                     .font(isCompleted
                           ? TypographyTokens.body.weight(.regular)

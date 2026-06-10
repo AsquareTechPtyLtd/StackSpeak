@@ -121,7 +121,7 @@ struct FeynmanCardView: View {
                     .animation(reduceMotion ? nil : MotionTokens.standard, value: stageProgress)
             }
         }
-        .frame(height: 2)
+        .frame(height: theme.spacing.xxs)
         .accessibilityLabel(String(format: String(localized: "a11y.feynman.stageProgress.format"),
                                    visibleStageIndex, visibleStageTotal))
     }
@@ -150,7 +150,7 @@ struct FeynmanCardView: View {
             if previousStage(from: stage) != nil {
                 backButton
             }
-            VStack(alignment: .leading, spacing: 2) {
+            VStack(alignment: .leading, spacing: theme.spacing.xxs) {
                 Text(word.word)
                     .font(TypographyTokens.cardTitle)
                     .foregroundColor(theme.colors.ink)

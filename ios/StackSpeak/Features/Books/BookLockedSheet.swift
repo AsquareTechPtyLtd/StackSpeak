@@ -18,7 +18,7 @@ struct BookLockedSheet: View {
 
             VStack(spacing: theme.spacing.lg) {
                 Image(systemName: "lock.fill")
-                    .font(.system(size: 48, weight: .semibold))
+                    .scaledIcon(size: IconSizeTokens.large, weight: .semibold)
                     .foregroundColor(theme.colors.accent)
 
                 VStack(spacing: theme.spacing.sm) {
@@ -46,7 +46,7 @@ struct BookLockedSheet: View {
 
     private var devProToggle: some View {
         HStack(spacing: theme.spacing.sm) {
-            VStack(alignment: .leading, spacing: 2) {
+            VStack(alignment: .leading, spacing: theme.spacing.xxs) {
                 Text("books.dev.proToggle")
                     .font(TypographyTokens.footnote.weight(.medium))
                     .foregroundColor(theme.colors.inkMuted)

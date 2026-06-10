@@ -47,7 +47,7 @@ struct WordListView: View {
     }
 
     private func wordRow(word: Word, progress: UserProgress) -> some View {
-        VStack(alignment: .leading, spacing: 2) {
+        VStack(alignment: .leading, spacing: theme.spacing.xxs) {
             HStack(spacing: theme.spacing.xs) {
                 Text(word.word)
                     .font(TypographyTokens.headline)
@@ -70,7 +70,7 @@ struct WordListView: View {
                 .foregroundColor(theme.colors.inkMuted)
                 .lineLimit(2)
         }
-        .padding(.vertical, 4)
+        .padding(.vertical, theme.spacing.xs)
     }
 
     private func load() async {

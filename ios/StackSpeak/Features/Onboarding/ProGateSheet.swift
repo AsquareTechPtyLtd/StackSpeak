@@ -16,9 +16,9 @@ struct ProGateSheet: View {
                 ZStack {
                     Circle()
                         .fill(theme.colors.accentBg)
-                        .frame(width: 80, height: 80)
+                        .frame(width: IconSizeTokens.avatar, height: IconSizeTokens.avatar)
                     Image(systemName: "star.fill")
-                        .font(.system(size: 36, weight: .semibold))
+                        .scaledIcon(size: IconSizeTokens.avatar * 0.45, weight: .semibold)
                         .foregroundColor(theme.colors.accent)
                 }
                 .accessibilityHidden(true)
@@ -51,7 +51,7 @@ struct ProGateSheet: View {
     /// because the copy applies equally to either gate.
     private var devProToggle: some View {
         HStack(spacing: theme.spacing.sm) {
-            VStack(alignment: .leading, spacing: 2) {
+            VStack(alignment: .leading, spacing: theme.spacing.xxs) {
                 Text("books.dev.proToggle")
                     .font(TypographyTokens.footnote.weight(.medium))
                     .foregroundColor(theme.colors.inkMuted)
@@ -65,6 +65,11 @@ struct ProGateSheet: View {
                 get: { userProgress?.isProActive ?? false },
                 set: { on in
                     guard let progress = userProgress else { return }
+                    // Capture pre-toggle state so a failed save restores BOTH
+                    // fields — nil-ing the expiry on revert would strand a
+                    // restored isPro=true with no expiry date.
+                    let oldIsPro = progress.isPro
+                    let oldExpiry = progress.proExpiryDate
                     progress.isPro = on
                     progress.proExpiryDate = on
                         ? Calendar.current.date(byAdding: .year, value: 1, to: Date())
@@ -73,8 +78,8 @@ struct ProGateSheet: View {
                         try modelContext.save()
                         if on { dismiss() }
                     } catch {
-                        progress.isPro = !on
-                        progress.proExpiryDate = nil
+                        progress.isPro = oldIsPro
+                        progress.proExpiryDate = oldExpiry
                     }
                 }
             ))

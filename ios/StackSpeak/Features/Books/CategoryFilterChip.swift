@@ -36,7 +36,7 @@ struct CategoryFilterChip: View {
             HStack(spacing: theme.spacing.xs) {
                 if let category {
                     Image(systemName: category.icon)
-                        .font(.system(size: 12, weight: .semibold))
+                        .scaledIcon(size: 12, weight: .semibold, relativeTo: .caption)
                         .accessibilityHidden(true)
                 }
                 Text(label)

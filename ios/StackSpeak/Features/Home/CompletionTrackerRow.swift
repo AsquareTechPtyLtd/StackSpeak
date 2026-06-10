@@ -22,7 +22,7 @@ struct CompletionTrackerRow: View {
     }
 
     private func cell(for day: CompletionDay) -> some View {
-        VStack(spacing: 4) {
+        VStack(spacing: theme.spacing.xs) {
             Text(dayLetter(for: day.date))
                 .font(TypographyTokens.mono)
                 .foregroundColor(day.isToday ? theme.colors.accent : theme.colors.inkFaint)

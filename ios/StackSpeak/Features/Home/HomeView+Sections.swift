@@ -11,7 +11,7 @@ extension HomeView {
             .filter { viewModel.isWordCompleted($0) }
             .count
 
-        return HStack(spacing: 4) {
+        return HStack(spacing: theme.spacing.xs) {
             Text("\(done)")
                 .font(TypographyTokens.mono.weight(.semibold))
                 .foregroundColor(done == total && total > 0 ? theme.colors.good : theme.colors.ink)

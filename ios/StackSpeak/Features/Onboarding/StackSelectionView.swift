@@ -91,7 +91,7 @@ struct StackSelectionView: View {
                         .font(TypographyTokens.caption.weight(.semibold))
                         .foregroundColor(theme.colors.accent)
                         .padding(.horizontal, theme.spacing.sm)
-                        .padding(.vertical, 4)
+                        .padding(.vertical, theme.spacing.xs)
                         .background(theme.colors.accentBg)
                         .clipShape(Capsule())
                 }
@@ -223,7 +223,7 @@ struct StackCard: View {
                 .background(iconBackground)
                 .clipShape(.rect(cornerRadius: RadiusTokens.inline))
 
-            VStack(alignment: .leading, spacing: 2) {
+            VStack(alignment: .leading, spacing: theme.spacing.xxs) {
                 Text(stack.displayName)
                     .font(TypographyTokens.headline)
                     .foregroundColor(isLocked ? theme.colors.inkMuted : theme.colors.ink)

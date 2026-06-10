@@ -28,7 +28,7 @@ struct NotificationSettingsView: View {
                         Task { await viewModel.toggleNotifications(enabled, userProgress: userProgress, modelContext: modelContext) }
                     }
                 )) {
-                    VStack(alignment: .leading, spacing: 2) {
+                    VStack(alignment: .leading, spacing: theme.spacing.xxs) {
                         Text("settings.notifications.enable")
                             .font(TypographyTokens.body)
                             .foregroundColor(theme.colors.ink)

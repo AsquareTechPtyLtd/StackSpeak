@@ -76,7 +76,7 @@ struct BookmarksView: View {
                 .foregroundColor(theme.colors.accent)
                 .frame(width: 24)
                 .accessibilityHidden(true)
-            VStack(alignment: .leading, spacing: 2) {
+            VStack(alignment: .leading, spacing: theme.spacing.xxs) {
                 Text(row.cardTitle)
                     .font(TypographyTokens.headline)
                     .foregroundColor(theme.colors.ink)
@@ -90,7 +90,7 @@ struct BookmarksView: View {
     }
 
     private func wordRow(word: Word, progress: UserProgress) -> some View {
-        VStack(alignment: .leading, spacing: 2) {
+        VStack(alignment: .leading, spacing: theme.spacing.xxs) {
             HStack(spacing: theme.spacing.xs) {
                 Text(word.word)
                     .font(TypographyTokens.headline)

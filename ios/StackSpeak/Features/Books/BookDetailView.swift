@@ -103,7 +103,7 @@ struct BookDetailView: View {
                 .foregroundColor(theme.colors.accent)
                 .frame(width: 24)
                 .accessibilityHidden(true)
-            VStack(alignment: .leading, spacing: 2) {
+            VStack(alignment: .leading, spacing: theme.spacing.xxs) {
                 Text(chapter.title)
                     .font(TypographyTokens.headline)
                     .foregroundColor(theme.colors.ink)

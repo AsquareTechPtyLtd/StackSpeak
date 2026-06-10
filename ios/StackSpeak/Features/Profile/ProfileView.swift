@@ -41,7 +41,7 @@ struct ProfileView: View {
                                 .font(TypographyTokens.caption.weight(.semibold))
                                 .foregroundColor(theme.colors.accent)
                                 .padding(.horizontal, theme.spacing.sm)
-                                .padding(.vertical, 4)
+                                .padding(.vertical, theme.spacing.xs)
                                 .background(theme.colors.accentBg)
                                 .clipShape(Capsule())
                         }
@@ -113,8 +113,8 @@ struct ProfileView: View {
     }
 
     private func streakCell(value: Int, label: LocalizedStringKey, showFlame: Bool) -> some View {
-        VStack(spacing: 4) {
-            HStack(spacing: 4) {
+        VStack(spacing: theme.spacing.xs) {
+            HStack(spacing: theme.spacing.xs) {
                 if showFlame {
                     Image(systemName: "flame.fill")
                         .foregroundColor(theme.colors.streak)

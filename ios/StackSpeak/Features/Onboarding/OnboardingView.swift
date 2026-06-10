@@ -105,14 +105,19 @@ struct OnboardingView: View {
         }
     }
 
+    /// Deliberate one-off metrics for the onboarding progress segments —
+    /// between the token steps, tuned to read as a hairline indicator.
+    private static let progressSegmentGap: CGFloat = 6
+    private static let progressSegmentHeight: CGFloat = 3
+
     /// O1 — three thin segments. Filled segments = pages already seen +
     /// the current one.
     private var progressBar: some View {
-        HStack(spacing: 6) {
+        HStack(spacing: Self.progressSegmentGap) {
             ForEach(pages.indices, id: \.self) { index in
                 Capsule()
                     .fill(index <= currentPage ? theme.colors.accentDecoration : theme.colors.line)
-                    .frame(height: 3)
+                    .frame(height: Self.progressSegmentHeight)
                     .animation(MotionTokens.standard, value: currentPage)
             }
         }

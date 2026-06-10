@@ -22,7 +22,7 @@ struct BookListRow: View {
                 metaRow
             }
         }
-        .padding(.vertical, 2)
+        .padding(.vertical, theme.spacing.xxs)
         .accessibilityElement(children: .combine)
     }
 
@@ -71,7 +71,7 @@ struct BookListRow: View {
                 .foregroundColor(theme.colors.inkFaint)
             if let streak = currentStreak, streak >= 2 {
                 Spacer()
-                HStack(spacing: 2) {
+                HStack(spacing: theme.spacing.xxs) {
                     Image(systemName: "flame.fill")
                         .foregroundColor(theme.colors.streak)
                     Text(String(format: String(localized: "books.streak.day.format"), streak))
@@ -96,7 +96,7 @@ private struct BookBadge: View {
     var leadingIcon: String? = nil
 
     var body: some View {
-        HStack(spacing: 4) {
+        HStack(spacing: theme.spacing.xs) {
             if let icon = leadingIcon {
                 Image(systemName: icon).font(.system(.caption2, weight: .semibold))
             }
@@ -104,8 +104,8 @@ private struct BookBadge: View {
                 .font(TypographyTokens.caption.weight(.semibold))
         }
         .foregroundColor(tint)
-        .padding(.horizontal, 8)
-        .padding(.vertical, 3)
+        .padding(.horizontal, theme.spacing.sm)
+        .padding(.vertical, theme.spacing.xxs)
         .background(tint.opacity(0.12))
         .clipShape(.rect(cornerRadius: RadiusTokens.pill))
     }
