@@ -89,6 +89,79 @@ struct BookListRow: View {
     }
 }
 
+private func previewBook(
+    title: String,
+    summary: String,
+    freeForAll: Bool = false,
+    accentHex: String? = nil
+) -> BookSummary {
+    BookSummary(
+        id: "preview-book",
+        title: title,
+        author: "Jane Dev",
+        summary: summary,
+        coverIcon: "books.vertical.fill",
+        accentHex: accentHex,
+        tags: ["swift", "ios"],
+        categories: [.mobileDev],
+        chapterCount: 6,
+        cardCount: 42,
+        manifestVersion: 1,
+        manifestPath: "books/preview-book/manifest.json",
+        freeForAll: freeForAll,
+        sizeBytes: 204_800
+    )
+}
+
+#Preview("Book List Row — Light") {
+    List {
+        BookListRow(book: previewBook(title: "Swift Concurrency",
+                                     summary: "Actors, tasks and structured concurrency explained."),
+                    lockState: .unlocked,
+                    currentStreak: 4,
+                    completionRatio: 0.6)
+        BookListRow(book: previewBook(title: "Free Intro to SwiftUI",
+                                     summary: "First-class declarative UI for Apple platforms.",
+                                     freeForAll: true),
+                    lockState: .free,
+                    currentStreak: nil,
+                    completionRatio: nil)
+        BookListRow(book: previewBook(title: "Advanced Architecture",
+                                     summary: "TCA, MVVM, and clean-layer boundaries.",
+                                     accentHex: "#7C3AED"),
+                    lockState: .locked,
+                    currentStreak: nil,
+                    completionRatio: nil)
+    }
+    .listStyle(.insetGrouped)
+    .withTheme(ThemeManager())
+}
+
+#Preview("Book List Row — Dark") {
+    List {
+        BookListRow(book: previewBook(title: "Swift Concurrency",
+                                     summary: "Actors, tasks and structured concurrency explained."),
+                    lockState: .unlocked,
+                    currentStreak: 4,
+                    completionRatio: 0.6)
+        BookListRow(book: previewBook(title: "Free Intro to SwiftUI",
+                                     summary: "First-class declarative UI for Apple platforms.",
+                                     freeForAll: true),
+                    lockState: .free,
+                    currentStreak: nil,
+                    completionRatio: nil)
+        BookListRow(book: previewBook(title: "Advanced Architecture",
+                                     summary: "TCA, MVVM, and clean-layer boundaries.",
+                                     accentHex: "#7C3AED"),
+                    lockState: .locked,
+                    currentStreak: nil,
+                    completionRatio: nil)
+    }
+    .listStyle(.insetGrouped)
+    .withTheme(ThemeManager())
+    .preferredColorScheme(.dark)
+}
+
 private struct BookBadge: View {
     @Environment(\.theme) private var theme
     let text: LocalizedStringKey

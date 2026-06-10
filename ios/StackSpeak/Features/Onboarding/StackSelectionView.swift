@@ -264,3 +264,20 @@ struct StackCard: View {
         cardState == .active ? theme.colors.accentBg : theme.colors.surfaceAlt
     }
 }
+
+// MARK: - Previews
+
+#Preview("Stack Selection — Light") {
+    StackSelectionView(showOnboarding: .constant(true))
+        .modelContainer(for: [Word.self, UserProgress.self], inMemory: true)
+        .environment(\.userProgress, UserProgress())
+        .withTheme(ThemeManager())
+}
+
+#Preview("Stack Selection — Dark") {
+    StackSelectionView(showOnboarding: .constant(true))
+        .modelContainer(for: [Word.self, UserProgress.self], inMemory: true)
+        .environment(\.userProgress, UserProgress())
+        .withTheme(ThemeManager())
+        .preferredColorScheme(.dark)
+}

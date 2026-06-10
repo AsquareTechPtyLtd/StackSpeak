@@ -103,3 +103,24 @@ struct BackingCardLink: View {
         }
     }
 }
+
+// MARK: - Previews
+
+#Preview("Backing Card Link — Light") {
+    BackingCardLink(
+        backingCard: BackingCardRef(bookId: "clean-code", chapterId: "ch-01", cardId: "card-001")
+    )
+    .padding()
+    .environment(\.userProgress, UserProgress())
+    .withTheme(ThemeManager())
+}
+
+#Preview("Backing Card Link — Dark") {
+    BackingCardLink(
+        backingCard: BackingCardRef(bookId: "clean-code", chapterId: "ch-01", cardId: "card-001")
+    )
+    .padding()
+    .environment(\.userProgress, UserProgress())
+    .withTheme(ThemeManager())
+    .preferredColorScheme(.dark)
+}

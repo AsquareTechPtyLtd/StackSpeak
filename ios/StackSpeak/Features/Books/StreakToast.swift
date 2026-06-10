@@ -23,3 +23,16 @@ struct StreakToast: View {
         .accessibilityLabel(String(format: String(localized: "a11y.book.streak.toast.format"), days))
     }
 }
+
+#Preview("Streak Toast — Light") {
+    StreakToast(days: 5)
+        .padding()
+        .withTheme(ThemeManager())
+}
+
+#Preview("Streak Toast — Dark") {
+    StreakToast(days: 5)
+        .padding()
+        .withTheme(ThemeManager())
+        .preferredColorScheme(.dark)
+}

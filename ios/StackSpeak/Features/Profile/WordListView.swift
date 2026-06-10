@@ -85,3 +85,30 @@ struct WordListView: View {
         words = loaded.sorted { $0.word.localizedCaseInsensitiveCompare($1.word) == .orderedAscending }
     }
 }
+
+#Preview("Word List — Light (empty)") {
+    NavigationStack {
+        WordListView(
+            title: "profile.mastered.title",
+            wordIds: [],
+            emptyTitle: "mastered.empty.title",
+            emptyMessage: "mastered.empty.message"
+        )
+    }
+    .withTheme(ThemeManager())
+    .environment(\.userProgress, UserProgress())
+}
+
+#Preview("Word List — Dark (empty)") {
+    NavigationStack {
+        WordListView(
+            title: "profile.mastered.title",
+            wordIds: [],
+            emptyTitle: "mastered.empty.title",
+            emptyMessage: "mastered.empty.message"
+        )
+    }
+    .withTheme(ThemeManager())
+    .environment(\.userProgress, UserProgress())
+    .preferredColorScheme(.dark)
+}

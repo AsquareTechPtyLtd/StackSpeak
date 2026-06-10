@@ -2,6 +2,17 @@ import SwiftUI
 import SwiftData
 import OSLog
 
+private let previewChapter = ChapterSummary(
+    id: "ch-1",
+    order: 1,
+    title: "Actors & Data Races",
+    summary: "Eliminate data races at compile time using Swift actors.",
+    icon: "cpu",
+    cardCount: 8,
+    cardIds: ["card-1", "card-2", "card-3"],
+    shards: ["chapters/ch-1.json"]
+)
+
 private let logger = Logger(category: "CardFlowView")
 
 /// The reading surface for one chapter — title, teaser, explanation, feynman.
@@ -296,4 +307,29 @@ private struct CapReachedSheet: View {
         .frame(maxWidth: .infinity)
         .background(theme.colors.bg)
     }
+}
+
+#Preview("Card Flow — Light") {
+    NavigationStack {
+        CardFlowView(bookId: "preview-book",
+                     bookTitle: "Swift Concurrency",
+                     chapter: previewChapter)
+    }
+    .withTheme(ThemeManager())
+    .environment(\.userProgress, UserProgress())
+    .modelContainer(for: [BookProgress.self, BookmarkedCard.self, UserProgress.self],
+                    inMemory: true)
+}
+
+#Preview("Card Flow — Dark") {
+    NavigationStack {
+        CardFlowView(bookId: "preview-book",
+                     bookTitle: "Swift Concurrency",
+                     chapter: previewChapter)
+    }
+    .withTheme(ThemeManager())
+    .environment(\.userProgress, UserProgress())
+    .modelContainer(for: [BookProgress.self, BookmarkedCard.self, UserProgress.self],
+                    inMemory: true)
+    .preferredColorScheme(.dark)
 }

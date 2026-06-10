@@ -127,3 +127,20 @@ struct BookmarksView: View {
         resolvedWords = loaded.sorted { $0.word.localizedCaseInsensitiveCompare($1.word) == .orderedAscending }
     }
 }
+
+#Preview("Bookmarks — Light") {
+    NavigationStack {
+        BookmarksView()
+    }
+    .withTheme(ThemeManager())
+    .environment(\.userProgress, UserProgress())
+}
+
+#Preview("Bookmarks — Dark") {
+    NavigationStack {
+        BookmarksView()
+    }
+    .withTheme(ThemeManager())
+    .environment(\.userProgress, UserProgress())
+    .preferredColorScheme(.dark)
+}
