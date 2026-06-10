@@ -56,8 +56,3 @@ struct StackDefinition: Codable, Identifiable {
         try c.encode(category, forKey: .category)
     }
 }
-
-struct StacksIndex: Codable {
-    let version: String
-    let stacks: [StackDefinition]
-}
