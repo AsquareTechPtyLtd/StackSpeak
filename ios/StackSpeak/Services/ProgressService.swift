@@ -65,15 +65,18 @@ final class ProgressService: ProgressRepository {
         userProgress: UserProgress
     ) throws -> Bool {
         applyWordPracticed(wordId: wordId, sentence: sentence, inputMethod: inputMethod, markAsMastered: markAsMastered, userProgress: userProgress)
-        dailySet.markWordCompleted(wordId)
 
-        let dayComplete = dailySet.isComplete
-        if dayComplete {
+        // Streak credit fires only on the transition to complete — a Pro batch
+        // word completed after the base 5 are done must not re-run completion.
+        let wasComplete = dailySet.isComplete
+        dailySet.markWordCompleted(wordId)
+        let justCompleted = dailySet.isComplete && !wasComplete
+        if justCompleted {
             applyDailySetCompletion(dailySet, userProgress: userProgress)
         }
 
         try modelContext.save()
-        return dayComplete
+        return justCompleted
     }
 
     func markWordMastered(_ wordId: UUID, userProgress: UserProgress) throws {
