@@ -131,11 +131,15 @@ struct StreakDisplayTests {
         #expect(progress.displayedCurrentStreak == 3)
     }
 
+    // Calendar arithmetic, not raw TimeInterval offsets: "-24h" is not always
+    // "yesterday" (DST transitions; running exactly at midnight), and "-48h"
+    // can resolve to 1 calendar day across a fall-back night. The production
+    // code compares startOfDay values, so the fixtures must too.
     @Test("Completed yesterday — shows current streak (still valid)")
     func completedYesterdayShowsStreak() {
         let progress = UserProgress()
         progress.currentStreak = 4
-        progress.lastCompletedDate = Date().addingTimeInterval(-24 * 3600)
+        progress.lastCompletedDate = Calendar.current.date(byAdding: .day, value: -1, to: Date())
         #expect(progress.displayedCurrentStreak == 4)
     }
 
@@ -143,8 +147,25 @@ struct StreakDisplayTests {
     func completedTwoDaysAgoShowsZero() {
         let progress = UserProgress()
         progress.currentStreak = 7
-        progress.lastCompletedDate = Date().addingTimeInterval(-48 * 3600)
+        progress.lastCompletedDate = Calendar.current.date(byAdding: .day, value: -2, to: Date())
         #expect(progress.displayedCurrentStreak == 0)
+    }
+
+    @Test("Midnight edge: exactly yesterday vs exactly 2 days ago via injected clock")
+    func midnightEdgeWithInjectedClock() {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(identifier: "UTC")!
+        // Fixed "now" one second after midnight — the worst case for raw-offset math.
+        let now = Date(timeIntervalSince1970: 1_750_000_000 - (1_750_000_000 % 86_400) + 1)
+
+        let progress = UserProgress()
+        progress.currentStreak = 5
+
+        progress.lastCompletedDate = calendar.date(byAdding: .day, value: -1, to: now)
+        #expect(progress.displayedCurrentStreak(now: now, calendar: calendar) == 5)
+
+        progress.lastCompletedDate = calendar.date(byAdding: .day, value: -2, to: now)
+        #expect(progress.displayedCurrentStreak(now: now, calendar: calendar) == 0)
     }
 }
 
