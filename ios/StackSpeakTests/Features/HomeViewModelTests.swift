@@ -52,38 +52,34 @@ struct HomeViewModelTests {
 
     @Test("isComingSoon is true when simpleDefinition is empty")
     func testComingSoonMissingSimple() async throws {
-        let viewModel = HomeViewModel()
         let word = createMockWord(id: UUID(), word: "webhook",
                                   simpleDefinition: "",
                                   connector: "Think of it like a doorbell")
-        #expect(viewModel.isComingSoon(word) == true)
+        #expect(word.isComingSoon == true)
     }
 
     @Test("isComingSoon is true when connector is empty")
     func testComingSoonMissingConnector() async throws {
-        let viewModel = HomeViewModel()
         let word = createMockWord(id: UUID(), word: "webhook",
                                   simpleDefinition: "A way to get pushed updates.",
                                   connector: "")
-        #expect(viewModel.isComingSoon(word) == true)
+        #expect(word.isComingSoon == true)
     }
 
     @Test("isComingSoon is false when both fields populated")
     func testComingSoonFullyBackfilled() async throws {
-        let viewModel = HomeViewModel()
         let word = createMockWord(id: UUID(), word: "webhook",
                                   simpleDefinition: "A way to get pushed updates.",
                                   connector: "Think of it like a doorbell")
-        #expect(viewModel.isComingSoon(word) == false)
+        #expect(word.isComingSoon == false)
     }
 
     @Test("isComingSoon treats whitespace-only as empty")
     func testComingSoonWhitespace() async throws {
-        let viewModel = HomeViewModel()
         let word = createMockWord(id: UUID(), word: "webhook",
                                   simpleDefinition: "   ",
                                   connector: "Think of it like a doorbell")
-        #expect(viewModel.isComingSoon(word) == true)
+        #expect(word.isComingSoon == true)
     }
 
     @Test("latestExplanation returns most recent PracticedSentence for the word")

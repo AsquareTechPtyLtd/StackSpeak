@@ -194,4 +194,61 @@ struct ProgressServiceTests {
         // Longest should update to current if current is higher
         #expect(userProgress.longestStreak == 11)
     }
+
+    @Test("recordWordCompletion finishes the day only on the final base word")
+    func testRecordWordCompletionGate() async throws {
+        let container = try makeContainer()
+        let context = container.mainContext
+        let service = ProgressService(modelContext: context)
+
+        let userProgress = UserProgress()
+        context.insert(userProgress)
+
+        let wordIds = (0..<5).map { _ in UUID() }
+        let dailySet = DailySet(dayString: DailySet.todayString(), wordIds: wordIds)
+        context.insert(dailySet)
+
+        // Words 1-4: day must not complete, no streak credit.
+        for id in wordIds.prefix(4) {
+            let dayComplete = try service.recordWordCompletion(
+                wordId: id, sentence: "explanation", inputMethod: .typed,
+                markAsMastered: false, dailySet: dailySet, userProgress: userProgress)
+            #expect(dayComplete == false)
+        }
+        #expect(userProgress.currentStreak == 0)
+        #expect(userProgress.lastCompletedDate == nil)
+
+        // 5th word: day completes, streak credited.
+        let dayComplete = try service.recordWordCompletion(
+            wordId: wordIds[4], sentence: "explanation", inputMethod: .typed,
+            markAsMastered: false, dailySet: dailySet, userProgress: userProgress)
+        #expect(dayComplete == true)
+        #expect(userProgress.currentStreak == 1)
+        #expect(userProgress.lastCompletedDate != nil)
+    }
+
+    @Test("Streak break does not drop level")
+    func testStreakBreakKeepsLevel() async throws {
+        let container = try makeContainer()
+        let context = container.mainContext
+        let service = ProgressService(modelContext: context)
+
+        let userProgress = UserProgress()
+        context.insert(userProgress)
+
+        userProgress.level = 7
+        userProgress.currentStreak = 12
+        // Simulate a 4-day gap — a broken streak.
+        userProgress.lastCompletedDate = Calendar.current.date(byAdding: .day, value: -4, to: Date())
+
+        let wordId = UUID()
+        let dailySet = DailySet(dayString: DailySet.todayString(), wordIds: [wordId])
+        dailySet.markWordCompleted(wordId)
+        context.insert(dailySet)
+
+        try service.completeDailySet(dailySet, userProgress: userProgress)
+
+        #expect(userProgress.currentStreak == 1)  // streak reset by the gap
+        #expect(userProgress.level == 7)          // level must never drop
+    }
 }

@@ -57,19 +57,24 @@ final class DailySet {
         return s
     }
 
+    /// Completion is anchored to the base daily-5 cards by membership, not count —
+    /// `completedWordIds` also accumulates Pro additional-batch completions, so a
+    /// count comparison would both fire early (4 base + 1 batch) and wedge false
+    /// forever once a 6th completion lands.
     var isComplete: Bool {
-        completedWordIds.count == wordIds.count && !wordIds.isEmpty
+        !wordIds.isEmpty && wordIds.allSatisfy { completedWordIds.contains($0) }
     }
 
     /// Streak completion is anchored to the first 5 cards regardless of tier.
     /// Pro's additional batches do not delay or accelerate streak completion.
-    var isStreakComplete: Bool {
-        !wordIds.isEmpty && wordIds.allSatisfy { completedWordIds.contains($0) }
-    }
+    var isStreakComplete: Bool { isComplete }
 
     var progress: Double {
         guard !wordIds.isEmpty else { return 0 }
-        return Double(completedWordIds.count) / Double(wordIds.count)
+        // Count only base-card completions so batch completions can't push past 1.0.
+        let completed = completedWordIds
+        let baseCompleted = wordIds.filter { completed.contains($0) }.count
+        return Double(baseCompleted) / Double(wordIds.count)
     }
 
     init(dayString: String, wordIds: [UUID]) {

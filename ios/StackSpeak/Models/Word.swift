@@ -125,6 +125,16 @@ final class Word {
     }
 }
 
+extension Word {
+    /// True when the word is unbackfilled for the Feynman flow — either
+    /// simpleDefinition or connector is empty. Coming-soon cards are still
+    /// completable but with a shortened flow.
+    var isComingSoon: Bool {
+        simpleDefinition.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            || connector.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+}
+
 /// Converts an arbitrary string to a deterministic UUID via FNV-1a so that
 /// mnemonic IDs like "bw001000-…" always produce the same UUID across installs.
 func deterministicUUID(from string: String) -> UUID {

@@ -65,10 +65,7 @@ struct FeynmanCardView: View {
         _stage = State(initialValue: isCompleted ? .done : .simple)
     }
 
-    var isComingSoon: Bool {
-        word.simpleDefinition.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-            || word.connector.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-    }
+    var isComingSoon: Bool { word.isComingSoon }
 
     var speechService: (any SpeechRepository)? { services?.speech }
 

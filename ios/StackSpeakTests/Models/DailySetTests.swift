@@ -72,3 +72,76 @@ struct DailySetAdditionalBatchesTests {
         #expect(set.isStreakComplete == true)
     }
 }
+
+@Suite("DailySet — completion gate")
+struct DailySetCompletionTests {
+
+    @Test("isComplete is false with no completions and for an empty set")
+    func incompleteByDefault() {
+        let primary = (0..<5).map { _ in UUID() }
+        let set = DailySet(dayString: "2026-04-27", wordIds: primary)
+        #expect(set.isComplete == false)
+
+        let empty = DailySet(dayString: "2026-04-28", wordIds: [])
+        #expect(empty.isComplete == false)
+    }
+
+    @Test("isComplete is false at 4 of 5 and flips true only on the 5th word")
+    func gateRequiresAllFive() {
+        let primary = (0..<5).map { _ in UUID() }
+        let set = DailySet(dayString: "2026-04-27", wordIds: primary)
+
+        for id in primary.prefix(4) { set.markWordCompleted(id) }
+        #expect(set.isComplete == false)
+
+        set.markWordCompleted(primary[4])
+        #expect(set.isComplete == true)
+    }
+
+    @Test("4 base + 1 batch completion does NOT count as complete")
+    func batchWordCannotSubstituteForBaseWord() {
+        let primary = (0..<5).map { _ in UUID() }
+        let extra = (0..<5).map { _ in UUID() }
+        let set = DailySet(dayString: "2026-04-27", wordIds: primary)
+        set.appendAdditionalBatch(extra)
+
+        for id in primary.prefix(4) { set.markWordCompleted(id) }
+        set.markWordCompleted(extra[0])
+
+        // 5 completions total, but only 4 of the base 5 — must not be complete.
+        #expect(set.isComplete == false)
+    }
+
+    @Test("isComplete stays true after extra batch completions push the count past 5")
+    func extraCompletionsDoNotWedgeCompletion() {
+        let primary = (0..<5).map { _ in UUID() }
+        let extra = (0..<5).map { _ in UUID() }
+        let set = DailySet(dayString: "2026-04-27", wordIds: primary)
+        set.appendAdditionalBatch(extra)
+
+        for id in primary { set.markWordCompleted(id) }
+        #expect(set.isComplete == true)
+
+        // A 6th completion (count 6 != 5) must not flip completion back off.
+        set.markWordCompleted(extra[0])
+        #expect(set.isComplete == true)
+    }
+
+    @Test("progress counts base cards only and never exceeds 1.0")
+    func progressClampedToBaseCards() {
+        let primary = (0..<5).map { _ in UUID() }
+        let extra = (0..<5).map { _ in UUID() }
+        let set = DailySet(dayString: "2026-04-27", wordIds: primary)
+        set.appendAdditionalBatch(extra)
+
+        #expect(set.progress == 0)
+
+        for id in primary.prefix(2) { set.markWordCompleted(id) }
+        set.markWordCompleted(extra[0])  // batch completion must not inflate progress
+        #expect(set.progress == 0.4)
+
+        for id in primary { set.markWordCompleted(id) }
+        for id in extra { set.markWordCompleted(id) }
+        #expect(set.progress == 1.0)
+    }
+}

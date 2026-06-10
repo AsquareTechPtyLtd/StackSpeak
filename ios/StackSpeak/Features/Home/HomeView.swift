@@ -20,8 +20,6 @@ struct HomeView: View {
     @State private var notificationAuthStatus: UNAuthorizationStatus = .notDetermined
     @State private var showNotificationBanner = false
     @State private var showNotificationPrompt = false
-    @State private var showLevelUp = false
-    @State private var levelUpTarget: Int?
     @State private var path: [UUID] = []
 
     var body: some View {
@@ -62,18 +60,10 @@ struct HomeView: View {
                     Task { await reloadIfNeeded() }
                 }
             }
-            .onChange(of: viewModel.justCompletedDay) { _, completed in
-                if completed { viewModel.justCompletedDay = false }
-            }
             .alert("notifications.prompt.title", isPresented: $showNotificationPrompt) {
                 notificationAlertButtons
             } message: {
                 Text("notifications.prompt.message")
-            }
-            .sheet(isPresented: $showLevelUp) {
-                if let level = levelUpTarget, let progress = userProgress {
-                    LevelUpView(newLevel: level, userProgress: progress)
-                }
             }
     }
 
