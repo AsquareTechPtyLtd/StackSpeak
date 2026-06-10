@@ -59,7 +59,9 @@ struct ThemeSettingsView: View {
         }
         .buttonStyle(.plain)
         .accessibilityLabel(labelKey)
-        .accessibilityValue(isSelected ? "selected" : "not selected")
+        .accessibilityValue(isSelected
+            ? String(localized: "a11y.option.selected")
+            : String(localized: "a11y.option.notSelected"))
     }
 
     private func apply(_ preference: ThemePreference) {
