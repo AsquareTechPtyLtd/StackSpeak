@@ -151,6 +151,27 @@ final class CardFlowViewModel {
         bookProgress.currentChapterId = chapterId
     }
 
+    /// Fetches (or creates) the per-book progress row, cached for the session so
+    /// every advance reuses the same instance instead of re-querying. Persistence
+    /// lives here, not in the view — same pattern as BookDetailViewModel.
+    func bookProgress(modelContext: ModelContext, bookId: String) throws -> BookProgress {
+        if let cachedBookProgress { return cachedBookProgress }
+        let descriptor = FetchDescriptor<BookProgress>(
+            predicate: #Predicate { $0.bookId == bookId }
+        )
+        let progress: BookProgress
+        if let existing = try modelContext.fetch(descriptor).first {
+            progress = existing
+        } else {
+            progress = BookProgress(bookId: bookId)
+            modelContext.insert(progress)
+        }
+        cachedBookProgress = progress
+        return progress
+    }
+
+    private var cachedBookProgress: BookProgress?
+
     static func dayString(from date: Date, calendar: Calendar) -> String {
         let c = calendar.dateComponents([.year, .month, .day], from: date)
         return String(format: "%04d-%02d-%02d", c.year ?? 0, c.month ?? 0, c.day ?? 0)

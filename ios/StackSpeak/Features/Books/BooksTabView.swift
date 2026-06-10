@@ -42,6 +42,10 @@ struct BooksTabView: View {
                 .onAppear {
                     // Hydrate the view model from persisted scene storage on first appear.
                     viewModel.selectedCategories = selectedCategoriesBinding.wrappedValue
+                    // Re-fetch per-book progress when returning from a reading
+                    // session — .task fires only once, so streak badges and
+                    // completion percentages would otherwise stay stale.
+                    viewModel.refreshProgress(modelContext: modelContext)
                 }
                 .sheet(item: $paywallBook) { book in
                     BookLockedSheet(book: book)

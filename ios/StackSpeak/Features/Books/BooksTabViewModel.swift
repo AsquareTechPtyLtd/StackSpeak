@@ -72,10 +72,12 @@ final class BooksTabViewModel {
 
     /// Returns 0...1 if the user has touched this book and its catalog entry has cards;
     /// `nil` otherwise. Empty/zero-card books also return `nil` (no rendering of "0 / 0").
+    /// Clamped: a catalog update can shrink `cardCount` below the user's
+    /// already-completed count, which would push the raw ratio past 1.0.
     func completionRatio(for book: BookSummary) -> Double? {
         guard let progress = progressByBookId[book.id] else { return nil }
         guard book.cardCount > 0 else { return nil }
-        return Double(progress.completedCardIds.count) / Double(book.cardCount)
+        return min(1.0, Double(progress.completedCardIds.count) / Double(book.cardCount))
     }
 
     /// Loads the catalog from the service and refreshes per-book progress from SwiftData.

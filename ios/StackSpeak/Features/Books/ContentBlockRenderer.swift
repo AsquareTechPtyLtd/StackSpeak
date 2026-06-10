@@ -44,7 +44,13 @@ struct ContentBlockView: View {
 
     @ViewBuilder
     private func heading(level: Int, text: String) -> some View {
-        let font: Font = level == 2 ? TypographyTokens.title2 : TypographyTokens.title3
+        // Level 1 (document title) must render larger than level 2; everything
+        // deeper than level 2 steps down to title3.
+        let font: Font = switch level {
+        case 1: TypographyTokens.title1
+        case 2: TypographyTokens.title2
+        default: TypographyTokens.title3
+        }
         Text(text)
             .font(font)
             .foregroundColor(theme.colors.ink)
@@ -228,19 +234,27 @@ private struct InlineRunsText: View {
         var result = AttributedString()
         for run in runs {
             var part = AttributedString(run.text)
-            for mark in run.marks ?? [] {
+            let marks = run.marks ?? []
+            // Accumulate font modifiers across marks instead of reassigning per
+            // mark — a [.bold, .italic] run previously kept only the last mark.
+            // A code mark sets the base typeface; bold/italic layer on top.
+            var font: Font? = marks.contains(.code) ? TypographyTokens.code : nil
+            for mark in marks {
                 switch mark {
                 case .bold:
-                    part.font = TypographyTokens.body.weight(.semibold)
+                    font = (font ?? TypographyTokens.body).weight(.semibold)
                 case .italic:
-                    part.font = TypographyTokens.body.italic()
+                    font = (font ?? TypographyTokens.body).italic()
                 case .code:
-                    part.font = TypographyTokens.code
+                    break  // handled as the base font above
                 case .link:
                     if let href = run.href, let url = URL(string: href) {
                         part.link = url
                     }
                 }
+            }
+            if let font {
+                part.font = font
             }
             result.append(part)
         }

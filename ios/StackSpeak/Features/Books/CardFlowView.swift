@@ -21,6 +21,7 @@ struct CardFlowView: View {
     @State private var viewModel = CardFlowViewModel()
     @State private var showCapReached = false
     @State private var bookmarkBump = false
+    @State private var isBookmarked = false
     @State private var saveError: Error?
 
     var body: some View {
@@ -62,12 +63,22 @@ struct CardFlowView: View {
             )
             .presentationDetents([.medium])
         }
-        .alert("Error", isPresented: .constant(saveError != nil), presenting: saveError) { _ in
-            Button("OK") { saveError = nil }
+        .alert(
+            Text("saveError.title"),
+            isPresented: Binding(
+                get: { saveError != nil },
+                set: { if !$0 { saveError = nil } }
+            ),
+            presenting: saveError
+        ) { _ in
+            Button("common.ok") { saveError = nil }
         } message: { error in
             Text(error.localizedDescription)
         }
         .task { await load() }
+        .onChange(of: viewModel.currentIndex) { _, _ in
+            refreshBookmarkState()
+        }
     }
 
     @ViewBuilder
@@ -91,7 +102,9 @@ struct CardFlowView: View {
                     .font(TypographyTokens.title3)
                     .foregroundColor(theme.colors.inkMuted)
 
-                Divider().background(theme.colors.line)
+                // .overlay, not .background — background paints behind the
+                // divider's frame and leaves the line itself system gray.
+                Divider().overlay(theme.colors.line)
 
                 ForEach(Array(card.explanation.enumerated()), id: \.offset) { _, block in
                     ContentBlockView(block: block, bookId: bookId)
@@ -128,16 +141,14 @@ struct CardFlowView: View {
 
             Button {
                 bookmarkBump.toggle()
-                guard let card = viewModel.currentCard else { return }
+                guard let card = viewModel.currentCard, let services else { return }
                 do {
-                    _ = try services?.bookmark.toggle(card: card, in: bookId, chapterId: chapter.id)
+                    isBookmarked = try services.bookmark.toggle(card: card, in: bookId, chapterId: chapter.id)
                 } catch {
                     logger.error("Failed to toggle card bookmark: \(error.localizedDescription, privacy: .public)")
+                    saveError = error
                 }
             } label: {
-                let isBookmarked = viewModel.currentCard
-                    .map { (try? services?.bookmark.isBookmarked(cardId: $0.id) ?? false) ?? false }
-                    ?? false
                 Image(systemName: isBookmarked ? "bookmark.fill" : "bookmark")
                     .symbolEffect(.bounce, value: bookmarkBump)
             }
@@ -164,7 +175,7 @@ struct CardFlowView: View {
         )
 
         // Mark this chapter as the resume point and try to land on the resume card.
-        if let progress = fetchOrCreateBookProgress() {
+        if let progress = fetchBookProgress() {
             viewModel.recordChapterEntry(bookProgress: progress, chapterId: chapter.id)
             viewModel.resumeIfPossible(at: progress.currentCardId)
             do {
@@ -174,10 +185,11 @@ struct CardFlowView: View {
                 saveError = error
             }
         }
+        refreshBookmarkState()
     }
 
     private func advance() {
-        guard let progress = userProgress, let bookProgress = fetchOrCreateBookProgress() else { return }
+        guard let progress = userProgress, let bookProgress = fetchBookProgress() else { return }
         let result = viewModel.markComplete(
             bookProgress: bookProgress,
             userProgress: progress,
@@ -188,7 +200,7 @@ struct CardFlowView: View {
 
     private func handleReadAnyway() {
         showCapReached = false
-        guard let progress = userProgress, let bookProgress = fetchOrCreateBookProgress() else { return }
+        guard let progress = userProgress, let bookProgress = fetchBookProgress() else { return }
         let result = viewModel.markComplete(
             bookProgress: bookProgress,
             userProgress: progress,
@@ -219,21 +231,30 @@ struct CardFlowView: View {
         }
     }
 
-    private func fetchOrCreateBookProgress() -> BookProgress? {
-        let descriptor = FetchDescriptor<BookProgress>(
-            predicate: #Predicate { $0.bookId == bookId }
-        )
+    /// Thin error-surfacing wrapper — fetch/create logic lives in the ViewModel.
+    private func fetchBookProgress() -> BookProgress? {
         do {
-            if let existing = try modelContext.fetch(descriptor).first {
-                return existing
-            }
-            let new = BookProgress(bookId: bookId)
-            modelContext.insert(new)
-            return new
+            return try viewModel.bookProgress(modelContext: modelContext, bookId: bookId)
         } catch {
             logger.error("Failed to fetch or create BookProgress: \(error.localizedDescription, privacy: .public)")
             saveError = error
             return nil
+        }
+    }
+
+    /// Bookmark state is tracked as @State and refreshed on load/navigation —
+    /// not polled inside the toolbar label on every render (which also
+    /// swallowed errors via try?).
+    private func refreshBookmarkState() {
+        guard let card = viewModel.currentCard, let services else {
+            isBookmarked = false
+            return
+        }
+        do {
+            isBookmarked = try services.bookmark.isBookmarked(cardId: card.id)
+        } catch {
+            logger.error("Failed to read bookmark state: \(error.localizedDescription, privacy: .public)")
+            isBookmarked = false
         }
     }
 }
