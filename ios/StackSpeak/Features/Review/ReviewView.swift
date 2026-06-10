@@ -46,8 +46,15 @@ struct ReviewView: View {
                     LevelUpView(newLevel: item.level, userProgress: progress)
                 }
             }
-            .alert("Error", isPresented: .constant(errorMessage != nil), presenting: errorMessage) { _ in
-                Button("OK") { errorMessage = nil }
+            .alert(
+                Text("saveError.title"),
+                isPresented: Binding(
+                    get: { errorMessage != nil },
+                    set: { if !$0 { errorMessage = nil } }
+                ),
+                presenting: errorMessage
+            ) { _ in
+                Button("common.ok") { errorMessage = nil }
             } message: { msg in
                 Text(msg)
             }

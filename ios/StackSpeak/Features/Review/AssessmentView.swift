@@ -24,6 +24,7 @@ struct AssessmentView: View {
     @State private var pendingLevelUp: Int?
     @State private var feedbackTrigger: FeedbackResult?
     @State private var errorMessage: String?
+    @State private var autoAdvanceTask: Task<Void, Never>?
 
     private static let distractorCount = 3
     private static let autoAdvanceDelay: Duration = .milliseconds(900)
@@ -58,10 +59,23 @@ struct AssessmentView: View {
             case nil: return nil
             }
         }
-        .alert("Error", isPresented: .constant(errorMessage != nil), presenting: errorMessage) { _ in
-            Button("OK") { errorMessage = nil }
+        .alert(
+            Text("saveError.title"),
+            isPresented: Binding(
+                get: { errorMessage != nil },
+                set: { if !$0 { errorMessage = nil } }
+            ),
+            presenting: errorMessage
+        ) { _ in
+            Button("common.ok") { errorMessage = nil }
         } message: { msg in
             Text(msg)
+        }
+        .onDisappear {
+            // The card can be torn down (parent advanced, sheet dismissed) while
+            // the auto-advance is pending — firing onComplete then would advance
+            // the assessment index a second time and silently skip a word.
+            autoAdvanceTask?.cancel()
         }
     }
 
@@ -109,7 +123,9 @@ struct AssessmentView: View {
         PrimaryCTAButton("review.assessment.submit") { submit() }
             .disabled(selectedAnswer == nil)
             .accessibilityLabel(String(localized: "a11y.submitAnswer"))
-            .accessibilityHint(selectedAnswer == nil ? "Select a definition first" : "Tap to submit your answer")
+            .accessibilityHint(selectedAnswer == nil
+                ? String(localized: "a11y.submitAnswer.selectFirst")
+                : String(localized: "a11y.submitAnswer.ready"))
     }
 
     // MARK: - State
@@ -162,10 +178,13 @@ struct AssessmentView: View {
             return
         }
 
-        // Correct answers auto-advance after a brief read-through.
+        // Correct answers auto-advance after a brief read-through. The task is
+        // stored so onDisappear can cancel it — see the modifier above.
         if correct {
-            Task {
+            autoAdvanceTask?.cancel()
+            autoAdvanceTask = Task {
                 try? await Task.sleep(for: Self.autoAdvanceDelay)
+                guard !Task.isCancelled else { return }
                 onComplete(true, nil)
             }
         }
@@ -262,9 +281,9 @@ struct OptionButton: View {
         .accessibilityLabel(text)
         .accessibilityValue({
             switch state {
-            case .correct:   return "correct"
-            case .incorrect: return "incorrect"
-            case .idle:      return isSelected ? "selected" : ""
+            case .correct:   return String(localized: "a11y.option.correct")
+            case .incorrect: return String(localized: "a11y.option.incorrect")
+            case .idle:      return isSelected ? String(localized: "a11y.option.selected") : ""
             }
         }())
     }

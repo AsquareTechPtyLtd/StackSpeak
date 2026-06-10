@@ -1,12 +1,18 @@
 import Foundation
+import Observation
 import Speech
 import AVFoundation
 
+// @Observable (not ObservableObject): views reach this through the @Observable
+// `Services` container without an @ObservedObject wrapper, so @Published
+// mutations would never invalidate view bodies — mic state and transcript
+// updates were silently dropped.
 @MainActor
-final class SpeechService: ObservableObject, SpeechRepository {
-    @Published var isRecording = false
-    @Published var transcript = ""
-    @Published var authorizationStatus: SFSpeechRecognizerAuthorizationStatus = .notDetermined
+@Observable
+final class SpeechService: SpeechRepository {
+    var isRecording = false
+    var transcript = ""
+    var authorizationStatus: SFSpeechRecognizerAuthorizationStatus = .notDetermined
 
     private var recognizer: SFSpeechRecognizer?
     private var recognitionRequest: SFSpeechAudioBufferRecognitionRequest?
