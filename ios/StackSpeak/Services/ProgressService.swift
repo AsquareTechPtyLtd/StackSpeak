@@ -170,9 +170,10 @@ final class ProgressService: ProgressRepository {
 
         // Incrementally update the caches instead of rescanning all results —
         // assessmentResults grows unboundedly and this runs on the main actor.
-        //   1st correct → in-progress tracker (wordsCreditedForLevelIds)
-        //   2nd correct → credited toward level (the progression currency).
-        //     canAttemptAssessment guarantees it lands on a later day.
+        // Each correct answer is worth one assessment point, max two per word:
+        //   1st correct → wordsCreditedForLevelIds (point 1)
+        //   2nd correct → wordsWithTwoCorrectIds (point 2; canAttemptAssessment
+        //     guarantees it lands on a later day)
         // The cached sets already encode the correct count: not yet tracked
         // means this is the first correct; already tracked means it's at
         // least the second.
@@ -202,7 +203,7 @@ final class ProgressService: ProgressRepository {
     private func checkAndAdvanceLevel(userProgress: UserProgress) {
         while LevelDefinition.canAdvance(
             currentLevel: userProgress.level,
-            wordsCredited: userProgress.wordsAssessedForLevel
+            points: userProgress.assessmentPointsForLevel
         ) {
             userProgress.level += 1
             userProgress.addMandatoryStacks(for: userProgress.level)

@@ -80,7 +80,7 @@ struct ProfileView: View {
                         .foregroundColor(theme.colors.ink)
                     if let levelProgress = LevelDefinition.progressToNextLevel(
                         currentLevel: progress.level,
-                        wordsCredited: progress.wordsAssessedForLevel
+                        points: progress.assessmentPointsForLevel
                     ) {
                         ProgressView(value: levelProgress.progress)
                             .tint(theme.colors.accent)
@@ -88,7 +88,7 @@ struct ProfileView: View {
                                                        Int(levelProgress.progress * 100)))
                         Text(String(format: String(localized: "profile.levelProgress.format"),
                                     Int(levelProgress.progress * 100),
-                                    levelProgress.wordsRemaining,
+                                    levelProgress.pointsRemaining,
                                     levelProgress.nextLevel.title))
                             .font(TypographyTokens.footnote)
                             .foregroundColor(theme.colors.inkMuted)

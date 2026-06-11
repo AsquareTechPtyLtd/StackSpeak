@@ -191,10 +191,10 @@ struct ProgressCacheTests {
         #expect(progress.wordsCreditedForLevelIds.contains(wordA))
         #expect(progress.wordsCreditedForLevelIds.contains(wordB))
 
-        // level currency: only the twice-correct word counts
+        // points: wordA contributes 2 (both sets), wordB contributes 1
         #expect(progress.wordsWithTwoCorrectIds.contains(wordA))
         #expect(!progress.wordsWithTwoCorrectIds.contains(wordB))
-        #expect(progress.wordsAssessedForLevel == 1)
+        #expect(progress.assessmentPointsForLevel == 3)
         #expect(progress.wordsAssessedCorrectlyTwice == 1)
     }
 }

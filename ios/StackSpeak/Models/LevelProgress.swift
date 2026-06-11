@@ -2,7 +2,8 @@ import Foundation
 
 struct LevelProgress: Codable {
     let progress: Double
-    let wordsRemaining: Int
+    /// Assessment points (correct answers, max two per word) still needed.
+    let pointsRemaining: Int
     let nextLevel: LevelDefinition
 
     var isReady: Bool {

@@ -20,7 +20,7 @@ struct ProgressServiceTests {
         )
     }
 
-    @Test("Multi-level advancement uses the two-correct currency")
+    @Test("Multi-level advancement uses the assessment-points currency")
     func testMultiLevelAdvancement() async throws {
         let container = try makeContainer()
         let context = container.mainContext
@@ -29,8 +29,8 @@ struct ProgressServiceTests {
         userProgress.level = 1
         context.insert(userProgress)
 
-        // Seed 34 distinct words each answered correctly twice (the level
-        // currency), plus one word with a single correct (in-progress).
+        // Seed 34 distinct words each answered correctly twice (2 points each),
+        // plus one word with a single correct (1 point) — 69 points total.
         let pendingWord = UUID()
         for _ in 0..<34 {
             let wordId = UUID()
@@ -44,23 +44,23 @@ struct ProgressServiceTests {
             wordId: pendingWord, attemptedAt: Date(), isCorrect: true,
             selectedAnswer: "c", correctAnswer: "c"))
         userProgress.rebuildProgressCaches()
-        #expect(userProgress.wordsAssessedForLevel == 34)
+        #expect(userProgress.assessmentPointsForLevel == 69)
 
-        // The pending word's second correct makes it the 35th credited word,
-        // crossing every threshold up to Engineer I (L11, requires 35).
-        // L12 requires 40, so it stops at 11.
+        // The pending word's second correct is the 70th point, crossing every
+        // threshold up to Engineer I (L11, requires 70). L12 requires 80, so
+        // it stops at 11.
         let newLevel = try service.recordAssessmentResult(
             wordId: pendingWord, isCorrect: true,
             selectedAnswer: "c", correctAnswer: "c",
             userProgress: userProgress
         )
 
-        #expect(userProgress.wordsAssessedForLevel == 35)
+        #expect(userProgress.assessmentPointsForLevel == 70)
         #expect(userProgress.level == 11)
         #expect(newLevel == 11)
     }
 
-    @Test("First correct is in-progress; the second correct credits the level")
+    @Test("Each correct earns a point; a word maxes out at two")
     func testSecondCorrectCredits() async throws {
         let container = try makeContainer()
         let context = container.mainContext
@@ -72,20 +72,21 @@ struct ProgressServiceTests {
         _ = try service.recordAssessmentResult(
             wordId: word, isCorrect: true, selectedAnswer: "c", correctAnswer: "c",
             userProgress: userProgress)
-        #expect(userProgress.wordsAssessedForLevel == 0)        // in-progress, no credit yet
+        #expect(userProgress.assessmentPointsForLevel == 1)     // first correct = point 1
         #expect(userProgress.wordsCreditedForLevelIds.contains(word))
+        #expect(userProgress.wordsAssessedCorrectlyTwice == 0)
 
         _ = try service.recordAssessmentResult(
             wordId: word, isCorrect: true, selectedAnswer: "c", correctAnswer: "c",
             userProgress: userProgress)
-        #expect(userProgress.wordsAssessedForLevel == 1)        // credited on the second correct
+        #expect(userProgress.assessmentPointsForLevel == 2)     // second correct = point 2
         #expect(userProgress.wordsAssessedCorrectlyTwice == 1)
 
-        // A third correct doesn't double-count the word.
+        // A third correct earns nothing more — the word is maxed out.
         _ = try service.recordAssessmentResult(
             wordId: word, isCorrect: true, selectedAnswer: "c", correctAnswer: "c",
             userProgress: userProgress)
-        #expect(userProgress.wordsAssessedForLevel == 1)
+        #expect(userProgress.assessmentPointsForLevel == 2)
     }
 
     @Test("Skip/report marks mastered but grants no level credit")
@@ -102,7 +103,7 @@ struct ProgressServiceTests {
             markAsMastered: true, userProgress: userProgress)
 
         #expect(userProgress.masteredWordIds.contains(word))
-        #expect(userProgress.wordsAssessedForLevel == 0)
+        #expect(userProgress.assessmentPointsForLevel == 0)
         #expect(userProgress.level == 1)
     }
 

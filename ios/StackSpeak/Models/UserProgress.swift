@@ -164,10 +164,12 @@ final class UserProgress {
         wordsPracticedIds.count
     }
 
-    /// Level-progression currency: words answered correctly twice, the second
-    /// on a later day. A single correct answer is in-progress, not credit.
-    var wordsAssessedForLevel: Int {
-        wordsWithTwoCorrectIds.count
+    /// Level-progression currency: assessment points. Every correct answer
+    /// earns one point; a word earns at most two — its first correct plus a
+    /// second correct on a later day. Derived from the two cached sets:
+    /// first-correct membership is worth 1, two-correct membership 1 more.
+    var assessmentPointsForLevel: Int {
+        wordsCreditedForLevelIds.count + wordsWithTwoCorrectIds.count
     }
 
     /// Words answered correctly twice (on different days). Same set as the

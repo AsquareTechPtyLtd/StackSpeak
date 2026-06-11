@@ -2,11 +2,11 @@ import Foundation
 
 /// One rung on the 60-level IC career ladder (12 bands × 5 sub-levels, Intern → Fellow).
 ///
-/// `wordsRequired` is the progression currency threshold: the cumulative number of
-/// words the user has **credited toward leveling** — a word is credited on its
-/// second correct assessment answer, which lands on a later day than the first
-/// (see `UserProgress.wordsAssessedForLevel` and `canAttemptAssessment`). A single
-/// correct answer is in-progress, not credit.
+/// `pointsRequired` is the progression currency threshold: cumulative **assessment
+/// points**. Every correct assessment answer earns one point, and a word can earn
+/// at most two — its first correct, and a second correct on a later day
+/// (`canAttemptAssessment` blocks same-day reattempts). See
+/// `UserProgress.assessmentPointsForLevel`.
 ///
 /// Content tiers unlock at fixed levels, baked into each word's `unlockLevel` and
 /// each stack's `minimumLevel` at authoring time: basic→1, intermediate→6,
@@ -15,70 +15,70 @@ import Foundation
 struct LevelDefinition: Codable {
     let level: Int
     let title: String
-    let wordsRequired: Int
+    let pointsRequired: Int
     let description: String
 
     static let levels: [LevelDefinition] = [
-        LevelDefinition(level: 1, title: "Intern I", wordsRequired: 0, description: "Starting your vocabulary journey"),
-        LevelDefinition(level: 2, title: "Intern II", wordsRequired: 2, description: "Starting your vocabulary journey"),
-        LevelDefinition(level: 3, title: "Intern III", wordsRequired: 4, description: "Starting your vocabulary journey"),
-        LevelDefinition(level: 4, title: "Intern IV", wordsRequired: 7, description: "Starting your vocabulary journey"),
-        LevelDefinition(level: 5, title: "Intern V", wordsRequired: 10, description: "Starting your vocabulary journey"),
-        LevelDefinition(level: 6, title: "Junior Engineer I", wordsRequired: 13, description: "Building foundational technical vocabulary"),
-        LevelDefinition(level: 7, title: "Junior Engineer II", wordsRequired: 17, description: "Building foundational technical vocabulary"),
-        LevelDefinition(level: 8, title: "Junior Engineer III", wordsRequired: 21, description: "Building foundational technical vocabulary"),
-        LevelDefinition(level: 9, title: "Junior Engineer IV", wordsRequired: 25, description: "Building foundational technical vocabulary"),
-        LevelDefinition(level: 10, title: "Junior Engineer V", wordsRequired: 30, description: "Building foundational technical vocabulary"),
-        LevelDefinition(level: 11, title: "Engineer I", wordsRequired: 35, description: "Expanding your professional communication"),
-        LevelDefinition(level: 12, title: "Engineer II", wordsRequired: 40, description: "Expanding your professional communication"),
-        LevelDefinition(level: 13, title: "Engineer III", wordsRequired: 46, description: "Expanding your professional communication"),
-        LevelDefinition(level: 14, title: "Engineer IV", wordsRequired: 52, description: "Expanding your professional communication"),
-        LevelDefinition(level: 15, title: "Engineer V", wordsRequired: 58, description: "Expanding your professional communication"),
-        LevelDefinition(level: 16, title: "Senior Engineer I", wordsRequired: 65, description: "Strengthening core technical concepts"),
-        LevelDefinition(level: 17, title: "Senior Engineer II", wordsRequired: 72, description: "Strengthening core technical concepts"),
-        LevelDefinition(level: 18, title: "Senior Engineer III", wordsRequired: 80, description: "Strengthening core technical concepts"),
-        LevelDefinition(level: 19, title: "Senior Engineer IV", wordsRequired: 88, description: "Strengthening core technical concepts"),
-        LevelDefinition(level: 20, title: "Senior Engineer V", wordsRequired: 96, description: "Strengthening core technical concepts"),
-        LevelDefinition(level: 21, title: "Lead Engineer I", wordsRequired: 105, description: "Communicating complex ideas with confidence"),
-        LevelDefinition(level: 22, title: "Lead Engineer II", wordsRequired: 114, description: "Communicating complex ideas with confidence"),
-        LevelDefinition(level: 23, title: "Lead Engineer III", wordsRequired: 123, description: "Communicating complex ideas with confidence"),
-        LevelDefinition(level: 24, title: "Lead Engineer IV", wordsRequired: 133, description: "Communicating complex ideas with confidence"),
-        LevelDefinition(level: 25, title: "Lead Engineer V", wordsRequired: 143, description: "Communicating complex ideas with confidence"),
-        LevelDefinition(level: 26, title: "Staff Engineer I", wordsRequired: 153, description: "Mastering advanced technical discourse"),
-        LevelDefinition(level: 27, title: "Staff Engineer II", wordsRequired: 164, description: "Mastering advanced technical discourse"),
-        LevelDefinition(level: 28, title: "Staff Engineer III", wordsRequired: 175, description: "Mastering advanced technical discourse"),
-        LevelDefinition(level: 29, title: "Staff Engineer IV", wordsRequired: 186, description: "Mastering advanced technical discourse"),
-        LevelDefinition(level: 30, title: "Staff Engineer V", wordsRequired: 198, description: "Mastering advanced technical discourse"),
-        LevelDefinition(level: 31, title: "Senior Staff I", wordsRequired: 210, description: "Leading technical discussions with precision"),
-        LevelDefinition(level: 32, title: "Senior Staff II", wordsRequired: 222, description: "Leading technical discussions with precision"),
-        LevelDefinition(level: 33, title: "Senior Staff III", wordsRequired: 235, description: "Leading technical discussions with precision"),
-        LevelDefinition(level: 34, title: "Senior Staff IV", wordsRequired: 248, description: "Leading technical discussions with precision"),
-        LevelDefinition(level: 35, title: "Senior Staff V", wordsRequired: 261, description: "Leading technical discussions with precision"),
-        LevelDefinition(level: 36, title: "Principal Engineer I", wordsRequired: 275, description: "Architecting solutions through clear communication"),
-        LevelDefinition(level: 37, title: "Principal Engineer II", wordsRequired: 289, description: "Architecting solutions through clear communication"),
-        LevelDefinition(level: 38, title: "Principal Engineer III", wordsRequired: 303, description: "Architecting solutions through clear communication"),
-        LevelDefinition(level: 39, title: "Principal Engineer IV", wordsRequired: 318, description: "Architecting solutions through clear communication"),
-        LevelDefinition(level: 40, title: "Principal Engineer V", wordsRequired: 333, description: "Architecting solutions through clear communication"),
-        LevelDefinition(level: 41, title: "Senior Principal I", wordsRequired: 348, description: "Influencing technical strategy through language"),
-        LevelDefinition(level: 42, title: "Senior Principal II", wordsRequired: 364, description: "Influencing technical strategy through language"),
-        LevelDefinition(level: 43, title: "Senior Principal III", wordsRequired: 380, description: "Influencing technical strategy through language"),
-        LevelDefinition(level: 44, title: "Senior Principal IV", wordsRequired: 396, description: "Influencing technical strategy through language"),
-        LevelDefinition(level: 45, title: "Senior Principal V", wordsRequired: 413, description: "Influencing technical strategy through language"),
-        LevelDefinition(level: 46, title: "Architect I", wordsRequired: 430, description: "Designing systems and the words that describe them"),
-        LevelDefinition(level: 47, title: "Architect II", wordsRequired: 448, description: "Designing systems and the words that describe them"),
-        LevelDefinition(level: 48, title: "Architect III", wordsRequired: 466, description: "Designing systems and the words that describe them"),
-        LevelDefinition(level: 49, title: "Architect IV", wordsRequired: 484, description: "Designing systems and the words that describe them"),
-        LevelDefinition(level: 50, title: "Architect V", wordsRequired: 503, description: "Designing systems and the words that describe them"),
-        LevelDefinition(level: 51, title: "Distinguished Engineer I", wordsRequired: 522, description: "Setting technical direction with clarity"),
-        LevelDefinition(level: 52, title: "Distinguished Engineer II", wordsRequired: 541, description: "Setting technical direction with clarity"),
-        LevelDefinition(level: 53, title: "Distinguished Engineer III", wordsRequired: 561, description: "Setting technical direction with clarity"),
-        LevelDefinition(level: 54, title: "Distinguished Engineer IV", wordsRequired: 581, description: "Setting technical direction with clarity"),
-        LevelDefinition(level: 55, title: "Distinguished Engineer V", wordsRequired: 601, description: "Setting technical direction with clarity"),
-        LevelDefinition(level: 56, title: "Fellow I", wordsRequired: 622, description: "Command of the full technical vocabulary"),
-        LevelDefinition(level: 57, title: "Fellow II", wordsRequired: 643, description: "Command of the full technical vocabulary"),
-        LevelDefinition(level: 58, title: "Fellow III", wordsRequired: 664, description: "Command of the full technical vocabulary"),
-        LevelDefinition(level: 59, title: "Fellow IV", wordsRequired: 686, description: "Command of the full technical vocabulary"),
-        LevelDefinition(level: 60, title: "Fellow V", wordsRequired: 708, description: "Command of the full technical vocabulary"),
+        LevelDefinition(level: 1, title: "Intern I", pointsRequired: 0, description: "Starting your vocabulary journey"),
+        LevelDefinition(level: 2, title: "Intern II", pointsRequired: 4, description: "Starting your vocabulary journey"),
+        LevelDefinition(level: 3, title: "Intern III", pointsRequired: 8, description: "Starting your vocabulary journey"),
+        LevelDefinition(level: 4, title: "Intern IV", pointsRequired: 14, description: "Starting your vocabulary journey"),
+        LevelDefinition(level: 5, title: "Intern V", pointsRequired: 20, description: "Starting your vocabulary journey"),
+        LevelDefinition(level: 6, title: "Junior Engineer I", pointsRequired: 26, description: "Building foundational technical vocabulary"),
+        LevelDefinition(level: 7, title: "Junior Engineer II", pointsRequired: 34, description: "Building foundational technical vocabulary"),
+        LevelDefinition(level: 8, title: "Junior Engineer III", pointsRequired: 42, description: "Building foundational technical vocabulary"),
+        LevelDefinition(level: 9, title: "Junior Engineer IV", pointsRequired: 50, description: "Building foundational technical vocabulary"),
+        LevelDefinition(level: 10, title: "Junior Engineer V", pointsRequired: 60, description: "Building foundational technical vocabulary"),
+        LevelDefinition(level: 11, title: "Engineer I", pointsRequired: 70, description: "Expanding your professional communication"),
+        LevelDefinition(level: 12, title: "Engineer II", pointsRequired: 80, description: "Expanding your professional communication"),
+        LevelDefinition(level: 13, title: "Engineer III", pointsRequired: 92, description: "Expanding your professional communication"),
+        LevelDefinition(level: 14, title: "Engineer IV", pointsRequired: 104, description: "Expanding your professional communication"),
+        LevelDefinition(level: 15, title: "Engineer V", pointsRequired: 116, description: "Expanding your professional communication"),
+        LevelDefinition(level: 16, title: "Senior Engineer I", pointsRequired: 130, description: "Strengthening core technical concepts"),
+        LevelDefinition(level: 17, title: "Senior Engineer II", pointsRequired: 144, description: "Strengthening core technical concepts"),
+        LevelDefinition(level: 18, title: "Senior Engineer III", pointsRequired: 160, description: "Strengthening core technical concepts"),
+        LevelDefinition(level: 19, title: "Senior Engineer IV", pointsRequired: 176, description: "Strengthening core technical concepts"),
+        LevelDefinition(level: 20, title: "Senior Engineer V", pointsRequired: 192, description: "Strengthening core technical concepts"),
+        LevelDefinition(level: 21, title: "Lead Engineer I", pointsRequired: 210, description: "Communicating complex ideas with confidence"),
+        LevelDefinition(level: 22, title: "Lead Engineer II", pointsRequired: 228, description: "Communicating complex ideas with confidence"),
+        LevelDefinition(level: 23, title: "Lead Engineer III", pointsRequired: 246, description: "Communicating complex ideas with confidence"),
+        LevelDefinition(level: 24, title: "Lead Engineer IV", pointsRequired: 266, description: "Communicating complex ideas with confidence"),
+        LevelDefinition(level: 25, title: "Lead Engineer V", pointsRequired: 286, description: "Communicating complex ideas with confidence"),
+        LevelDefinition(level: 26, title: "Staff Engineer I", pointsRequired: 306, description: "Mastering advanced technical discourse"),
+        LevelDefinition(level: 27, title: "Staff Engineer II", pointsRequired: 328, description: "Mastering advanced technical discourse"),
+        LevelDefinition(level: 28, title: "Staff Engineer III", pointsRequired: 350, description: "Mastering advanced technical discourse"),
+        LevelDefinition(level: 29, title: "Staff Engineer IV", pointsRequired: 372, description: "Mastering advanced technical discourse"),
+        LevelDefinition(level: 30, title: "Staff Engineer V", pointsRequired: 396, description: "Mastering advanced technical discourse"),
+        LevelDefinition(level: 31, title: "Senior Staff I", pointsRequired: 420, description: "Leading technical discussions with precision"),
+        LevelDefinition(level: 32, title: "Senior Staff II", pointsRequired: 444, description: "Leading technical discussions with precision"),
+        LevelDefinition(level: 33, title: "Senior Staff III", pointsRequired: 470, description: "Leading technical discussions with precision"),
+        LevelDefinition(level: 34, title: "Senior Staff IV", pointsRequired: 496, description: "Leading technical discussions with precision"),
+        LevelDefinition(level: 35, title: "Senior Staff V", pointsRequired: 522, description: "Leading technical discussions with precision"),
+        LevelDefinition(level: 36, title: "Principal Engineer I", pointsRequired: 550, description: "Architecting solutions through clear communication"),
+        LevelDefinition(level: 37, title: "Principal Engineer II", pointsRequired: 578, description: "Architecting solutions through clear communication"),
+        LevelDefinition(level: 38, title: "Principal Engineer III", pointsRequired: 606, description: "Architecting solutions through clear communication"),
+        LevelDefinition(level: 39, title: "Principal Engineer IV", pointsRequired: 636, description: "Architecting solutions through clear communication"),
+        LevelDefinition(level: 40, title: "Principal Engineer V", pointsRequired: 666, description: "Architecting solutions through clear communication"),
+        LevelDefinition(level: 41, title: "Senior Principal I", pointsRequired: 696, description: "Influencing technical strategy through language"),
+        LevelDefinition(level: 42, title: "Senior Principal II", pointsRequired: 728, description: "Influencing technical strategy through language"),
+        LevelDefinition(level: 43, title: "Senior Principal III", pointsRequired: 760, description: "Influencing technical strategy through language"),
+        LevelDefinition(level: 44, title: "Senior Principal IV", pointsRequired: 792, description: "Influencing technical strategy through language"),
+        LevelDefinition(level: 45, title: "Senior Principal V", pointsRequired: 826, description: "Influencing technical strategy through language"),
+        LevelDefinition(level: 46, title: "Architect I", pointsRequired: 860, description: "Designing systems and the words that describe them"),
+        LevelDefinition(level: 47, title: "Architect II", pointsRequired: 896, description: "Designing systems and the words that describe them"),
+        LevelDefinition(level: 48, title: "Architect III", pointsRequired: 932, description: "Designing systems and the words that describe them"),
+        LevelDefinition(level: 49, title: "Architect IV", pointsRequired: 968, description: "Designing systems and the words that describe them"),
+        LevelDefinition(level: 50, title: "Architect V", pointsRequired: 1006, description: "Designing systems and the words that describe them"),
+        LevelDefinition(level: 51, title: "Distinguished Engineer I", pointsRequired: 1044, description: "Setting technical direction with clarity"),
+        LevelDefinition(level: 52, title: "Distinguished Engineer II", pointsRequired: 1082, description: "Setting technical direction with clarity"),
+        LevelDefinition(level: 53, title: "Distinguished Engineer III", pointsRequired: 1122, description: "Setting technical direction with clarity"),
+        LevelDefinition(level: 54, title: "Distinguished Engineer IV", pointsRequired: 1162, description: "Setting technical direction with clarity"),
+        LevelDefinition(level: 55, title: "Distinguished Engineer V", pointsRequired: 1202, description: "Setting technical direction with clarity"),
+        LevelDefinition(level: 56, title: "Fellow I", pointsRequired: 1244, description: "Command of the full technical vocabulary"),
+        LevelDefinition(level: 57, title: "Fellow II", pointsRequired: 1286, description: "Command of the full technical vocabulary"),
+        LevelDefinition(level: 58, title: "Fellow III", pointsRequired: 1328, description: "Command of the full technical vocabulary"),
+        LevelDefinition(level: 59, title: "Fellow IV", pointsRequired: 1372, description: "Command of the full technical vocabulary"),
+        LevelDefinition(level: 60, title: "Fellow V", pointsRequired: 1416, description: "Command of the full technical vocabulary"),
     ]
 
     /// Highest level in the ladder.
@@ -92,28 +92,28 @@ struct LevelDefinition: Codable {
         levels.first { $0.level == currentLevel + 1 }
     }
 
-    /// Whether the user has enough credited words to advance past `currentLevel`.
-    static func canAdvance(currentLevel: Int, wordsCredited: Int) -> Bool {
+    /// Whether the user has enough assessment points to advance past `currentLevel`.
+    static func canAdvance(currentLevel: Int, points: Int) -> Bool {
         guard let nextLevelDef = nextLevel(after: currentLevel) else {
             return false
         }
-        return wordsCredited >= nextLevelDef.wordsRequired
+        return points >= nextLevelDef.pointsRequired
     }
 
-    static func progressToNextLevel(currentLevel: Int, wordsCredited: Int) -> LevelProgress? {
+    static func progressToNextLevel(currentLevel: Int, points: Int) -> LevelProgress? {
         guard let nextLevelDef = nextLevel(after: currentLevel) else {
             return nil
         }
 
-        let currentThreshold = definition(for: currentLevel)?.wordsRequired ?? 0
-        let span = max(1, nextLevelDef.wordsRequired - currentThreshold)
-        let earned = max(0, wordsCredited - currentThreshold)
+        let currentThreshold = definition(for: currentLevel)?.pointsRequired ?? 0
+        let span = max(1, nextLevelDef.pointsRequired - currentThreshold)
+        let earned = max(0, points - currentThreshold)
         let progress = min(1.0, Double(earned) / Double(span))
-        let wordsRemaining = max(0, nextLevelDef.wordsRequired - wordsCredited)
+        let pointsRemaining = max(0, nextLevelDef.pointsRequired - points)
 
         return LevelProgress(
             progress: progress,
-            wordsRemaining: wordsRemaining,
+            pointsRemaining: pointsRemaining,
             nextLevel: nextLevelDef
         )
     }
