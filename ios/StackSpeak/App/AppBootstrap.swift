@@ -157,6 +157,11 @@ final class AppBootstrap {
         }
 
         if let services = services {
+            // Reconcile the Pro entitlement before anything reads `isProActive`
+            // (renewals while the app was closed extend the stored expiry).
+            services.purchase.startTransactionListener()
+            await services.purchase.refreshEntitlement()
+
             do {
                 try await services.word.loadWordsFromBundle()
                 // Update catalog status after successful load

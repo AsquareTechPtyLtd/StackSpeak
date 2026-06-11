@@ -9,7 +9,7 @@ private let previewLockedBook = BookSummary(
     coverIcon: "cylinder.split.1x2.fill",
     accentHex: nil,
     tags: ["swiftdata", "ios"],
-    categories: [.mobileDev],
+    categories: [.codeCraft],
     chapterCount: 8,
     cardCount: 56,
     manifestVersion: 1,
@@ -18,14 +18,16 @@ private let previewLockedBook = BookSummary(
     sizeBytes: 307_200
 )
 
-/// Minimal locked-book gate shown when a non-pro user taps a pro book — from the
-/// Books tab or from a word's "From the book" link. Replace with a full
-/// subscription flow when in-app purchase is wired up.
+/// Locked-book gate shown when a non-pro user taps a pro book — from the
+/// Books tab or from a word's "From the book" link. The CTA opens the Pro
+/// paywall (`ProGateSheet`).
 struct BookLockedSheet: View {
     @Environment(\.theme) private var theme
     @Environment(\.dismiss) private var dismiss
     @Environment(\.userProgress) private var userProgress
     @Environment(\.modelContext) private var modelContext
+
+    @State private var showProSheet = false
 
     let book: BookSummary
 
@@ -50,7 +52,13 @@ struct BookLockedSheet: View {
                         .multilineTextAlignment(.center)
                 }
 
-                PrimaryCTAButton("books.locked.cta") { dismiss() }
+                PrimaryCTAButton("books.locked.cta") { showProSheet = true }
+
+                Button { dismiss() } label: {
+                    Text("common.notNow")
+                        .font(TypographyTokens.footnote.weight(.medium))
+                        .foregroundColor(theme.colors.inkMuted)
+                }
 
                 devProToggle
             }
@@ -59,6 +67,14 @@ struct BookLockedSheet: View {
             Spacer()
         }
         .background(theme.colors.bg.ignoresSafeArea())
+        .sheet(isPresented: $showProSheet) {
+            ProGateSheet()
+        }
+        // Once the paywall (or dev toggle) grants Pro, this gate has nothing
+        // left to gate — dismiss so the unlocked book is immediately tappable.
+        .onChange(of: userProgress?.isProActive ?? false) { _, isPro in
+            if isPro { dismiss() }
+        }
     }
 
     private var devProToggle: some View {

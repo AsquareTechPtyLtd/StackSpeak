@@ -1,5 +1,6 @@
 import Foundation
 import SwiftData
+import StoreKit
 import UserNotifications
 import Speech
 
@@ -51,6 +52,22 @@ protocol NotificationRepository {
     func cancelAllNotifications()
     func getPendingNotificationCount() async -> Int
     func resetBadge()
+}
+
+/// Protocol for the Pro subscription purchase flow (StoreKit 2)
+@MainActor
+protocol PurchaseRepository {
+    /// Pro subscription products, sorted cheapest first. Empty until `loadProducts()` succeeds.
+    var proProducts: [Product] { get }
+    var isLoadingProducts: Bool { get }
+
+    func startTransactionListener()
+    func loadProducts() async
+    /// Returns true when the purchase completed and Pro is now active.
+    func purchase(_ product: Product) async throws -> Bool
+    /// Returns true when Pro is active after replaying past transactions.
+    func restorePurchases() async throws -> Bool
+    func refreshEntitlement() async
 }
 
 /// Protocol for speech recognition
