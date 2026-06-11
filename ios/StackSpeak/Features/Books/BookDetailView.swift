@@ -6,7 +6,7 @@ private let previewBookSummary = BookSummary(
     title: "Swift Concurrency",
     author: "Robin Swift",
     summary: "Actors, async/await, and structured concurrency for iOS developers.",
-    coverIcon: "gearshape.2.fill",
+    coverIcon: "gearshape.2",
     accentHex: "#0A84FF",
     tags: ["swift", "concurrency"],
     categories: [.codeCraft],

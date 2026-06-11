@@ -6,7 +6,7 @@ private let previewLockedBook = BookSummary(
     title: "Advanced SwiftData",
     author: "Alex Engineer",
     summary: "Relationships, migrations, and CloudKit sync with SwiftData.",
-    coverIcon: "cylinder.split.1x2.fill",
+    coverIcon: "cylinder.split.1x2",
     accentHex: nil,
     tags: ["swiftdata", "ios"],
     categories: [.codeCraft],

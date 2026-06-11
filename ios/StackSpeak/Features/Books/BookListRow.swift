@@ -100,7 +100,7 @@ private func previewBook(
         title: title,
         author: "Jane Dev",
         summary: summary,
-        coverIcon: "books.vertical.fill",
+        coverIcon: "books.vertical",
         accentHex: accentHex,
         tags: ["swift", "ios"],
         categories: [.codeCraft],
