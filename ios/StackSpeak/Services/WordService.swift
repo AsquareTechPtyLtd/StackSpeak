@@ -62,19 +62,24 @@ final class WordService: WordRepository {
         // during save" assertion when a single save resolves more than a few
         // hundred newly-inserted models at once. Saving every `batchSize` inserts
         // forces SwiftData to commit temp-IDs before the next batch begins.
-        // Seed `seenIds` with what's already in the store, then add each ID as we
-        // accept it this pass. This skips not just words already persisted but also
-        // duplicate IDs *within the incoming bundle* — two entries resolving to the
-        // same UUID would otherwise both insert and trip the `@Attribute(.unique)`
-        // constraint at save time, failing a whole chunk (and partially committing
-        // earlier ones) over a single content-authoring mistake.
-        var seenIds = try fetchExistingWordIdSet()
+        // `bundleIds` also rejects duplicate IDs *within the incoming bundle* —
+        // two entries resolving to the same UUID would otherwise both insert and
+        // trip the `@Attribute(.unique)` constraint at save time, failing a whole
+        // chunk (and partially committing earlier ones) over a single
+        // content-authoring mistake.
+        let existingIds = try fetchExistingWordIdSet()
+        var bundleIds = Set<UUID>()
+        var alreadyPersisted = 0
         let batchSize = 200
         var insertedInBatch = 0
         for (dto, stack) in allWords {
             let wordId = UUID(uuidString: dto.id) ?? deterministicUUID(from: dto.id)
-            guard seenIds.insert(wordId).inserted else {
-                logger.warning("Skipping duplicate word id \(dto.id, privacy: .public) during bundle load")
+            guard bundleIds.insert(wordId).inserted else {
+                logger.warning("Duplicate word id \(dto.id, privacy: .public) within bundle data — skipping")
+                continue
+            }
+            guard !existingIds.contains(wordId) else {
+                alreadyPersisted += 1
                 continue
             }
             let word = Word(from: dto, stack: stack)
@@ -89,6 +94,12 @@ final class WordService: WordRepository {
         if modelContext.hasChanges {
             try modelContext.save()
         }
+
+        if alreadyPersisted > 0 {
+            logger.debug("Bundle load skipped \(alreadyPersisted) already-persisted words")
+        }
+
+        try deleteStaleWords(notIn: bundleIds)
 
         // Count total words after loading
         let totalCount = try modelContext.fetchCount(FetchDescriptor<Word>())
@@ -178,6 +189,26 @@ final class WordService: WordRepository {
         }
 
         return words.sorted(using: KeyPathComparator(\.word))
+    }
+
+    /// Deletes persisted words whose IDs are no longer in the bundled catalog —
+    /// leftovers from older app versions where word IDs were renamed or removed.
+    /// Other records (review states, assessment results, mastered/bookmarked
+    /// sets) reference words by UUID value, not SwiftData relationships, so
+    /// stale references simply stop resolving and the UI already skips them.
+    /// Internal (not private) so tests can exercise it directly.
+    func deleteStaleWords(notIn bundleIds: Set<UUID>) throws {
+        // An empty bundle means the load itself failed (missing index, all stack
+        // files unreadable) — never interpret that as "delete everything".
+        guard !bundleIds.isEmpty else { return }
+        let stale = try modelContext.fetch(FetchDescriptor<Word>())
+            .filter { !bundleIds.contains($0.id) }
+        guard !stale.isEmpty else { return }
+        for word in stale {
+            modelContext.delete(word)
+        }
+        try modelContext.save()
+        logger.info("Deleted \(stale.count) stale words no longer in the bundled catalog")
     }
 
     // MARK: - Private helpers
