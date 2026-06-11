@@ -49,7 +49,7 @@ struct ProfileView: View {
                 }
             }
             .sheet(isPresented: $showProSheet) {
-                ProGateSheet().presentationDetents([.medium])
+                ProGateSheet()
             }
         }
     }

@@ -56,7 +56,6 @@ struct StackSelectionView: View {
         .onAppear { applySmartDefaultsOnce() }
         .sheet(isPresented: $showProSheet) {
             ProGateSheet()
-                .presentationDetents([.medium])
         }
         .alert("saveError.title", isPresented: .constant(saveError != nil), presenting: saveError) { _ in
             Button("common.ok") { saveError = nil }

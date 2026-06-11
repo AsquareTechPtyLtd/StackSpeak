@@ -7,12 +7,20 @@ struct PrimaryCTAButton: View {
     @Environment(\.theme) private var theme
     @Environment(\.isEnabled) private var isEnabled
 
-    let titleKey: LocalizedStringKey
+    let title: Text
     let isLoading: Bool
     let action: () -> Void
 
     init(_ titleKey: LocalizedStringKey, isLoading: Bool = false, action: @escaping () -> Void) {
-        self.titleKey = titleKey
+        self.title = Text(titleKey)
+        self.isLoading = isLoading
+        self.action = action
+    }
+
+    /// For titles composed at runtime (e.g. "Start 7-day free trial" with the
+    /// day count from StoreKit). Pass already-localized text only.
+    init(verbatim title: String, isLoading: Bool = false, action: @escaping () -> Void) {
+        self.title = Text(verbatim: title)
         self.isLoading = isLoading
         self.action = action
     }
@@ -23,7 +31,7 @@ struct PrimaryCTAButton: View {
                 if isLoading {
                     ProgressView().tint(theme.colors.accentText)
                 } else {
-                    Text(titleKey)
+                    title
                         .font(TypographyTokens.headline)
                 }
             }

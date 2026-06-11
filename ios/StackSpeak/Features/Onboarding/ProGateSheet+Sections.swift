@@ -83,13 +83,8 @@ extension ProGateSheet {
     @ViewBuilder
     var footerSection: some View {
         VStack(spacing: theme.spacing.sm) {
-            PrimaryCTAButton(
-                selectedProductHasTrial ? "pro.gate.cta.trial" : "pro.gate.cta.subscribe",
-                isLoading: isPurchasing
-            ) {
-                purchaseSelected()
-            }
-            .disabled(selectedProduct == nil)
+            ctaButton
+                .disabled(selectedProduct == nil)
 
             HStack(spacing: theme.spacing.lg) {
                 Button { restorePurchases() } label: {
@@ -115,6 +110,27 @@ extension ProGateSheet {
         .padding(.horizontal, theme.spacing.xl)
         .padding(.vertical, theme.spacing.md)
         .background(theme.colors.bg)
+    }
+
+    /// CTA copy names the trial length from the product's actual intro offer
+    /// ("Start 7-day free trial") so it can never drift from App Store Connect.
+    @ViewBuilder
+    private var ctaButton: some View {
+        if let days = selectedProduct?.paywallTrialDays {
+            PrimaryCTAButton(
+                verbatim: String(format: String(localized: "pro.gate.cta.trial.days.format"), days),
+                isLoading: isPurchasing
+            ) {
+                purchaseSelected()
+            }
+        } else {
+            PrimaryCTAButton(
+                selectedProductHasTrial ? "pro.gate.cta.trial" : "pro.gate.cta.subscribe",
+                isLoading: isPurchasing
+            ) {
+                purchaseSelected()
+            }
+        }
     }
 
     /// Dev affordance shared with `BookLockedSheet`: lets a tester unlock all

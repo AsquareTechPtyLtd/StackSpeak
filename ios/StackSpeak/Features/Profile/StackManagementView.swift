@@ -71,7 +71,6 @@ struct StackManagementView: View {
         .onAppear { loadSelectedStacks() }
         .sheet(isPresented: $showProSheet) {
             ProGateSheet()
-                .presentationDetents([.medium])
         }
         .sensoryFeedback(.success, trigger: saveSuccessTrigger)
         .alert(
