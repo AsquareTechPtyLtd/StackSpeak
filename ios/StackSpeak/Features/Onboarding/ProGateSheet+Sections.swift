@@ -133,48 +133,4 @@ extension ProGateSheet {
         }
     }
 
-    /// Dev affordance shared with `BookLockedSheet`: lets a tester unlock all
-    /// Pro features without an IAP. Strings are shared (`books.dev.proToggle*`)
-    /// because the copy applies equally to either gate.
-    var devProToggle: some View {
-        HStack(spacing: theme.spacing.sm) {
-            VStack(alignment: .leading, spacing: theme.spacing.xxs) {
-                Text("books.dev.proToggle")
-                    .font(TypographyTokens.footnote.weight(.medium))
-                    .foregroundColor(theme.colors.inkMuted)
-                Text("books.dev.proToggle.subtitle")
-                    .font(TypographyTokens.caption)
-                    .foregroundColor(theme.colors.inkFaint)
-            }
-            Spacer()
-            #if DEBUG
-            Toggle("", isOn: Binding(
-                get: { userProgress?.isProActive ?? false },
-                set: { on in
-                    guard let progress = userProgress else { return }
-                    // Capture pre-toggle state so a failed save restores BOTH
-                    // fields — nil-ing the expiry on revert would strand a
-                    // restored isPro=true with no expiry date.
-                    let oldIsPro = progress.isPro
-                    let oldExpiry = progress.proExpiryDate
-                    progress.isPro = on
-                    progress.proExpiryDate = on
-                        ? Calendar.current.date(byAdding: .year, value: 1, to: Date())
-                        : nil
-                    do {
-                        try modelContext.save()
-                        if on { dismiss() }
-                    } catch {
-                        progress.isPro = oldIsPro
-                        progress.proExpiryDate = oldExpiry
-                    }
-                }
-            ))
-            .labelsHidden()
-            #endif
-        }
-        .padding(theme.spacing.md)
-        .background(theme.colors.surfaceAlt)
-        .clipShape(.rect(cornerRadius: RadiusTokens.inline))
-    }
 }

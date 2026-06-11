@@ -9,7 +9,6 @@ struct ProGateSheet: View {
     @Environment(\.theme) var theme
     @Environment(\.dismiss) var dismiss
     @Environment(\.userProgress) var userProgress
-    @Environment(\.modelContext) var modelContext
     @Environment(\.services) var services
 
     @State var selectedProductId: String?
@@ -25,7 +24,6 @@ struct ProGateSheet: View {
                     headerSection
                     featureList
                     productPicker
-                    devProToggle
                 }
                 .frame(maxWidth: 480)
                 .padding(theme.spacing.xl)

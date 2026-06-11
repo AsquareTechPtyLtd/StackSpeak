@@ -22,9 +22,6 @@ struct ProfileView: View {
                         sectionGroup("profile.section.stats") { statsSection(progress: progress) }
                         sectionGroup("profile.section.collections") { collectionSection(progress: progress) }
                         sectionGroup("profile.section.settings") { settingsSection(progress: progress) }
-                        #if DEBUG
-                        sectionGroup("profile.section.developer") { devSection(progress: progress) }
-                        #endif
                     }
                 }
                 .padding(.horizontal, theme.spacing.lg)
