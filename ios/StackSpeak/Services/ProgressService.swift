@@ -170,10 +170,11 @@ final class ProgressService: ProgressRepository {
 
         // Incrementally update the caches instead of rescanning all results —
         // assessmentResults grows unboundedly and this runs on the main actor.
-        //   1st correct → credited toward level (the progression currency)
-        //   2nd correct → retention stat (no longer gates levels)
-        // The cached sets already encode the correct count: not yet credited
-        // means this is the first correct; already credited means it's at
+        //   1st correct → in-progress tracker (wordsCreditedForLevelIds)
+        //   2nd correct → credited toward level (the progression currency).
+        //     canAttemptAssessment guarantees it lands on a later day.
+        // The cached sets already encode the correct count: not yet tracked
+        // means this is the first correct; already tracked means it's at
         // least the second.
         if isCorrect {
             var credited = userProgress.wordsCreditedForLevelIds

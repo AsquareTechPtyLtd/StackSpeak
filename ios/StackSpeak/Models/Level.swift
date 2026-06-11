@@ -3,9 +3,10 @@ import Foundation
 /// One rung on the 60-level IC career ladder (12 bands × 5 sub-levels, Intern → Fellow).
 ///
 /// `wordsRequired` is the progression currency threshold: the cumulative number of
-/// words the user has **credited toward leveling** — a word is credited on its first
-/// correct assessment answer (see `UserProgress.wordsAssessedForLevel`). The second
-/// correct answer is tracked separately as a retention stat and does not gate levels.
+/// words the user has **credited toward leveling** — a word is credited on its
+/// second correct assessment answer, which lands on a later day than the first
+/// (see `UserProgress.wordsAssessedForLevel` and `canAttemptAssessment`). A single
+/// correct answer is in-progress, not credit.
 ///
 /// Content tiers unlock at fixed levels, baked into each word's `unlockLevel` and
 /// each stack's `minimumLevel` at authoring time: basic→1, intermediate→6,

@@ -187,14 +187,14 @@ struct ProgressCacheTests {
 
         progress.rebuildProgressCaches()
 
-        // credited (level currency): both words count
+        // first-correct tracker: both words have at least one correct
         #expect(progress.wordsCreditedForLevelIds.contains(wordA))
         #expect(progress.wordsCreditedForLevelIds.contains(wordB))
-        #expect(progress.wordsAssessedForLevel == 2)
 
-        // retention stat: only the twice-correct word
+        // level currency: only the twice-correct word counts
         #expect(progress.wordsWithTwoCorrectIds.contains(wordA))
         #expect(!progress.wordsWithTwoCorrectIds.contains(wordB))
+        #expect(progress.wordsAssessedForLevel == 1)
         #expect(progress.wordsAssessedCorrectlyTwice == 1)
     }
 }

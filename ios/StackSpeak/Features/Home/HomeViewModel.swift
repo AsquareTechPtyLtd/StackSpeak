@@ -70,7 +70,8 @@ final class HomeViewModel {
     /// Records a user explanation for a word, marks it complete in today's set, and
     /// if the day is now fully complete, drives the streak update.
     /// `explanation` may be empty — the coming-soon path calls this without content.
-    /// `markAsMastered` when true immediately adds to masteredWordIds and wordsWithTwoCorrectIds.
+    /// `markAsMastered` when true immediately adds to masteredWordIds (and only there —
+    /// mastery never touches the assessment caches or grants level credit).
     func submitExplanation(
         for wordId: UUID,
         explanation: String,

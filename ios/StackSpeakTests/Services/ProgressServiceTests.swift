@@ -20,7 +20,7 @@ struct ProgressServiceTests {
         )
     }
 
-    @Test("Multi-level advancement uses the credited (first-correct) currency")
+    @Test("Multi-level advancement uses the two-correct currency")
     func testMultiLevelAdvancement() async throws {
         let container = try makeContainer()
         let context = container.mainContext
@@ -29,19 +29,28 @@ struct ProgressServiceTests {
         userProgress.level = 1
         context.insert(userProgress)
 
-        // Seed 34 distinct words each credited once (first correct = level currency).
+        // Seed 34 distinct words each answered correctly twice (the level
+        // currency), plus one word with a single correct (in-progress).
+        let pendingWord = UUID()
         for _ in 0..<34 {
-            userProgress.assessmentResults.append(AssessmentResult(
-                wordId: UUID(), attemptedAt: Date(), isCorrect: true,
-                selectedAnswer: "c", correctAnswer: "c"))
+            let wordId = UUID()
+            for _ in 0..<2 {
+                userProgress.assessmentResults.append(AssessmentResult(
+                    wordId: wordId, attemptedAt: Date(), isCorrect: true,
+                    selectedAnswer: "c", correctAnswer: "c"))
+            }
         }
+        userProgress.assessmentResults.append(AssessmentResult(
+            wordId: pendingWord, attemptedAt: Date(), isCorrect: true,
+            selectedAnswer: "c", correctAnswer: "c"))
         userProgress.rebuildProgressCaches()
         #expect(userProgress.wordsAssessedForLevel == 34)
 
-        // Recording the 35th credited word crosses every threshold up to
-        // Engineer I (L11, requires 35). L12 requires 40, so it stops at 11.
+        // The pending word's second correct makes it the 35th credited word,
+        // crossing every threshold up to Engineer I (L11, requires 35).
+        // L12 requires 40, so it stops at 11.
         let newLevel = try service.recordAssessmentResult(
-            wordId: UUID(), isCorrect: true,
+            wordId: pendingWord, isCorrect: true,
             selectedAnswer: "c", correctAnswer: "c",
             userProgress: userProgress
         )
@@ -51,8 +60,8 @@ struct ProgressServiceTests {
         #expect(newLevel == 11)
     }
 
-    @Test("First correct credits the level; second correct is retention only")
-    func testFirstCorrectCredits() async throws {
+    @Test("First correct is in-progress; the second correct credits the level")
+    func testSecondCorrectCredits() async throws {
         let container = try makeContainer()
         let context = container.mainContext
         let service = ProgressService(modelContext: context)
@@ -63,14 +72,20 @@ struct ProgressServiceTests {
         _ = try service.recordAssessmentResult(
             wordId: word, isCorrect: true, selectedAnswer: "c", correctAnswer: "c",
             userProgress: userProgress)
-        #expect(userProgress.wordsAssessedForLevel == 1)        // credited immediately
-        #expect(userProgress.wordsAssessedCorrectlyTwice == 0)  // not yet retained
+        #expect(userProgress.wordsAssessedForLevel == 0)        // in-progress, no credit yet
+        #expect(userProgress.wordsCreditedForLevelIds.contains(word))
 
         _ = try service.recordAssessmentResult(
             wordId: word, isCorrect: true, selectedAnswer: "c", correctAnswer: "c",
             userProgress: userProgress)
-        #expect(userProgress.wordsAssessedForLevel == 1)        // still one credited word
-        #expect(userProgress.wordsAssessedCorrectlyTwice == 1)  // now retained
+        #expect(userProgress.wordsAssessedForLevel == 1)        // credited on the second correct
+        #expect(userProgress.wordsAssessedCorrectlyTwice == 1)
+
+        // A third correct doesn't double-count the word.
+        _ = try service.recordAssessmentResult(
+            wordId: word, isCorrect: true, selectedAnswer: "c", correctAnswer: "c",
+            userProgress: userProgress)
+        #expect(userProgress.wordsAssessedForLevel == 1)
     }
 
     @Test("Skip/report marks mastered but grants no level credit")

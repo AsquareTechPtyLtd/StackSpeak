@@ -9,8 +9,8 @@ private let logger = Logger(category: "AssessmentView")
 struct AssessmentView: View {
     @Environment(\.theme) private var theme
     @Environment(\.services) private var services
-    @Environment(\.userProgress) private var userProgress
-    @Environment(\.modelContext) private var modelContext
+    @Environment(\.userProgress) var userProgress
+    @Environment(\.modelContext) var modelContext
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     let word: Word
@@ -20,13 +20,14 @@ struct AssessmentView: View {
 
     @State private var selectedAnswer: String?
     @State private var hasSubmitted = false
-    @State private var options: [String] = []
+    @State var options: [String] = []
     @State private var pendingLevelUp: Int?
     @State private var feedbackTrigger: FeedbackResult?
     @State private var errorMessage: String?
     @State private var autoAdvanceTask: Task<Void, Never>?
+    @State private var showMasteryPrompt = false
 
-    private static let distractorCount = 3
+    static let distractorCount = 3
     private static let autoAdvanceDelay: Duration = .milliseconds(900)
 
     var isCorrect: Bool {
@@ -76,6 +77,15 @@ struct AssessmentView: View {
             // the auto-advance is pending — firing onComplete then would advance
             // the assessment index a second time and silently skip a word.
             autoAdvanceTask?.cancel()
+        }
+        // Second correct answer = full credit earned and the word leaves the
+        // assessment pool — the natural moment to offer retiring it from the
+        // daily rotation too. Either choice advances to the next card.
+        .alert("review.mastery.title", isPresented: $showMasteryPrompt) {
+            Button("review.mastery.confirm") { markMasteredAndAdvance() }
+            Button("review.mastery.keep", role: .cancel) { onComplete(true, nil) }
+        } message: {
+            Text(String(format: String(localized: "review.mastery.message.format"), word.word))
         }
     }
 
@@ -152,6 +162,9 @@ struct AssessmentView: View {
         // we never present a resolved/auto-advanced state for an attempt that
         // wasn't durably recorded (assessment is the progression currency).
         let correct = isCorrect
+        // Read before recording: already in the first-correct tracker means this
+        // correct answer is the word's second — the one that earns level credit.
+        let isSecondCorrect = correct && progress.wordsCreditedForLevelIds.contains(word.id)
         let newLevel: Int?
         do {
             newLevel = try services.progress.recordAssessmentResult(
@@ -178,6 +191,14 @@ struct AssessmentView: View {
             return
         }
 
+        // The second correct completes the word's assessment journey — offer to
+        // mark it mastered instead of auto-advancing. (When it also triggered a
+        // level-up, the celebration above takes precedence and no prompt shows.)
+        if isSecondCorrect {
+            showMasteryPrompt = true
+            return
+        }
+
         // Correct answers auto-advance after a brief read-through. The task is
         // stored so onDisappear can cancel it — see the modifier above.
         if correct {
@@ -190,102 +211,24 @@ struct AssessmentView: View {
         }
     }
 
+    /// Marks the word mastered (out of daily rotation) and advances. A save
+    /// failure is logged but still advances — the assessment result itself was
+    /// already durably recorded, and mastery can be retried from the word page.
+    private func markMasteredAndAdvance() {
+        if let progress = userProgress, let services {
+            do {
+                try services.progress.markWordMastered(word.id, userProgress: progress)
+            } catch {
+                logger.error("Failed to mark word mastered: \(error.localizedDescription, privacy: .public)")
+            }
+        }
+        onComplete(true, nil)
+    }
+
     // MARK: - Options generation
 
-    private func generateOptions() {
-        guard let progress = userProgress else { return }
-        let allWords: [Word]
-        do {
-            allWords = try modelContext.fetch(FetchDescriptor<Word>())
-        } catch {
-            logger.error("Failed to fetch words for assessment options: \(error.localizedDescription, privacy: .public)")
-            return
-        }
-
-        let distractors = Self.buildDistractors(for: word, count: Self.distractorCount,
-                                                allWords: allWords, progress: progress)
-        var seen = Set<String>()
-        options = ([word.shortDefinition] + distractors)
-            .filter { seen.insert($0).inserted }
-            .shuffled()
-    }
-
-    /// Picks plausible wrong-answer definitions: prefers words the user has practiced,
-    /// falls back to any unlocked word at the user's current level.
-    private static func buildDistractors(for word: Word, count: Int,
-                                         allWords: [Word], progress: UserProgress) -> [String] {
-        func excludesTarget(_ w: Word) -> Bool {
-            w.id != word.id && w.shortDefinition != word.shortDefinition
-        }
-        let practiced = allWords.filter { excludesTarget($0) && progress.wordsPracticedIds.contains($0.id) }
-        let pool = practiced.count >= count
-            ? practiced
-            : allWords.filter { excludesTarget($0) && $0.unlockLevel <= progress.level }
-        return pool.shuffled().prefix(count).map(\.shortDefinition)
-    }
-
-    private enum FeedbackResult: Equatable {
+    enum FeedbackResult: Equatable {
         case correct, incorrect
-    }
-}
-
-// MARK: - OptionButton
-
-struct OptionButton: View {
-    @Environment(\.theme) private var theme
-
-    enum State { case idle, correct, incorrect }
-
-    let text: String
-    let isSelected: Bool
-    let state: State
-    let onTap: () -> Void
-
-    private var border: Color {
-        switch state {
-        case .correct:   return theme.colors.good
-        case .incorrect: return theme.colors.bad
-        case .idle:      return isSelected ? theme.colors.accent : theme.colors.line
-        }
-    }
-
-    private var fill: Color {
-        switch state {
-        case .correct:   return theme.colors.good.opacity(0.10)
-        case .incorrect: return theme.colors.bad.opacity(0.10)
-        case .idle:      return isSelected ? theme.colors.accentBg : theme.colors.surface
-        }
-    }
-
-    var body: some View {
-        Button(action: onTap) {
-            HStack(alignment: .top) {
-                Text(text)
-                    .font(TypographyTokens.body)
-                    .foregroundColor(theme.colors.ink)
-                    .multilineTextAlignment(.leading)
-                    .lineLimit(nil)
-                    .fixedSize(horizontal: false, vertical: true)
-                Spacer(minLength: theme.spacing.sm)
-            }
-            .padding(theme.spacing.md)
-            .background(fill)
-            .clipShape(.rect(cornerRadius: RadiusTokens.card))
-            .overlay(
-                RoundedRectangle(cornerRadius: RadiusTokens.card)
-                    .stroke(border, lineWidth: state != .idle || isSelected ? 1.5 : 0.5)
-            )
-        }
-        .buttonStyle(.plain)
-        .disabled(state != .idle)
-        .accessibilityLabel(text)
-        .accessibilityValue({
-            switch state {
-            case .correct:   return String(localized: "a11y.option.correct")
-            case .incorrect: return String(localized: "a11y.option.incorrect")
-            case .idle:      return isSelected ? String(localized: "a11y.option.selected") : ""
-            }
-        }())
     }
 }
 

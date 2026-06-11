@@ -14,9 +14,11 @@ final class UserProgress {
     var installDate: Date
     var shuffleSeed: UUID
     var wordQueueCursor: Int
+    /// Words answered correctly twice (the second on a later day, enforced by
+    /// `canAttemptAssessment`). This is the level-progression currency.
     var wordsWithTwoCorrectIdsStorage: String
-    /// Words credited toward level progression (first correct assessment answer).
-    /// This is the level currency; `wordsWithTwoCorrectIds` is a retention stat.
+    /// Words with at least one correct answer — the in-progress tracker that
+    /// lets `recordAssessmentResult` tell a first correct from a second.
     var wordsCreditedForLevelIdsStorage: String = ""
     var didCompleteOnboarding: Bool
 
@@ -162,13 +164,14 @@ final class UserProgress {
         wordsPracticedIds.count
     }
 
-    /// Level-progression currency: words credited (first correct answer).
+    /// Level-progression currency: words answered correctly twice, the second
+    /// on a later day. A single correct answer is in-progress, not credit.
     var wordsAssessedForLevel: Int {
-        wordsCreditedForLevelIds.count
+        wordsWithTwoCorrectIds.count
     }
 
-    /// Retention stat: words answered correctly twice (on different days).
-    /// Displayed/celebrated but does not gate levels.
+    /// Words answered correctly twice (on different days). Same set as the
+    /// level currency; kept as a named stat for the profile display.
     var wordsAssessedCorrectlyTwice: Int {
         wordsWithTwoCorrectIds.count
     }
