@@ -196,6 +196,7 @@ struct StackCard: View {
             if isLocked {
                 cardContent
                     .accessibilityLabel(stack.displayName)
+                    .accessibilityValue(isSelected ? "selected" : "not selected")
                     .accessibilityHint(isLocked ? String(localized: "stacks.locked.a11yHint") : "")
             } else {
                 Button(action: onToggle) { cardContent }
@@ -236,9 +237,9 @@ struct StackCard: View {
 
             Spacer()
 
-            Image(systemName: cardState == .active ? "checkmark.circle.fill" : "circle")
+            Image(systemName: radioIcon)
                 .font(.system(.title2))
-                .foregroundColor(cardState == .active ? theme.colors.accent : theme.colors.inkFaint)
+                .foregroundColor(radioColor)
         }
         .padding(theme.spacing.cardPadding)
         .background(cardState == .active ? theme.colors.accentBg : theme.colors.surface)
@@ -250,6 +251,21 @@ struct StackCard: View {
                     lineWidth: cardState == .active ? 1.5 : 0.5
                 )
         )
+    }
+
+    /// Locked cards (core stacks for free users) are always included in the
+    /// user's selection, so the radio shows a checkmark — grayed out to signal
+    /// it can't be toggled.
+    private var radioIcon: String {
+        switch cardState {
+        case .locked: return isSelected ? "checkmark.circle.fill" : "circle"
+        case .active: return "checkmark.circle.fill"
+        case .idle:   return "circle"
+        }
+    }
+
+    private var radioColor: Color {
+        cardState == .active ? theme.colors.accent : theme.colors.inkFaint
     }
 
     private var iconForeground: Color {

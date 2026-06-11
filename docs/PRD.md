@@ -479,11 +479,29 @@ On first launch, create a UserProgress record with:
 - Anonymous use — no name, avatar, or profile screen.
 - Optional name field may be added post-MVP.
 
+## Monetization — StackSpeak Pro
+
+A single Pro entitlement, sold as an auto-renewing App Store subscription (StoreKit 2, no backend — entitlement verified on-device and persisted to `UserProgress`).
+
+**Pro unlocks:**
+- Customizing (deselecting) core/mandatory stacks — free users always keep the full core set for their level
+- All Pro books in the Library (books not marked `freeForAll`)
+- All future Pro features
+
+**Products** (App Store Connect must mirror `ios/StackSpeak.storekit`):
+- `com.stackspeak.ios.pro.monthly` — Pro Monthly
+- `com.stackspeak.ios.pro.yearly` — Pro Yearly (presented as "Best value" default)
+- Both carry a 7-day free-trial introductory offer
+- Subscription group: "StackSpeak Pro"
+
+**Entitlement rules:** purchase/renewal stores the subscription expiry; Pro is active while the expiry is in the future. Lapse happens by expiry passing — the app never revokes locally (see `ProEntitlement`).
+
+**Coupons / discounts:** Apple subscription **offer codes**. The paywall's "Redeem a Code" button presents Apple's redemption sheet; redeemed transactions flow through the normal entitlement pipeline. Codes are created and managed entirely in App Store Connect (Subscriptions → the subscription → Offer Codes) — discount type (free period, pay-up-front, pay-as-you-go), eligibility, and expiry are configured there, and **new codes never require an app update**. Sample codes for local testing live in `ios/StackSpeak.storekit` (`FREEMONTH`, `HALFOFFYEAR`).
+
 ## Out of Scope for MVP
 
 - User accounts or cloud sync
 - Social features or sharing
-- In-app purchases or subscriptions
 - AI-generated sentence validation (just non-empty + contains-word check)
 - Words outside the tech domain
 - Android version (Phase 2 goal)

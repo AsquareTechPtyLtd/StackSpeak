@@ -1,103 +1,159 @@
+import StoreKit
 import SwiftUI
 
-/// Minimal pro-upsell gate shown when a free user taps "Get Pro" on the core
-/// stacks section. Replace with a full subscription flow when IAP is wired up.
+/// The Pro paywall. Shown from the core-stacks "Get Pro" chips, the Profile
+/// toolbar, and `BookLockedSheet`. Loads the subscription products via
+/// `PurchaseService` and runs the StoreKit 2 purchase/restore flows.
+/// Sections live in `ProGateSheet+Sections.swift`.
 struct ProGateSheet: View {
-    @Environment(\.theme) private var theme
-    @Environment(\.dismiss) private var dismiss
-    @Environment(\.userProgress) private var userProgress
-    @Environment(\.modelContext) private var modelContext
+    @Environment(\.theme) var theme
+    @Environment(\.dismiss) var dismiss
+    @Environment(\.userProgress) var userProgress
+    @Environment(\.modelContext) var modelContext
+    @Environment(\.services) var services
+
+    @State var selectedProductId: String?
+    @State var isPurchasing = false
+    @State var purchaseError: Error?
+    @State var showNothingToRestore = false
+    @State var showRedeemSheet = false
 
     var body: some View {
         VStack(spacing: 0) {
-            Spacer()
-
-            VStack(spacing: theme.spacing.lg) {
-                ZStack {
-                    Circle()
-                        .fill(theme.colors.accentBg)
-                        .frame(width: IconSizeTokens.avatar, height: IconSizeTokens.avatar)
-                    Image(systemName: "star.fill")
-                        .scaledIcon(size: IconSizeTokens.avatar * 0.45, weight: .semibold)
-                        .foregroundColor(theme.colors.accent)
+            ScrollView {
+                VStack(spacing: theme.spacing.lg) {
+                    headerSection
+                    featureList
+                    productPicker
+                    devProToggle
                 }
-                .accessibilityHidden(true)
-
-                VStack(spacing: theme.spacing.sm) {
-                    Text("pro.gate.title")
-                        .font(TypographyTokens.title2)
-                        .foregroundColor(theme.colors.ink)
-                        .multilineTextAlignment(.center)
-
-                    Text("pro.gate.message")
-                        .font(TypographyTokens.body)
-                        .foregroundColor(theme.colors.inkMuted)
-                        .multilineTextAlignment(.center)
-                }
-
-                PrimaryCTAButton("pro.gate.cta") { dismiss() }
-
-                devProToggle
+                .frame(maxWidth: 480)
+                .padding(theme.spacing.xl)
             }
-            .padding(theme.spacing.xl)
 
-            Spacer()
+            footerSection
         }
         .background(theme.colors.bg.ignoresSafeArea())
+        .task { await loadProducts() }
+        .alert(
+            "pro.gate.error.title",
+            isPresented: Binding(
+                get: { purchaseError != nil },
+                set: { if !$0 { purchaseError = nil } }
+            ),
+            presenting: purchaseError
+        ) { _ in
+            Button("common.ok") { purchaseError = nil }
+        } message: { error in
+            Text(error.localizedDescription)
+        }
+        .alert("pro.gate.restore.none", isPresented: $showNothingToRestore) {
+            Button("common.ok") { showNothingToRestore = false }
+        }
+        // Apple's offer-code redemption sheet. Codes are minted in App Store
+        // Connect (Subscriptions → Offer Codes); the redeemed transaction also
+        // arrives through PurchaseService's Transaction.updates listener, so
+        // the entitlement refresh here is just for an immediate dismiss.
+        .offerCodeRedemption(isPresented: $showRedeemSheet) { result in
+            handleRedemption(result)
+        }
     }
 
-    /// Same dev affordance shown on `BookLockedSheet`. Lets a tester unlock all
-    /// Pro features without an IAP. Strings are shared (`books.dev.proToggle*`)
-    /// because the copy applies equally to either gate.
-    private var devProToggle: some View {
-        HStack(spacing: theme.spacing.sm) {
-            VStack(alignment: .leading, spacing: theme.spacing.xxs) {
-                Text("books.dev.proToggle")
-                    .font(TypographyTokens.footnote.weight(.medium))
-                    .foregroundColor(theme.colors.inkMuted)
-                Text("books.dev.proToggle.subtitle")
-                    .font(TypographyTokens.caption)
-                    .foregroundColor(theme.colors.inkFaint)
-            }
-            Spacer()
-            #if DEBUG
-            Toggle("", isOn: Binding(
-                get: { userProgress?.isProActive ?? false },
-                set: { on in
-                    guard let progress = userProgress else { return }
-                    // Capture pre-toggle state so a failed save restores BOTH
-                    // fields — nil-ing the expiry on revert would strand a
-                    // restored isPro=true with no expiry date.
-                    let oldIsPro = progress.isPro
-                    let oldExpiry = progress.proExpiryDate
-                    progress.isPro = on
-                    progress.proExpiryDate = on
-                        ? Calendar.current.date(byAdding: .year, value: 1, to: Date())
-                        : nil
-                    do {
-                        try modelContext.save()
-                        if on { dismiss() }
-                    } catch {
-                        progress.isPro = oldIsPro
-                        progress.proExpiryDate = oldExpiry
-                    }
-                }
-            ))
-            .labelsHidden()
-            #endif
+    var products: [Product] {
+        services?.purchase.proProducts ?? []
+    }
+
+    var selectedProduct: Product? {
+        products.first { $0.id == selectedProductId }
+    }
+
+    /// True when the selected product starts with a free-trial intro offer.
+    var selectedProductHasTrial: Bool {
+        selectedProduct?.subscription?.introductoryOffer?.paymentMode == .freeTrial
+    }
+
+    // MARK: - Actions
+
+    private func loadProducts() async {
+        guard let services else { return }
+        await services.purchase.loadProducts()
+        // Default to the yearly (most expensive) plan; products are sorted cheapest first.
+        if selectedProductId == nil {
+            selectedProductId = services.purchase.proProducts.last?.id
         }
-        .padding(theme.spacing.md)
-        .background(theme.colors.surfaceAlt)
-        .clipShape(.rect(cornerRadius: RadiusTokens.inline))
+    }
+
+    func purchaseSelected() {
+        guard let services, let product = selectedProduct, !isPurchasing else { return }
+        isPurchasing = true
+        Task {
+            defer { isPurchasing = false }
+            do {
+                if try await services.purchase.purchase(product) {
+                    dismiss()
+                }
+            } catch {
+                purchaseError = error
+            }
+        }
+    }
+
+    func handleRedemption(_ result: Result<Void, Error>) {
+        switch result {
+        case .success:
+            Task {
+                await services?.purchase.refreshEntitlement()
+                if userProgress?.isProActive == true {
+                    dismiss()
+                }
+            }
+        case .failure(let error):
+            // The sheet handles its own invalid-code messaging; only surface
+            // real failures, not the user backing out.
+            if !isUserCancellation(error) {
+                purchaseError = error
+            }
+        }
+    }
+
+    private func isUserCancellation(_ error: Error) -> Bool {
+        (error as? StoreKitError).map {
+            if case .userCancelled = $0 { return true }
+            return false
+        } ?? false
+    }
+
+    func restorePurchases() {
+        guard let services, !isPurchasing else { return }
+        isPurchasing = true
+        Task {
+            defer { isPurchasing = false }
+            do {
+                if try await services.purchase.restorePurchases() {
+                    dismiss()
+                } else {
+                    showNothingToRestore = true
+                }
+            } catch {
+                purchaseError = error
+            }
+        }
     }
 }
 
+// MARK: - Previews
+
 #Preview("Pro Gate Sheet - Light") {
-    ProGateSheet().withTheme(ThemeManager())
+    ProGateSheet()
+        .withTheme(ThemeManager())
+        .environment(\.userProgress, UserProgress())
+        .modelContainer(for: [UserProgress.self], inMemory: true)
 }
 
 #Preview("Pro Gate Sheet - Dark") {
     ProGateSheet()
         .withTheme(ThemeManager())
+        .environment(\.userProgress, UserProgress())
+        .modelContainer(for: [UserProgress.self], inMemory: true)
         .preferredColorScheme(.dark)
 }

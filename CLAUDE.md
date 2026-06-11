@@ -82,7 +82,7 @@ The generated `.xcodeproj` is git-ignored. Re-run `xcodegen generate` after pull
 ### Dependencies
 Apple frameworks only. **No Swift Package Manager dependencies.**
 
-**Allowed:** SwiftUI, SwiftData, Foundation, UserNotifications, Speech, Combine.
+**Allowed:** SwiftUI, SwiftData, Foundation, UserNotifications, Speech, Combine, StoreKit.
 
 **Not allowed:** Any third-party package (Alamofire, SnapKit, Lottie, etc.). If something feels like it needs a library, discuss first.
 

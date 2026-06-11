@@ -21,6 +21,7 @@ final class Services {
     let report: any ReportServiceProtocol
     let bookCatalog: BookCatalogService
     let bookmark: any BookmarkRepository
+    let purchase: any PurchaseRepository
 
     var catalogStatus: CatalogStatus = .loading
 
@@ -33,6 +34,7 @@ final class Services {
         self.report = ReportService(modelContext: modelContext)
         self.bookCatalog = BookCatalogService(source: BundledBookSource.main())
         self.bookmark = BookmarkService(modelContext: modelContext)
+        self.purchase = PurchaseService(modelContext: modelContext)
     }
 
     // Preview/Test initializer with mock repositories
@@ -44,7 +46,8 @@ final class Services {
         speech: any SpeechRepository,
         report: any ReportServiceProtocol,
         bookCatalog: BookCatalogService,
-        bookmark: any BookmarkRepository
+        bookmark: any BookmarkRepository,
+        purchase: any PurchaseRepository
     ) {
         self.word = word
         self.progress = progress
@@ -54,6 +57,7 @@ final class Services {
         self.report = report
         self.bookCatalog = bookCatalog
         self.bookmark = bookmark
+        self.purchase = purchase
     }
 }
 

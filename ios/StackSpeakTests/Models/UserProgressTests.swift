@@ -156,7 +156,8 @@ struct StreakDisplayTests {
         var calendar = Calendar(identifier: .gregorian)
         calendar.timeZone = TimeZone(identifier: "UTC")!
         // Fixed "now" one second after midnight — the worst case for raw-offset math.
-        let now = Date(timeIntervalSince1970: 1_750_000_000 - (1_750_000_000 % 86_400) + 1)
+        let midnightEpoch: Int = 1_750_000_000 - (1_750_000_000 % 86_400) + 1
+        let now = Date(timeIntervalSince1970: TimeInterval(midnightEpoch))
 
         let progress = UserProgress()
         progress.currentStreak = 5

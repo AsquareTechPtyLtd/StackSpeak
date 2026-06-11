@@ -9,7 +9,7 @@ private let previewBookSummary = BookSummary(
     coverIcon: "gearshape.2.fill",
     accentHex: "#0A84FF",
     tags: ["swift", "concurrency"],
-    categories: [.mobileDev],
+    categories: [.codeCraft],
     chapterCount: 5,
     cardCount: 38,
     manifestVersion: 1,

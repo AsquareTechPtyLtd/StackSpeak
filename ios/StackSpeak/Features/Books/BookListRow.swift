@@ -103,7 +103,7 @@ private func previewBook(
         coverIcon: "books.vertical.fill",
         accentHex: accentHex,
         tags: ["swift", "ios"],
-        categories: [.mobileDev],
+        categories: [.codeCraft],
         chapterCount: 6,
         cardCount: 42,
         manifestVersion: 1,
