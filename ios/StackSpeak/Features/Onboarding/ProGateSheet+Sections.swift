@@ -91,10 +91,18 @@ extension ProGateSheet {
             }
             .disabled(selectedProduct == nil)
 
-            Button { restorePurchases() } label: {
-                Text("pro.gate.restore")
-                    .font(TypographyTokens.footnote.weight(.medium))
-                    .foregroundColor(theme.colors.accent)
+            HStack(spacing: theme.spacing.lg) {
+                Button { restorePurchases() } label: {
+                    Text("pro.gate.restore")
+                        .font(TypographyTokens.footnote.weight(.medium))
+                        .foregroundColor(theme.colors.accent)
+                }
+
+                Button { showRedeemSheet = true } label: {
+                    Text("pro.gate.redeem")
+                        .font(TypographyTokens.footnote.weight(.medium))
+                        .foregroundColor(theme.colors.accent)
+                }
             }
             .disabled(isPurchasing)
 

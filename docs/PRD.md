@@ -496,6 +496,8 @@ A single Pro entitlement, sold as an auto-renewing App Store subscription (Store
 
 **Entitlement rules:** purchase/renewal stores the subscription expiry; Pro is active while the expiry is in the future. Lapse happens by expiry passing — the app never revokes locally (see `ProEntitlement`).
 
+**Coupons / discounts:** Apple subscription **offer codes**. The paywall's "Redeem a Code" button presents Apple's redemption sheet; redeemed transactions flow through the normal entitlement pipeline. Codes are created and managed entirely in App Store Connect (Subscriptions → the subscription → Offer Codes) — discount type (free period, pay-up-front, pay-as-you-go), eligibility, and expiry are configured there, and **new codes never require an app update**. Sample codes for local testing live in `ios/StackSpeak.storekit` (`FREEMONTH`, `HALFOFFYEAR`).
+
 ## Out of Scope for MVP
 
 - User accounts or cloud sync

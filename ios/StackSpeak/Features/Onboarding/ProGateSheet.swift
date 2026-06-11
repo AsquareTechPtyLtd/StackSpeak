@@ -16,6 +16,7 @@ struct ProGateSheet: View {
     @State var isPurchasing = false
     @State var purchaseError: Error?
     @State var showNothingToRestore = false
+    @State var showRedeemSheet = false
 
     var body: some View {
         VStack(spacing: 0) {
@@ -48,6 +49,13 @@ struct ProGateSheet: View {
         }
         .alert("pro.gate.restore.none", isPresented: $showNothingToRestore) {
             Button("common.ok") { showNothingToRestore = false }
+        }
+        // Apple's offer-code redemption sheet. Codes are minted in App Store
+        // Connect (Subscriptions → Offer Codes); the redeemed transaction also
+        // arrives through PurchaseService's Transaction.updates listener, so
+        // the entitlement refresh here is just for an immediate dismiss.
+        .offerCodeRedemption(isPresented: $showRedeemSheet) { result in
+            handleRedemption(result)
         }
     }
 
@@ -88,6 +96,31 @@ struct ProGateSheet: View {
                 purchaseError = error
             }
         }
+    }
+
+    func handleRedemption(_ result: Result<Void, Error>) {
+        switch result {
+        case .success:
+            Task {
+                await services?.purchase.refreshEntitlement()
+                if userProgress?.isProActive == true {
+                    dismiss()
+                }
+            }
+        case .failure(let error):
+            // The sheet handles its own invalid-code messaging; only surface
+            // real failures, not the user backing out.
+            if !isUserCancellation(error) {
+                purchaseError = error
+            }
+        }
+    }
+
+    private func isUserCancellation(_ error: Error) -> Bool {
+        (error as? StoreKitError).map {
+            if case .userCancelled = $0 { return true }
+            return false
+        } ?? false
     }
 
     func restorePurchases() {
