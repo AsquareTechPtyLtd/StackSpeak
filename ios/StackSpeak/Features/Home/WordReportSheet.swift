@@ -100,40 +100,17 @@ struct WordReportSheet: View {
                 .font(TypographyTokens.footnote)
                 .foregroundColor(theme.colors.inkMuted)
 
-            ZStack(alignment: .topLeading) {
-                if additionalNotes.isEmpty {
-                    Text("report.notes.placeholder")
-                        .font(TypographyTokens.body)
-                        .foregroundColor(theme.colors.inkFaint)
-                        .padding(.horizontal, theme.spacing.sm + 5)
-                        .padding(.vertical, theme.spacing.sm + 8)
-                        .allowsHitTesting(false)
+            ThemedTextEditor(
+                placeholder: "report.notes.placeholder",
+                text: $additionalNotes,
+                focus: $notesFocused,
+                height: 100
+            )
+            .autocorrectionDisabled()
+            .onChange(of: additionalNotes) { _, newValue in
+                if newValue.count > Self.maxNotesLength {
+                    additionalNotes = String(newValue.prefix(Self.maxNotesLength))
                 }
-                TextEditor(text: $additionalNotes)
-                    .font(TypographyTokens.body)
-                    .foregroundColor(theme.colors.ink)
-                    .scrollContentBackground(.hidden)
-                    .frame(height: 100)
-                    .padding(theme.spacing.sm)
-                    .background(theme.colors.surfaceAlt)
-                    .clipShape(.rect(cornerRadius: RadiusTokens.inline))
-                    .textContentType(.none)
-                    .autocorrectionDisabled()
-                    .focused($notesFocused)
-                    .toolbar {
-                        ToolbarItemGroup(placement: .keyboard) {
-                            Spacer()
-                            Button(String(localized: "common.done")) {
-                                notesFocused = false
-                            }
-                            .foregroundColor(theme.colors.accent)
-                        }
-                    }
-                    .onChange(of: additionalNotes) { _, newValue in
-                        if newValue.count > Self.maxNotesLength {
-                            additionalNotes = String(newValue.prefix(Self.maxNotesLength))
-                        }
-                    }
             }
 
             HStack {

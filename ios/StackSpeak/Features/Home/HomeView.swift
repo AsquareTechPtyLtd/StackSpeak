@@ -159,7 +159,7 @@ struct HomeView: View {
                 wordList(progress: progress)
             }
         }
-        .frame(maxWidth: 720)
+        .frame(maxWidth: LayoutTokens.contentMaxWidth)
         .padding(.vertical, theme.spacing.md)
     }
 

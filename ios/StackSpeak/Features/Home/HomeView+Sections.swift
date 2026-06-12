@@ -29,7 +29,7 @@ extension HomeView {
         .clipShape(.rect(cornerRadius: RadiusTokens.inline))
         .overlay(
             RoundedRectangle(cornerRadius: RadiusTokens.inline)
-                .stroke(theme.colors.line, lineWidth: 0.5)
+                .stroke(theme.colors.line, lineWidth: BorderTokens.hairline)
         )
     }
 

@@ -119,7 +119,7 @@ struct LevelUpView: View {
                 Circle()
                     .strokeBorder(
                         theme.colors.accentDecoration.opacity(0.35 - Double(index) * 0.1),
-                        lineWidth: 1
+                        lineWidth: BorderTokens.regular
                     )
                     .frame(width: diameter, height: diameter)
                     .scaleEffect(ringsSettled ? 1 : 0.7)

@@ -50,7 +50,7 @@ struct CategoryFilterChip: View {
             .clipShape(.rect(cornerRadius: RadiusTokens.pill))
             .overlay(
                 RoundedRectangle(cornerRadius: RadiusTokens.pill)
-                    .stroke(border, lineWidth: isSelected ? 1.5 : 1)
+                    .stroke(border, lineWidth: isSelected ? BorderTokens.emphasis : BorderTokens.regular)
             )
         }
         .buttonStyle(.plain)

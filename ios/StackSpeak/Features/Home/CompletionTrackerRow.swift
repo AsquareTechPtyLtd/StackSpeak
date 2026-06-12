@@ -58,7 +58,7 @@ struct CompletionTrackerRow: View {
                     .strokeBorder(
                         day.isToday ? theme.colors.streak
                                     : (day.hasAnyProgress ? theme.colors.streak.opacity(0.8) : theme.colors.line),
-                        lineWidth: day.isToday ? 1.5 : 0.5
+                        lineWidth: day.isToday ? BorderTokens.emphasis : BorderTokens.hairline
                     )
             )
 

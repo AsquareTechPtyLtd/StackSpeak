@@ -29,7 +29,7 @@ struct ReviewView: View {
                         Text("review.tab.flashcards").tag(ReviewTab.flashcards)
                     }
                     .pickerStyle(.segmented)
-                    .frame(maxWidth: 280)
+                    .frame(maxWidth: LayoutTokens.controlMaxWidth)
                     .padding(.horizontal, theme.spacing.lg)
                     .padding(.top, theme.spacing.xs)
 

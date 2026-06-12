@@ -11,7 +11,7 @@ private struct CardChrome: ViewModifier {
             .clipShape(.rect(cornerRadius: RadiusTokens.card))
             .overlay(
                 RoundedRectangle(cornerRadius: RadiusTokens.card)
-                    .stroke(theme.colors.line, lineWidth: 0.5)
+                    .stroke(theme.colors.line, lineWidth: BorderTokens.hairline)
             )
     }
 }

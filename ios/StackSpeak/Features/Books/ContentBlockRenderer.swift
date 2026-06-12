@@ -114,7 +114,7 @@ struct ContentBlockView: View {
         .background(tint.opacity(0.1))
         .overlay(
             RoundedRectangle(cornerRadius: RadiusTokens.inline)
-                .stroke(tint.opacity(0.3), lineWidth: 1)
+                .stroke(tint.opacity(0.3), lineWidth: BorderTokens.regular)
         )
         .clipShape(.rect(cornerRadius: RadiusTokens.inline))
     }

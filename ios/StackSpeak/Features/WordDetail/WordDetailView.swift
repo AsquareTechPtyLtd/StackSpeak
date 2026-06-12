@@ -45,7 +45,7 @@ struct WordDetailView: View {
                     }
                     Spacer(minLength: theme.spacing.xxxl)
                 }
-                .frame(maxWidth: 720, alignment: .leading)
+                .frame(maxWidth: LayoutTokens.contentMaxWidth, alignment: .leading)
                 .padding(.horizontal, theme.spacing.xl)
                 .padding(.top, theme.spacing.lg)
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -166,7 +166,7 @@ struct WordDetailView: View {
             .clipShape(.rect(cornerRadius: RadiusTokens.inline))
             .overlay(
                 RoundedRectangle(cornerRadius: RadiusTokens.inline)
-                    .stroke(theme.colors.line, lineWidth: 0.5)
+                    .stroke(theme.colors.line, lineWidth: BorderTokens.hairline)
             )
             .accessibilityLabel(String(format: String(localized: "a11y.codeExample.format"), word.codeExampleLanguage))
         }

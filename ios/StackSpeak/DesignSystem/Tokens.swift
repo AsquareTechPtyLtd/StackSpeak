@@ -131,6 +131,26 @@ enum IconSizeTokens {
     static let hero: CGFloat = 96
 }
 
+/// Three considered stroke widths. Anything else is a smell.
+enum BorderTokens {
+    /// Resting card/row outline.
+    static let hairline: CGFloat = 0.5
+    /// Mid-weight outline for chips and decorative rings.
+    static let regular: CGFloat = 1
+    /// Selected / active / today emphasis outline.
+    static let emphasis: CGFloat = 1.5
+}
+
+/// Readable-width caps so layouts hold on iPad and large phones.
+enum LayoutTokens {
+    /// Full content column (Home, WordDetail, stack management).
+    static let contentMaxWidth: CGFloat = 720
+    /// Narrow modal column (paywall sections).
+    static let sheetMaxWidth: CGFloat = 480
+    /// Compact control row (segmented pickers).
+    static let controlMaxWidth: CGFloat = 280
+}
+
 /// Three considered radii. Anything else is a smell.
 enum RadiusTokens {
     /// Inline elements: chips, code blocks, small inputs.

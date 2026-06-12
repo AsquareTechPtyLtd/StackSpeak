@@ -39,12 +39,11 @@ struct OptionButton: View {
                     .fixedSize(horizontal: false, vertical: true)
                 Spacer(minLength: theme.spacing.sm)
             }
-            .padding(theme.spacing.md)
-            .background(fill)
-            .clipShape(.rect(cornerRadius: RadiusTokens.card))
-            .overlay(
-                RoundedRectangle(cornerRadius: RadiusTokens.card)
-                    .stroke(border, lineWidth: state != .idle || isSelected ? 1.5 : 0.5)
+            .selectableCardChrome(
+                isSelected: state != .idle || isSelected,
+                fill: fill,
+                border: border,
+                padding: theme.spacing.md
             )
         }
         .buttonStyle(.plain)

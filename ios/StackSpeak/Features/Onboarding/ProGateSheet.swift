@@ -25,7 +25,7 @@ struct ProGateSheet: View {
                     featureList
                     productPicker
                 }
-                .frame(maxWidth: 480)
+                .frame(maxWidth: LayoutTokens.sheetMaxWidth)
                 .padding(theme.spacing.xl)
             }
 

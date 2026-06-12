@@ -109,7 +109,7 @@ extension ProGateSheet {
                 .foregroundColor(theme.colors.inkFaint)
                 .multilineTextAlignment(.center)
         }
-        .frame(maxWidth: 480)
+        .frame(maxWidth: LayoutTokens.sheetMaxWidth)
         .padding(.horizontal, theme.spacing.xl)
         .padding(.vertical, theme.spacing.md)
         .background(theme.colors.bg)
