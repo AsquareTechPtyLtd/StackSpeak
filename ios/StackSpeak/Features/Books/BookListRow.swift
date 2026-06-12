@@ -15,8 +15,10 @@ struct BookListRow: View {
             cover
             VStack(alignment: .leading, spacing: theme.spacing.xs) {
                 titleRow
+                // Brand serif for the editorial one-liner — the Bear-style
+                // moment on each catalog row.
                 Text(book.summary)
-                    .font(TypographyTokens.subheadline)
+                    .font(TypographyTokens.etymology)
                     .foregroundColor(theme.colors.inkMuted)
                     .lineLimit(2)
                 metaRow
@@ -66,8 +68,9 @@ struct BookListRow: View {
 
     private var metaRow: some View {
         HStack(spacing: theme.spacing.sm) {
+            // Mono for countable metadata, matching the Home rows' treatment.
             Text(String(format: String(localized: "books.meta.format"), book.chapterCount, book.cardCount))
-                .font(TypographyTokens.caption)
+                .font(TypographyTokens.mono)
                 .foregroundColor(theme.colors.inkFaint)
             if let streak = currentStreak, streak >= 2 {
                 Spacer()
@@ -75,14 +78,14 @@ struct BookListRow: View {
                     Image(systemName: "flame.fill")
                         .foregroundColor(theme.colors.streak)
                     Text(String(format: String(localized: "books.streak.day.format"), streak))
-                        .font(TypographyTokens.caption)
+                        .font(TypographyTokens.mono)
                         .foregroundColor(theme.colors.inkMuted)
                 }
                 .accessibilityLabel(String(format: String(localized: "a11y.book.streak.format"), streak))
             } else if let ratio = completionRatio, ratio > 0 {
                 Spacer()
                 Text(String(format: String(localized: "books.completion.format"), Int(ratio * 100)))
-                    .font(TypographyTokens.caption)
+                    .font(TypographyTokens.mono)
                     .foregroundColor(theme.colors.inkMuted)
             }
         }

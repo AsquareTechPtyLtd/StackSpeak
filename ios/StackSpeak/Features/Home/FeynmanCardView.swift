@@ -155,7 +155,7 @@ struct FeynmanCardView: View {
             }
             VStack(alignment: .leading, spacing: theme.spacing.xxs) {
                 Text(word.word)
-                    .font(TypographyTokens.cardTitle)
+                    .font(TypographyTokens.cardTitleSerif)
                     .foregroundColor(theme.colors.ink)
                     .accessibilityAddTraits(.isHeader)
                 Text(word.pronunciation)

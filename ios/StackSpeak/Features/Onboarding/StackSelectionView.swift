@@ -67,8 +67,10 @@ struct StackSelectionView: View {
 
     private var headerSection: some View {
         VStack(alignment: .leading, spacing: theme.spacing.md) {
+            // Brand serif extends the onboarding glyph language onto its
+            // final page instead of dropping to token-painted Inter.
             Text("onboarding.stacks.title")
-                .font(TypographyTokens.title1)
+                .font(TypographyTokens.instrumentSerif(size: 34, relativeTo: .largeTitle))
                 .foregroundColor(theme.colors.ink)
 
             Text("onboarding.stacks.description")

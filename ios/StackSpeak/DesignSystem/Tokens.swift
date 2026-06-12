@@ -186,8 +186,8 @@ struct TypographyTokens {
         .custom("JetBrainsMono-Regular", size: size, relativeTo: .caption)
     }
 
-    static func instrumentSerif(size: CGFloat) -> Font {
-        .custom("InstrumentSerif-Italic", size: size, relativeTo: .callout)
+    static func instrumentSerif(size: CGFloat, relativeTo textStyle: Font.TextStyle = .callout) -> Font {
+        .custom("InstrumentSerif-Italic", size: size, relativeTo: textStyle)
     }
 
     // MARK: - Semantic tokens
@@ -210,8 +210,10 @@ struct TypographyTokens {
     static let etymology      = instrumentSerif(size: 17)
     static let etymologyLarge = instrumentSerif(size: 22)
 
-    /// Single tuned card title size. Density removed (F10).
-    static let cardTitle = inter(size: 26, weight: .semibold, relativeTo: .title)
+    /// Single tuned card title size. Density removed (F10). Brand serif at
+    /// the Feynman hero slot — the practice card's one editorial moment;
+    /// sized up vs. the old Inter 26 to match its smaller x-height.
+    static let cardTitleSerif = instrumentSerif(size: 32, relativeTo: .title)
 }
 
 // MARK: - Color hex initializer
