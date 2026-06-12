@@ -168,33 +168,31 @@
     },
     {
       "id": "dbi-ad3-0070-0000-0000-0000-000000000007",
-      "word": "DuckDB",
-      "pronunciation": "DUK-dee-bee",
+      "word": "Percolator",
+      "pronunciation": "PUR-kuh-lay-tur",
       "partOfSpeech": "noun",
-      "shortDefinition": "An embedded, vectorised columnar OLAP engine designed for data-science workloads running in-process.",
-      "simpleDefinition": "DuckDB is a SQLite-style embedded database — a library you link directly into your process — but designed for analytical queries rather than transactional ones. It uses a vectorised, columnar execution engine with Apache Arrow-compatible memory layout, making it dramatically faster than row-oriented engines for aggregations over large datasets.",
-      "longDefinition": "DuckDB (Mark Raasveldt and Hannes Mühleisen, CWI Amsterdam, first public release 2019, v1.0 January 2024) is the canonical modern embedded analytical engine. Its design choices stand in sharp contrast to SQLite: DuckDB uses columnar storage and vectorised execution rather than row-oriented storage and tuple-at-a-time processing. The execution engine processes batches (vectors) of 1,024 to 8,192 values per operator call, enabling SIMD auto-vectorisation and dramatically better CPU cache utilization versus the Volcano one-row-at-a-time model. The storage format stores each column as a separate contiguous run with compression (dictionary encoding, run-length encoding, bit-packing). DuckDB adopts a push-based execution model (operators push vectors downstream) rather than pull-based, improving CPU pipeline utilization on deeply pipelined modern processors. It parallelizes queries automatically across all available CPU cores using a morsel-driven parallelism model. DuckDB can query Parquet files, CSV files, Apache Arrow in-memory tables, and JSON files directly without loading data into the database first — a 'query anything' philosophy that made it ubiquitous in data engineering pipelines. The Python API (import duckdb) allows direct querying of Pandas DataFrames and NumPy arrays via Apache Arrow zero-copy. By 2026, DuckDB is standard infrastructure in Python data science: analysts run local analytical SQL against gigabytes of Parquet files in seconds without spinning up a warehouse. The database is fully ACID-compliant and supports multi-reader/single-writer concurrency via MVCC.",
-      "connector": "Think of DuckDB like a pocket calculator for data: you install it in your script like any other library, feed it a Parquet file or a Pandas DataFrame, and get SQL analytics results in milliseconds — no server, no cluster, no setup.",
-      "techContext": "DuckDB's zero-copy Arrow integration meant the data engineering team could run aggregation queries over 50 GB of in-memory Arrow batches without any serialisation overhead between the data pipeline and the query engine.",
-      "exampleSentence": "The data scientist replaced a 2-hour PySpark job with a 90-second DuckDB query running on her laptop, since DuckDB's vectorised execution over local Parquet files outperformed the cluster overhead for sub-terabyte datasets.",
+      "shortDefinition": "Google's optimistic two-phase commit protocol for distributed MVCC transactions built on top of a single-row-atomic key-value store like Bigtable.",
+      "simpleDefinition": "Percolator is the transaction protocol Google published in 2010 to add multi-row ACID transactions to Bigtable, which only offers single-row atomicity. It uses optimistic concurrency — transactions read freely, then validate and commit using a two-phase protocol. Each transaction picks a start timestamp from a centralized clock service (the timestamp oracle), writes tentative lock records alongside data, and commits by atomically promoting those locks. If a conflict is detected during commit, the transaction aborts and retries.",
+      "longDefinition": "Bigtable provides atomic writes only within a single row. Building web-scale incremental processing on top — for example, updating all rows affected by a new web crawl — requires cross-row atomicity. Percolator (Peng and Dabek, Google, OSDI 2010) solves this with an optimistic distributed transaction protocol layered entirely on top of Bigtable's single-row primitives. The protocol introduces three logical columns alongside each data column: a lock column, a write column (storing committed version pointers), and a data column (storing tentative values). A transaction proceeds in three steps. First, the client picks a start timestamp ts_start from a centralized timestamp oracle. Second, during execution the transaction reads values at ts_start (reading only committed versions) and buffers writes locally. Third, commit runs in two phases: Phase 1 (prewrite) — for each written cell, the client atomically (via Bigtable's single-row compare-and-swap) checks for conflicts (another transaction's lock, or a write more recent than ts_start) and writes a tentative lock + data record; if any cell fails, the transaction aborts. Phase 2 (commit) — the client picks a commit timestamp ts_commit from the oracle, atomically writes the write record for the primary lock (converting it to a committed write pointer), then asynchronously cleans up the secondary locks. Percolator's key insight: once the primary lock is atomically committed in Phase 2 via a single Bigtable row write, the transaction is durable even if the client crashes — readers lazily clean up secondary locks when they encounter them. Timestamp oracle is the centralized bottleneck; Google ran it as a single Chubby-replicated service issuing timestamps in batches. Percolator is the direct intellectual ancestor of TiKV's transaction layer and CockroachDB's write-intent protocol.",
+      "connector": "Think of Percolator like a hot-drink machine that drips water through grounds one drop at a time (incremental processing), but uses sticky notes (lock columns) on each cup to ensure no one grabs a half-brewed drink — once the main note is replaced with a receipt (primary commit), the brew is final even if the machine loses power.",
+      "techContext": "TiKV (the storage layer of TiDB) implements Percolator directly: every distributed transaction in TiDB runs the Percolator two-phase optimistic commit protocol over RocksDB-backed Raft groups, using the Placement Driver as the timestamp oracle.",
+      "exampleSentence": "After migrating to a Percolator-style transaction layer, the team's cross-shard transfers achieved snapshot isolation without a dedicated transaction coordinator, because the commit protocol embedded all coordination into the key-value store's atomic row operations.",
       "codeExample": {
-        "language": "python",
-        "code": "import duckdb\n\n# Query Parquet files directly — no loading required\nresult = duckdb.sql(\"\"\"\n    SELECT\n        date_trunc('month', event_time) AS month,\n        event_type,\n        COUNT(*)                        AS events,\n        COUNT(DISTINCT user_id)         AS unique_users\n    FROM read_parquet('events/2025/**/*.parquet')\n    WHERE country = 'US'\n    GROUP BY 1, 2\n    ORDER BY 1, 3 DESC\n\"\"\").df()   # returns a Pandas DataFrame via Arrow zero-copy"
+        "language": "plaintext",
+        "code": "Percolator commit flow (simplified, 2 rows: A and B):\n\nts_start = oracle.get_timestamp()   // e.g. 100\n\n// Phase 1 — Prewrite\nrow A: CAS lock=nil → lock='primary'; data@100 = new_val_A\nrow B: CAS lock=nil → lock='secondary→A'; data@100 = new_val_B\n\n// Phase 2 — Commit (atomic on primary row only)\nts_commit = oracle.get_timestamp()  // e.g. 105\nrow A: CAS lock='primary' → write@105 = data_ptr; lock=nil\n\n// Secondary lock cleanup (lazy, by next reader or async)\nrow B: write@105 = data_ptr; lock=nil\n\n// Any reader at ts >= 105 sees new_val_A and new_val_B atomically"
       },
-      "etymology": "The name is a playful nod to the duck — a bird comfortable in water, on land, and in the air — reflecting DuckDB's versatility in querying data across formats and environments. Created at CWI Amsterdam, the birthplace of the MonetDB columnar database that pioneered vectorised execution.",
+      "etymology": "Named after a percolator coffee maker — the system continuously filters updates through the data store in a drip-by-drip incremental fashion. Introduced in Peng and Dabek, 'Large-scale Incremental Processing Using Distributed Transactions and Notifications' (OSDI 2010).",
       "unlockLevel": 36,
       "tags": [
-        "olap",
-        "columnar",
-        "vectorised",
-        "embedded",
-        "frontier-2026"
+        "distributed-systems",
+        "transactions",
+        "mvcc"
       ],
-      "category": "systems",
+      "category": "concepts",
       "backingCard": {
         "bookId": "database-internals",
-        "chapterId": "dbi-ch13-modern-database-patterns",
-        "cardId": "dbi-ch13-c005"
+        "chapterId": "dbi-ch12-distributed-transactions",
+        "cardId": "dbi-ch12-c005"
       }
     },
     {
@@ -339,20 +337,20 @@
     },
     {
       "id": "dbi-ad3-0130-0000-0000-0000-000000000013",
-      "word": "Two-Phase Commit",
-      "pronunciation": "TOO-fayz KOM-it",
+      "word": "Deterministic Database",
+      "pronunciation": "deh-TUR-mih-NIS-tik DAY-tuh-bayss",
       "partOfSpeech": "noun",
-      "shortDefinition": "A distributed protocol where a coordinator asks all participants to prepare, then commits only if all agree.",
-      "simpleDefinition": "Two-phase commit (2PC) is the standard protocol for distributed atomicity. In Phase 1, the coordinator asks all participants to prepare — each writes its changes durably and votes yes or no. In Phase 2, the coordinator sends commit only if every participant voted yes; otherwise it sends abort. The fatal flaw: participants hold locks between the two phases and are blocked if the coordinator crashes.",
-      "longDefinition": "Two-phase commit is the oldest and most widely deployed distributed transaction protocol. Every database supporting distributed transactions — Postgres (via foreign data wrappers with XA), Oracle, MySQL, IBM DB2 — implements it. The X/Open XA standard (1991) defines the API between a transaction manager and resource managers. Phase 1 (Prepare): the coordinator sends PREPARE to all participants; each participant writes all transaction data to durable storage, logs its prepared state, and returns VOTE-YES (or VOTE-NO if it cannot commit). A YES vote is a durable promise — the participant must be able to commit even after a crash and restart. Phase 2 (Commit or Abort): if all participants voted YES, the coordinator writes COMMIT to its own log and sends COMMIT to all participants, which apply the changes and release locks. If any participant voted NO, the coordinator sends ABORT. The coordinator's decision record is the critical artifact: if it writes COMMIT to its log before crashing, recovery re-reads the decision and resends COMMIT; if it crashes before writing, participants time out and abort. Normal-case cost: 2 message round trips plus 3 durability writes. The fundamental problem: once all participants vote YES, they surrender autonomy — they cannot unilaterally commit or abort. If the coordinator crashes before sending Phase 2, participants are stuck in the prepared state, holding all transaction locks, unable to make progress. This blocking window is why Netflix, Uber, and others migrated away from XA-based 2PC toward event-driven sagas for long-running business transactions. Paxos commit (Gray and Lamport 2004) and Spanner's distributed transaction protocol are non-blocking alternatives.",
-      "connector": "Think of 2PC like a wedding officiant asking both parties 'Do you take this person?' before saying 'I now pronounce you married.' If the officiant collapses after both say yes but before pronouncing them married, everyone is stuck at the altar — the ceremony cannot proceed or be cancelled without the officiant.",
-      "techContext": "The team's XA distributed transaction across three microservices caused a 90-second lock storm when the coordinator process was restarted mid-transaction, blocking all writes to the affected rows until recovery completed.",
-      "exampleSentence": "Two-phase commit guaranteed atomicity for the bank's cross-account transfers but introduced an 8 ms latency overhead for the prepare round trip, which became unacceptable at 50,000 transactions per second.",
+      "shortDefinition": "A database engine that pre-orders all transactions in a global log before execution so every replica processes them identically, eliminating distributed commit coordination.",
+      "simpleDefinition": "A deterministic database assigns a global serialization order to all transactions before any replica executes them. Because every replica processes the same ordered log, they all reach the same final state without ever needing to communicate during execution — no two-phase commit, no lock negotiation across shards. The coordination cost moves from execution time (per-transaction) to pre-ordering time (batched), yielding dramatically lower latency at high transaction rates.",
+      "longDefinition": "Traditional distributed databases like those using two-phase commit (2PC) coordinate during execution: each transaction acquires locks, votes on commits, and waits for a coordinator's decision — a process that adds multiple network round trips to every transaction's latency and creates blocking windows when coordinators fail. The Calvin protocol (Thomson et al., 'Calvin: Fast Distributed Transactions for Partitioned Database Systems', SIGMOD 2012) introduced the deterministic database model to eliminate this per-transaction coordination entirely. Calvin works in three layers: (1) Sequencer layer — receives incoming transactions from clients, batches them into 10 ms epochs, and replicates each epoch to all sequencers via Paxos/Zab, establishing a globally agreed-upon serialization order before any transaction executes. (2) Scheduler layer — each partition's scheduler reads its epoch's transactions, acquires all locks in the globally agreed order (avoiding deadlock by design), and executes transactions deterministically. Because all replicas process the same ordered sequence, they never diverge — no 2PC is needed. (3) Storage layer — standard key-value or relational storage accessed by the scheduler. The key insight: 2PC is only necessary because replicas might disagree about the order of concurrent transactions. By pre-ordering transactions, Calvin converts the coordination problem from a per-transaction negotiation to a batch-level consensus — far cheaper at high throughput. Limitations: Calvin requires transactions to declare all read and write sets upfront (or use a two-round fallback for interactive transactions with conditional logic); this constraint works well for OLTP workloads with predictable access patterns but is awkward for ad-hoc queries or transactions that branch on read results. FaunaDB (now Fauna) implemented a Calvin-inspired architecture; SLOG (Ren et al., VLDB 2019) extends Calvin to support multi-master with geographically local serialization for most transactions. The model also simplifies replica recovery: a lagging replica simply replays the ordered log from any point.",
+      "connector": "Think of a deterministic database like a symphony orchestra where every musician receives the full score in advance — rather than improvising and signaling each other during the performance, everyone simply plays their part in the predetermined order, and the result is perfectly coordinated without any mid-performance negotiation.",
+      "techContext": "Fauna's Calvin-based architecture achieves globally consistent transactions across regions without 2PC by sequencing all writes through a globally replicated log; reads can be served from any replica because all replicas are guaranteed to have applied the same ordered sequence of writes.",
+      "exampleSentence": "By pre-ordering transactions in a globally replicated log, the deterministic database eliminated the 2PC latency penalty entirely, achieving 50,000 cross-shard transactions per second at under 10 ms — three times the throughput of the previous 2PC-based system at the same latency.",
       "codeExample": {
-        "language": "text",
-        "code": "Phase 1 — Prepare:\n  Coordinator → Node A: PREPARE tx_42\n  Coordinator → Node B: PREPARE tx_42\n  Node A → Coordinator: VOTE-YES  (durably logged)\n  Node B → Coordinator: VOTE-YES  (durably logged)\n\nPhase 2 — Commit (all YES):\n  Coordinator: write COMMIT to own WAL\n  Coordinator → Node A: COMMIT tx_42\n  Coordinator → Node B: COMMIT tx_42\n  Node A, B: apply, release locks, ACK\n\nBLOCKING SCENARIO:\n  Coordinator crashes after both VOTE-YES, before sending COMMIT\n  → Node A and B hold locks indefinitely — cannot commit or abort"
+        "language": "plaintext",
+        "code": "Deterministic execution (Calvin model, 2 partitions A and B):\n\nEpoch 10 (10 ms batch), sequencer replicates via Paxos:\n  Tx1: READ A.x, WRITE B.y = 5\n  Tx2: READ B.y, WRITE A.x = 3\n  Tx3: WRITE A.x = 7\n\nSchedulers receive the same ordered list:\n  Partition A scheduler: lock A.x for Tx1, Tx2, Tx3 in order\n  Partition B scheduler: lock B.y for Tx1, Tx2 in order\n\n  Execute: Tx1 → Tx2 → Tx3 in globally agreed order\n  All replicas of A and B execute identically → no 2PC needed\n  Result is deterministic on every replica"
       },
-      "etymology": "Two refers to the two phases (prepare and commit); the protocol was first described by Jim Gray in 1978 as part of the System R distributed transaction work at IBM. The X/Open XA standard (1991) formalized the interface.",
+      "etymology": "Deterministic from Latin determinare ('to fix limits') — meaning the outcome is fully determined by the input sequence with no non-deterministic branching; database is the standard term for a persistent, organized data store. The architectural concept was formalized by Thomson, Diamond, Weng, Ren, Shasha, and Abadi in 'Calvin: Fast Distributed Transactions for Partitioned Database Systems' (SIGMOD 2012).",
       "unlockLevel": 36,
       "tags": [
         "distributed-systems",
@@ -362,37 +360,35 @@
       "category": "concepts",
       "backingCard": {
         "bookId": "database-internals",
-        "chapterId": "dbi-ch12-distributed-transactions",
-        "cardId": "dbi-ch12-c005"
+        "chapterId": "dbi-ch12-distributed-transactions"
       }
     },
     {
       "id": "dbi-ad3-0140-0000-0000-0000-000000000014",
-      "word": "Paxos",
-      "pronunciation": "PAK-sos",
+      "word": "Hybrid Logical Clock",
+      "pronunciation": "HY-brid LOJ-ih-kul KLOK",
       "partOfSpeech": "noun",
-      "shortDefinition": "A consensus algorithm that guarantees agreement among N nodes even if a minority crash, using a quorum-based voting round.",
-      "simpleDefinition": "Paxos, designed by Leslie Lamport, solves the consensus problem: getting a set of distributed nodes to agree on a single value even if some nodes fail. It uses two phases — Prepare (establish a ballot number and discover any previously chosen value) and Accept (propose a value and collect majority acceptances). Any two majorities share at least one member, preventing two conflicting values from ever being chosen.",
-      "longDefinition": "Paxos (Leslie Lamport, 'The Part-Time Parliament', submitted 1989, published 1998) was the first rigorously proved solution to the distributed consensus problem. It operates with three roles: proposers (drive the protocol), acceptors (vote), and learners (observe the outcome). Phase 1a (Prepare): a proposer selects a unique ballot number n higher than any previously used and sends Prepare(n) to all acceptors. Phase 1b (Promise): each acceptor that receives Prepare(n) promises not to accept any proposal with ballot < n and reports the highest-numbered proposal it has already accepted. Phase 2a (Accept): the proposer sends Accept(n, v) to a majority of acceptors, where v is the value from the highest-numbered promise received (or the proposer's own value if none). Phase 2b (Accepted): each acceptor receiving Accept(n, v) sends Accepted(n, v) to all learners; a learner decides when it hears Accepted from a majority. The key invariant: any two majorities of N acceptors share at least one member. That common member has seen both proposals, so a new proposer always discovers the previously chosen value in Phase 1 and propagates it — ensuring only one value can ever be chosen per slot. Single-decree Paxos chooses one value. Multi-Paxos extends this to a log: elect a stable leader and skip Phase 1 for subsequent log slots while the leader holds authority. Apache ZooKeeper (Zab protocol), Google Chubby, and early Spanner replication all use Multi-Paxos variants. The liveness weakness: two proposers can duel by outbidding each other with higher ballot numbers indefinitely; Multi-Paxos with a stable leader avoids this in practice.",
-      "connector": "Think of Paxos like a parliamentary vote with one rule: you can only propose a candidate already endorsed by a previous session if one exists, and you need a majority every time. This rule makes it impossible for two different candidates to win the same seat simultaneously.",
-      "techContext": "Google Chubby uses Multi-Paxos to provide a distributed lock service that serves as the foundation for coordination across Google's internal infrastructure, tolerating the failure of any minority of its five replicas.",
-      "exampleSentence": "Paxos's quorum overlap guarantee meant that even after two of five replicas crashed simultaneously, the surviving three could elect a new leader and resume log replication without any committed entry being lost.",
+      "shortDefinition": "A distributed timestamp combining a physical NTP component with a monotonic logical counter so that causally related events always carry increasing timestamps close to wall-clock time.",
+      "simpleDefinition": "A Hybrid Logical Clock (HLC) reads the local NTP clock but also maintains a logical counter. Whenever a message arrives from another node, the HLC advances to the maximum of its own physical time, the sender's physical time, and the logical counter — then increments the counter. This ensures two things: the timestamp is always close to real wall-clock time, and causal relationships between events are never inverted, even when NTP clocks differ by a few hundred milliseconds.",
+      "longDefinition": "Pure logical clocks (Lamport clocks, vector clocks) maintain causal ordering but drift arbitrarily far from wall-clock time. Pure physical clocks (NTP) stay close to wall time but have unbounded uncertainty — two events on different machines may receive the same NTP timestamp even though one causally preceded the other. Hybrid Logical Clocks (Kulkarni et al., 'Logical Physical Clocks and Consistent Snapshots in Globally Distributed Databases', 2014) combine both dimensions. An HLC timestamp is a pair (l, c) where l is the max physical time seen so far (in NTP units) and c is a logical counter used to break ties when two events share the same l. The update rules are: (1) On local event: if NTP.now() > l, update l = NTP.now(), c = 0; else c++. (2) On receiving message with timestamp (l_m, c_m): l' = max(l, l_m, NTP.now()); if l' == l == l_m, c = max(c, c_m) + 1; elif l' == l, c++; elif l' == l_m, c = c_m + 1; else c = 0. The resulting timestamps obey two guarantees: causality — if event A causally preceded event B, then HLC(A) < HLC(B) in lexicographic order; and physical proximity — the l component never exceeds wall clock time by more than the maximum NTP drift (typically bounded in practice to a few hundred milliseconds). HLC timestamps enable causally consistent reads across distributed nodes without a centralized oracle: a reader requesting a snapshot at HLC timestamp T simply waits until its local clock advances past T before returning data. CockroachDB uses HLCs as its primary timestamp mechanism — every transaction gets an HLC start timestamp, and the uncertainty window (default 500 ms) defines the window within which a transaction must restart if it encounters a write whose timestamp is within that window. YugabyteDB also uses HLC. Compared to Google Spanner's TrueTime, HLC does not require GPS/atomic clock hardware but introduces uncertainty restarts as a correctness mechanism instead.",
+      "connector": "Think of an HLC like a traveller's watch that always shows local time but also has a hidden odometer: whenever you receive a postcard from someone further ahead in time, you set your watch forward to match and tick the odometer — so your watch is always close to real time and the odometer order always reflects who called whom first.",
+      "techContext": "CockroachDB's HLC-based timestamp assignment allows cross-node snapshot reads without a centralized oracle; the 500 ms uncertainty window bounds how long a transaction must retry when it cannot determine whether a concurrent write preceded its snapshot.",
+      "exampleSentence": "After adopting hybrid logical clocks, the team's distributed reads achieved causal consistency without a centralized timestamp server, because each node's HLC advanced on every incoming message, capturing causality in the timestamp itself.",
       "codeExample": {
-        "language": "text",
-        "code": "Paxos Phase 1 (Prepare):\n  Proposer → all Acceptors: Prepare(n=42)\n  Acceptor → Proposer: Promise(42, highest_accepted=(39, v='foo'))\n\nPaxos Phase 2 (Accept):\n  Proposer → majority of Acceptors:\n      Accept(42, v='foo')   ← must use value from highest promise\n  Acceptor → Learners: Accepted(42, 'foo')\n  Learner: decides 'foo' once majority Accepted received\n\nQuorum overlap property:\n  Any two majorities of 5 share ≥ 1 member\n  → that member has seen both proposals\n  → only one value can ever be chosen"
+        "language": "plaintext",
+        "code": "HLC update on receiving message (l_m=100, c_m=3) on node with l=98, c=0:\n\n  NTP.now() = 101          // physical clock\n  l' = max(l=98, l_m=100, NTP=101) = 101\n  l' > l and l' > l_m → c = 0\n  New HLC: (101, 0)        // advanced to physical clock, counter reset\n\nHLC update on local event (l=101, c=0, NTP=101):\n  NTP.now() = 101 == l → c = 1\n  New HLC: (101, 1)        // same physical second, counter incremented\n\nOrdering: (101,0) < (101,1) → causal order preserved ✓"
       },
-      "etymology": "Named after Paxos, a Greek island. Lamport used the fictional story of a part-time parliament on Paxos island to explain the protocol in the original paper, which reviewers initially found too whimsical and rejected before it was eventually published in 1998.",
+      "etymology": "Hybrid because it merges two clock disciplines — physical (NTP wall time) and logical (Lamport counter); logical clock from Leslie Lamport's 1978 paper on logical clocks; the HLC construction was introduced by Kulkarni, Demirbas, Madeppa, Avva, and Leone in a 2014 technical report and subsequently published in various distributed systems venues.",
       "unlockLevel": 36,
       "tags": [
         "distributed-systems",
-        "consensus",
-        "replication"
+        "clocks",
+        "consistency"
       ],
-      "category": "algorithms",
+      "category": "concepts",
       "backingCard": {
         "bookId": "database-internals",
-        "chapterId": "dbi-ch12-distributed-transactions",
-        "cardId": "dbi-ch12-c003"
+        "chapterId": "dbi-ch12-distributed-transactions"
       }
     },
     {
@@ -425,56 +421,58 @@
     },
     {
       "id": "dbi-ad3-0160-0000-0000-0000-000000000016",
-      "word": "Saga Pattern",
-      "pronunciation": "SAH-gah PAT-urn",
+      "word": "Bounded Staleness",
+      "pronunciation": "BOWN-ded STAYL-nes",
       "partOfSpeech": "noun",
-      "shortDefinition": "Breaking a long distributed transaction into a sequence of local transactions each with a compensating undo action.",
-      "simpleDefinition": "A saga decomposes a long-running business transaction into a sequence of independent local transactions, each of which commits immediately. If a later step fails, previously completed steps are reversed by compensating transactions — new transactions that undo the business effect. No distributed locks are held across steps, enabling high availability at the cost of intermediate visibility to other transactions.",
-      "longDefinition": "The saga pattern (Garcia-Molina and Salem, 'Sagas', SIGMOD 1987) was proposed as an alternative to long-running database transactions that hold locks for extended periods. 2PC holds all participant locks from prepare until the commit decision arrives — acceptable for sub-second OLTP but catastrophic for multi-step business processes (book flight, reserve hotel, charge card) that may span minutes or involve external services with variable latency. A saga splits this into T1, T2, ..., Tn — independent local transactions each of which commits immediately. If step Tk fails, compensating transactions C(k-1), C(k-2), ..., C1 execute in reverse order to undo the already-committed work. Compensating transactions are new, committed transactions — not database rollbacks. They are visible to other transactions from the moment they commit. Two coordination strategies: choreography (each service reacts to events and emits the next; no central coordinator; simple but hard to trace across many services) and orchestration (a central saga orchestrator directs each step explicitly; Netflix Conductor, Temporal/Uber Cadence implement this). Critical design constraints: compensating transactions must be idempotent (the orchestrator may retry), compensation must be written explicitly for every forward step, semantically non-reversible steps (send email, charge a card that has already been debited by the issuer) must be handled with business-level compensation (send cancellation email, issue refund), and non-compensable steps should be placed last to minimize the need for compensation. Amazon uses sagas for order processing; Netflix for content licensing; Uber for trip booking. The trade-off sagas accept explicitly: no ACID isolation — other transactions can observe intermediate saga state between T1 committing and C1 executing.",
-      "connector": "Think of a saga like booking a vacation: you reserve a flight (T1), then a hotel (T2), then a car (T3). If the car is unavailable (T3 fails), you cancel the hotel (C2) and release the flight (C1) as separate actions — each one committed immediately when made, undone individually if something goes wrong downstream.",
-      "techContext": "The team replaced a 3-service XA distributed transaction with a saga orchestrated by Temporal, eliminating the 2PC coordinator as a single point of failure and reducing average transaction latency from 150 ms to 40 ms.",
-      "exampleSentence": "The saga pattern let the payment service commit its local debit immediately while the inventory and shipping services ran their own local transactions, avoiding the 30-second lock storm that the previous 2PC implementation caused during peak load.",
+      "shortDefinition": "A consistency level guaranteeing that reads will reflect all writes completed more than a configurable time interval or version count in the past.",
+      "simpleDefinition": "Bounded staleness sits between strong consistency and eventual consistency: you configure a maximum lag — for example, 5 seconds or 100 versions — and the database guarantees that any read sees a state no older than that bound. Reads may still be slightly stale, but the staleness is capped. This lets geo-distributed systems serve reads from a local replica with a latency guarantee while still providing a meaningful consistency promise.",
+      "longDefinition": "In distributed databases replicated across regions, serving every read from the primary node guarantees strong consistency but imposes cross-region round-trip latency (50–200 ms). Serving reads from a local replica eliminates latency but can return arbitrarily stale data if the replica lags. Bounded staleness (one of the five consistency levels in Azure Cosmos DB's consistency spectrum, and analogous guarantees in Google Spanner's bounded-staleness read mode and CockroachDB's follower reads) is a middle ground: it guarantees that reads return a version of the data that is at most K versions or T seconds behind the latest committed write on the primary. Azure Cosmos DB implements bounded staleness as a configurable tuple (K, T) where K is the maximum number of stale operations and T is the maximum lag in seconds; any read is guaranteed to see all writes that committed more than max(K, T) in the past. The consistency guarantee is monotonic: within a single session a client will never see data regress to an older version than it has already observed. Operationally, bounded staleness is used when: (a) read latency must be local (sub-10 ms) but applications cannot tolerate completely unconstrained staleness; (b) analytics queries need a consistent snapshot at a point slightly in the past; or (c) compliance requires that cached data is never more than N seconds old. Google Spanner's bounded staleness read mode lets a client specify a staleness bound (e.g., 15 seconds) and Spanner will route the read to the nearest replica that is at most that far behind, eliminating cross-region round trips for most reads while providing a deterministic freshness guarantee. CockroachDB exposes this as follower reads: a query at AS OF SYSTEM TIME follower_read_timestamp() is served from a local follower rather than the leaseholder, with a bounded lag guarantee derived from the cluster's closed timestamp interval (typically 4.8 seconds by default).",
+      "connector": "Think of bounded staleness like a newspaper with a guaranteed publication delay: you know the news is at most 6 hours old, so you can trust what you read for most purposes — but you accept that the very latest breaking story might not be in it yet.",
+      "techContext": "CockroachDB's follower reads use bounded staleness semantics: a query with AS OF SYSTEM TIME follower_read_timestamp() is routed to the nearest replica and guaranteed to be no more than ~5 seconds stale, halving cross-region read latency for analytics workloads.",
+      "exampleSentence": "By configuring bounded staleness with a 10-second window, the team's reporting service read from a local Cosmos DB replica instead of round-tripping to the primary region, cutting average read latency from 180 ms to 8 ms with a firm freshness guarantee.",
       "codeExample": {
-        "language": "python",
-        "code": "# Temporal-style saga orchestration\n@workflow.defn\nclass OrderSaga:\n    @workflow.run\n    async def run(self, order: OrderInput) -> str:\n        # T1: reserve inventory\n        item_id = await workflow.execute_activity(\n            reserve_inventory, order.sku, schedule_to_close_timeout=timedelta(seconds=10)\n        )\n        try:\n            # T2: charge payment\n            charge_id = await workflow.execute_activity(\n                charge_payment, order.amount,\n                schedule_to_close_timeout=timedelta(seconds=10)\n            )\n        except ActivityError:\n            # C1: compensate — release inventory\n            await workflow.execute_activity(release_inventory, item_id)\n            raise\n        return charge_id"
+        "language": "sql",
+        "code": "-- CockroachDB: follower read with bounded staleness\n-- Reads from nearest replica; guaranteed ≤ ~5 seconds stale\nSELECT order_id, total, status\nFROM orders\nAS OF SYSTEM TIME follower_read_timestamp()\nWHERE created_at > now() - INTERVAL '24 hours';\n\n-- Explicit staleness bound (read data as of 10 seconds ago)\nSELECT COUNT(*) FROM events\nAS OF SYSTEM TIME '-10s';"
       },
-      "etymology": "Saga derives from the Old Norse word for a long narrative story of heroic deeds — chosen by Garcia-Molina and Salem to evoke a long-running transaction with an epic arc of forward steps and potential reversals.",
+      "etymology": "Bounded from Middle English bounden ('having limits'); staleness from stale (having lost freshness), used in distributed systems literature since the early 2000s to describe the age of a replica's data. The term bounded staleness was popularized by Microsoft's Azure Cosmos DB documentation and Werner Vogels's writings on consistency models.",
       "unlockLevel": 36,
       "tags": [
-        "distributed-systems",
-        "transactions",
-        "microservices"
-      ],
-      "category": "patterns",
-      "backingCard": {
-        "bookId": "database-internals",
-        "chapterId": "dbi-ch12-distributed-transactions",
-        "cardId": "dbi-ch12-c013"
-      }
-    },
-    {
-      "id": "dbi-ad3-0170-0000-0000-0000-000000000017",
-      "word": "FLP Impossibility",
-      "pronunciation": "EF-el-PEE im-pos-ih-BIL-ih-tee",
-      "partOfSpeech": "noun",
-      "shortDefinition": "Fischer-Lynch-Paterson 1985 proof: no consensus algorithm can guarantee termination in an asynchronous system if one process can fail.",
-      "simpleDefinition": "The FLP result proved that in a fully asynchronous message-passing system where messages may be arbitrarily delayed (but not lost) and even one process can fail by stopping, no deterministic algorithm can guarantee that all non-faulty processes agree on a value and terminate. A slow process is indistinguishable from a crashed one, forcing an algorithm to either block forever waiting or risk deciding without a crucial vote.",
-      "longDefinition": "Fischer, Lynch, and Paterson, 'Impossibility of Distributed Consensus with One Faulty Process' (JACM 1985, Dijkstra Prize 2001) is among the most influential theoretical results in distributed systems. It proves that in an asynchronous system — one where there is no bound on message delivery time — no deterministic consensus algorithm can simultaneously satisfy agreement (all non-faulty processes decide the same value), validity (the decided value was proposed by some process), and termination (every non-faulty process eventually decides), even if only a single process can fail by stopping (crashing). The proof uses the notion of a bivalent configuration: a system state from which either value (0 or 1) can still be reached. The argument shows that from any initial bivalent configuration, there always exists a sequence of steps that keeps the system in a bivalent state indefinitely — so no algorithm can guarantee progress. The practical escape hatches exploited by every real consensus system: timeouts (real networks are partially synchronous — asynchronous some of the time but synchronous most of the time; use timeouts to suspect failures and accept occasional wrong suspicions; Paxos, Raft, and Zab all do this), randomisation (adding random coin flips to the algorithm achieves expected-case termination even in asynchronous models; Ben-Or 1983), and partial synchrony models (Dwork, Lynch, Stockmeyer 1988 showed that eventual synchrony — a period of synchrony after an unknown GST — is sufficient for consensus with liveness). FLP applies to a precise model (deterministic, asynchronous, crash failures). Real systems operate outside this model in ways that make consensus achievable in practice.",
-      "connector": "Think of FLP like a jury deliberation where one juror might have fallen asleep (crashed) or might just be thinking slowly (delayed). You can't tell which. The theorem proves that no procedure can guarantee a verdict in finite time — you either risk waiting forever for the sleeping juror or risk deciding without their vote.",
-      "techContext": "Understanding FLP clarifies why Raft uses heartbeat timeouts: the timeout is the deliberate departure from the FLP asynchronous model — it makes the system partially synchronous, breaking the impossibility at the cost of occasional false leader elections.",
-      "exampleSentence": "FLP Impossibility explains why every production consensus algorithm — Raft, Paxos, Zab — uses timeouts rather than waiting indefinitely for slow nodes: timeouts are the mechanism that escape the asynchronous model where the theorem applies.",
-      "etymology": "FLP are the initials of the three authors: Michael J. Fischer (Yale), Nancy Lynch (MIT), and Michael S. Paterson (Warwick). Their paper 'Impossibility of Distributed Consensus with One Faulty Process' was published in the Journal of the ACM in April 1985 and won the Dijkstra Prize in Distributed Computing in 2001.",
-      "unlockLevel": 36,
-      "tags": [
-        "distributed-systems",
-        "consensus",
-        "theory"
+        "consistency",
+        "replication",
+        "distributed-systems"
       ],
       "category": "concepts",
       "backingCard": {
         "bookId": "database-internals",
-        "chapterId": "dbi-ch12-distributed-transactions",
-        "cardId": "dbi-ch12-c002"
+        "chapterId": "dbi-ch11-replication-and-failover"
+      }
+    },
+    {
+      "id": "dbi-ad3-0170-0000-0000-0000-000000000017",
+      "word": "Morsel-Driven Parallelism",
+      "pronunciation": "MOR-sul DRIV-un pair-uh-LEL-iz-um",
+      "partOfSpeech": "noun",
+      "shortDefinition": "An intra-query parallelism model that divides input data into small fixed-size chunks (morsels) dynamically claimed by worker threads, enabling work-stealing and load balancing without pre-partitioning.",
+      "simpleDefinition": "Morsel-driven parallelism splits query input data into small, fixed-size chunks called morsels — typically a few thousand rows each. A dispatcher maintains a queue of morsels; idle worker threads pull the next morsel and process it independently. Because morsels are claimed at runtime rather than pre-assigned at query compile time, fast threads automatically do more work than slow ones, balancing load across uneven hardware and skewed data without any manual tuning.",
+      "longDefinition": "Traditional parallel query engines partition data among a fixed number of threads at compile time (Exchange operators in the Volcano/iterator model). This static assignment causes severe load imbalance when data skew is high, when NUMA memory latency differs across sockets, or when threads compete with other workloads at runtime. Morsel-driven parallelism (Leis et al., HyPer, VLDB 2014) replaces static partitioning with a dynamic work-stealing scheduler. The input relation (or intermediate pipeline result) is divided into morsels of a configurable size — HyPer uses 10,000 rows, DuckDB uses 122,880 rows (called vectors of vectors) — stored in a globally accessible dispatcher. Each worker thread runs a tight pipeline loop: claim the next morsel from the dispatcher, execute the full pipeline (scan → filter → aggregate → ...) over those rows in register/cache, push results to a thread-local partial aggregate, repeat. When one thread's input is exhausted, it steals morsels from other threads' remaining work. The entire pipeline is compiled to machine code per query (LLVM in HyPer, template-instantiated C++ in DuckDB), so the tight inner loop runs at near-native speed with no virtual dispatch per row. Three properties make this superior to static partitioning: dynamic load balancing (threads naturally converge to equal utilization), NUMA awareness (morsels can be allocated from NUMA-local memory, and threads preferentially claim local morsels), and cache efficiency (morsel size is tuned so the working set fits in L2/L3 cache during pipeline execution). DuckDB adopted morsel-driven parallelism starting in v0.3; by DuckDB v1.0 it is the default execution model for all multi-core systems. The HyPer paper demonstrated near-linear speedup up to 32 cores on TPC-H benchmarks, outperforming Volcano-model parallel databases by 4–8× on aggregation-heavy queries.",
+      "connector": "Think of morsel-driven parallelism like a buffet where each worker grabs their own plate (morsel) and fills it independently — fast eaters go back for more plates immediately, and no worker ever sits idle waiting for a pre-assigned plate that has run out.",
+      "techContext": "DuckDB's morsel-driven execution is why it achieves near-linear multi-core speedup for TPC-H queries without any user-visible partitioning hints — the scheduler dynamically rebalances work across all available CPU cores during the query.",
+      "exampleSentence": "Switching from a static-partition parallel engine to morsel-driven parallelism reduced query tail latency by 60% on skewed datasets, because threads that finished their assigned partition early continued processing unclaimed morsels rather than spinning idle.",
+      "codeExample": {
+        "language": "plaintext",
+        "code": "Morsel-driven execution (3 threads, 9 morsels of 10K rows each):\n\nDispatcher queue: [M1][M2][M3][M4][M5][M6][M7][M8][M9]\n\nT1: claim M1 → pipeline(M1) → claim M4 → pipeline(M4) → ...\nT2: claim M2 → pipeline(M2) → claim M5 → pipeline(M5) → ...\nT3: claim M3 → pipeline(M3) → claim M6 → pipeline(M6) → ...\n\n  T2 processes M2 slowly (NUMA remote memory):\nT1: finishes M7 → steals M8 (T2's remaining morsel) → processes it\n\n  All threads finish at ≈ the same time (load balanced)\n  No thread idle-waits; no morsel is processed twice"
+      },
+      "etymology": "Morsel from Middle English/Old French morcel ('small piece, bite'), emphasizing the small fixed granularity of work units; driven indicates the scheduler is reactive to thread availability rather than pre-planned. The term was coined by Leis, Boncz, Kemper, and Neumann in 'Morsel-Driven Parallelism: A NUMA-Aware Query Evaluation Framework for the Many-Core Age' (VLDB 2014).",
+      "unlockLevel": 36,
+      "tags": [
+        "query-execution",
+        "parallelism",
+        "olap"
+      ],
+      "category": "concepts",
+      "backingCard": {
+        "bookId": "database-internals",
+        "chapterId": "dbi-ch13-modern-database-patterns"
       }
     },
     {
@@ -680,26 +678,30 @@
     },
     {
       "id": "dbi-ad3-0250-0000-0000-0000-000000000025",
-      "word": "Leaderless Replication",
-      "pronunciation": "LEE-dur-les rep-lih-KAY-shun",
+      "word": "Learned Index",
+      "pronunciation": "LURND IN-deks",
       "partOfSpeech": "noun",
-      "shortDefinition": "A topology with no designated primary; writes go to a quorum of nodes and are reconciled by anti-entropy.",
-      "simpleDefinition": "In leaderless replication, any node in the cluster can accept writes and reads. Writes are sent to W of N nodes; reads are sent to R of N nodes. As long as W + R > N, a read quorum always overlaps a write quorum, ensuring readers see the latest write. When nodes fall behind, an anti-entropy process detects and repairs divergence. Cassandra and Riak use this model.",
-      "longDefinition": "Leaderless replication (popularized by Amazon's Dynamo paper, DeCandia et al., SOSP 2007) eliminates the single leader that is the bottleneck and single point of failure in primary-replica topologies. Every node is equal; any node can receive any read or write. Quorum reads and writes provide configurable consistency: with replication factor N, a write to W nodes and a read from R nodes satisfies W + R > N, guaranteeing that at least one node in any read quorum has seen the latest write. Tuning W and R lets operators trade consistency for availability per-operation: W=1 maximizes write availability; R=N maximizes read consistency. The trade-offs: eventual consistency with tunable quorums (even with W + R > N, there are edge cases — a stale read can occur if a write reached W nodes but not the R nodes chosen for the next read in a concurrent window). Anti-entropy ensures nodes eventually converge: Cassandra uses a Merkle tree comparison between nodes (repair process) to detect and fix divergence; Dynamo uses a gossip protocol and anti-entropy background sync. Conflict resolution when two writes reach different quorums simultaneously: last-write-wins (LWW) with client-generated timestamps is the simplest but can silently discard concurrent writes; vector clocks (Riak) detect concurrent writes and present both to the application or a merge function; CRDTs make conflict resolution automatic for supported data types. Sloppy quorums extend availability during partitions: writes that cannot reach the required quorum are accepted by available nodes with a hint that they should be forwarded to the real owner when it recovers (hinted handoff). In 2026, leaderless replication is the standard model for Cassandra, ScyllaDB, Riak, and the Apache Cassandra-compatible services (Amazon Keyspaces, Azure Managed Instance for Apache Cassandra).",
-      "connector": "Think of leaderless replication like a jury without a foreperson: every juror's vote counts, decisions require a majority (quorum), and if a juror was absent during deliberation, they get briefed afterward (anti-entropy repair) so the record is eventually consistent.",
-      "techContext": "The team configured Cassandra with RF=3, W=2, R=2 (quorum) for strong consistency on payment records, while using W=1, R=1 for user session data where slightly stale reads were acceptable in exchange for lower write latency.",
-      "exampleSentence": "Leaderless replication with sloppy quorums allowed the Cassandra cluster to continue accepting writes during the datacenter network partition, with hinted handoff delivering the buffered writes to the isolated nodes when connectivity was restored.",
-      "etymology": "Leaderless describes the absence of a designated primary node; the pattern was described (without this name) in Amazon's Dynamo paper (DeCandia et al., SOSP 2007) and in Werner Vogels's blog posts on 'eventually consistent' storage; the term 'leaderless replication' was popularized by Martin Kleppmann in 'Designing Data-Intensive Applications' (2017).",
+      "shortDefinition": "An index structure that replaces B-tree traversal with a machine-learned model trained to predict where a key sits in a sorted array.",
+      "simpleDefinition": "A learned index trains a small regression model — anything from a linear function to a multi-layer neural network — to map a lookup key directly to its approximate position in a sorted array of records. Instead of traversing log-depth tree nodes, the lookup evaluates the model in a handful of arithmetic operations and then searches a bounded local window. For in-memory workloads with smooth key distributions, learned indexes can outperform B-trees on both space and latency.",
+      "longDefinition": "Traditional B-tree indexes use a fixed, data-agnostic structure: every lookup traverses from root to leaf regardless of the key distribution. Learned indexes (Kraska et al., 'The Case for Learned Index Structures', SIGMOD 2018) replace the tree with a model that exploits the data distribution. Conceptually, a sorted array of N keys is a cumulative distribution function (CDF): a key k maps to position CDF(k) × N. If you can approximate the CDF accurately enough, you can jump directly to a neighborhood of the target key and finish with a local binary search over a small error bound. The original paper proposed a Recursive Model Index (RMI): a two-level hierarchy of linear models where the first level routes to one of thousands of second-level models, each responsible for a key range. Each model is just a slope-and-intercept linear function; the entire structure fits in a few hundred KB versus a B-tree's megabytes for the same key set. Prediction error is bounded: the model stores the maximum under- and over-prediction error (min_err, max_err) during training, and lookup searches only the window [predicted_pos - min_err, predicted_pos + max_err]. For read-heavy workloads with stable distributions, a well-trained RMI achieves 1–3 CPU instructions per level versus 20–30 for a B-tree cache miss. Practical challenges limit adoption: (1) Inserts invalidate model predictions — most learned index research assumes read-only or append-only workloads; (2) Model training must be repeated or incrementally updated as key distributions shift; (3) Skewed distributions with long tails reduce model accuracy. Production variants address updates: ALEX (Ding et al., SIGMOD 2020) adds a gapped-array structure that accepts inserts without full retraining; PGM-Index (Ferragina and Vinciguerra, VLDB 2020) supports dynamic inserts and offers provably optimal space usage. As of 2026, learned indexes appear in production research prototypes at Google and Microsoft and in niche embedded systems, but have not displaced B-trees in mainstream relational databases due to update and distribution-shift challenges.",
+      "connector": "Think of a learned index like knowing the library by heart: instead of following a card-catalog trail from the top shelf down, you walk directly to approximately the right shelf based on your intuition about where books in that range tend to live — then glance a few books left or right to find the exact one.",
+      "techContext": "PGM-Index achieves up to 64× smaller memory footprint than a B-tree for the same key set on smooth distributions, making it attractive for read-heavy in-memory lookup tables in analytical engines where the key set is stable.",
+      "exampleSentence": "By replacing the in-memory B-tree over their sorted event log with a two-level learned index, the team halved point-lookup latency on sorted integer keys while reducing index memory from 400 MB to 18 MB.",
+      "codeExample": {
+        "language": "plaintext",
+        "code": "Learned index lookup (RMI, 2 levels):\n\n  Sorted keys: [10, 20, 30, ..., 1_000_000]   (N = 100,000 keys)\n  Level-0 model: pos_estimate = key × 0.1  (linear fit to CDF)\n  Level-1 models: 1,000 local linear models, each covering 100 keys\n\n  Query key = 75,430:\n    Level-0: 75,430 × 0.1 = 7,543  → route to L1 model #75\n    Level-1[75]: slope=0.99, intercept=7_480 → pos_estimate = 7,523\n    Error bounds: min_err=0, max_err=5\n    Binary search window: [7_523, 7_528]  (6 comparisons max)\n\n  B-tree equivalent: ~17 node comparisons across cache lines"
+      },
+      "etymology": "Learned from machine learning — the model parameters are learned from training data rather than hard-coded; index is the standard database term for a data structure that accelerates record lookups. The concept was introduced by Kraska, Beutel, Chi, Dean, and Polyzotis in 'The Case for Learned Index Structures' (SIGMOD 2018).",
       "unlockLevel": 36,
       "tags": [
-        "replication",
-        "distributed-systems",
-        "consistency"
+        "indexing",
+        "machine-learning",
+        "database-internals"
       ],
-      "category": "architecture",
+      "category": "concepts",
       "backingCard": {
         "bookId": "database-internals",
-        "chapterId": "dbi-ch11-replication-and-failover"
+        "chapterId": "dbi-ch06-indexing"
       }
     },
     {

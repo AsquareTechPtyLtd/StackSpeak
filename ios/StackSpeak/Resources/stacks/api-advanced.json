@@ -316,27 +316,27 @@
     },
     {
       "id": "api-adv-0140-0000-0000-0000-000000000014",
-      "word": "Dead-Letter Queue",
-      "pronunciation": "DED-LET-er KYOO",
+      "word": "Request Hedging",
+      "pronunciation": "reh-KWEST HEJ-ing",
       "partOfSpeech": "noun",
-      "shortDefinition": "Secondary queue where messages that fail processing repeatedly are routed for inspection and remediation.",
-      "simpleDefinition": "A dead-letter queue (DLQ) captures messages that a consumer cannot successfully process after a configured number of retries. Instead of losing the message or blocking the queue, the broker moves it to the DLQ, where engineers can inspect the failure, fix the bug, and reprocess the message — preventing a single bad message from poisoning the entire pipeline.",
-      "longDefinition": "Poison messages — malformed payloads, messages that trigger consumer bugs, or messages that arrive at a time when downstream dependencies are unavailable — would otherwise cause an infinite retry loop or silent data loss. The DLQ is the safety net. AWS SQS, Azure Service Bus, RabbitMQ, and Apache Kafka (via a pattern called 'dead letter topic') all support DLQs. A well-configured DLQ setup includes a max-receive-count or max-delivery-count threshold, CloudWatch or Datadog alerts when the DLQ depth exceeds zero, and an operational runbook for replay. Reprocessing from a DLQ must account for ordering (messages may arrive out of order relative to the main queue) and idempotency (downstream side effects may have partially occurred). The DLQ is also valuable for observability: repeated DLQ entries reveal systematic bugs in producers or consumers.",
-      "techContext": "On AWS SQS, set maxReceiveCount in the redrive policy. On Kafka, implement a DLT (dead letter topic) in the consumer with a retry topic chain (order-events → order-events.retry.1 → order-events.retry.2 → order-events.dlt). Monitor DLQ depth as a priority-one alert — a non-empty DLQ means data is being dropped from your pipeline.",
-      "exampleSentence": "An alert fired when our order-events DLQ depth exceeded zero; investigation revealed that a new schema field was missing a default, causing every consumer to throw a NullPointerException on the new event format.",
-      "etymology": "The term 'dead letter' comes from postal services — a letter that cannot be delivered or returned goes to the dead letter office; the metaphor was adopted by message queue systems in the 1990s (IBM MQ was an early user) and became ubiquitous with cloud messaging services.",
-      "connector": "A dead-letter queue is like an 'undeliverable mail' bin at a post office — letters that can't be delivered are held there rather than destroyed, so postal workers can investigate and fix the problem.",
+      "shortDefinition": "Latency technique that fires duplicate requests to multiple replicas and returns whichever response arrives first.",
+      "simpleDefinition": "Request hedging sends the same request to two or more replicas simultaneously after a short delay. Whichever replica responds first wins; the others are cancelled. It trades a small increase in backend load for a significant reduction in tail latency — the slowest percentile that determines user-perceived worst-case response time.",
+      "longDefinition": "Request hedging, described by Jeff Dean in Google's tail-at-scale research, attacks the long-tail latency problem that affects distributed systems at scale. Even if the median response time is fast, occasional slow replicas (garbage collection pauses, slow disks, hot spots) create a long tail. Hedging sends a second request to a different replica after a brief delay — typically set at the median or p75 latency so the hedge fires only when a response is abnormally late. The first response received cancels the outstanding duplicates. Because the hedge fires only for the slow tail, the increase in overall backend request volume is modest (often under 5%) while p99 and p999 latencies can improve dramatically. Hedging differs from retrying: retries fire after failure; hedging fires in parallel before any failure is detected, purely to race against slowness. Hedging is safe only for idempotent operations — reads and idempotent mutations. Non-idempotent writes (charge a card, create a record) must not be hedged without an idempotency key guaranteeing exactly-once semantics. gRPC supports hedging natively via the service config's hedging policy.",
+      "techContext": "Enable hedging in gRPC via the service config hedgingPolicy. For REST, implement it in an HTTP client interceptor: after a configurable delay (e.g., p75 of recent latencies), fire a second request to a different host and return the first response. Always measure the hedge rate to confirm load increase is acceptable.",
+      "exampleSentence": "Enabling hedging on read calls to the product catalog service reduced p99 response time from 380 ms to 95 ms with only a 3 percent increase in catalog service load.",
+      "etymology": "From the financial term 'hedging' (holding offsetting positions to reduce risk exposure); in distributed systems the concept was formalized by Jeff Dean and Luiz André Barroso in 'The Tail at Scale' (CACM, 2013), describing Google's internal latency-reduction techniques.",
+      "connector": "Request hedging is like sending two cab drivers to your address simultaneously — whichever arrives first gets your fare; the extra cost is small but you reliably avoid waiting for the one stuck in traffic.",
       "codeExample": {
-        "language": "yaml",
-        "code": "# AWS SQS Redrive Policy (CloudFormation)\nOrderQueue:\n  Type: AWS::SQS::Queue\n  Properties:\n    RedrivePolicy:\n      deadLetterTargetArn: !GetAtt OrderDLQ.Arn\n      maxReceiveCount: 3   # move to DLQ after 3 failures\n\nOrderDLQ:\n  Type: AWS::SQS::Queue\n  Properties:\n    MessageRetentionPeriod: 1209600  # 14 days\n\n# CloudWatch alarm: alert if DLQ depth > 0\nDLQDepthAlarm:\n  Type: AWS::CloudWatch::Alarm\n  Properties:\n    MetricName: ApproximateNumberOfMessagesVisible\n    Threshold: 0\n    ComparisonOperator: GreaterThanThreshold"
+        "language": "go",
+        "code": "// gRPC hedging policy (service config JSON)\nconst serviceConfig = `{\n  \"methodConfig\": [{\n    \"name\": [{\"service\": \"catalog.CatalogService\"}],\n    \"hedgingPolicy\": {\n      \"maxAttempts\": 3,\n      \"hedgingDelay\": \"50ms\",\n      \"nonFatalStatusCodes\": [\"UNAVAILABLE\", \"INTERNAL\"]\n    }\n  }]\n}`\n// gRPC fires the first request immediately.\n// If no response in 50ms, fires a second to another replica.\n// At 100ms, fires a third. Returns whichever completes first."
       },
       "unlockLevel": 16,
       "tags": [
-        "messaging",
-        "reliability",
-        "queues"
+        "performance",
+        "latency",
+        "resilience"
       ],
-      "category": "components"
+      "category": "patterns"
     },
     {
       "id": "api-adv-0150-0000-0000-0000-000000000015",
@@ -388,51 +388,51 @@
     },
     {
       "id": "api-adv-0170-0000-0000-0000-000000000017",
-      "word": "Burn Rate",
-      "pronunciation": "BERN RAYT",
+      "word": "API Federation",
+      "pronunciation": "AY-pee-EYE fed-uh-RAY-shun",
       "partOfSpeech": "noun",
-      "shortDefinition": "Rate at which an error budget is being consumed relative to the pace that would exhaust it within the SLO window.",
-      "simpleDefinition": "Burn rate measures how quickly your service is consuming its error budget compared to the rate that would exactly use it up by the end of the SLO window. A burn rate of 1 means you are on track to use your entire budget by window end. A burn rate of 10 means you will exhaust the budget ten times faster — and must page an on-call engineer immediately.",
-      "longDefinition": "Error budget alerting on raw SLI values (e.g., alert when error rate > 1 percent) produces noisy alerts: a brief spike triggers an alert even if total budget impact is trivial. Burn rate alerting, introduced in the Google SRE Workbook as 'multi-window, multi-burn-rate alerts,' is far more precise. The burn rate is calculated as: (current error rate) / (1 - SLO target). For a 99 percent SLO (1 percent error budget), a current error rate of 10 percent gives a burn rate of 10. The multi-window approach uses two windows: a long window (1 hour at burn rate 14) catches significant ongoing incidents, and a short window (5 minutes at burn rate 14) confirms the incident is still active rather than historical. This combination reduces false positives dramatically. Burn rate is the correct abstraction for translating raw metrics into actionable alerts that reflect business impact on the SLO rather than instantaneous noise.",
-      "techContext": "The multi-window burn rate alert formula from the Google SRE Workbook has been implemented in Prometheus recording rules, Datadog SLO burn rate monitors, and Grafana SLO dashboards. The canonical setup uses two severity levels: page immediately at burn rate ≥ 14 over 1 hour (budget half-gone in 3 days), and ticket at burn rate ≥ 1 over 6 hours (on track to exhaust budget).",
-      "exampleSentence": "Our burn-rate alert fired at 2 a.m. when a bad deployment drove a 15x burn rate on the checkout SLO, giving the on-call engineer a precise measure of impact rather than a raw error-rate alarm.",
-      "etymology": "Burn rate as a concept entered SRE vocabulary through the Google SRE Workbook (2018), authored by Alex Hidalgo and colleagues; it borrowed the startup finance term 'burn rate' (rate of cash consumption) and applied it to error budget consumption, making budget exhaustion timing intuitive.",
-      "connector": "Burn rate is like a speedometer for your error budget — a reading of 1 means you'll reach zero right at the end of the month; a reading of 10 means you're speeding toward empty and need to brake now.",
+      "shortDefinition": "Composing multiple domain-owned API subgraphs or sub-surfaces into one unified gateway the client queries.",
+      "simpleDefinition": "API federation lets each team own and evolve their portion of the API surface independently while presenting consumers with a single, unified interface. In GraphQL federation, each service publishes a subgraph schema; a gateway merges them into a supergraph. In REST federation, an API gateway aggregates routes from multiple backend teams. Clients see one address; ownership is distributed.",
+      "longDefinition": "API federation addresses the organizational tension in large API platforms: a single centrally-owned API becomes a bottleneck — every field addition, deprecation, or schema change requires a central API team's approval. Federation decentralizes ownership by distributing the API surface to the teams closest to the data. The most fully-specified form is GraphQL Federation (Apollo Federation Specification, v1 2019, v2 2022): each domain service publishes a subgraph schema using the @key and @external directives to declare entity ownership; a router (Apollo Router, GraphQL Hive Router) composes these into a supergraph schema at deploy time. At query time, the router executes a query plan that fetches fields from the appropriate subgraph services in parallel or sequence. The result is transparent to the client: one GraphQL endpoint, one response. In REST, federation is less formally specified but practically achieved via gateway route aggregation: each service team registers their routes with a gateway (Kong, Apigee, AWS API Gateway), and the gateway presents a unified base URL while routing to independent backend deployments. Federation's key benefit is that teams can deploy schema changes independently as long as they respect additive-only compatibility rules; the supergraph composition step acts as the validation gate.",
+      "techContext": "Apollo Rover CLI validates subgraph schema composition before deployment, preventing runtime breakage. Each subgraph registers with Apollo GraphOS; the Router polls for schema updates and applies them hot without restart. Schema checks in CI enforce that no subgraph change breaks the composed supergraph.",
+      "exampleSentence": "After introducing GraphQL federation, the products team shipped a new sustainabilityScore field the same morning they wrote it — no coordination with the orders, reviews, or search teams required.",
+      "etymology": "Federation from Latin foederatus ('united by treaty, allied'); in computing the term was applied to identity systems (federated identity) before being adopted by the Apollo GraphQL team in 2019 for their schema composition specification.",
+      "connector": "API federation is like a federation of sovereign states under a common currency — each nation (service team) controls its own territory, but citizens (clients) transact with one unified system.",
       "codeExample": {
-        "language": "yaml",
-        "code": "# Prometheus — multi-window burn rate alert\n# SLO: 99% availability (1% error budget)\ngroups:\n  - name: slo-burn\n    rules:\n      - alert: HighBurnRate\n        expr: |\n          (\n            job:request_error_rate1h:ratio > (14 * 0.01)\n            and\n            job:request_error_rate5m:ratio > (14 * 0.01)\n          )\n        for: 0m\n        labels:\n          severity: page\n        annotations:\n          summary: \"Burn rate {{ $value }}x — SLO budget exhausted in < 3 days\""
+        "language": "graphql",
+        "code": "# Products subgraph — owns the Product entity\ntype Product @key(fields: \"id\") {\n  id: ID!\n  name: String!\n  price: Float!\n  sustainabilityScore: Float  # added by products team independently\n}\n\n# Orders subgraph — references Product owned by products subgraph\ntype Order @key(fields: \"id\") {\n  id: ID!\n  lineItems: [LineItem!]!\n}\ntype LineItem {\n  quantity: Int!\n  product: Product!  # router resolves this from products subgraph\n}\n\n# Client sees one unified supergraph — no cross-team coordination needed"
       },
       "unlockLevel": 16,
       "tags": [
-        "observability",
-        "sre",
-        "alerting"
+        "graphql",
+        "api",
+        "architecture"
       ],
-      "category": "concepts"
+      "category": "patterns"
     },
     {
       "id": "api-adv-0180-0000-0000-0000-000000000018",
-      "word": "W3C Trace Context",
-      "pronunciation": "DUB-ul-yoo THREE SEE TRAYS KON-tekst",
+      "word": "API-First Design",
+      "pronunciation": "AY-pee-EYE FURST dih-ZYN",
       "partOfSpeech": "noun",
-      "shortDefinition": "W3C standard HTTP headers (traceparent and tracestate) for propagating distributed trace identifiers across services.",
-      "simpleDefinition": "W3C Trace Context defines two HTTP headers — traceparent and tracestate — that carry a trace ID and span ID across service boundaries. Any service that receives these headers can attach its work to the existing trace, enabling end-to-end distributed tracing across systems that may use different tracing vendors or frameworks.",
-      "longDefinition": "Before W3C Trace Context (W3C Recommendation, February 2020), every tracing vendor used proprietary headers: Zipkin used X-B3-TraceId / X-B3-SpanId, Jaeger used uber-trace-id, Datadog used x-datadog-trace-id. When a trace crossed a vendor boundary, context was lost. The traceparent header carries four fields: version, trace-id (16-byte hex), parent-id (8-byte hex identifying the sending span), and trace-flags (a bitmask with a 'sampled' bit). The tracestate header carries vendor-specific key-value pairs without breaking interoperability. OpenTelemetry SDK implementations automatically inject and extract these headers from outgoing and incoming HTTP requests. W3C Trace Context is now implemented in OpenTelemetry, Jaeger, Zipkin, Datadog, Honeycomb, AWS X-Ray, and Google Cloud Trace, making cross-vendor trace propagation work automatically when all services use conforming SDKs.",
-      "techContext": "OpenTelemetry propagates W3C Trace Context by default. If you're running a heterogeneous stack (some services on Datadog, some on Jaeger), W3C Trace Context is the standard that keeps traces connected across vendor boundaries. AWS X-Ray uses a proprietary X-Amzn-Trace-Id header but provides a compatibility layer; migrating to W3C Trace Context is recommended for portability.",
-      "exampleSentence": "After upgrading all services to emit and consume W3C Trace Context headers, we could finally trace a single user request from our Nginx gateway through five microservices spanning two cloud accounts on one timeline.",
-      "etymology": "W3C Trace Context was developed by the W3C Distributed Tracing Working Group (2017–2020), a collaboration between Google, Microsoft, Dynatrace, and the OpenCensus/OpenTelemetry community; it became a W3C Recommendation in February 2020.",
-      "connector": "W3C Trace Context is like a baton in a relay race — each runner (service) receives it, adds their leg to the official record, and passes it on, so the full race route can be reconstructed from any finish line.",
+      "shortDefinition": "Methodology where the API contract is designed, reviewed, and frozen as a specification before any implementation begins.",
+      "simpleDefinition": "API-first design means writing the API contract — an OpenAPI or AsyncAPI specification — and getting agreement from all consumers before a single line of implementation code is written. Teams build against the contract using mock servers while the real implementation is developed in parallel. This eliminates the common failure mode of discovering interface mismatches only when systems are integrated.",
+      "longDefinition": "API-first design inverts the traditional workflow in which a server is built, then documented, then integrated. Instead, the API contract is treated as the primary design artifact: it is authored in OpenAPI or AsyncAPI, reviewed by consumers for usability, and version-controlled before implementation begins. Consumer teams can generate typed client SDKs and run mock servers (Prism, Microcks) against the contract immediately, starting frontend or integration development in parallel with the backend. The design-before-implement constraint forces early resolution of interface questions — field names, error codes, pagination strategy, versioning strategy — that are cheap to change in a YAML file but expensive to change after deployment. API-first aligns with design-by-contract thinking: the specification is the source of truth, and the implementation must satisfy it. Contract test suites (Dredd, Schemathesis) verify at CI time that the live server matches the specification. Platforms like Stoplight Studio, Speakeasy, and APIMatic provide tooling for collaborative API design review. The pattern is particularly valuable when multiple independent teams consume the same API: the contract review step creates a natural cross-team alignment gate before any code is shipped.",
+      "techContext": "Use Stoplight Studio or a plain OpenAPI YAML file in the repository as the design artifact. Run Prism as a mock server so consumers can start integration work immediately. Add Schemathesis or Dredd to CI to verify the live implementation matches the spec on every pull request.",
+      "exampleSentence": "API-first design caught a critical naming inconsistency between the iOS and Android teams' expectations before a single line of server code was written, saving an estimated two weeks of post-integration rework.",
+      "etymology": "The term emerged in the API management discourse of the 2010s as a counterpoint to code-first API documentation; 'design-first' and 'API-first' are used interchangeably and were popularized by Swagger/OpenAPI tooling vendors including Stoplight and Postman.",
+      "connector": "API-first design is like drafting the blueprints before breaking ground — the architect, plumbers, and electricians all review the plans before construction starts, because changing a wall on paper costs hours but changing it in concrete costs weeks.",
       "codeExample": {
-        "language": "http",
-        "code": "# Incoming request from upstream service\nGET /payments/charge HTTP/1.1\ntraceparent: 00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01\ntracestate: vendorname=opaquevalue\n\n# traceparent breakdown:\n# 00                              — version\n# 4bf92f3577b34da6a3ce929d0e0e4736 — trace-id (16 bytes, hex)\n# 00f067aa0ba902b7                — parent-id (8 bytes, hex)\n# 01                              — flags (01 = sampled)"
+        "language": "yaml",
+        "code": "# Step 1: Author the contract before implementation\n# orders-api.yaml (OpenAPI 3.1)\nopenapi: \"3.1.0\"\ninfo:\n  title: Orders API\n  version: \"1.0\"\npaths:\n  /orders:\n    post:\n      summary: Place an order\n      requestBody:\n        required: true\n        content:\n          application/json:\n            schema:\n              required: [customerId, items]\n              properties:\n                customerId: { type: string }\n                items:\n                  type: array\n                  items:\n                    properties:\n                      sku: { type: string }\n                      qty: { type: integer }\n      responses:\n        \"202\": { description: Order accepted }\n# Step 2: Run Prism mock — consumers integrate before backend exists\n# prism mock orders-api.yaml --port 4010"
       },
       "unlockLevel": 16,
       "tags": [
-        "observability",
-        "tracing",
-        "standards"
+        "api",
+        "design",
+        "process"
       ],
-      "category": "qualities"
+      "category": "processes"
     },
     {
       "id": "api-adv-0190-0000-0000-0000-000000000019",

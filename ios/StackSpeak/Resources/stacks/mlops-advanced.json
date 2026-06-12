@@ -335,32 +335,32 @@
     },
     {
       "id": "mlo-adv-0130-0000-0000-0000-000000000013",
-      "word": "Delta Lake",
-      "pronunciation": "DEL-tah LAYK",
+      "word": "gradient checkpointing",
+      "pronunciation": "GRAY-dee-ent CHEK-poynt-ing",
       "partOfSpeech": "noun",
-      "shortDefinition": "An open-source storage layer that adds ACID transactions, schema enforcement, and time travel to data lake object storage, widely used for data versioning in ML.",
-      "simpleDefinition": "Plain object storage (S3, GCS) is cheap and scalable but has no transactions, no schema enforcement, and no way to see what data looked like at a past point in time. Delta Lake wraps object storage with a transaction log that makes it behave like a proper database: you get ACID writes, the ability to query historical snapshots via time travel, and automatic schema validation that prevents garbage data from corrupting a training dataset.",
-      "longDefinition": "Delta Lake is an open-source storage format and protocol developed by Databricks and open-sourced in 2019. It adds a transaction log (the Delta Log) to standard Parquet files on object storage, enabling four capabilities that plain Parquet cannot provide. First, ACID transactions: concurrent writes to the same table are serialized through the log, preventing partial writes and read-write conflicts that plague object storage at scale. Second, time travel: because every write appends a new commit to the Delta Log, you can query the table as it existed at any past timestamp or version number — essential for reproducing training datasets. Third, schema enforcement: Delta Lake validates the schema of incoming data against the registered table schema and rejects writes that would introduce type mismatches or missing columns, preventing silent data quality regressions. Fourth, schema evolution: controlled backward-compatible additions are allowed (adding a nullable column) while breaking changes require explicit permission. In the MLOps context, Delta Lake is the primary mechanism for data versioning in Lakehouse architectures. A training pipeline can pin its dataset read to a specific version ('as of version 42') and guarantee that rerunning the pipeline six months later will read identical data. Delta Lake is natively integrated into Databricks, Spark 3.x, and Apache Flink, and has been adopted by Snowflake, BigQuery, and Azure Synapse as an open format they can query.",
-      "connector": "Think of Delta Lake like a Git repository for your data — every write is a commit with a SHA, you can check out any past state with time travel, and concurrent writers don't corrupt each other's changes because the transaction log serializes them.",
-      "techContext": "Our training pipeline reads from a Delta Lake table pinned to a specific version, ensuring that any retraining run on the same code reproduces the same dataset regardless of when it executes.",
-      "exampleSentence": "After migrating training data to Delta Lake, we could finally answer audit questions like 'what features did the model use on March 15th?' by time-traveling to the table state on that date.",
+      "shortDefinition": "A memory-saving training technique that discards intermediate activations during the forward pass and recomputes them on demand during backpropagation.",
+      "simpleDefinition": "Training deep neural networks normally stores every layer's activations in GPU memory so backpropagation can use them to compute gradients. Gradient checkpointing throws most of those activations away immediately, then recomputes them from the nearest saved checkpoint when the backward pass needs them. You trade extra compute (roughly 30–40% more FLOPs) for a dramatic reduction in activation memory — enabling much larger batches or models on the same hardware.",
+      "longDefinition": "During a standard neural network forward pass, the output activations of every layer are retained in memory because the backward pass needs them to compute gradients via the chain rule. For a large transformer with thousands of layers and large sequence lengths, these stored activations can consume tens of gigabytes of GPU memory — often more than the model parameters themselves. Gradient checkpointing (also called activation checkpointing or rematerialization) breaks the computation graph into segments, saving only the activations at segment boundaries (the 'checkpoints') and discarding all intermediate activations within each segment. During backpropagation, when the gradients for a discarded activation are needed, the forward computation for that segment is re-run from the nearest checkpoint to recompute it. The memory-compute trade-off is configurable: checkpointing every layer saves the most memory (activation memory becomes O(sqrt(N)) rather than O(N) in layer count) but doubles the compute; checkpointing every K layers gives proportionally less memory saving with proportionally less overhead. In PyTorch, `torch.utils.checkpoint.checkpoint()` implements this transparently for arbitrary function blocks. For transformer models, `gradient_checkpointing_enable()` in Hugging Face Transformers applies it to all attention and MLP blocks with a single method call. The technique is now standard for any LLM fine-tuning or pretraining run where activation memory would otherwise limit batch size or sequence length.",
+      "connector": "Think of gradient checkpointing like a hiker who, instead of carrying full gear at all times, drops most of it at designated waypoints and retrieves it on the return trip — the hike takes longer but the load is sustainable.",
+      "techContext": "In practice, gradient checkpointing is essential for fine-tuning large language models: a 7B parameter model at bfloat16 requires ~14 GB for parameters, but storing all transformer block activations for a 2048-token sequence on a 32-example batch can require 40–80 GB more. Enabling gradient checkpointing cuts the activation footprint by 8–10× at the cost of roughly 30% longer training time per step.",
+      "exampleSentence": "Enabling gradient checkpointing on the 13B parameter fine-tuning run cut GPU activation memory from 48 GB to 6 GB, allowing a batch size of 8 on a single A100 that previously ran out of memory at batch size 1.",
       "codeExample": {
         "language": "python",
-        "code": "from delta.tables import DeltaTable\nfrom pyspark.sql import SparkSession\n\nspark = SparkSession.builder \\\n    .config(\"spark.jars.packages\", \"io.delta:delta-core_2.12:2.4.0\") \\\n    .config(\"spark.sql.extensions\", \"io.delta.sql.DeltaSparkSessionExtension\") \\\n    .getOrCreate()\n\n# Pin training read to a specific version for reproducibility\ndf_training = spark.read \\\n    .format(\"delta\") \\\n    .option(\"versionAsOf\", 42) \\\n    .load(\"s3://my-bucket/training-features\")\n\n# Time travel by timestamp\ndf_snapshot = spark.read \\\n    .format(\"delta\") \\\n    .option(\"timestampAsOf\", \"2024-03-15\") \\\n    .load(\"s3://my-bucket/training-features\")"
+        "code": "from transformers import AutoModelForCausalLM, TrainingArguments, Trainer\n\n# Load model and enable gradient checkpointing\nmodel = AutoModelForCausalLM.from_pretrained(\n    \"meta-llama/Llama-2-7b-hf\",\n    torch_dtype=\"bfloat16\",\n    device_map=\"auto\",\n)\nmodel.gradient_checkpointing_enable()  # trades ~30% compute for ~8x less activation memory\n\n# Alternative: PyTorch primitive for custom modules\nimport torch\nfrom torch.utils.checkpoint import checkpoint\n\nclass CheckpointedTransformerBlock(torch.nn.Module):\n    def forward(self, x):\n        # Activations within this call are NOT stored; recomputed on backward\n        return checkpoint(self._forward_impl, x, use_reentrant=False)\n\n    def _forward_impl(self, x):\n        return self.attn(self.norm1(x)) + self.mlp(self.norm2(x))"
       },
-      "etymology": "Named for the Greek letter delta (Δ), symbolizing change and difference; developed by Databricks and open-sourced in 2019; 'Lake' refers to the data lake storage paradigm it enhances.",
+      "etymology": "From 'gradient' (the partial derivatives computed during backpropagation) and 'checkpointing' (saving intermediate states at intervals to enable recovery or resumption); the technique was formalized in the automatic differentiation literature and popularized for deep learning by Chen et al. (2016) in 'Training Deep Nets with Sublinear Memory Cost'.",
       "unlockLevel": 16,
       "tags": [
         "mlops",
-        "data-versioning",
-        "storage",
-        "infrastructure"
+        "training",
+        "memory-optimization",
+        "deep-learning"
       ],
-      "category": "tools",
+      "category": "concepts",
       "backingCard": {
         "bookId": "mlops-patterns",
-        "chapterId": "mlo-ch03-data-versioning",
-        "cardId": "mlo-ch03-c006"
+        "chapterId": "mlo-ch07-training-infrastructure",
+        "cardId": "mlo-ch07-c009"
       }
     },
     {

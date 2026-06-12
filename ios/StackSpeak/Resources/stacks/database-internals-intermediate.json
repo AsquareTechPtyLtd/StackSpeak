@@ -91,26 +91,25 @@
     },
     {
       "id": "dbi-int-0040-0000-0000-0000-000000000004",
-      "word": "B-Tree",
-      "pronunciation": "BEE TREE",
+      "word": "HOT Update",
+      "pronunciation": "HOT UP-dayt",
       "partOfSpeech": "noun",
-      "shortDefinition": "A self-balancing tree index where all leaves are at the same depth and nodes pack many keys for I/O efficiency.",
-      "simpleDefinition": "A B-tree is the tree index structure that powers nearly every relational database. Its defining property is that all leaf nodes are at the same depth, so every key lookup costs exactly the same number of page reads. Nodes are wide — hundreds of keys per node — so the tree is very shallow: a billion-row table typically needs only three or four levels.",
-      "longDefinition": "Rudolf Bayer and Edward McCreight introduced the B-tree in 1972 to index data on block-addressed disk. The key insight: disk I/O is not byte-granular — you read and write entire blocks. A good index structure must minimize block reads, not key comparisons. A B-tree of order t obeys three invariants: all leaves share the same depth (height-balanced); every non-root internal node holds between t and 2t keys (bounded fan-out, giving O(log_t N) height); and keys within each node are sorted. With a branching factor of 500 (realistic for 8 KB pages with 16-byte keys), a tree over a billion rows is at most four levels deep. Because the root and upper levels are heavily accessed, they stay permanently hot in the buffer pool, making the practical cost of most lookups a single leaf-page I/O. The B-tree supports both point lookups (O(log N)) and range scans (follow leaf-level sibling pointers). In database engineering, 'B-tree' almost always means the B+ tree variant described next.",
-      "connector": "Think of a B-tree like a well-organized filing cabinet with a hierarchy of labeled dividers — each divider points to a narrower range of folders until you reach the exact document, and every drawer is exactly the same depth.",
-      "techContext": "Every CREATE INDEX in PostgreSQL and MySQL creates a B-tree by default. Understanding B-tree structure explains why sequential primary keys outperform random UUIDs: sequential inserts always hit the right-most leaf, while random inserts scatter across all pages and force constant 50/50 splits.",
-      "exampleSentence": "With a B-tree branching factor of 500, our 200-million-row orders table fits in a three-level index, meaning every primary key lookup touches at most three pages after the root warms in the buffer pool.",
+      "shortDefinition": "A PostgreSQL optimization that skips index updates when an updated row's new version fits on the same heap page as the old version and no indexed column changed.",
+      "simpleDefinition": "Normally, updating any row in PostgreSQL creates a new row version on any heap page with space, and every index on the table must add a pointer to that new version. A HOT (Heap-Only Tuple) update short-circuits this: if the new version fits on the same heap page as the old version and none of the indexed columns changed, PostgreSQL skips all index updates and instead adds a chain pointer from the old tuple to the new one within the page. Index entries continue pointing to the old tuple, which redirects to the new one at page-scan time.",
+      "longDefinition": "PostgreSQL's MVCC model creates a new physical tuple for every UPDATE — it never modifies a tuple in place. Without optimization, this means every UPDATE on a table with N indexes generates N new index entries (one per index) plus the new heap tuple. For a table with 10 indexes, a single UPDATE touching only non-indexed columns writes 11 items: 1 heap tuple + 10 index entries. HOT (Heap-Only Tuple) optimization eliminates the index writes entirely when two conditions are met: (1) the UPDATE touches no indexed column, and (2) the new tuple version fits on the same heap page as the old version (determined by fillfactor-reserved free space). When both conditions hold, PostgreSQL marks the new tuple with the HEAP_ONLY_TUPLE flag and writes a chain pointer (ctid redirect) from the old tuple to the new tuple — all within the same page. Indexes continue pointing to the old tuple's item pointer, which the heap scan follows to reach the new version. This makes HOT updates write-amplification equivalent to a single-page modification: only the heap page is dirtied, not the index pages. HOT also enables same-page VACUUM: the old dead tuple can be pruned and its space reclaimed during a normal heap page scan (HOT pruning) without a full VACUUM pass touching the index, because no index entry points to the dead tuple. The fill factor setting on a table directly controls HOT eligibility: a lower fill factor (e.g., 70) leaves more free space on each page for HOT chains, increasing the likelihood that updated tuples land on the same page. High-churn tables (frequently updated rows with a stable index column set) benefit most from a low fill factor. HOT was introduced in PostgreSQL 8.3 (2008). Limitations: HOT chains can grow long on heavily updated pages if VACUUM does not run frequently enough; the planner must follow chains during index scans, adding a small per-chain overhead.",
+      "connector": "Think of HOT update like editing a footnote in a printed book: instead of reprinting the entire index with a new page reference, you cross out the footnote in place and write the new text right below it on the same page — anyone following the old index entry just reads the correction directly.",
+      "techContext": "Setting fillfactor=70 on a high-UPDATE table reserves 30% of each page for HOT chains, ensuring most row updates stay on the same page and skip all index maintenance — dramatically reducing write amplification and autovacuum frequency on hot-row tables.",
+      "exampleSentence": "After setting fillfactor=70 on the sessions table and confirming that the indexed user_id column was never updated, the team observed a 65% drop in index write I/O because nearly all updates qualified as HOT and bypassed all five secondary indexes.",
       "codeExample": {
         "language": "sql",
-        "code": "-- PostgreSQL: create a B-tree index (default type)\nCREATE INDEX idx_orders_created ON orders (created_at);\n\n-- Inspect index depth (number of B-tree levels)\nSELECT * FROM bt_metap('idx_orders_created');\n-- Returns: magic, version, root, level (height), fastroot, ..."
+        "code": "-- Create table with fillfactor=70 to reserve space for HOT chains\nCREATE TABLE sessions (\n  session_id  uuid PRIMARY KEY,\n  user_id     bigint NOT NULL,           -- indexed, never updated\n  last_seen   timestamptz NOT NULL,      -- updated frequently\n  data        jsonb\n) WITH (fillfactor = 70);\n\nCREATE INDEX idx_sessions_user ON sessions (user_id);\n\n-- This UPDATE qualifies as HOT: only last_seen changes, not user_id\nUPDATE sessions SET last_seen = now() WHERE session_id = $1;\n\n-- Verify HOT updates via pg_stat_user_tables\nSELECT n_tup_upd, n_tup_hot_upd,\n       round(100.0 * n_tup_hot_upd / NULLIF(n_tup_upd,0), 1) AS hot_pct\nFROM pg_stat_user_tables\nWHERE relname = 'sessions';"
       },
-      "etymology": "The 'B' was never authoritatively defined by Bayer himself; common folk interpretations include Balanced, Broad, and Boeing (where the research was conducted). The invariant — not the name — is what matters.",
+      "etymology": "HOT is an acronym for Heap-Only Tuple — 'heap-only' because the new tuple version exists only in the heap (the main table storage) and is not referenced by any index entry. Introduced in PostgreSQL 8.3 by Pavan Deolasee and others as a targeted optimization for high-update-rate tables.",
       "unlockLevel": 6,
       "tags": [
-        "indexing",
-        "b-tree",
+        "postgres",
         "storage",
-        "internals"
+        "indexing"
       ],
       "category": "concepts",
       "backingCard": {
@@ -121,28 +120,31 @@
     },
     {
       "id": "dbi-int-0050-0000-0000-0000-000000000005",
-      "word": "B+ Tree",
-      "pronunciation": "BEE-PLUS TREE",
+      "word": "GiST Index",
+      "pronunciation": "JIST IN-deks",
       "partOfSpeech": "noun",
-      "shortDefinition": "The dominant B-tree variant: data lives only in leaves, which form a linked list enabling fast range scans.",
-      "simpleDefinition": "The B+ tree improves on the original B-tree with one key change: full data records live only at the leaf level; internal nodes hold only routing keys and child pointers. This lets internal nodes pack more keys per page (higher fan-out, shallower tree) and enables O(1) range scans by following the linked list of leaf pages. PostgreSQL, InnoDB, Oracle, and SQL Server all implement B+ trees.",
-      "longDefinition": "In a classic B-tree, internal nodes carry both routing keys and data records, which limits how many child pointers fit per page. The B+ tree separates these concerns: internal nodes are routing-only (keys + pointers, no data), and leaf nodes carry the full records. Every logical key appearing as a separator in an internal node is also present — with its data — in a leaf. The practical consequences are significant. First, higher fan-out: an InnoDB internal page (16 KB) holds roughly 1 000 key-pointer pairs, allowing a three-level tree to index a trillion rows. Second, efficient range scans: all leaves form a doubly-linked list in key order. A range query seeks to the first matching leaf and follows sibling pointers without returning to the root — critical for ORDER BY, BETWEEN, and index range scans. Third, predictable depth: because all data is at leaf level, every point lookup traverses the same number of levels. In practice, the terms B-tree and B+ tree are used interchangeably in database documentation; when a vendor says 'B-tree index,' they almost always mean a B+ tree.",
-      "connector": "Think of a B+ tree like a library card catalog where the drawers (internal nodes) contain only labels pointing you to the right shelf, while the actual books (data) are all on the bottom shelf in alphabetical order — you can walk along that shelf for a range lookup without climbing back to the top.",
-      "techContext": "The B+ tree leaf linked-list is what makes ORDER BY on an indexed column fast: the database seeks to the first key and walks the leaf chain in sorted order, fetching only the pages it needs.",
-      "exampleSentence": "The range query on created_at finished in 12 ms instead of 4 seconds because the B+ tree's leaf linked-list let the executor walk 200 pages sequentially without touching the upper tree levels.",
-      "etymology": "The '+' variant was popularized by Knuth's The Art of Computer Programming (Vol. 3, 1973); 'plus' denotes the addition of the leaf-level linked list to the original B-tree design.",
+      "shortDefinition": "PostgreSQL's Generalized Search Tree — an extensible index framework that lets user-defined types plug in their own search predicates and distance functions.",
+      "simpleDefinition": "A GiST index is not one specific tree structure but a framework: you provide four operator class methods (consistent, union, penalty, picksplit) and GiST handles the tree mechanics — node splitting, search traversal, buffering, and concurrency. This extensibility lets a single framework back full-text search (tsvector), geometric containment (PostGIS), range overlap, and nearest-neighbor queries, all using the same B-tree-like page format.",
+      "longDefinition": "B-trees can only answer equality and ordering predicates (=, <, >, BETWEEN) on scalar types. Many useful queries — does this point fall inside this polygon? does this time range overlap that one? what are the 5 nearest restaurants? — require different search semantics that a B-tree cannot express. GiST (Generalized Search Tree) (Hellerstein, Naughton, and Pfeffer, VLDB 1995) provides a generic infrastructure for building balanced, disk-resident, multi-dimensional index trees. Instead of hard-coding split and search logic, GiST delegates to a pluggable operator class that implements four core methods: consistent(entry, query) — does the index node possibly contain results matching query?; union(entries) — compute a bounding predicate that covers all entries in a node; penalty(entry1, entry2) — cost of inserting entry2 into a subtree rooted at entry1 (guides the descent); picksplit(entries) — split a full node into two groups. With these four primitives, GiST implements an R-tree for geometric data, a B+-tree for sorted data, or any other tree variant where the search predicate is monotone (if a predicate is false for a node, it is false for all children). PostgreSQL ships GiST operator classes for: tsvector (full-text search, using query containment as the consistency predicate), geometric types (point, box, circle, polygon — using bounding-box containment), range types (tsrange, numrange — using range overlap), and arrays. PostGIS extends GiST with an R-tree operator class for geography and geometry types, enabling the spatial queries (ST_Intersects, ST_DWithin, KNN) that power mapping applications. GiST also supports nearest-neighbor (KNN) index scans via an optional distance() operator class method: EXPLAIN an ORDER BY ... <-> ... (KNN distance) query and you will see an 'Index Scan using gist_idx ... Order By' node, meaning GiST traverses the tree in distance order rather than scanning all rows. Key trade-off versus GIN: GiST is lossy (consistent() is allowed to return false positives; heap rows must be re-checked), making it faster for spatial/range queries but less suitable for exact set-membership tests where GIN (the inverted index sibling) excels.",
+      "connector": "Think of GiST like a universal remote control with a 'plug-in brain slot': the remote (tree infrastructure) handles all the button mechanics, but you swap in different brains (operator classes) — one brain knows about geography, another about text matching — without rebuilding the hardware.",
+      "techContext": "PostGIS's geometry columns use a GiST index with an R-tree operator class; the ST_DWithin(geom, point, radius) predicate traverses the GiST tree using bounding-box pruning, eliminating the full-table scan that would otherwise be required for proximity queries over millions of locations.",
+      "exampleSentence": "Adding a GiST index on the location column reduced the 'find all stores within 5 km' query from a 4-second full-table scan to a 3 ms index scan, because PostGIS's R-tree operator class pruned 99.8% of bounding boxes before touching the heap.",
+      "codeExample": {
+        "language": "sql",
+        "code": "-- PostGIS spatial GiST index\nCREATE INDEX idx_stores_location\n  ON stores USING gist(location);   -- location is geometry type\n\n-- KNN nearest-neighbor query (uses GiST distance() operator)\nSELECT name, ST_Distance(location, ST_MakePoint(-73.99, 40.73)::geography) AS dist_m\nFROM stores\nORDER BY location <-> ST_MakePoint(-73.99, 40.73)  -- KNN operator\nLIMIT 5;\n\n-- Range overlap GiST index\nCREATE INDEX idx_bookings_during\n  ON bookings USING gist(during);   -- during is tstzrange\n\nSELECT * FROM bookings\nWHERE during && tstzrange('2026-06-12', '2026-06-15');"
+      },
+      "etymology": "GiST stands for Generalized Search Tree — 'generalized' because the framework is agnostic to the specific search predicate or data type, making it applicable to any balanced tree structure whose consistency predicate is monotone. Introduced by Hellerstein, Naughton, and Pfeffer at VLDB 1995 and incorporated into PostgreSQL in version 7.0 (2000).",
       "unlockLevel": 6,
       "tags": [
         "indexing",
-        "b-tree",
-        "storage",
+        "postgres",
         "internals"
       ],
       "category": "concepts",
       "backingCard": {
         "bookId": "database-internals",
-        "chapterId": "dbi-ch02-storage-engines-b-trees",
-        "cardId": "dbi-ch02-c002"
+        "chapterId": "dbi-ch06-indexing",
+        "cardId": "dbi-ch06-c005"
       }
     },
     {
@@ -757,25 +759,25 @@
     },
     {
       "id": "dbi-int-0270-0000-0000-0000-000000000027",
-      "word": "Inverted Index",
-      "pronunciation": "in-VURT-ed IN-deks",
+      "word": "Index Selectivity",
+      "pronunciation": "IN-deks suh-LEK-tiv-ih-tee",
       "partOfSpeech": "noun",
-      "shortDefinition": "An index mapping tokens to the documents or rows that contain them; powers full-text search.",
-      "simpleDefinition": "An inverted index flips the standard index relationship: instead of mapping each row to its data, it maps each token (word, term) to the list of rows containing that token. This is the data structure behind every search engine and every full-text search feature. A B-tree can find row 42 by ID; an inverted index can find all rows containing the word 'database.'",
-      "longDefinition": "An inverted index consists of a vocabulary (the set of all distinct tokens) and a postings list for each token — the sorted list of document/row identifiers that contain that token, along with optional position and frequency metadata. To answer a full-text query like 'database AND internals', the engine looks up both tokens' postings lists and intersects them (set intersection). For phrase queries like '\"database internals\"', it intersects and then filters for positions where the tokens are adjacent. PostgreSQL implements inverted indexes via the GIN (Generalized Inverted Index) access method, used for tsvector full-text search, JSONB containment queries, and array membership tests. Elasticsearch is built entirely on Lucene's inverted index. Index construction requires tokenization (splitting text into terms), normalization (lowercasing, stemming, stop-word removal), and postings-list merging. Inverted indexes excel at read-heavy full-text workloads but have high write amplification: every INSERT must tokenize the document and add one postings-list entry per token.",
-      "connector": "Think of an inverted index like a book's index at the back: instead of 'chapter 3 contains these words,' it says 'the word database appears on pages 12, 45, 67, 203' — the direction of lookup is inverted.",
-      "techContext": "PostgreSQL's GIN index supports the @@ (text search match) and @> (JSONB containment) operators. GIN indexes have higher build cost and write amplification than B-trees but support set-membership and full-text queries that B-trees cannot.",
-      "exampleSentence": "After adding a GIN inverted index on the document_text tsvector column, the full-text search query dropped from 12 seconds (sequential scan + regex) to 4 ms (inverted index postings-list lookup and intersection).",
+      "shortDefinition": "The fraction of table rows that satisfy an index predicate; the closer to zero, the more useful the index, and the more likely the planner chooses it over a sequential scan.",
+      "simpleDefinition": "Index selectivity measures how many rows match a given predicate relative to the total rows in a table. High selectivity (close to 0) means very few rows match — the index is highly discriminating and the planner will almost certainly use it. Low selectivity (close to 1) means most rows match — the index narrows almost nothing and the planner typically does a sequential scan instead, because touching every index page plus every heap page is slower than one sequential sweep.",
+      "longDefinition": "The query planner's job is to find the cheapest execution plan. For any predicate that has an index, the planner computes the expected cost of using the index versus scanning the table sequentially. The pivotal input is the estimated fraction of rows that match the predicate, derived from column statistics maintained by ANALYZE (in PostgreSQL: pg_statistic / pg_stats). Index selectivity = (estimated matching rows) / (total rows). A predicate with selectivity 0.001 matches 0.1% of rows — excellent; using the index skips 99.9% of the table. A predicate with selectivity 0.5 matches half the rows — an index scan must fetch half the heap pages in random order, which at typical row sizes is slower than one sequential pass. PostgreSQL's planner has a hard-coded threshold near 5–20% (depending on page cost, random_page_cost setting, and correlation) beyond which it prefers a sequential scan. The threshold shifts when rows are physically ordered close to index order (high correlation in pg_stats.correlation): with correlation ≈ 1.0, index scans remain efficient up to ~50% selectivity because heap pages are accessed nearly sequentially. Key column statistics stored by ANALYZE that affect selectivity estimates: n_distinct (number of distinct values, used for equality predicates), histogram_bounds (value distribution for range predicates), correlation (physical-to-logical ordering), and most_common_vals / most_common_freqs (for skewed distributions like status columns with values 'active'=99%, 'deleted'=1%). When estimates are wrong — due to correlation not captured in statistics, function-wrapped columns (WHERE UPPER(email) = 'X' bypasses the index), or out-of-date statistics — the planner chooses the wrong plan. The fix: run ANALYZE, increase statistics target (ALTER TABLE ... ALTER COLUMN ... SET STATISTICS 500), or add an expression index on UPPER(email).",
+      "connector": "Think of index selectivity like a sieve: a fine-mesh sieve (high selectivity, few holes that match) is worth using because it keeps almost everything back and lets very little through. A coarse sieve (low selectivity) passes most material anyway, so you may as well tip the whole bucket without the extra step.",
+      "techContext": "Setting statistics target to 500 on a skewed status column gave the planner enough histogram detail to correctly estimate that a WHERE status = 'pending' predicate would match 0.3% of rows rather than the default-assumed 20%, switching the plan from a sequential scan to an index scan and halving query time.",
+      "exampleSentence": "The planner chose a sequential scan despite the existing index because the WHERE country = 'US' predicate had 60% selectivity — picking 60% of rows in random order was more expensive than one linear sweep — so the team added a partial index instead.",
       "codeExample": {
         "language": "sql",
-        "code": "-- PostgreSQL: GIN inverted index for full-text search\nALTER TABLE articles\n  ADD COLUMN search_vec tsvector\n  GENERATED ALWAYS AS (\n    to_tsvector('english', title || ' ' || body)\n  ) STORED;\n\nCREATE INDEX idx_articles_fts\n  ON articles USING gin(search_vec);\n\n-- Query using the inverted index:\nSELECT title FROM articles\nWHERE search_vec @@ to_tsquery('english', 'database & internals');"
+        "code": "-- PostgreSQL: inspect column selectivity statistics\nSELECT\n  attname,\n  n_distinct,\n  correlation,\n  most_common_vals,\n  most_common_freqs\nFROM pg_stats\nWHERE tablename = 'orders' AND attname = 'status';\n\n-- Check estimated vs actual row counts in a query plan\nEXPLAIN (ANALYZE, BUFFERS)\nSELECT * FROM orders WHERE status = 'pending';\n-- Rows=… (estimate) vs actual rows=…\n-- Large gap → stale/insufficient statistics\n\n-- Raise statistics target for a skewed column\nALTER TABLE orders\n  ALTER COLUMN status SET STATISTICS 500;\nANALYZE orders (status);"
       },
-      "etymology": "Inverted from Latin invertere ('to turn upside down'); the index is 'inverted' because it maps from content (tokens) to documents, the reverse of a forward index. The term was established in information retrieval literature in the 1960s.",
+      "etymology": "Selectivity from Latin selectus ('chosen, picked out') — the degree to which a predicate selects (picks out) a subset of rows. The concept is foundational to relational query optimization, formalized in Selinger et al., 'Access Path Selection in a Relational Database Management System' (SIGMOD 1979), the paper that introduced cost-based optimization to SQL databases.",
       "unlockLevel": 6,
       "tags": [
         "indexing",
-        "full-text-search",
-        "internals"
+        "query-planning",
+        "postgres"
       ],
       "category": "concepts",
       "backingCard": {

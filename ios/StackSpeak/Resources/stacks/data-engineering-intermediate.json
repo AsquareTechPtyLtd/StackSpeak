@@ -177,25 +177,25 @@
     },
     {
       "id": "de-int-0080-0000-0000-0000-000000000008",
-      "word": "Partitioning",
-      "pronunciation": "par-TISH-uh-ning",
+      "word": "incremental processing",
+      "pronunciation": "in-kruh-MEN-tul PROS-es-ing",
       "partOfSpeech": "noun",
-      "shortDefinition": "Dividing a large table or file set into smaller segments stored separately so queries can skip irrelevant segments entirely.",
-      "simpleDefinition": "When a table is partitioned by date, queries that filter on `event_date = '2026-05-01'` read only that one directory of files rather than the entire table. This 'partition pruning' is often the single largest performance and cost lever available for large analytical tables.",
-      "longDefinition": "Partitioning stores each partition as a separate directory or file group — `s3://data/events/year=2026/month=05/day=01/` — so the query engine can list only relevant directories before reading any data. Date/time partitioning is the right default for time-series data because most analytical queries filter by time. High-cardinality columns like `user_id` are poor partition choices: millions of tiny partitions cause excessive object-store LIST operations and Spark task overhead. The ideal partition size is 128 MB–1 GB per file. Open table formats (Iceberg, Delta Lake) add hidden partitioning: Iceberg tracks partition metadata in its catalog rather than in directory names, allowing partition strategy changes without rewriting existing data.",
-      "techContext": "In Snowflake, micro-partitioning is automatic and transparent — Snowflake stores data in 50–500 MB immutable micro-partitioned files and uses column-level min/max statistics to prune partitions at query time without requiring the user to define partition keys. In BigQuery, table partitioning and clustering are explicit options. In Spark and open table formats, partition strategy is the engineer's responsibility.",
-      "exampleSentence": "After repartitioning the events table from a single date column to `year/month/day`, a query for the last 7 days dropped from scanning 3 TB to scanning 21 GB.",
-      "etymology": "From the Latin 'partitio' (division) — the practice of dividing a whole into parts for more efficient access.",
-      "connector": "Like filing cabinets with labeled drawers — instead of searching every folder for May documents, you open only the May drawer.",
+      "shortDefinition": "A pipeline pattern that processes only records added or changed since the previous run, rather than reprocessing the entire dataset each time.",
+      "simpleDefinition": "An incremental pipeline asks 'what changed since yesterday?' instead of 'what exists today?'. Each run picks up new and updated rows by filtering on a high-watermark timestamp or a change-data-capture stream. Processing 50,000 new orders per day is orders of magnitude cheaper than scanning the full 500 million order history on every run.",
+      "longDefinition": "Full-refresh pipelines are simple to reason about — re-run from scratch, overwrite the output — but become unacceptably slow and expensive as data volumes grow. Incremental processing addresses this by maintaining state across runs: a high-watermark column (typically `updated_at` or `created_at`) records the last-processed timestamp, and each run queries only rows where that column exceeds the watermark. After a successful run, the watermark advances to the current run's maximum timestamp. This pattern has two main variants. Append-only incremental (the simpler case) suits event tables where records are never updated — the pipeline inserts new rows and advances the watermark. Upsert incremental (more complex) suits dimension and transaction tables where records can be updated — the pipeline merges new and changed rows using a MERGE statement, matching on the natural key and overwriting changed fields. The critical correctness concern is clock drift and late-arriving data: a row updated at 13:59:59 may not arrive in the source replica until 14:00:01, after a watermark set to 14:00:00 has already passed. Building a lookback buffer — e.g., always re-processing the last 15 minutes beyond the watermark — handles late arrivals at the cost of slightly more work per run. In dbt, incremental models implement this pattern with `{{ is_incremental() }}` conditional filters and configurable `unique_key` for upsert behavior.",
+      "techContext": "The dbt incremental materialization applies the filter `WHERE updated_at > (SELECT MAX(updated_at) FROM {{ this }})` automatically when `is_incremental()` is true. The `unique_key` config switches behavior from append to MERGE. For very high-volume tables, setting `incremental_strategy = 'insert_overwrite'` with partition granularity (overwrite only today's partition) is more efficient than row-level MERGE.",
+      "exampleSentence": "Switching the customer metrics model from a full refresh to an incremental upsert reduced nightly dbt run time from 45 minutes to 6 minutes and cut Snowflake credit consumption by 80%.",
+      "etymology": "From Latin 'incrementum' (growth, increase) — incremental processing adds to or updates existing results by processing only the increment of new data, rather than the whole.",
+      "connector": "Like updating a shopping list — you don't rewrite every item you already have, you just add the new ones and change quantities that changed.",
       "codeExample": {
-        "language": "python",
-        "code": "# Write a partitioned Parquet table with Spark\ndf.write \\\n  .partitionBy('year', 'month', 'day') \\\n  .mode('overwrite') \\\n  .parquet('s3://datalake/events/')\n\n# Query only reads the relevant partition directory\nspark.read.parquet('s3://datalake/events/') \\\n  .filter(\"year = '2026' AND month = '05' AND day = '01'\") \\\n  .groupBy('event_type') \\\n  .count() \\\n  .show()"
+        "language": "sql",
+        "code": "-- dbt incremental model: upsert pattern\n-- {{ config(materialized='incremental', unique_key='order_id') }}\n\nSELECT\n    order_id,\n    customer_id,\n    amount_usd,\n    status,\n    updated_at\nFROM {{ source('app_db', 'orders') }}\n\n{% if is_incremental() %}\n  -- On incremental runs: process only rows updated since last load\n  -- 10-minute buffer handles late-arriving replica lag\n  WHERE updated_at > (\n    SELECT MAX(updated_at) - INTERVAL '10 minutes'\n    FROM {{ this }}\n  )\n{% endif %}"
       },
       "unlockLevel": 6,
       "tags": [
         "data-engineering",
         "intermediate",
-        "storage",
+        "pipeline",
         "performance"
       ],
       "category": "processes"
@@ -377,51 +377,51 @@
     },
     {
       "id": "de-int-0160-0000-0000-0000-000000000016",
-      "word": "BigQuery",
-      "pronunciation": "BIG-kweer-ee",
+      "word": "Apache Flink",
+      "pronunciation": "uh-PAY-chee FLINK",
       "partOfSpeech": "noun",
-      "shortDefinition": "Google Cloud's serverless analytical data warehouse that charges per byte scanned, with automatic scaling and no cluster management.",
-      "simpleDefinition": "BigQuery stores data in Google's proprietary Capacitor columnar format on Colossus, Google's distributed file system. There is no warehouse or cluster to manage — you submit SQL and BigQuery allocates compute slots automatically, billing on-demand users per terabyte scanned.",
-      "longDefinition": "BigQuery's on-demand pricing model — $5 per TB scanned — makes partition pruning and column selection the primary cost levers: a query that scans 500 GB instead of 5 TB saves $22.50 per run. The alternative is slot reservations (flat-rate billing), which works better for predictable, high-volume workloads. BigQuery's compute unit is a 'slot' (CPU + memory + I/O); on-demand queries can use thousands of slots temporarily. BigQuery ML supports training models with SQL directly inside BigQuery. BigLake bridges BigQuery with open formats — you can create BigLake tables over Parquet or Iceberg files in GCS and query them with the same SQL. In 2026, BigQuery's integration with Vertex AI and Gemini models enables in-database embedding generation and vector search.",
-      "techContext": "BigQuery's INFORMATION_SCHEMA views expose query metadata (bytes processed, slot milliseconds, job ID) that drive cost monitoring. The EXPLAIN statement or Query Execution Details panel shows operator-level time and bytes processed per stage, the starting point for query optimization. Partitioning by date and clustering by high-cardinality filter columns together can reduce scan volume by 99%+ for time-series tables.",
-      "exampleSentence": "By adding a partition filter on `event_date` and clustering on `user_id`, the team reduced the cost of their daily active user query from $18 per run to under $0.50.",
-      "etymology": "A compound of 'big' (reflecting Google's emphasis on large-scale data processing) and 'query' — a direct, descriptive name for a service designed for querying big data.",
-      "connector": "Like a serverless taxi — you get in, say where you're going, pay for the miles driven (bytes scanned), and never think about maintaining the car.",
+      "shortDefinition": "A distributed stateful stream-processing engine that provides exactly-once semantics, event-time windowing, and sub-second latency for high-throughput data pipelines.",
+      "simpleDefinition": "Apache Flink processes data as a continuous stream of events rather than in batches. It maintains operator state (running totals, session windows, aggregations) durably in checkpoints, so it can recover exactly to where it was after a failure. This combination — true streaming with fault tolerance — makes Flink the dominant engine for real-time data pipelines that cannot afford either latency or data loss.",
+      "longDefinition": "Flink's architecture centers on a cluster of JobManager (coordinator) and TaskManager (worker) nodes. A Flink program is compiled into a directed acyclic graph of operators — sources, transformations, and sinks — which are parallelized and distributed across TaskManager slots. Each operator maintains local state in RocksDB (or a JVM heap state backend), and Flink periodically snapshots all operator states into consistent, distributed checkpoints stored in object storage (S3 or GCS). On failure, Flink replays the source (typically Kafka) from the last checkpoint offset and restores all operator states from the snapshot, achieving exactly-once processing guarantees end-to-end. Flink operates natively in event time: each event carries a timestamp, and windowed operations (tumbling, sliding, session windows) close based on watermarks derived from event timestamps rather than wall-clock time. This means Flink correctly aggregates late-arriving events within the configured late-data tolerance. The Flink SQL / Table API layer allows streaming pipelines to be expressed in standard SQL, making the system accessible to engineers who work primarily in SQL. By 2026, Flink is the standard for stream processing at scale, used by Alibaba (which employs most Flink committers), Lyft, Netflix, and major financial institutions for event-time analytics, CDC processing, and real-time ML feature generation.",
+      "techContext": "The DataStream API gives fine-grained control over state management: `ValueState`, `MapState`, `ListState`, and `AggregatingState` are all typed state descriptors backed by the chosen state backend. Flink's checkpoint alignment ensures consistent snapshots across parallel operator chains without stopping the stream. For teams primarily using SQL, Flink SQL running over Kafka sources with Iceberg or Delta Lake sinks is a common production pattern for real-time lakehouse ingestion.",
+      "exampleSentence": "The fraud detection team replaced their hourly batch job with a Flink pipeline that scored every transaction within 200 milliseconds of arrival, cutting fraudulent transaction exposure by 70%.",
+      "etymology": "Flink is the German word for 'agile' or 'swift' — chosen by the project's Berlin-based founders to emphasize the engine's speed and responsiveness for streaming data.",
+      "connector": "Like a factory assembly line that processes each part as it arrives on the belt — rather than waiting for a full pallet to accumulate before starting, work happens continuously and the line recovers its position automatically if a machine stops.",
       "codeExample": {
-        "language": "sql",
-        "code": "-- Partitioned + clustered table for cost-efficient queries\nCREATE TABLE `project.dataset.events`\nPARTITION BY DATE(event_date)\nCLUSTER BY user_id, event_type\nAS\nSELECT * FROM `project.dataset.events_raw`;\n\n-- Query scans only the relevant partition and cluster files\nSELECT\n    user_id,\n    COUNT(*) AS purchase_count\nFROM `project.dataset.events`\nWHERE event_date BETWEEN '2026-05-01' AND '2026-05-07'\n  AND event_type = 'purchase'\nGROUP BY user_id;"
+        "language": "java",
+        "code": "// Flink DataStream: count events per user in a 5-minute tumbling window\nStreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();\nenv.enableCheckpointing(60_000);  // checkpoint every 60 seconds\n\nDataStream<Event> events = env\n    .addSource(new FlinkKafkaConsumer<>(\"clicks\", new EventSchema(), kafkaProps))\n    .assignTimestampsAndWatermarks(\n        WatermarkStrategy\n            .<Event>forBoundedOutOfOrderness(Duration.ofSeconds(30))\n            .withTimestampAssigner((e, t) -> e.eventTimeMs)\n    );\n\nevents\n    .keyBy(Event::userId)\n    .window(TumblingEventTimeWindows.of(Time.minutes(5)))\n    .aggregate(new CountAggregate())\n    .addSink(new FlinkKafkaProducer<>(\"click-counts\", new ResultSchema(), kafkaProps));\n\nenv.execute(\"Click Count Pipeline\");"
       },
       "unlockLevel": 6,
       "tags": [
         "data-engineering",
         "intermediate",
-        "warehouse",
-        "cloud"
+        "streaming",
+        "distributed"
       ],
       "category": "components"
     },
     {
       "id": "de-int-0170-0000-0000-0000-000000000017",
-      "word": "Redshift",
-      "pronunciation": "RED-shift",
+      "word": "Apache Spark",
+      "pronunciation": "uh-PAY-chee SPARK",
       "partOfSpeech": "noun",
-      "shortDefinition": "Amazon's massively parallel processing cloud data warehouse, where distribution key choices directly determine query performance and data movement between nodes.",
-      "simpleDefinition": "Redshift uses a leader node to coordinate query execution across multiple compute nodes. Each table's distribution style — KEY, ALL, or EVEN — controls how rows are spread across nodes, and matching distribution keys between joined tables eliminates expensive cross-node data shuffles.",
-      "longDefinition": "Redshift is a massively parallel processing (MPP) database. The leader node parses queries and distributes work across compute nodes that each store a slice of the data and execute query fragments in parallel. Distribution choices have direct performance implications: KEY distribution places rows with the same key on the same node, enabling co-located joins without network transfer; ALL distribution copies an entire (typically small) table to every node, so joins against it are always local; EVEN distributes rows round-robin, maximizing parallelism at the cost of all joins requiring shuffles. SORT keys determine the on-disk order of data within each node — queries that filter or join on the sort key benefit from range-scan skip. In 2026, Redshift Serverless eliminates the need to choose and manage node types, offering auto-scaling with per-second billing.",
-      "techContext": "The EXPLAIN output (or SVL_QUERY_REPORT post-execution) reveals 'DS_BCAST_INNER' and 'DS_DIST_BOTH' nodes in the plan — these indicate expensive data movement. The goal when tuning is to eliminate redistribution steps by aligning distribution keys between fact and dimension tables. `ANALYZE` updates table statistics; `VACUUM` reclaims space from deleted rows and re-sorts data after bulk inserts.",
-      "exampleSentence": "After changing the `fact_orders` distribution key from EVEN to `customer_id` to match `dim_customer`, the EXPLAIN plan for the cohort analysis dropped its DS_BCAST_INNER node and query time fell from 90 seconds to 8.",
-      "etymology": "Named for the astronomical phenomenon where light from objects moving away from an observer shifts toward the red end of the spectrum — evoking the idea of distributed, high-speed data movement.",
-      "connector": "Like a factory floor with specialized workstations — the foreman (leader node) assigns tasks, each station (compute node) works on its own slice of the job, and the design of how materials flow between stations determines throughput.",
+      "shortDefinition": "A distributed in-memory processing engine for large-scale batch and streaming data transformations, with APIs in Python, Scala, Java, and SQL.",
+      "simpleDefinition": "Apache Spark splits a dataset across a cluster of machines and processes each partition in parallel, keeping intermediate results in memory wherever possible. A transformation that would take hours on a single machine finishes in minutes on a Spark cluster, because dozens of workers each handle a fraction of the data simultaneously.",
+      "longDefinition": "Spark's core abstraction is the Resilient Distributed Dataset (RDD), though most production code uses the higher-level DataFrame and Dataset APIs built on top of it. A Spark job compiles into a Directed Acyclic Graph (DAG) of stages separated by shuffles. Within a stage, tasks run in parallel — one task per partition, one partition per executor thread. Spark's Catalyst optimizer rewrites and optimizes DataFrame query plans before execution; the Tungsten engine executes the optimized plan using code generation and off-heap memory management for maximum CPU efficiency. PySpark (the Python API) is the dominant interface for data engineering teams. The structured streaming API exposes the same DataFrame operations for streaming sources (Kafka, Kinesis, Delta Lake), making it possible to use a single programming model for batch and streaming pipelines. Spark's ecosystem coverage is broad: ML (MLlib), graph processing (GraphX), interactive queries (Spark SQL), and now LLM integration via Spark AI. As of 2026, Spark runs on Databricks, AWS EMR, Google Dataproc, Azure HDInsight, and Kubernetes. Databricks' Photon engine (a C++ reimplementation of Spark's query engine) delivers 2–8× performance improvements for SQL and Delta Lake operations over the standard JVM engine.",
+      "techContext": "The Spark UI is the primary diagnostic tool: the Stage DAG view shows which stages are bottlenecks; the task distribution chart shows skew; the SQL physical plan shows which filters and projections were pushed down. Adaptive Query Execution (AQE, enabled by default in Spark 3.2+) automatically coalesces small shuffle partitions and detects join skew at runtime without requiring explicit tuning.",
+      "exampleSentence": "The daily feature engineering job that processed 2 billion event rows on a single machine took 8 hours; re-written as a PySpark job on a 20-node cluster, it completed in 18 minutes.",
+      "etymology": "Named for the spark of electricity — evoking the system's speed relative to its predecessor Hadoop MapReduce, which wrote intermediate results to disk between stages. Spark keeps those results in memory, making it dramatically faster.",
+      "connector": "Like a relay race where each runner handles one section of the course simultaneously — the baton (data partition) never sits idle, and all sections run in parallel rather than one at a time.",
       "codeExample": {
-        "language": "sql",
-        "code": "-- Create a fact table distributed on customer_id\nCREATE TABLE fact_orders (\n    order_id     BIGINT,\n    customer_id  BIGINT,\n    amount_usd   DECIMAL(10,2),\n    created_at   TIMESTAMP\n)\nDISTSTYLE KEY\nDISTKEY (customer_id)\nSORTKEY (created_at);\n\n-- Check for redistribution in query plan\nEXPLAIN\nSELECT c.tier, SUM(f.amount_usd)\nFROM fact_orders f\nJOIN dim_customer c ON f.customer_id = c.customer_id\nGROUP BY 1;"
+        "language": "python",
+        "code": "from pyspark.sql import SparkSession\nfrom pyspark.sql import functions as F\n\nspark = SparkSession.builder.appName(\"FeatureEngineering\").getOrCreate()\n\n# Read a large Parquet dataset from S3\nevents = spark.read.parquet(\"s3://datalake/events/year=2026/\")\n\n# Distributed aggregation: compute 30-day purchase totals per user\nfeatures = (\n    events\n    .filter(F.col(\"event_type\") == \"purchase\")\n    .filter(F.col(\"event_date\") >= F.date_sub(F.current_date(), 30))\n    .groupBy(\"user_id\")\n    .agg(\n        F.count(\"*\").alias(\"purchase_count_30d\"),\n        F.sum(\"amount_usd\").alias(\"purchase_total_30d\"),\n        F.max(\"event_date\").alias(\"last_purchase_date\"),\n    )\n)\n\n# Write output back to the lakehouse\nfeatures.write \\\n    .mode(\"overwrite\") \\\n    .parquet(\"s3://datalake/features/user_purchase_30d/\")"
       },
       "unlockLevel": 6,
       "tags": [
         "data-engineering",
         "intermediate",
-        "warehouse",
-        "cloud"
+        "distributed",
+        "batch"
       ],
       "category": "components"
     },
