@@ -124,6 +124,7 @@ struct FeynmanCardView: View {
         .frame(height: theme.spacing.xxs)
         .accessibilityLabel(String(format: String(localized: "a11y.feynman.stageProgress.format"),
                                    visibleStageIndex, visibleStageTotal))
+        .accessibilityAddTraits(.updatesFrequently)
     }
 
     /// 0-1 progress through visible stages.
@@ -131,9 +132,11 @@ struct FeynmanCardView: View {
         Double(visibleStageIndex - 1) / Double(max(1, visibleStageTotal - 1))
     }
 
-    private var visibleStageTotal: Int { isComingSoon ? 4 : 5 }
+    // Internal (not private) so the stage-transition actions in
+    // FeynmanCardView+Actions.swift can announce "Stage N of M" to VoiceOver.
+    var visibleStageTotal: Int { isComingSoon ? 4 : 5 }
 
-    private var visibleStageIndex: Int {
+    var visibleStageIndex: Int {
         switch stage {
         case .simple:    return 1
         case .technical: return 2

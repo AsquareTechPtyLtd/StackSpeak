@@ -1,3 +1,4 @@
+import Accessibility
 import SwiftUI
 
 /// SRS flashcard.
@@ -149,6 +150,11 @@ struct FlashcardView: View {
         withAnimation(reduceMotion ? nil : MotionTokens.standard) {
             isFlipped = false
         }
+        // The flip-back and button collapse are silent to VoiceOver — say
+        // what happened and that a new card is up (SC 4.1.3).
+        AccessibilityNotification.Announcement(
+            String(localized: "a11y.flashcard.answerRecorded")
+        ).post()
     }
 }
 

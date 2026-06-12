@@ -1,3 +1,4 @@
+import Accessibility
 import SwiftUI
 import SwiftData
 import OSLog
@@ -12,6 +13,7 @@ struct AssessmentView: View {
     @Environment(\.userProgress) var userProgress
     @Environment(\.modelContext) var modelContext
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.accessibilityVoiceOverEnabled) private var voiceOverEnabled
 
     let word: Word
     /// Called when this answer is fully resolved. `leveledUpTo` is non-nil
@@ -29,6 +31,9 @@ struct AssessmentView: View {
 
     static let distractorCount = 3
     private static let autoAdvanceDelay: Duration = .milliseconds(900)
+    /// VoiceOver users get the result announced and a longer beat before the
+    /// card advances under them (SC 4.1.3).
+    private static let voiceOverAutoAdvanceDelay: Duration = .milliseconds(2500)
 
     var isCorrect: Bool {
         selectedAnswer == word.shortDefinition
@@ -208,8 +213,12 @@ struct AssessmentView: View {
         // stored so onDisappear can cancel it — see the modifier above.
         if correct {
             autoAdvanceTask?.cancel()
+            AccessibilityNotification.Announcement(
+                String(localized: "a11y.assessment.correct.autoAdvance")
+            ).post()
+            let delay = voiceOverEnabled ? Self.voiceOverAutoAdvanceDelay : Self.autoAdvanceDelay
             autoAdvanceTask = Task {
-                try? await Task.sleep(for: Self.autoAdvanceDelay)
+                try? await Task.sleep(for: delay)
                 guard !Task.isCancelled else { return }
                 onComplete(true, nil)
             }

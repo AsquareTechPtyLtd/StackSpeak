@@ -1,3 +1,4 @@
+import Accessibility
 import SwiftUI
 
 // MARK: - Stage transitions, submit/skip/report actions, recording
@@ -54,6 +55,7 @@ extension FeynmanCardView {
         withAnimation(reduceMotion ? nil : MotionTokens.standard) {
             stage = next
         }
+        announceStage()
         if next == .done { onStageDidReachDone() }
     }
 
@@ -73,6 +75,16 @@ extension FeynmanCardView {
         withAnimation(reduceMotion ? nil : MotionTokens.standard) {
             stage = prev
         }
+        announceStage()
+    }
+
+    /// Stage changes are otherwise silent to VoiceOver — the cross-fade
+    /// carries no accessibility event (SC 4.1.3).
+    private func announceStage() {
+        AccessibilityNotification.Announcement(
+            String(format: String(localized: "a11y.feynman.stageProgress.format"),
+                   visibleStageIndex, visibleStageTotal)
+        ).post()
     }
 
     // MARK: - Submit / skip / report
