@@ -159,7 +159,8 @@ struct ReviewView: View {
                         FlashcardView(
                             word: word,
                             onAgain: { handleReview(reviewState: reviewState, quality: .again) },
-                            onGood:  { handleReview(reviewState: reviewState, quality: .good) }
+                            onGood:  { handleReview(reviewState: reviewState, quality: .good) },
+                            onEasy:  { handleReview(reviewState: reviewState, quality: .easy) }
                         )
                         .tag(index)
                     }

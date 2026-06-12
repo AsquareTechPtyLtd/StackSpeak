@@ -69,6 +69,15 @@ struct ReviewStateTests {
         #expect(state.easinessFactor == 1.3)
     }
 
+    @Test("Easy (quality 5) raises the easiness factor")
+    func easyRaisesEasiness() {
+        let state = ReviewState(wordId: UUID())
+        state.updateAfterReview(quality: 5)
+        // SM-2 q=5 adjustment: 0.1 - 0 = +0.1 — the only grade that speeds a card up.
+        #expect(abs(state.easinessFactor - 2.6) < 1e-9)
+        #expect(ReviewQuality.easy.rawValue == 5)
+    }
+
     // MARK: - Interval jitter
 
     private func dueOffsetDays(_ state: ReviewState, from now: Date) -> Int {
