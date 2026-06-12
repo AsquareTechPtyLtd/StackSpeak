@@ -124,7 +124,9 @@ struct AssessmentView: View {
                 .font(TypographyTokens.callout)
                 .foregroundColor(theme.colors.inkMuted)
             PrimaryCTAButton("review.assessment.continue") {
-                onComplete(isCorrect, pendingLevelUp)
+                let levelUp = pendingLevelUp
+                pendingLevelUp = nil
+                onComplete(isCorrect, levelUp)
             }
         }
     }
@@ -186,7 +188,10 @@ struct AssessmentView: View {
 
         if let newLevel {
             // Level-up takes precedence: hand control to the parent immediately so
-            // the celebration sheet appears and isn't lost on auto-advance.
+            // the celebration sheet appears and isn't lost on auto-advance. Consume
+            // the pending value here — leaving it set would let a later Continue
+            // tap on this card re-fire the same level-up.
+            pendingLevelUp = nil
             onComplete(correct, newLevel)
             return
         }

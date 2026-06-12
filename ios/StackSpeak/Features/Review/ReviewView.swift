@@ -107,6 +107,9 @@ struct ReviewView: View {
                     }
                 }
                 .tabViewStyle(.page(indexDisplayMode: .never))
+                // Advancing is only allowed through handleAssessmentComplete —
+                // a free swipe would skip the card without recording a result.
+                .scrollDisabled(true)
                 .frame(maxHeight: .infinity)
             }
         }
