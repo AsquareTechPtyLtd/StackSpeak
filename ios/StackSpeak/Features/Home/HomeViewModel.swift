@@ -8,6 +8,10 @@ final class HomeViewModel {
     var wordsById: [UUID: Word] = [:]
     var errorMessage: String?
     var currentIndex: Int = 0
+    /// False until the first `loadTodaysWords` finishes. Lets the view tell
+    /// "still loading" apart from "genuinely all mastered" — without it, the
+    /// empty (computed) `todaysWords` briefly flashes the all-mastered state.
+    var hasLoaded = false
 
     var todaysWords: [Word] {
         guard let set = dailySet else { return [] }
@@ -41,6 +45,9 @@ final class HomeViewModel {
 
     func loadTodaysWords(wordService: any WordRepository, userProgress: UserProgress) async {
         guard !Task.isCancelled else { return }
+        // Mark loaded on any non-cancelled exit (success, no-set, or error); a
+        // cancelled load leaves it for the superseding load to set.
+        defer { if !Task.isCancelled { hasLoaded = true } }
         do {
             dailySet = try wordService.generateDailySet(for: Date(), userProgress: userProgress)
 

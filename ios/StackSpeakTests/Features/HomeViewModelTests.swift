@@ -6,6 +6,14 @@ import Foundation
 @MainActor
 struct HomeViewModelTests {
 
+    @Test("hasLoaded defaults to false so the empty list never flashes all-mastered")
+    func testHasLoadedDefaultsFalse() async throws {
+        // The Today view shows a spinner until this is true, then decides
+        // between the word list and the all-mastered empty state. Defaulting
+        // it true would reintroduce the flash on a slow load.
+        #expect(HomeViewModel().hasLoaded == false)
+    }
+
     @Test("todaysWords computed property derives from wordsById")
     func testTodaysWordsComputed() async throws {
         let viewModel = HomeViewModel()
