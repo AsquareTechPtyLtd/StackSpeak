@@ -31,7 +31,9 @@ struct TodayWordRow: View {
                     .foregroundColor(theme.colors.inkFaint)
             }
 
-            Spacer()
+            Spacer(minLength: theme.spacing.sm)
+
+            TopicChip(label: word.topicLabel)
 
             if isCompleted {
                 Image(systemName: "checkmark.seal.fill")

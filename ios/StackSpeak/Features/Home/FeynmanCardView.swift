@@ -177,6 +177,8 @@ struct FeynmanCardView: View {
                     .font(TypographyTokens.mono)
                     .foregroundColor(theme.colors.inkMuted)
                     .accessibilityLabel(String(format: String(localized: "a11y.pronunciation.format"), word.pronunciation))
+                TopicChip(label: word.topicLabel)
+                    .padding(.top, theme.spacing.xxs)
             }
             Spacer()
             overflowMenu
