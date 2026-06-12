@@ -92,6 +92,7 @@ struct WordDetailView: View {
 
     private var headerBlock: some View {
         HStack(spacing: theme.spacing.sm) {
+            TopicChip(label: word.topicLabel)
             Text(word.pronunciation)
                 .font(TypographyTokens.mono)
                 .foregroundColor(theme.colors.inkMuted)

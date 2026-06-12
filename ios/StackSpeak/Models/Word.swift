@@ -47,6 +47,8 @@ final class Word {
     }
 
     var wordStack: WordStack { WordStack(rawValue: stack) }
+    /// Short, level-free topic label for chips (e.g. "Web Security", "Git").
+    var topicLabel: String { wordStack.shortName }
     var category: String {
         get { categoryRaw }
         set { categoryRaw = newValue }

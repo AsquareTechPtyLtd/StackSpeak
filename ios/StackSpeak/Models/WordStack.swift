@@ -53,6 +53,12 @@ struct WordStack: RawRepresentable, Codable, Hashable, Identifiable {
         definition?.name ?? rawValue
     }
 
+    /// Short, level-free topic label (e.g. "Web Security"). Falls back to the
+    /// full display name when the stack carries no short label.
+    var shortName: String {
+        definition?.shortName ?? displayName
+    }
+
     var description: String {
         definition?.description ?? ""
     }

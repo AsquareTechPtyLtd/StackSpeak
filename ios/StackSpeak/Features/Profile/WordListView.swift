@@ -64,6 +64,8 @@ struct WordListView: View {
                         .foregroundColor(theme.colors.accent)
                         .accessibilityLabel(String(localized: "a11y.bookmarked"))
                 }
+                Spacer(minLength: theme.spacing.sm)
+                TopicChip(label: word.topicLabel)
             }
             Text(word.shortDefinition)
                 .font(TypographyTokens.subheadline)

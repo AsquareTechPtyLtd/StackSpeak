@@ -101,6 +101,8 @@ struct BookmarksView: View {
                         .foregroundColor(theme.colors.good)
                         .accessibilityLabel(String(localized: "a11y.mastered"))
                 }
+                Spacer(minLength: theme.spacing.sm)
+                TopicChip(label: word.topicLabel)
             }
             Text(word.shortDefinition)
                 .font(TypographyTokens.subheadline)
