@@ -55,12 +55,15 @@ struct ColorTokens {
         codeInk: Color(hex: "15161A"),
         codeKey: Color(hex: "8B2F7A"),
         codeStr: Color(hex: "2F6F47"),
-        codeCom: Color(hex: "8A8A7F"),
-        codeNum: Color(hex: "B5651D"),
+        codeCom: Color(hex: "696960"),
+        codeNum: Color(hex: "964C10"),
         good: Color(hex: "2F6F47"),
         warn: Color(hex: "A85812"),
         bad: Color(hex: "C0392B"),
-        streak: Color(hex: "E08A1E"),
+        // 3.83:1 on bg / 4.18:1 on surface — WCAG 1.4.11 non-text floor is 3:1.
+        // streakInk's checkmark on this fill is 4.33:1, fine for icon glyphs;
+        // don't put body text on a streak fill without rechecking.
+        streak: Color(hex: "B56A00"),
         streakInk: Color(hex: "15161A"),
         badInk: .white
     )
@@ -83,7 +86,7 @@ struct ColorTokens {
         codeInk: Color(hex: "E6E6EA"),
         codeKey: Color(hex: "D291E7"),
         codeStr: Color(hex: "7FCF99"),
-        codeCom: Color(hex: "6B6E77"),
+        codeCom: Color(hex: "84878F"),
         codeNum: Color(hex: "E0A878"),
         good: Color(hex: "7FCF99"),
         warn: Color(hex: "E0A878"),
