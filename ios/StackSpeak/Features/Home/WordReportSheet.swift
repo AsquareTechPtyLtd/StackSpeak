@@ -21,6 +21,7 @@ struct WordReportSheet: View {
     @State private var additionalNotes = ""
     @State private var isSubmitting = false
     @State private var showSuccess = false
+    @FocusState private var notesFocused: Bool
 
     var body: some View {
         NavigationStack {
@@ -118,6 +119,16 @@ struct WordReportSheet: View {
                     .clipShape(.rect(cornerRadius: RadiusTokens.inline))
                     .textContentType(.none)
                     .autocorrectionDisabled()
+                    .focused($notesFocused)
+                    .toolbar {
+                        ToolbarItemGroup(placement: .keyboard) {
+                            Spacer()
+                            Button(String(localized: "common.done")) {
+                                notesFocused = false
+                            }
+                            .foregroundColor(theme.colors.accent)
+                        }
+                    }
                     .onChange(of: additionalNotes) { _, newValue in
                         if newValue.count > Self.maxNotesLength {
                             additionalNotes = String(newValue.prefix(Self.maxNotesLength))

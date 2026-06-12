@@ -20,20 +20,24 @@ struct ReviewView: View {
         NavigationStack {
             ZStack {
                 theme.colors.bg.ignoresSafeArea()
-                content
-            }
-            .navigationTitle("review.navTitle")
-            .navigationBarTitleDisplayMode(.large)
-            .toolbar {
-                ToolbarItem(placement: .principal) {
+                // Picker lives in the body: a .principal toolbar item is
+                // invisible while the large title is expanded, hiding the
+                // mode switch exactly when the screen is first seen.
+                VStack(spacing: 0) {
                     Picker("review.modeLabel", selection: $selectedTab) {
                         Text("review.tab.assessment").tag(ReviewTab.assessment)
                         Text("review.tab.flashcards").tag(ReviewTab.flashcards)
                     }
                     .pickerStyle(.segmented)
                     .frame(maxWidth: 280)
+                    .padding(.horizontal, theme.spacing.lg)
+                    .padding(.top, theme.spacing.xs)
+
+                    content
                 }
             }
+            .navigationTitle("review.navTitle")
+            .navigationBarTitleDisplayMode(.large)
             .task {
                 if let progress = userProgress, let services {
                     viewModel.loadDueReviews(progress: progress)

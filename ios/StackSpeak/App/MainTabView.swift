@@ -20,9 +20,8 @@ struct MainTabView: View {
             .filter { progress.canAttemptAssessment(for: $0) }.count
     }
 
-    /// Standard iOS tab bar on both iPhone and iPad. Uses .tabBarOnly style
-    /// because the destination views aren't wired through a NavigationSplitView.
-    /// Future: .sidebarAdaptable + split-view scaffolding for iPad.
+    /// `.sidebarAdaptable`: tab bar on iPhone; on iPad the iOS 18 top tab bar
+    /// that can morph into a sidebar.
     var body: some View {
         @Bindable var router = router
         TabView(selection: $router.selection) {
@@ -44,6 +43,7 @@ struct MainTabView: View {
                 ProfileView()
             }
         }
+        .tabViewStyle(.sidebarAdaptable)
         .environment(\.tabRouter, router)
     }
 }

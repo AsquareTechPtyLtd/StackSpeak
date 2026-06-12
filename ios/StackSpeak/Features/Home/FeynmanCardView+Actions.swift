@@ -91,6 +91,9 @@ extension FeynmanCardView {
 
     func submitExplanation(trimmed: String) {
         stopRecordingIfNeeded()
+        // Resign the editor focus explicitly — on small phones a lingering
+        // keyboard can cover the Back-to-Today CTA that appears on done.
+        explanationFocused = false
         onSubmit(trimmed, inputMethod, false)
         advanceTrigger &+= 1
         let next: FeynmanStage = isComingSoon ? .done : .connector
@@ -102,6 +105,7 @@ extension FeynmanCardView {
 
     func submitAsComingSoon() {
         stopRecordingIfNeeded()
+        explanationFocused = false
         onSubmit("", .typed, false)
         advanceTrigger &+= 1
         withAnimation(reduceMotion ? nil : MotionTokens.standard) {
@@ -112,6 +116,7 @@ extension FeynmanCardView {
 
     func skipWord() {
         stopRecordingIfNeeded()
+        explanationFocused = false
         onSubmit("", .typed, true)  // mark as mastered
         advanceTrigger &+= 1
         withAnimation(reduceMotion ? nil : MotionTokens.standard) {
