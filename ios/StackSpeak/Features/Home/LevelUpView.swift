@@ -13,8 +13,15 @@ struct LevelUpView: View {
     @Environment(\.theme) private var theme
     @Environment(\.dismiss) private var dismiss
     @Environment(\.modelContext) private var modelContext
+    @Environment(\.tabRouter) private var tabRouter
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     private let logger = Logger(category: "LevelUp")
+
+    /// Deliberate one-off metrics for the celebration hero — the serif glyph
+    /// sits above the largeTitle scale and the rings are tuned around it.
+    private static let glyphPointSize: CGFloat = 112
+    private static let ringDiameters: [CGFloat] = [160, 204, 248]
 
     let newLevel: Int
     let userProgress: UserProgress
@@ -48,22 +55,20 @@ struct LevelUpView: View {
             }
             .padding(theme.spacing.xl)
         }
-        .presentationDetents([.medium, .large])
+        // Full-height only: a sheet opens at its smallest detent, and a medium
+        // debut would clip the ring-field hero below.
+        .presentationDetents([.large])
         .presentationDragIndicator(.visible)
         .sensoryFeedback(.success, trigger: hasAppeared)
         .onAppear { hasAppeared = true }
-        .sheet(isPresented: $showStackPicker, onDismiss: { dismiss() }) {
+        .sheet(isPresented: $showStackPicker, onDismiss: { goHome() }) {
             LevelUpStackPickerSheet(newLevel: newLevel, userProgress: userProgress)
         }
     }
 
     private var celebrationContent: some View {
         VStack(spacing: theme.spacing.lg) {
-            Image(systemName: "star.circle.fill")
-                .scaledIcon(size: IconSizeTokens.hero)
-                .foregroundColor(theme.colors.accent)
-                .symbolEffect(.bounce.up.byLayer, value: hasAppeared)
-                .accessibilityHidden(true)
+            levelGlyph
 
             if let levelDef = levelDefinition {
                 Text("levelUp.youAreNow")
@@ -105,6 +110,43 @@ struct LevelUpView: View {
         }
     }
 
+    /// Typographic hero (P0-5): the new level number in the brand serif over
+    /// concentric accent rings — same register as the onboarding glyph pages,
+    /// clearly distinct from empty states and the paywall.
+    private var levelGlyph: some View {
+        ZStack {
+            ForEach(Array(Self.ringDiameters.enumerated()), id: \.offset) { index, diameter in
+                Circle()
+                    .strokeBorder(
+                        theme.colors.accentDecoration.opacity(0.35 - Double(index) * 0.1),
+                        lineWidth: 1
+                    )
+                    .frame(width: diameter, height: diameter)
+                    .scaleEffect(ringsSettled ? 1 : 0.7)
+                    .opacity(ringsSettled ? 1 : 0)
+                    .animation(MotionTokens.bounce.delay(Double(index) * 0.07), value: hasAppeared)
+            }
+
+            Circle()
+                .fill(theme.colors.accentBg)
+                .frame(width: Self.ringDiameters[0], height: Self.ringDiameters[0])
+
+            Text(verbatim: "\(newLevel)")
+                .font(TypographyTokens.instrumentSerif(size: Self.glyphPointSize))
+                .foregroundColor(theme.colors.accent)
+                .scaleEffect(ringsSettled ? 1 : 0.8)
+                .animation(MotionTokens.bounce, value: hasAppeared)
+        }
+        .frame(height: Self.ringDiameters[Self.ringDiameters.count - 1])
+        .accessibilityLabel(String(format: String(localized: "a11y.levelUp.levelNumber.format"), newLevel))
+    }
+
+    /// Rings and glyph render in their final state immediately when Reduce
+    /// Motion is on; otherwise they settle in on appear.
+    private var ringsSettled: Bool {
+        hasAppeared || reduceMotion
+    }
+
     private var continueButton: some View {
         PrimaryCTAButton(hasNewOptionalStacks
                          ? "levelUp.choosePath"
@@ -112,9 +154,17 @@ struct LevelUpView: View {
             if hasNewOptionalStacks {
                 showStackPicker = true
             } else {
-                dismiss()
+                goHome()
             }
         }
+    }
+
+    /// P1-9: dismissing the celebration used to drop the user mid-quiz on the
+    /// next assessment card. Continue now lands on Home, where the status line
+    /// shows the new rank.
+    private func goHome() {
+        tabRouter?.selection = .home
+        dismiss()
     }
 }
 
