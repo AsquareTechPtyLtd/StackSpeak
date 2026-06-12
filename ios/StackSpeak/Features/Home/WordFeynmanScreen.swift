@@ -16,6 +16,7 @@ struct WordFeynmanScreen: View {
     let onSubmit: (UUID, String, InputMethod, Bool) -> Void
 
     @State private var didJustComplete = false
+    @State private var hasEntered = false
 
     var body: some View {
         VStack(spacing: theme.spacing.md) {
@@ -38,6 +39,17 @@ struct WordFeynmanScreen: View {
             )
             .padding(.horizontal, theme.spacing.lg)
             .padding(.top, theme.spacing.sm)
+            // Entrance beat to match the completion CTA's exit choreography —
+            // Reduce Motion renders the settled state immediately.
+            .opacity(hasEntered ? 1 : 0)
+            .offset(y: hasEntered ? 0 : 12)
+            .onAppear {
+                if reduceMotion {
+                    hasEntered = true
+                } else {
+                    withAnimation(MotionTokens.standard) { hasEntered = true }
+                }
+            }
 
             if shouldShowCompletionCTA {
                 completionCTA

@@ -86,11 +86,13 @@ struct ProfileView: View {
                             .tint(theme.colors.accent)
                             .accessibilityLabel(String(format: String(localized: "a11y.levelProgress.percent.format"),
                                                        Int(levelProgress.progress * 100)))
+                        // Mono for the countable progress line, matching the
+                        // metadata treatment on Home and Books rows.
                         Text(String(format: String(localized: "profile.levelProgress.format"),
                                     Int(levelProgress.progress * 100),
                                     levelProgress.pointsRemaining,
                                     levelProgress.nextLevel.title))
-                            .font(TypographyTokens.footnote)
+                            .font(TypographyTokens.mono)
                             .foregroundColor(theme.colors.inkMuted)
                     }
                 }

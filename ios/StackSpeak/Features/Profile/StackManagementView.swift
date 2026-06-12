@@ -55,7 +55,7 @@ struct StackManagementView: View {
                         minimumStacksWarning
                     }
                 }
-                .frame(maxWidth: 720)
+                .frame(maxWidth: LayoutTokens.contentMaxWidth)
                 .padding(theme.spacing.lg)
             }
         }

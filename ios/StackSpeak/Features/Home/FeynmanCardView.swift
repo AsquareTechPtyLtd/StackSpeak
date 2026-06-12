@@ -124,6 +124,7 @@ struct FeynmanCardView: View {
         .frame(height: theme.spacing.xxs)
         .accessibilityLabel(String(format: String(localized: "a11y.feynman.stageProgress.format"),
                                    visibleStageIndex, visibleStageTotal))
+        .accessibilityAddTraits(.updatesFrequently)
     }
 
     /// 0-1 progress through visible stages.
@@ -131,9 +132,11 @@ struct FeynmanCardView: View {
         Double(visibleStageIndex - 1) / Double(max(1, visibleStageTotal - 1))
     }
 
-    private var visibleStageTotal: Int { isComingSoon ? 4 : 5 }
+    // Internal (not private) so the stage-transition actions in
+    // FeynmanCardView+Actions.swift can announce "Stage N of M" to VoiceOver.
+    var visibleStageTotal: Int { isComingSoon ? 4 : 5 }
 
-    private var visibleStageIndex: Int {
+    var visibleStageIndex: Int {
         switch stage {
         case .simple:    return 1
         case .technical: return 2
@@ -152,7 +155,7 @@ struct FeynmanCardView: View {
             }
             VStack(alignment: .leading, spacing: theme.spacing.xxs) {
                 Text(word.word)
-                    .font(TypographyTokens.cardTitle)
+                    .font(TypographyTokens.cardTitleSerif)
                     .foregroundColor(theme.colors.ink)
                     .accessibilityAddTraits(.isHeader)
                 Text(word.pronunciation)
@@ -216,7 +219,9 @@ struct FeynmanCardView: View {
     var advanceControls: some View {
         switch stage {
         case .simple, .technical, .connector:
-            SwipeNudge("feynman.swipe.continue", direction: .backward, onAdvance: advance)
+            // .forward: the chevron points right — a left chevron reads as the
+            // iOS-universal "back" even though the advance swipe travels left.
+            SwipeNudge("feynman.swipe.continue", direction: .forward, onAdvance: advance)
                 .accessibilityAction(named: Text("feynman.swipe.continue.a11y")) { advance() }
         case .explain:
             explainControls

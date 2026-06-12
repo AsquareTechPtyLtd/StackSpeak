@@ -55,12 +55,15 @@ struct ColorTokens {
         codeInk: Color(hex: "15161A"),
         codeKey: Color(hex: "8B2F7A"),
         codeStr: Color(hex: "2F6F47"),
-        codeCom: Color(hex: "8A8A7F"),
-        codeNum: Color(hex: "B5651D"),
+        codeCom: Color(hex: "696960"),
+        codeNum: Color(hex: "964C10"),
         good: Color(hex: "2F6F47"),
         warn: Color(hex: "A85812"),
         bad: Color(hex: "C0392B"),
-        streak: Color(hex: "E08A1E"),
+        // 3.83:1 on bg / 4.18:1 on surface — WCAG 1.4.11 non-text floor is 3:1.
+        // streakInk's checkmark on this fill is 4.33:1, fine for icon glyphs;
+        // don't put body text on a streak fill without rechecking.
+        streak: Color(hex: "B56A00"),
         streakInk: Color(hex: "15161A"),
         badInk: .white
     )
@@ -83,7 +86,7 @@ struct ColorTokens {
         codeInk: Color(hex: "E6E6EA"),
         codeKey: Color(hex: "D291E7"),
         codeStr: Color(hex: "7FCF99"),
-        codeCom: Color(hex: "6B6E77"),
+        codeCom: Color(hex: "84878F"),
         codeNum: Color(hex: "E0A878"),
         good: Color(hex: "7FCF99"),
         warn: Color(hex: "E0A878"),
@@ -128,6 +131,26 @@ enum IconSizeTokens {
     static let hero: CGFloat = 96
 }
 
+/// Three considered stroke widths. Anything else is a smell.
+enum BorderTokens {
+    /// Resting card/row outline.
+    static let hairline: CGFloat = 0.5
+    /// Mid-weight outline for chips and decorative rings.
+    static let regular: CGFloat = 1
+    /// Selected / active / today emphasis outline.
+    static let emphasis: CGFloat = 1.5
+}
+
+/// Readable-width caps so layouts hold on iPad and large phones.
+enum LayoutTokens {
+    /// Full content column (Home, WordDetail, stack management).
+    static let contentMaxWidth: CGFloat = 720
+    /// Narrow modal column (paywall sections).
+    static let sheetMaxWidth: CGFloat = 480
+    /// Compact control row (segmented pickers).
+    static let controlMaxWidth: CGFloat = 280
+}
+
 /// Three considered radii. Anything else is a smell.
 enum RadiusTokens {
     /// Inline elements: chips, code blocks, small inputs.
@@ -163,8 +186,8 @@ struct TypographyTokens {
         .custom("JetBrainsMono-Regular", size: size, relativeTo: .caption)
     }
 
-    static func instrumentSerif(size: CGFloat) -> Font {
-        .custom("InstrumentSerif-Italic", size: size, relativeTo: .callout)
+    static func instrumentSerif(size: CGFloat, relativeTo textStyle: Font.TextStyle = .callout) -> Font {
+        .custom("InstrumentSerif-Italic", size: size, relativeTo: textStyle)
     }
 
     // MARK: - Semantic tokens
@@ -187,8 +210,10 @@ struct TypographyTokens {
     static let etymology      = instrumentSerif(size: 17)
     static let etymologyLarge = instrumentSerif(size: 22)
 
-    /// Single tuned card title size. Density removed (F10).
-    static let cardTitle = inter(size: 26, weight: .semibold, relativeTo: .title)
+    /// Single tuned card title size. Density removed (F10). Brand serif at
+    /// the Feynman hero slot — the practice card's one editorial moment;
+    /// sized up vs. the old Inter 26 to match its smaller x-height.
+    static let cardTitleSerif = instrumentSerif(size: 32, relativeTo: .title)
 }
 
 // MARK: - Color hex initializer

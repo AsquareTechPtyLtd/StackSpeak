@@ -46,7 +46,7 @@ struct StackSelectionView: View {
                             optionalSection(category: category, stacks: stacks)
                         }
                     }
-                    .frame(maxWidth: 720)
+                    .frame(maxWidth: LayoutTokens.contentMaxWidth)
                     .padding(theme.spacing.lg)
                 }
 
@@ -67,8 +67,10 @@ struct StackSelectionView: View {
 
     private var headerSection: some View {
         VStack(alignment: .leading, spacing: theme.spacing.md) {
+            // Brand serif extends the onboarding glyph language onto its
+            // final page instead of dropping to token-painted Inter.
             Text("onboarding.stacks.title")
-                .font(TypographyTokens.title1)
+                .font(TypographyTokens.instrumentSerif(size: 34, relativeTo: .largeTitle))
                 .foregroundColor(theme.colors.ink)
 
             Text("onboarding.stacks.description")
@@ -240,16 +242,7 @@ struct StackCard: View {
                 .font(.system(.title2))
                 .foregroundColor(radioColor)
         }
-        .padding(theme.spacing.cardPadding)
-        .background(cardState == .active ? theme.colors.accentBg : theme.colors.surface)
-        .clipShape(.rect(cornerRadius: RadiusTokens.card))
-        .overlay(
-            RoundedRectangle(cornerRadius: RadiusTokens.card)
-                .stroke(
-                    cardState == .active ? theme.colors.accent : theme.colors.line,
-                    lineWidth: cardState == .active ? 1.5 : 0.5
-                )
-        )
+        .selectableCardChrome(isSelected: cardState == .active)
     }
 
     /// Locked cards (core stacks for free users) are always included in the

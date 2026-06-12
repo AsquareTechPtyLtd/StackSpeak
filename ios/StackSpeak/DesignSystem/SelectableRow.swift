@@ -99,14 +99,7 @@ struct SelectableRow<Leading: View, Trailing: View>: View {
 
                 roleIndicator
             }
-            .padding(theme.spacing.cardPadding)
-            .background(isSelected ? theme.colors.accentBg : theme.colors.surface)
-            .clipShape(.rect(cornerRadius: RadiusTokens.card))
-            .overlay(
-                RoundedRectangle(cornerRadius: RadiusTokens.card)
-                    .stroke(isSelected ? theme.colors.accent : theme.colors.line,
-                            lineWidth: isSelected ? 1.5 : 0.5)
-            )
+            .selectableCardChrome(isSelected: isSelected)
         }
         .buttonStyle(.plain)
         .accessibilityAddTraits(isSelected ? [.isSelected] : [])

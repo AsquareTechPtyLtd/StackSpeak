@@ -49,16 +49,7 @@ struct ProProductCard: View {
                     .font(.system(.title2))
                     .foregroundColor(isSelected ? theme.colors.accent : theme.colors.inkFaint)
             }
-            .padding(theme.spacing.cardPadding)
-            .background(isSelected ? theme.colors.accentBg : theme.colors.surface)
-            .clipShape(.rect(cornerRadius: RadiusTokens.card))
-            .overlay(
-                RoundedRectangle(cornerRadius: RadiusTokens.card)
-                    .stroke(
-                        isSelected ? theme.colors.accent : theme.colors.line,
-                        lineWidth: isSelected ? 1.5 : 0.5
-                    )
-            )
+            .selectableCardChrome(isSelected: isSelected)
         }
         .buttonStyle(.plain)
         .accessibilityLabel(Text("\(title), \(priceText)"))

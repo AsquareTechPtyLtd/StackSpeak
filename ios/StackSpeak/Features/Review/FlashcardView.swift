@@ -1,3 +1,4 @@
+import Accessibility
 import SwiftUI
 
 /// SRS flashcard.
@@ -18,6 +19,8 @@ struct FlashcardView: View {
 
     @State private var isFlipped = false
     @State private var flipTrigger = 0
+    @State private var againTrigger = 0
+    @State private var goodTrigger = 0
 
     /// Deliberate fixed design height for the card surface; content is short
     /// (term + definition + example) and a stable frame keeps the flip calm.
@@ -43,6 +46,8 @@ struct FlashcardView: View {
             Spacer()
         }
         .sensoryFeedback(.impact(weight: .light), trigger: flipTrigger)
+        .sensoryFeedback(.impact(weight: .light), trigger: againTrigger)
+        .sensoryFeedback(.success, trigger: goodTrigger)
     }
 
     private var cardSurface: some View {
@@ -113,6 +118,7 @@ struct FlashcardView: View {
     private var actionButtons: some View {
         HStack(spacing: theme.spacing.lg) {
             Button {
+                againTrigger &+= 1
                 onAgain()
                 reset()
             } label: {
@@ -128,6 +134,7 @@ struct FlashcardView: View {
             .accessibilityHint(Text("a11y.flashcard.again.hint"))
 
             Button {
+                goodTrigger &+= 1
                 onGood()
                 reset()
             } label: {
@@ -149,6 +156,11 @@ struct FlashcardView: View {
         withAnimation(reduceMotion ? nil : MotionTokens.standard) {
             isFlipped = false
         }
+        // The flip-back and button collapse are silent to VoiceOver — say
+        // what happened and that a new card is up (SC 4.1.3).
+        AccessibilityNotification.Announcement(
+            String(localized: "a11y.flashcard.answerRecorded")
+        ).post()
     }
 }
 

@@ -8,8 +8,11 @@ extension ProGateSheet {
     var headerSection: some View {
         VStack(spacing: theme.spacing.lg) {
             ZStack {
+                // accentBg is a low-opacity tint — over the near-black dark-mode
+                // bg it disappears, so ground it on surface first.
                 Circle()
-                    .fill(theme.colors.accentBg)
+                    .fill(theme.colors.surface)
+                    .overlay(Circle().fill(theme.colors.accentBg))
                     .frame(width: IconSizeTokens.avatar, height: IconSizeTokens.avatar)
                 Image(systemName: "star.fill")
                     .scaledIcon(size: IconSizeTokens.avatar * 0.45, weight: .semibold)
@@ -106,7 +109,7 @@ extension ProGateSheet {
                 .foregroundColor(theme.colors.inkFaint)
                 .multilineTextAlignment(.center)
         }
-        .frame(maxWidth: 480)
+        .frame(maxWidth: LayoutTokens.sheetMaxWidth)
         .padding(.horizontal, theme.spacing.xl)
         .padding(.vertical, theme.spacing.md)
         .background(theme.colors.bg)

@@ -49,47 +49,23 @@ extension FeynmanCardView {
                 }
             }
 
-            // FC1 — TextEditor placeholder via ZStack overlay (TextEditor doesn't
-            // support placeholders natively).
-            ZStack(alignment: .topLeading) {
-                if explanation.isEmpty {
-                    Text("feynman.explain.placeholder")
-                        .font(TypographyTokens.body)
-                        .foregroundColor(theme.colors.inkFaint)
-                        .padding(.horizontal, theme.spacing.sm + 5)
-                        .padding(.vertical, theme.spacing.sm + 8)
-                        .allowsHitTesting(false)
+            ThemedTextEditor(
+                placeholder: "feynman.explain.placeholder",
+                text: $explanation,
+                focus: $explanationFocused,
+                minHeight: 120,
+                accessibilityLabel: String(localized: "a11y.feynman.explanationInput")
+            )
+            .onChange(of: explanation) { _, newValue in
+                if newValue.count > Self.maxExplanationLength {
+                    explanation = String(newValue.prefix(Self.maxExplanationLength))
                 }
-                TextEditor(text: $explanation)
-                    .font(TypographyTokens.body)
-                    .foregroundColor(theme.colors.ink)
-                    .scrollContentBackground(.hidden)
-                    .frame(minHeight: 120)
-                    .padding(theme.spacing.sm)
-                    .background(theme.colors.surfaceAlt)
-                    .clipShape(.rect(cornerRadius: RadiusTokens.inline))
-                    .focused($explanationFocused)
-                    .accessibilityLabel(String(localized: "a11y.feynman.explanationInput"))
-                    .toolbar {
-                        ToolbarItemGroup(placement: .keyboard) {
-                            Spacer()
-                            Button(String(localized: "common.done")) {
-                                explanationFocused = false
-                            }
-                            .foregroundColor(theme.colors.accent)
-                        }
-                    }
-                    .onChange(of: explanation) { _, newValue in
-                        if newValue.count > Self.maxExplanationLength {
-                            explanation = String(newValue.prefix(Self.maxExplanationLength))
-                        }
-                    }
-                    .onChange(of: speechService?.transcript ?? "") { _, newValue in
-                        if !newValue.isEmpty {
-                            explanation = String(newValue.prefix(Self.maxExplanationLength))
-                            inputMethod = .voice
-                        }
-                    }
+            }
+            .onChange(of: speechService?.transcript ?? "") { _, newValue in
+                if !newValue.isEmpty {
+                    explanation = String(newValue.prefix(Self.maxExplanationLength))
+                    inputMethod = .voice
+                }
             }
 
             HStack {
@@ -151,7 +127,9 @@ extension FeynmanCardView {
                 }
                 .disabled(trimmed.isEmpty)
             }
-            if trimmed.isEmpty {
+            // Suppressed while recording — "type a few words" would contradict
+            // the active voice input filling the editor.
+            if trimmed.isEmpty && speechService?.isRecording != true {
                 Text("feynman.explain.submitHint")
                     .font(TypographyTokens.footnote)
                     .foregroundColor(theme.colors.inkMuted)

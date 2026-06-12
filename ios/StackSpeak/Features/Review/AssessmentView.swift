@@ -1,3 +1,4 @@
+import Accessibility
 import SwiftUI
 import SwiftData
 import OSLog
@@ -12,6 +13,7 @@ struct AssessmentView: View {
     @Environment(\.userProgress) var userProgress
     @Environment(\.modelContext) var modelContext
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.accessibilityVoiceOverEnabled) private var voiceOverEnabled
 
     let word: Word
     /// Called when this answer is fully resolved. `leveledUpTo` is non-nil
@@ -29,6 +31,9 @@ struct AssessmentView: View {
 
     static let distractorCount = 3
     private static let autoAdvanceDelay: Duration = .milliseconds(900)
+    /// VoiceOver users get the result announced and a longer beat before the
+    /// card advances under them (SC 4.1.3).
+    private static let voiceOverAutoAdvanceDelay: Duration = .milliseconds(2500)
 
     var isCorrect: Bool {
         selectedAnswer == word.shortDefinition
@@ -42,8 +47,6 @@ struct AssessmentView: View {
 
                 if hasSubmitted && !isCorrect {
                     incorrectFeedback
-                } else if !hasSubmitted {
-                    submitButton
                 }
             }
             .padding(theme.spacing.lg)
@@ -124,18 +127,11 @@ struct AssessmentView: View {
                 .font(TypographyTokens.callout)
                 .foregroundColor(theme.colors.inkMuted)
             PrimaryCTAButton("review.assessment.continue") {
-                onComplete(isCorrect, pendingLevelUp)
+                let levelUp = pendingLevelUp
+                pendingLevelUp = nil
+                onComplete(isCorrect, levelUp)
             }
         }
-    }
-
-    private var submitButton: some View {
-        PrimaryCTAButton("review.assessment.submit") { submit() }
-            .disabled(selectedAnswer == nil)
-            .accessibilityLabel(String(localized: "a11y.submitAnswer"))
-            .accessibilityHint(selectedAnswer == nil
-                ? String(localized: "a11y.submitAnswer.selectFirst")
-                : String(localized: "a11y.submitAnswer.ready"))
     }
 
     // MARK: - State
@@ -149,9 +145,12 @@ struct AssessmentView: View {
 
     // MARK: - Actions
 
+    /// Tapping an option submits it directly — a separate Submit tap added
+    /// friction without preventing any error (options are single-tap final).
     private func selectOption(_ option: String) {
         guard !hasSubmitted else { return }
         selectedAnswer = option
+        submit()
     }
 
     private func submit() {
@@ -186,7 +185,10 @@ struct AssessmentView: View {
 
         if let newLevel {
             // Level-up takes precedence: hand control to the parent immediately so
-            // the celebration sheet appears and isn't lost on auto-advance.
+            // the celebration sheet appears and isn't lost on auto-advance. Consume
+            // the pending value here — leaving it set would let a later Continue
+            // tap on this card re-fire the same level-up.
+            pendingLevelUp = nil
             onComplete(correct, newLevel)
             return
         }
@@ -203,8 +205,12 @@ struct AssessmentView: View {
         // stored so onDisappear can cancel it — see the modifier above.
         if correct {
             autoAdvanceTask?.cancel()
+            AccessibilityNotification.Announcement(
+                String(localized: "a11y.assessment.correct.autoAdvance")
+            ).post()
+            let delay = voiceOverEnabled ? Self.voiceOverAutoAdvanceDelay : Self.autoAdvanceDelay
             autoAdvanceTask = Task {
-                try? await Task.sleep(for: Self.autoAdvanceDelay)
+                try? await Task.sleep(for: delay)
                 guard !Task.isCancelled else { return }
                 onComplete(true, nil)
             }
