@@ -90,6 +90,19 @@ struct FeynmanCardView: View {
         .contentShape(Rectangle())
         .simultaneousGesture(swipeAdvanceGesture)
         .sensoryFeedback(.selection, trigger: advanceTrigger)
+        // Single choke point for every stage transition — advance, retreat,
+        // submit, skip, and report all funnel through here, so no path can
+        // forget the VoiceOver announcement (SC 4.1.3) or leave the keyboard
+        // covering the post-completion CTA.
+        .onChange(of: stage) { _, newStage in
+            if newStage != .explain {
+                explanationFocused = false
+            }
+            VoiceOverAnnouncer.post(
+                String(format: String(localized: "a11y.feynman.stageProgress.format"),
+                       visibleStageIndex, visibleStageTotal)
+            )
+        }
         .sheet(isPresented: $showReport) {
             WordReportSheet(
                 word: word,
@@ -122,9 +135,11 @@ struct FeynmanCardView: View {
             }
         }
         .frame(height: theme.spacing.xxs)
+        // No .updatesFrequently: that trait is for continuously-changing
+        // elements (timers); stage changes are announced imperatively from
+        // the onChange(of: stage) choke point instead.
         .accessibilityLabel(String(format: String(localized: "a11y.feynman.stageProgress.format"),
                                    visibleStageIndex, visibleStageTotal))
-        .accessibilityAddTraits(.updatesFrequently)
     }
 
     /// 0-1 progress through visible stages.

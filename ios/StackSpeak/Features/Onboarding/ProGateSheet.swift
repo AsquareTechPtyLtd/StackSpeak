@@ -37,15 +37,8 @@ struct ProGateSheet: View {
         // gets a dismissable, full-height sheet — including iPad, where an
         // undetented sheet renders as a clipped floating window.
         .overlay(alignment: .topTrailing) {
-            Button { dismiss() } label: {
-                Image(systemName: "xmark")
-                    .font(.system(.subheadline, weight: .semibold)) // icon glyph
-                    .foregroundColor(theme.colors.inkMuted)
-                    .padding(theme.spacing.sm)
-                    .background(theme.colors.surfaceAlt, in: Circle())
-            }
-            .padding(theme.spacing.md)
-            .accessibilityLabel(Text("common.close"))
+            SheetCloseButton { dismiss() }
+                .padding(theme.spacing.md)
         }
         .presentationDetents([.large])
         .presentationDragIndicator(.visible)

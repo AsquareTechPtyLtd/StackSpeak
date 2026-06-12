@@ -8,9 +8,12 @@ import SwiftUI
 /// `MotionTokens.nudge` for the cadence. Wrapping the hint in a button gives
 /// VoiceOver users (and tap-preferring users) an explicit advance affordance.
 struct SwipeNudge: View {
+    /// The chevron glyph follows iOS forward/back convention (forward = right),
+    /// but the nudge motion mimics the finger gesture itself — advancing is a
+    /// LEFTWARD swipe (content slides left), so .forward drifts left.
     enum Direction {
-        case forward   // chevron points right; nudges right
-        case backward  // chevron points left; nudges left
+        case forward   // chevron points right; nudges left (swipe left to advance)
+        case backward  // chevron points left; nudges right (swipe right to go back)
     }
 
     @Environment(\.theme) private var theme
@@ -57,7 +60,7 @@ struct SwipeNudge: View {
 
     private var chevron: some View {
         let glyph = direction == .forward ? "chevron.right" : "chevron.left"
-        let dx: CGFloat = direction == .forward ? 4 : -4
+        let dx: CGFloat = direction == .forward ? -4 : 4
         return Image(systemName: glyph)
             .font(TypographyTokens.callout.weight(.semibold))
             .foregroundColor(theme.colors.inkMuted)
