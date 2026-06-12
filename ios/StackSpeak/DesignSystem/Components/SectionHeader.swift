@@ -19,8 +19,12 @@ struct SectionHeader: View {
     }
 
     var body: some View {
+        // Semibold + slight tracking so the label outweighs the body text it
+        // introduces — a muted header lighter than its content inverts the
+        // hierarchy.
         Text(title)
-            .font(TypographyTokens.subheadline.weight(.medium))
+            .font(TypographyTokens.subheadline.weight(.semibold))
+            .tracking(0.2)
             .foregroundColor(theme.colors.inkMuted)
     }
 }

@@ -52,8 +52,11 @@ struct CompletionTrackerRow: View {
             .clipShape(.rect(cornerRadius: Self.cellRadius))
             .overlay(
                 RoundedRectangle(cornerRadius: Self.cellRadius)
+                    // Today's border stays in the streak family — an indigo
+                    // accent ring around an orange fill collides two semantic
+                    // color families in one cell.
                     .strokeBorder(
-                        day.isToday ? theme.colors.accentDecoration
+                        day.isToday ? theme.colors.streak
                                     : (day.hasAnyProgress ? theme.colors.streak.opacity(0.8) : theme.colors.line),
                         lineWidth: day.isToday ? 1.5 : 0.5
                     )

@@ -113,9 +113,11 @@ struct WordDetailView: View {
     }
 
     private var shortDefinition: some View {
+        // Primary gloss of the word — full ink, not muted; everything else on
+        // the page elaborates on this line.
         Text(word.shortDefinition)
             .font(TypographyTokens.title3)
-            .foregroundColor(theme.colors.inkMuted)
+            .foregroundColor(theme.colors.ink)
             .fixedSize(horizontal: false, vertical: true)
             .padding(.top, theme.spacing.sm)
     }

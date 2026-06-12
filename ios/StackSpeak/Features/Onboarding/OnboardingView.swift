@@ -29,8 +29,11 @@ struct OnboardingView: View {
             title: String(localized: "onboarding.page2.title"),
             description: String(localized: "onboarding.page2.description")
         ),
+        // "60" = the 60-step ladder named in the page copy — keeps the serif
+        // glyph treatment running through all three pages instead of dropping
+        // to a plain SF Symbol at the highest-intent moment.
         OnboardingPage(
-            kind: .icon(systemImage: "chart.line.uptrend.xyaxis"),
+            kind: .glyph("60"),
             title: String(localized: "onboarding.page3.title"),
             description: String(localized: "onboarding.page3.description")
         )
