@@ -446,9 +446,9 @@ Notifications must feel helpful, not naggy. Request permission only after the us
 
 ### Onboarding (3 screens + stack selection, skippable)
 
-1. **Value prop:** *"Five quiet words, every weekday."*
-2. **Active learning:** *"Practice by writing — or speaking — your own sentence."*
-3. **Progression hook:** *"Level up from Intern to Staff Engineer."*
+1. **Value prop:** *"Five words a day. Sound like a senior engineer."*
+2. **Active learning:** *"Teach it back to learn it."* (Feynman technique)
+3. **Progression hook:** *"Climb from Intern to Fellow."* (60-level ladder + interleaving)
 4. **Stack selection:** User chooses which optional stacks to add (core stacks pre-selected and locked)
 
 Each screen has a "Next" button and a persistent "Skip" option. After screen 3 (or skip), user sees the stack selection screen. After confirming stack choices, user lands on the Home screen with their first daily set ready. No level quiz.

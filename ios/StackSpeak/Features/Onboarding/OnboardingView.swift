@@ -16,19 +16,21 @@ struct OnboardingView: View {
     @State private var showSkipConfirm = false
     @State private var saveError: Error?
 
+    // Promise → method → journey: lead with what the app gives you, then the
+    // Feynman hook, then the Intern→Fellow ladder right before stack selection.
     private let pages: [OnboardingPage] = [
         OnboardingPage(
-            kind: .glyph("\u{201C}"),
+            kind: .glyph("5"),
             title: String(localized: "onboarding.page1.title"),
             description: String(localized: "onboarding.page1.description")
         ),
         OnboardingPage(
-            kind: .icon(systemImage: "shuffle"),
+            kind: .glyph("\u{201C}"),
             title: String(localized: "onboarding.page2.title"),
             description: String(localized: "onboarding.page2.description")
         ),
         OnboardingPage(
-            kind: .icon(systemImage: "mic.fill"),
+            kind: .icon(systemImage: "chart.line.uptrend.xyaxis"),
             title: String(localized: "onboarding.page3.title"),
             description: String(localized: "onboarding.page3.description")
         )
@@ -207,9 +209,9 @@ struct OnboardingPage {
     enum Kind {
         case icon(systemImage: String)
         /// Single character/grapheme rendered in the brand serif as a
-        /// typographic moment — used for the lead "Teach it back" page so
-        /// the hero gestures at the product's writing-led ethos before the
-        /// SF Symbol pages take over.
+        /// typographic moment — the "5" on the promise page and the quote
+        /// mark on the Feynman page, gesturing at the product's writing-led
+        /// ethos before the SF Symbol page takes over.
         case glyph(String)
     }
     let kind: Kind
