@@ -48,6 +48,8 @@ struct LevelUpView: View {
             }
             .padding(theme.spacing.xl)
         }
+        .presentationDetents([.medium, .large])
+        .presentationDragIndicator(.visible)
         .sensoryFeedback(.success, trigger: hasAppeared)
         .onAppear { hasAppeared = true }
         .sheet(isPresented: $showStackPicker, onDismiss: { dismiss() }) {

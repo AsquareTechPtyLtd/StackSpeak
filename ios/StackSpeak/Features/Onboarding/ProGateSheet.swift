@@ -32,6 +32,23 @@ struct ProGateSheet: View {
             footerSection
         }
         .background(theme.colors.bg.ignoresSafeArea())
+        // Close affordance + detents live here, not at the call sites, so every
+        // presentation (onboarding, profile, stack management, locked books)
+        // gets a dismissable, full-height sheet — including iPad, where an
+        // undetented sheet renders as a clipped floating window.
+        .overlay(alignment: .topTrailing) {
+            Button { dismiss() } label: {
+                Image(systemName: "xmark")
+                    .font(.system(.subheadline, weight: .semibold)) // icon glyph
+                    .foregroundColor(theme.colors.inkMuted)
+                    .padding(theme.spacing.sm)
+                    .background(theme.colors.surfaceAlt, in: Circle())
+            }
+            .padding(theme.spacing.md)
+            .accessibilityLabel(Text("common.close"))
+        }
+        .presentationDetents([.large])
+        .presentationDragIndicator(.visible)
         .task { await loadProducts() }
         .alert(
             "pro.gate.error.title",
