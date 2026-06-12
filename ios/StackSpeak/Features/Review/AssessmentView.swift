@@ -47,8 +47,6 @@ struct AssessmentView: View {
 
                 if hasSubmitted && !isCorrect {
                     incorrectFeedback
-                } else if !hasSubmitted {
-                    submitButton
                 }
             }
             .padding(theme.spacing.lg)
@@ -136,15 +134,6 @@ struct AssessmentView: View {
         }
     }
 
-    private var submitButton: some View {
-        PrimaryCTAButton("review.assessment.submit") { submit() }
-            .disabled(selectedAnswer == nil)
-            .accessibilityLabel(String(localized: "a11y.submitAnswer"))
-            .accessibilityHint(selectedAnswer == nil
-                ? String(localized: "a11y.submitAnswer.selectFirst")
-                : String(localized: "a11y.submitAnswer.ready"))
-    }
-
     // MARK: - State
 
     private func stateFor(option: String) -> OptionButton.State {
@@ -156,9 +145,12 @@ struct AssessmentView: View {
 
     // MARK: - Actions
 
+    /// Tapping an option submits it directly — a separate Submit tap added
+    /// friction without preventing any error (options are single-tap final).
     private func selectOption(_ option: String) {
         guard !hasSubmitted else { return }
         selectedAnswer = option
+        submit()
     }
 
     private func submit() {

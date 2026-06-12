@@ -11,19 +11,25 @@ struct EmptyStateView: View {
     let message: LocalizedStringKey
     let actionTitle: LocalizedStringKey?
     let action: (() -> Void)?
+    let secondaryActionTitle: LocalizedStringKey?
+    let secondaryAction: (() -> Void)?
 
     init(
         icon: String,
         title: LocalizedStringKey,
         message: LocalizedStringKey,
         actionTitle: LocalizedStringKey? = nil,
-        action: (() -> Void)? = nil
+        action: (() -> Void)? = nil,
+        secondaryActionTitle: LocalizedStringKey? = nil,
+        secondaryAction: (() -> Void)? = nil
     ) {
         self.icon = icon
         self.title = title
         self.message = message
         self.actionTitle = actionTitle
         self.action = action
+        self.secondaryActionTitle = secondaryActionTitle
+        self.secondaryAction = secondaryAction
     }
 
     var body: some View {
@@ -51,6 +57,13 @@ struct EmptyStateView: View {
                         .foregroundColor(theme.colors.accent)
                 }
                 .padding(.top, theme.spacing.xs)
+            }
+            if let secondaryActionTitle, let secondaryAction {
+                Button(action: secondaryAction) {
+                    Text(secondaryActionTitle)
+                        .font(TypographyTokens.subheadline)
+                        .foregroundColor(theme.colors.inkMuted)
+                }
             }
             Spacer()
         }

@@ -13,12 +13,14 @@ struct HomeView: View {
     @Environment(\.theme) var theme
     @Environment(\.services) var services
     @Environment(\.userProgress) var userProgress
+    @Environment(\.tabRouter) private var tabRouter
 
     @Query var dailySets: [DailySet]
     @State var viewModel = HomeViewModel()
     @State var notificationAuthStatus: UNAuthorizationStatus = .notDetermined
     @State var showNotificationBanner = false
     @State var showNotificationPrompt = false
+    @State private var showStackManagement = false
     @State var path: [UUID] = []
 
     var body: some View {
@@ -126,11 +128,21 @@ struct HomeView: View {
                 .padding(.horizontal, theme.spacing.lg)
 
             if viewModel.todaysWords.isEmpty && viewModel.errorMessage == nil {
+                // The most engaged users land here — give them somewhere to go.
                 EmptyStateView(
                     icon: "checkmark.seal.fill",
                     title: "home.allMastered.title",
-                    message: "home.allMastered.message"
+                    message: "home.allMastered.message",
+                    actionTitle: "home.allMastered.browseLibrary",
+                    action: { tabRouter?.selection = .books },
+                    secondaryActionTitle: "home.allMastered.manageStacks",
+                    secondaryAction: { showStackManagement = true }
                 )
+                .sheet(isPresented: $showStackManagement) {
+                    NavigationStack {
+                        StackManagementView()
+                    }
+                }
             } else {
                 sectionDivider
                     .padding(.horizontal, theme.spacing.lg)

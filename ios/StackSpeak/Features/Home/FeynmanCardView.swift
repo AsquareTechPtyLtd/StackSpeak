@@ -219,7 +219,9 @@ struct FeynmanCardView: View {
     var advanceControls: some View {
         switch stage {
         case .simple, .technical, .connector:
-            SwipeNudge("feynman.swipe.continue", direction: .backward, onAdvance: advance)
+            // .forward: the chevron points right — a left chevron reads as the
+            // iOS-universal "back" even though the advance swipe travels left.
+            SwipeNudge("feynman.swipe.continue", direction: .forward, onAdvance: advance)
                 .accessibilityAction(named: Text("feynman.swipe.continue.a11y")) { advance() }
         case .explain:
             explainControls

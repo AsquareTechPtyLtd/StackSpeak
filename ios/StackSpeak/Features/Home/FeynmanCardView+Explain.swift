@@ -151,7 +151,9 @@ extension FeynmanCardView {
                 }
                 .disabled(trimmed.isEmpty)
             }
-            if trimmed.isEmpty {
+            // Suppressed while recording — "type a few words" would contradict
+            // the active voice input filling the editor.
+            if trimmed.isEmpty && speechService?.isRecording != true {
                 Text("feynman.explain.submitHint")
                     .font(TypographyTokens.footnote)
                     .foregroundColor(theme.colors.inkMuted)
