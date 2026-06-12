@@ -53,7 +53,7 @@ extension FeynmanCardView {
                 placeholder: "feynman.explain.placeholder",
                 text: $explanation,
                 focus: $explanationFocused,
-                minHeight: 120,
+                height: .grows(min: 120),
                 accessibilityLabel: String(localized: "a11y.feynman.explanationInput")
             )
             .onChange(of: explanation) { _, newValue in

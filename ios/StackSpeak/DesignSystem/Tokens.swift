@@ -127,8 +127,6 @@ enum IconSizeTokens {
     static let avatar: CGFloat = 80
     /// Onboarding hero icons.
     static let xLarge: CGFloat = 72
-    /// Level-up / single-celebration moments.
-    static let hero: CGFloat = 96
 }
 
 /// Three considered stroke widths. Anything else is a smell.
@@ -209,6 +207,13 @@ struct TypographyTokens {
 
     static let etymology      = instrumentSerif(size: 17)
     static let etymologyLarge = instrumentSerif(size: 22)
+    /// Editorial one-liners on Books catalog rows. Same metrics as etymology
+    /// today, but a separate token so word-surface tuning can't reflow the
+    /// catalog (and vice versa).
+    static let bookSummarySerif = instrumentSerif(size: 17)
+    /// Serif counterpart to title1, sized up for the serif's smaller x-height
+    /// (same +6 offset as cardTitleSerif vs the old Inter 26 card title).
+    static let title1Serif = instrumentSerif(size: 34, relativeTo: .largeTitle)
 
     /// Single tuned card title size. Density removed (F10). Brand serif at
     /// the Feynman hero slot — the practice card's one editorial moment;

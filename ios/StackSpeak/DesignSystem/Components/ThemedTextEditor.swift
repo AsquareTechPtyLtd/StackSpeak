@@ -5,15 +5,21 @@ import SwiftUI
 /// explain stage and the word-report notes field — the placeholder alignment
 /// arithmetic lives here once instead of drifting per call site.
 struct ThemedTextEditor: View {
+    /// One height policy per editor — the enum makes "grows" and "fixed"
+    /// mutually exclusive by construction instead of by comment.
+    enum Height {
+        /// Editor grows with content from this minimum.
+        case grows(min: CGFloat)
+        /// Fixed editor height.
+        case fixed(CGFloat)
+    }
+
     @Environment(\.theme) private var theme
 
     let placeholder: LocalizedStringKey
     @Binding var text: String
     let focus: FocusState<Bool>.Binding
-    /// Editor grows from this height with content.
-    var minHeight: CGFloat?
-    /// Fixed editor height; mutually exclusive with `minHeight` in practice.
-    var height: CGFloat?
+    let height: Height
     var accessibilityLabel: String?
 
     /// Nudges that align the overlay placeholder with TextEditor's internal
@@ -35,6 +41,16 @@ struct ThemedTextEditor: View {
         }
     }
 
+    private var minHeight: CGFloat? {
+        if case .grows(let min) = height { return min }
+        return nil
+    }
+
+    private var fixedHeight: CGFloat? {
+        if case .fixed(let value) = height { return value }
+        return nil
+    }
+
     @ViewBuilder
     private var editor: some View {
         let base = TextEditor(text: $text)
@@ -42,7 +58,10 @@ struct ThemedTextEditor: View {
             .foregroundColor(theme.colors.ink)
             .scrollContentBackground(.hidden)
             .frame(minHeight: minHeight)
-            .frame(height: height)
+            .frame(height: fixedHeight)
+            // Free-text fields — suppress content-type inference so QuickType
+            // never offers stored personal data as suggestions here.
+            .textContentType(.none)
             .padding(theme.spacing.sm)
             .background(theme.colors.surfaceAlt)
             .clipShape(.rect(cornerRadius: RadiusTokens.inline))
@@ -62,4 +81,42 @@ struct ThemedTextEditor: View {
             base
         }
     }
+}
+
+// MARK: - Previews
+
+/// Wrapper so previews can supply the required @FocusState binding.
+private struct ThemedTextEditorPreview: View {
+    @State private var emptyText = ""
+    @State private var filledText = "An operation is idempotent if applying it twice equals applying it once."
+    @FocusState private var focused: Bool
+
+    var body: some View {
+        VStack(spacing: 16) {
+            ThemedTextEditor(
+                placeholder: "feynman.explain.placeholder",
+                text: $emptyText,
+                focus: $focused,
+                height: .grows(min: 120)
+            )
+            ThemedTextEditor(
+                placeholder: "report.notes.placeholder",
+                text: $filledText,
+                focus: $focused,
+                height: .fixed(100)
+            )
+        }
+        .padding()
+    }
+}
+
+#Preview("Themed Text Editor — Light") {
+    ThemedTextEditorPreview()
+        .withTheme(ThemeManager())
+}
+
+#Preview("Themed Text Editor — Dark") {
+    ThemedTextEditorPreview()
+        .withTheme(ThemeManager())
+        .preferredColorScheme(.dark)
 }

@@ -1,4 +1,3 @@
-import Accessibility
 import SwiftUI
 
 // MARK: - Stage transitions, submit/skip/report actions, recording
@@ -55,7 +54,6 @@ extension FeynmanCardView {
         withAnimation(reduceMotion ? nil : MotionTokens.standard) {
             stage = next
         }
-        announceStage()
         if next == .done { onStageDidReachDone() }
     }
 
@@ -75,25 +73,12 @@ extension FeynmanCardView {
         withAnimation(reduceMotion ? nil : MotionTokens.standard) {
             stage = prev
         }
-        announceStage()
-    }
-
-    /// Stage changes are otherwise silent to VoiceOver — the cross-fade
-    /// carries no accessibility event (SC 4.1.3).
-    private func announceStage() {
-        AccessibilityNotification.Announcement(
-            String(format: String(localized: "a11y.feynman.stageProgress.format"),
-                   visibleStageIndex, visibleStageTotal)
-        ).post()
     }
 
     // MARK: - Submit / skip / report
 
     func submitExplanation(trimmed: String) {
         stopRecordingIfNeeded()
-        // Resign the editor focus explicitly — on small phones a lingering
-        // keyboard can cover the Back-to-Today CTA that appears on done.
-        explanationFocused = false
         onSubmit(trimmed, inputMethod, false)
         advanceTrigger &+= 1
         let next: FeynmanStage = isComingSoon ? .done : .connector
@@ -105,7 +90,6 @@ extension FeynmanCardView {
 
     func submitAsComingSoon() {
         stopRecordingIfNeeded()
-        explanationFocused = false
         onSubmit("", .typed, false)
         advanceTrigger &+= 1
         withAnimation(reduceMotion ? nil : MotionTokens.standard) {
@@ -116,7 +100,6 @@ extension FeynmanCardView {
 
     func skipWord() {
         stopRecordingIfNeeded()
-        explanationFocused = false
         onSubmit("", .typed, true)  // mark as mastered
         advanceTrigger &+= 1
         withAnimation(reduceMotion ? nil : MotionTokens.standard) {

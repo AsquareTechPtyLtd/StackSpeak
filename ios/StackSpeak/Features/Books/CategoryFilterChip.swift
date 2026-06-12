@@ -44,13 +44,14 @@ struct CategoryFilterChip: View {
                     .lineLimit(1)
             }
             .foregroundColor(foreground)
-            .padding(.horizontal, theme.spacing.md)
-            .padding(.vertical, theme.spacing.sm)
-            .background(bg)
-            .clipShape(.rect(cornerRadius: RadiusTokens.pill))
-            .overlay(
-                RoundedRectangle(cornerRadius: RadiusTokens.pill)
-                    .stroke(border, lineWidth: isSelected ? BorderTokens.emphasis : BorderTokens.regular)
+            .selectableCardChrome(
+                isSelected: isSelected,
+                fill: bg,
+                border: border,
+                padding: EdgeInsets(top: theme.spacing.sm, leading: theme.spacing.md,
+                                    bottom: theme.spacing.sm, trailing: theme.spacing.md),
+                radius: RadiusTokens.pill,
+                idleLineWidth: BorderTokens.regular
             )
         }
         .buttonStyle(.plain)

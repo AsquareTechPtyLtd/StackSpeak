@@ -18,7 +18,7 @@ struct BookListRow: View {
                 // Brand serif for the editorial one-liner — the Bear-style
                 // moment on each catalog row.
                 Text(book.summary)
-                    .font(TypographyTokens.etymology)
+                    .font(TypographyTokens.bookSummarySerif)
                     .foregroundColor(theme.colors.inkMuted)
                     .lineLimit(2)
                 metaRow

@@ -104,7 +104,7 @@ struct WordReportSheet: View {
                 placeholder: "report.notes.placeholder",
                 text: $additionalNotes,
                 focus: $notesFocused,
-                height: 100
+                height: .fixed(100)
             )
             .autocorrectionDisabled()
             .onChange(of: additionalNotes) { _, newValue in

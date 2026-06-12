@@ -70,7 +70,7 @@ struct StackSelectionView: View {
             // Brand serif extends the onboarding glyph language onto its
             // final page instead of dropping to token-painted Inter.
             Text("onboarding.stacks.title")
-                .font(TypographyTokens.instrumentSerif(size: 34, relativeTo: .largeTitle))
+                .font(TypographyTokens.title1Serif)
                 .foregroundColor(theme.colors.ink)
 
             Text("onboarding.stacks.description")

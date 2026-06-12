@@ -66,6 +66,14 @@ struct HomeView: View {
             } message: {
                 Text("notifications.prompt.message")
             }
+            // Anchored here, not on the all-mastered EmptyStateView: saving
+            // stacks can repopulate todaysWords, and a sheet on the vanishing
+            // branch would be force-dismissed mid-flow.
+            .sheet(isPresented: $showStackManagement) {
+                NavigationStack {
+                    StackManagementView()
+                }
+            }
     }
 
     private var mainZStack: some View {
@@ -138,11 +146,6 @@ struct HomeView: View {
                     secondaryActionTitle: "home.allMastered.manageStacks",
                     secondaryAction: { showStackManagement = true }
                 )
-                .sheet(isPresented: $showStackManagement) {
-                    NavigationStack {
-                        StackManagementView()
-                    }
-                }
             } else {
                 sectionDivider
                     .padding(.horizontal, theme.spacing.lg)

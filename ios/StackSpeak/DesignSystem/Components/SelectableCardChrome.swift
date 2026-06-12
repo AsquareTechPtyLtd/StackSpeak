@@ -13,19 +13,23 @@ struct SelectableCardChrome: ViewModifier {
     /// Override for state-colored borders. Defaults to accent-when-selected
     /// over the hairline `line` color.
     var border: Color?
-    /// Defaults to the card padding (EdgeInsets); OptionButton uses the
-    /// tighter uniform `md`.
-    var padding: CGFloat?
+    /// Defaults to the card padding; OptionButton and the category chips use
+    /// their own insets.
+    var padding: EdgeInsets?
+    /// Card radius for rows/cards; chips pass `RadiusTokens.pill`.
+    var radius: CGFloat = RadiusTokens.card
+    /// Resting border width; chips use `regular` instead of the hairline.
+    var idleLineWidth: CGFloat = BorderTokens.hairline
 
     func body(content: Content) -> some View {
         let resolvedFill: Color = fill ?? (isSelected ? theme.colors.accentBg : theme.colors.surface)
         let resolvedBorder: Color = border ?? (isSelected ? theme.colors.accent : theme.colors.line)
-        let lineWidth: CGFloat = isSelected ? BorderTokens.emphasis : BorderTokens.hairline
+        let lineWidth: CGFloat = isSelected ? BorderTokens.emphasis : idleLineWidth
         return padded(content)
             .background(resolvedFill)
-            .clipShape(.rect(cornerRadius: RadiusTokens.card))
+            .clipShape(.rect(cornerRadius: radius))
             .overlay(
-                RoundedRectangle(cornerRadius: RadiusTokens.card)
+                RoundedRectangle(cornerRadius: radius)
                     .stroke(resolvedBorder, lineWidth: lineWidth)
             )
     }
@@ -45,13 +49,41 @@ extension View {
         isSelected: Bool,
         fill: Color? = nil,
         border: Color? = nil,
-        padding: CGFloat? = nil
+        padding: EdgeInsets? = nil,
+        radius: CGFloat = RadiusTokens.card,
+        idleLineWidth: CGFloat = BorderTokens.hairline
     ) -> some View {
         modifier(SelectableCardChrome(
             isSelected: isSelected,
             fill: fill,
             border: border,
-            padding: padding
+            padding: padding,
+            radius: radius,
+            idleLineWidth: idleLineWidth
         ))
     }
+}
+
+#Preview("Selectable card chrome — Light") {
+    VStack(spacing: 12) {
+        Text(verbatim: "Idle card").selectableCardChrome(isSelected: false)
+        Text(verbatim: "Selected card").selectableCardChrome(isSelected: true)
+        Text(verbatim: "Pill chip").selectableCardChrome(
+            isSelected: true,
+            radius: RadiusTokens.pill,
+            idleLineWidth: BorderTokens.regular
+        )
+    }
+    .padding()
+    .withTheme(ThemeManager())
+}
+
+#Preview("Selectable card chrome — Dark") {
+    VStack(spacing: 12) {
+        Text(verbatim: "Idle card").selectableCardChrome(isSelected: false)
+        Text(verbatim: "Selected card").selectableCardChrome(isSelected: true)
+    }
+    .padding()
+    .withTheme(ThemeManager())
+    .preferredColorScheme(.dark)
 }

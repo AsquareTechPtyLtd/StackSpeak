@@ -43,7 +43,8 @@ struct OptionButton: View {
                 isSelected: state != .idle || isSelected,
                 fill: fill,
                 border: border,
-                padding: theme.spacing.md
+                padding: EdgeInsets(top: theme.spacing.md, leading: theme.spacing.md,
+                                    bottom: theme.spacing.md, trailing: theme.spacing.md)
             )
         }
         .buttonStyle(.plain)

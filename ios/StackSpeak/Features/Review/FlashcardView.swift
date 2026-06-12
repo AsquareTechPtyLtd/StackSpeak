@@ -1,4 +1,3 @@
-import Accessibility
 import SwiftUI
 
 /// SRS flashcard.
@@ -17,10 +16,21 @@ struct FlashcardView: View {
     let onAgain: () -> Void
     let onGood: () -> Void
 
+    /// One haptic channel for all card events (mirrors AssessmentView's
+    /// enum-trigger pattern); the counter makes repeats of the same kind fire.
+    private struct FeedbackEvent: Equatable {
+        enum Kind { case flip, again, good }
+        var count = 0
+        var kind: Kind?
+
+        mutating func fire(_ kind: Kind) {
+            count &+= 1
+            self.kind = kind
+        }
+    }
+
     @State private var isFlipped = false
-    @State private var flipTrigger = 0
-    @State private var againTrigger = 0
-    @State private var goodTrigger = 0
+    @State private var feedback = FeedbackEvent()
 
     /// Deliberate fixed design height for the card surface; content is short
     /// (term + definition + example) and a stable frame keeps the flip calm.
@@ -45,9 +55,13 @@ struct FlashcardView: View {
 
             Spacer()
         }
-        .sensoryFeedback(.impact(weight: .light), trigger: flipTrigger)
-        .sensoryFeedback(.impact(weight: .light), trigger: againTrigger)
-        .sensoryFeedback(.success, trigger: goodTrigger)
+        .sensoryFeedback(trigger: feedback) { _, new in
+            switch new.kind {
+            case .flip, .again: return .impact(weight: .light)
+            case .good: return .success
+            case nil: return nil
+            }
+        }
     }
 
     private var cardSurface: some View {
@@ -75,7 +89,7 @@ struct FlashcardView: View {
     }
 
     private func flip() {
-        flipTrigger &+= 1
+        feedback.fire(.flip)
         withAnimation(reduceMotion ? nil : MotionTokens.standard) {
             isFlipped.toggle()
         }
@@ -118,7 +132,7 @@ struct FlashcardView: View {
     private var actionButtons: some View {
         HStack(spacing: theme.spacing.lg) {
             Button {
-                againTrigger &+= 1
+                feedback.fire(.again)
                 onAgain()
                 reset()
             } label: {
@@ -134,7 +148,7 @@ struct FlashcardView: View {
             .accessibilityHint(Text("a11y.flashcard.again.hint"))
 
             Button {
-                goodTrigger &+= 1
+                feedback.fire(.good)
                 onGood()
                 reset()
             } label: {
@@ -158,9 +172,7 @@ struct FlashcardView: View {
         }
         // The flip-back and button collapse are silent to VoiceOver — say
         // what happened and that a new card is up (SC 4.1.3).
-        AccessibilityNotification.Announcement(
-            String(localized: "a11y.flashcard.answerRecorded")
-        ).post()
+        VoiceOverAnnouncer.post(String(localized: "a11y.flashcard.answerRecorded"))
     }
 }
 

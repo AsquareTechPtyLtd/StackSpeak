@@ -1,4 +1,3 @@
-import Accessibility
 import SwiftUI
 import SwiftData
 import OSLog
@@ -51,6 +50,10 @@ struct AssessmentView: View {
             }
             .padding(theme.spacing.lg)
         }
+        // The parent TabView sets .scrollDisabled(true) to block free swiping,
+        // and that propagates down the environment — opt this card's own
+        // content back in so Continue stays reachable on small screens.
+        .scrollDisabled(false)
         .task(id: word.id) {
             if options.isEmpty {
                 generateOptions()
@@ -127,9 +130,7 @@ struct AssessmentView: View {
                 .font(TypographyTokens.callout)
                 .foregroundColor(theme.colors.inkMuted)
             PrimaryCTAButton("review.assessment.continue") {
-                let levelUp = pendingLevelUp
-                pendingLevelUp = nil
-                onComplete(isCorrect, levelUp)
+                onComplete(isCorrect, consumePendingLevelUp())
             }
         }
     }
@@ -183,13 +184,10 @@ struct AssessmentView: View {
         feedbackTrigger = correct ? .correct : .incorrect
         pendingLevelUp = newLevel
 
-        if let newLevel {
-            // Level-up takes precedence: hand control to the parent immediately so
-            // the celebration sheet appears and isn't lost on auto-advance. Consume
-            // the pending value here — leaving it set would let a later Continue
-            // tap on this card re-fire the same level-up.
-            pendingLevelUp = nil
-            onComplete(correct, newLevel)
+        if newLevel != nil {
+            // Level-up takes precedence: hand control to the parent immediately
+            // so the celebration sheet appears and isn't lost on auto-advance.
+            onComplete(correct, consumePendingLevelUp())
             return
         }
 
@@ -205,9 +203,7 @@ struct AssessmentView: View {
         // stored so onDisappear can cancel it — see the modifier above.
         if correct {
             autoAdvanceTask?.cancel()
-            AccessibilityNotification.Announcement(
-                String(localized: "a11y.assessment.correct.autoAdvance")
-            ).post()
+            VoiceOverAnnouncer.post(String(localized: "a11y.assessment.correct.autoAdvance"))
             let delay = voiceOverEnabled ? Self.voiceOverAutoAdvanceDelay : Self.autoAdvanceDelay
             autoAdvanceTask = Task {
                 try? await Task.sleep(for: delay)
@@ -215,6 +211,15 @@ struct AssessmentView: View {
                 onComplete(true, nil)
             }
         }
+    }
+
+    /// Atomically reads and clears the pending level-up so every handoff
+    /// consumes it exactly once — the pairing lives here instead of being
+    /// re-implemented at each call site. (Defensive on the incorrect path:
+    /// wrong answers can't level up today, but this keeps it drift-proof.)
+    private func consumePendingLevelUp() -> Int? {
+        defer { pendingLevelUp = nil }
+        return pendingLevelUp
     }
 
     /// Marks the word mastered (out of daily rotation) and advances. A save
