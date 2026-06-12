@@ -13,19 +13,30 @@ struct SelectableCardChrome: ViewModifier {
     /// Override for state-colored borders. Defaults to accent-when-selected
     /// over the hairline `line` color.
     var border: Color?
-    /// Defaults to the card padding; OptionButton uses the tighter `md`.
+    /// Defaults to the card padding (EdgeInsets); OptionButton uses the
+    /// tighter uniform `md`.
     var padding: CGFloat?
 
     func body(content: Content) -> some View {
-        content
-            .padding(padding ?? theme.spacing.cardPadding)
-            .background(fill ?? (isSelected ? theme.colors.accentBg : theme.colors.surface))
+        let resolvedFill: Color = fill ?? (isSelected ? theme.colors.accentBg : theme.colors.surface)
+        let resolvedBorder: Color = border ?? (isSelected ? theme.colors.accent : theme.colors.line)
+        let lineWidth: CGFloat = isSelected ? BorderTokens.emphasis : BorderTokens.hairline
+        return padded(content)
+            .background(resolvedFill)
             .clipShape(.rect(cornerRadius: RadiusTokens.card))
             .overlay(
                 RoundedRectangle(cornerRadius: RadiusTokens.card)
-                    .stroke(border ?? (isSelected ? theme.colors.accent : theme.colors.line),
-                            lineWidth: isSelected ? BorderTokens.emphasis : BorderTokens.hairline)
+                    .stroke(resolvedBorder, lineWidth: lineWidth)
             )
+    }
+
+    @ViewBuilder
+    private func padded(_ content: Content) -> some View {
+        if let padding {
+            content.padding(padding)
+        } else {
+            content.padding(theme.spacing.cardPadding)
+        }
     }
 }
 

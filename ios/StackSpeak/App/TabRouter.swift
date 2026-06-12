@@ -16,7 +16,8 @@ final class TabRouter {
 }
 
 private struct TabRouterKey: EnvironmentKey {
-    static let defaultValue: TabRouter? = nil
+    // nil holds no state, so the non-Sendable optional is safe to share.
+    nonisolated(unsafe) static let defaultValue: TabRouter? = nil
 }
 
 extension EnvironmentValues {
