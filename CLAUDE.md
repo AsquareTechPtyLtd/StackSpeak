@@ -91,7 +91,9 @@ Cross-platform progress sync (iPhone ↔ iPad ↔ Android) uses **Supabase** —
 
 - **All backend access goes behind the `BackendService` protocol.** Never call Supabase REST endpoints (or any vendor) directly from ViewModels, services, or views — only `SupabaseBackendService` (the one conformer) knows it's Supabase. Switching backends = write one new conformer.
 - The synced record is a **platform-neutral `ProgressSnapshot`** (a compact, versioned JSON blob, one row per user) so iOS and Android serialize the *identical* shape. Entitlement fields (`isPro`/`proExpiryDate`/`isLifetimePro`) are **not** synced — each device derives Pro from its own store (StoreKit / Play Billing).
-- **Tiering:** within-ecosystem backup/sync is free (iCloud for Apple, Android backup); **cross-platform sync is Pro-gated** (`isProActive`) and is the only path that touches the backend.
+- **Tiering:** within-ecosystem backup/sync is free (iCloud for Apple, Android backup); **cross-platform sync is Pro-gated** (`isProActive`) and is the only path that touches the backend. Sync only runs once a real account is linked (Apple/email) — never for a bare anonymous session.
+- **Login is optional — never a startup wall.** Anonymous-first / guest mode; sign-in is offered in Profile, not required to use the app (a mandatory login would risk App Store rejection under guideline 5.1.1 and kill activation). Identity (login) and entitlement (Pro) are independent: show sign-in regardless of Pro, gate *syncing* on Pro.
+- `DailySet` (today's 5-word set + completion) is **per-day and intentionally NOT synced** — it regenerates each day/device, so "0/5" after a restore is expected, not data loss.
 - **Secrets:** the Supabase **anon/publishable key** + project URL may ship in the client (safe only because Row Level Security restricts each user to their own row); they load from a **git-ignored config**, never hardcoded. The **service_role key** and DB password are never in the app, the repo, or any commit.
 - SQL schema + RLS policies live in `supabase/migrations/`.
 
@@ -121,6 +123,7 @@ A feature is complete when:
 - Uses design tokens (no hardcoded colors, fonts, or spacing)
 - Accessibility verified: Dynamic Type scales correctly; VoiceOver labels on all interactive elements
 - No orphaned TODO comments or commented-out code
+- Word-data changes pass `scripts/check-words-content.py` — no stubs, no index drift, no unintended cross-stack duplicate terms, and a `shortDefinition` never contains its own term (it is the multiple-choice quiz answer)
 
 ## Development Commands
 
@@ -130,6 +133,9 @@ cd ios && xcodegen generate && cd ..
 
 # Build (any available iOS Simulator)
 xcodebuild -project ios/StackSpeak.xcodeproj -scheme StackSpeak -destination 'generic/platform=iOS Simulator'
+
+# Compile-check fast (no booted simulator needed — useful in headless/CI envs)
+xcodebuild build-for-testing -project ios/StackSpeak.xcodeproj -scheme StackSpeak -destination 'generic/platform=iOS Simulator' -quiet
 
 # Run tests
 xcodebuild test -project ios/StackSpeak.xcodeproj -scheme StackSpeak -destination 'generic/platform=iOS Simulator'
@@ -148,7 +154,18 @@ open ios/StackSpeak.xcodeproj
 
 # Verify word data is in sync
 ./scripts/check-words-sync.sh
+
+# Lint word content (stubs, self-leaking shortDefinitions, index drift, duplicate terms)
+python3 scripts/check-words-content.py
 ```
+
+## Workflow Conventions
+
+- **Git cadence:** batch pushes after ~5 file-changing commits, not per-fix. Commit/push only when asked; if on `main`, branch first.
+- **Feature branches:** major multi-commit work lands on a feature branch, merged with `--no-ff`. Open a PR when the feature is ready; if a branch is *stacked* on another open PR, merge the base PR first so the new PR diffs cleanly against `main`.
+- **Planning docs:** plans, roadmaps, and review write-ups go in **`.planning/`** as dated files (e.g. `feature-x-2026-06-13.md`). `.planning/` is **git-ignored** (local scratch) — durable cross-session state worth keeping also belongs in auto-memory.
+- **Confirm scope before building:** when the user shows a screen or hints at wanting something, confirm placement/scope first — a screenshot is not approval to implement there.
+- **Verify before claiming done:** compile with `build-for-testing`; SourceKit "cannot find type" errors across files are usually just a missing build index, not real errors — trust a clean build over the editor.
 
 ## Data Synchronization
 
