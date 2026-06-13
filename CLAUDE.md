@@ -86,6 +86,15 @@ Apple frameworks only. **No Swift Package Manager dependencies.**
 
 **Not allowed:** Any third-party package (Alamofire, SnapKit, Lottie, etc.). If something feels like it needs a library, discuss first.
 
+### Backend & Sync (Supabase)
+Cross-platform progress sync (iPhone ↔ iPad ↔ Android) uses **Supabase** — but **not the Supabase Swift SDK** (it's an SPM dependency). Talk to Supabase over its **REST API** (PostgREST + GoTrue Auth) with plain **`URLSession`**. This keeps the "Apple frameworks only / no SPM" rule intact and makes the backend trivially swappable.
+
+- **All backend access goes behind the `BackendService` protocol.** Never call Supabase REST endpoints (or any vendor) directly from ViewModels, services, or views — only `SupabaseBackendService` (the one conformer) knows it's Supabase. Switching backends = write one new conformer.
+- The synced record is a **platform-neutral `ProgressSnapshot`** (a compact, versioned JSON blob, one row per user) so iOS and Android serialize the *identical* shape. Entitlement fields (`isPro`/`proExpiryDate`/`isLifetimePro`) are **not** synced — each device derives Pro from its own store (StoreKit / Play Billing).
+- **Tiering:** within-ecosystem backup/sync is free (iCloud for Apple, Android backup); **cross-platform sync is Pro-gated** (`isProActive`) and is the only path that touches the backend.
+- **Secrets:** the Supabase **anon/publishable key** + project URL may ship in the client (safe only because Row Level Security restricts each user to their own row); they load from a **git-ignored config**, never hardcoded. The **service_role key** and DB password are never in the app, the repo, or any commit.
+- SQL schema + RLS policies live in `supabase/migrations/`.
+
 ## Testing
 
 - **Framework:** Swift Testing (not XCTest).
@@ -175,11 +184,11 @@ When delegating work to subagents, point them at the minimal context they need r
 ## What Claude Should NOT Do
 
 - Do not modify anything outside this project folder
-- Do not add Swift Package Manager dependencies
-- Do not create a backend or server
+- Do not add Swift Package Manager dependencies (incl. the Supabase Swift SDK — use the REST API via `URLSession`, see **Backend & Sync**)
+- Do not stand up a *custom* server. The only backend is **Supabase** (managed), reached via REST behind the `BackendService` protocol, for Pro-gated cross-platform sync — nothing else
 - Do not add analytics or tracking
+- Do not commit Supabase secrets (service_role key, DB password); the anon key + URL load from a git-ignored config
 - Do not generate placeholder / lorem ipsum content — use real tech words only
 - Do not skip writing preview providers
 - Do not hardcode colors, fonts, or spacing — always use design tokens
-- Do not start Android work — it's deferred to Phase 2
 - Do not duplicate product spec or implementation details into this file — link to `docs/PRD.md` or the relevant code
