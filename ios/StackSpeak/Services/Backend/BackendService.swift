@@ -16,6 +16,13 @@ protocol BackendService: Sendable {
     @discardableResult
     func ensureSession() async throws -> BackendUserID
 
+    /// Signs in with an Apple ID token (native Sign in with Apple). Replaces the
+    /// current (anonymous) session with the Apple-linked user, so the same Apple
+    /// ID resolves to the same user across devices — the basis of cross-device
+    /// sync. `rawNonce` is the un-hashed nonce that was hashed onto the request.
+    @discardableResult
+    func signInWithApple(idToken: String, rawNonce: String) async throws -> BackendUserID
+
     /// Fetches the user's remote snapshot, or nil if they have none yet.
     func fetchSnapshot() async throws -> ProgressSnapshot?
 

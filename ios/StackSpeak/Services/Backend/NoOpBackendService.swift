@@ -11,6 +11,10 @@ struct NoOpBackendService: BackendService {
         throw BackendError.notConfigured
     }
 
+    func signInWithApple(idToken: String, rawNonce: String) async throws -> BackendUserID {
+        throw BackendError.notConfigured
+    }
+
     func fetchSnapshot() async throws -> ProgressSnapshot? {
         throw BackendError.notConfigured
     }

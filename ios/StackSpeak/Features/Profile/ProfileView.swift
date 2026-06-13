@@ -21,6 +21,7 @@ struct ProfileView: View {
                         sectionGroup("profile.section.streak") { streakSection(progress: progress) }
                         sectionGroup("profile.section.stats") { statsSection(progress: progress) }
                         sectionGroup("profile.section.collections") { collectionSection(progress: progress) }
+                        sectionGroup("profile.section.sync") { SyncAccountSection() }
                         sectionGroup("profile.section.settings") { settingsSection(progress: progress) }
                     }
                 }

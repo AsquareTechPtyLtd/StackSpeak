@@ -24,6 +24,17 @@ extension SupabaseBackendService {
         return try await signInAnonymously()
     }
 
+    func signInWithApple(idToken: String, rawNonce: String) async throws -> BackendUserID {
+        struct Body: Encodable { let provider = "apple"; let id_token: String; let nonce: String }
+        var request = restRequest(path: "/auth/v1/token", query: "grant_type=id_token")
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try Self.encode(Body(id_token: idToken, nonce: rawNonce))
+        let (data, response) = try await send(request)
+        try Self.check(response)
+        return try apply(authData: data)
+    }
+
     private func signInAnonymously() async throws -> BackendUserID {
         var request = restRequest(path: "/auth/v1/signup", query: nil)
         request.httpMethod = "POST"
