@@ -29,6 +29,12 @@ create trigger progress_set_updated_at
 -- Row Level Security: a user may only touch their own row.
 alter table public.progress enable row level security;
 
+-- Table-level privileges. RLS decides *which rows* a role sees; the role still
+-- needs a GRANT to touch the table at all. Anonymous users sign in as the
+-- `authenticated` role, so granting it here covers them too. `anon`
+-- (unauthenticated) is intentionally NOT granted — those requests stay blocked.
+grant select, insert, update, delete on public.progress to authenticated;
+
 drop policy if exists "progress_select_own" on public.progress;
 create policy "progress_select_own" on public.progress
     for select using (auth.uid() = user_id);
