@@ -22,6 +22,9 @@ final class Services {
     let bookCatalog: BookCatalogService
     let bookmark: any BookmarkRepository
     let purchase: any PurchaseRepository
+    /// Sync backend (Supabase via REST, or a no-op when unconfigured). Accessed
+    /// only through the protocol — see CLAUDE.md → "Backend & Sync".
+    let backend: any BackendService
 
     var catalogStatus: CatalogStatus = .loading
 
@@ -35,6 +38,7 @@ final class Services {
         self.bookCatalog = BookCatalogService(source: BundledBookSource.main())
         self.bookmark = BookmarkService(modelContext: modelContext)
         self.purchase = PurchaseService(modelContext: modelContext)
+        self.backend = BackendServiceFactory.make()
     }
 
     // Preview/Test initializer with mock repositories
@@ -47,7 +51,8 @@ final class Services {
         report: any ReportServiceProtocol,
         bookCatalog: BookCatalogService,
         bookmark: any BookmarkRepository,
-        purchase: any PurchaseRepository
+        purchase: any PurchaseRepository,
+        backend: any BackendService = NoOpBackendService()
     ) {
         self.word = word
         self.progress = progress
@@ -58,6 +63,7 @@ final class Services {
         self.bookCatalog = bookCatalog
         self.bookmark = bookmark
         self.purchase = purchase
+        self.backend = backend
     }
 }
 

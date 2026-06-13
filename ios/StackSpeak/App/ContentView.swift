@@ -6,6 +6,7 @@ struct ContentView: View {
     @Environment(\.colorScheme) private var systemColorScheme
     @Environment(\.theme) private var theme
     @Environment(\.scenePhase) private var scenePhase
+    @Environment(\.services) private var services
     @Query private var userProgressList: [UserProgress]
 
     @State private var showOnboarding = false
@@ -41,6 +42,14 @@ struct ContentView: View {
             if newPhase == .active {
                 Task {
                     _ = await NotificationService.shared.checkAuthorizationStatus()
+                }
+                // Pull/merge/push progress on foreground — no-op unless Pro + a
+                // backend is configured (SyncCoordinator gates internally).
+                if let services {
+                    Task {
+                        await SyncCoordinator(backend: services.backend, modelContext: modelContext)
+                            .syncIfEligible()
+                    }
                 }
             }
         }
