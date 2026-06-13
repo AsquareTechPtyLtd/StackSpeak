@@ -15,6 +15,18 @@ struct NoOpBackendService: BackendService {
         throw BackendError.notConfigured
     }
 
+    func signUpWithEmail(_ email: String, password: String) async throws -> EmailSignUpResult {
+        throw BackendError.notConfigured
+    }
+
+    func signInWithEmail(_ email: String, password: String) async throws -> BackendUserID {
+        throw BackendError.notConfigured
+    }
+
+    func sendPasswordReset(email: String) async throws {
+        throw BackendError.notConfigured
+    }
+
     func fetchSnapshot() async throws -> ProgressSnapshot? {
         throw BackendError.notConfigured
     }

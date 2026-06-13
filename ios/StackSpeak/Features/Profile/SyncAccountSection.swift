@@ -14,6 +14,7 @@ struct SyncAccountSection: View {
     @State private var rawNonce = ""
     @State private var errorMessage: String?
     @State private var isWorking = false
+    @State private var showEmailAuth = false
 
     private var isPro: Bool { userProgress?.isProActive ?? false }
 
@@ -43,6 +44,15 @@ struct SyncAccountSection: View {
                 .frame(height: 44)
                 .clipShape(.rect(cornerRadius: RadiusTokens.card))
                 .disabled(isWorking)
+
+                Button { showEmailAuth = true } label: {
+                    Text("profile.sync.email")
+                        .font(TypographyTokens.subheadline.weight(.medium))
+                        .foregroundColor(theme.colors.accent)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, theme.spacing.sm)
+                }
+                .buttonStyle(.plain)
             }
 
             if let errorMessage {
@@ -52,6 +62,9 @@ struct SyncAccountSection: View {
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+        .sheet(isPresented: $showEmailAuth) {
+            EmailAuthView()
+        }
     }
 
     private func handle(_ result: Result<ASAuthorization, Error>) {
