@@ -4,6 +4,17 @@ import OSLog
 
 private let logger = Logger(category: "SyncCoordinator")
 
+/// Shared keys for sync state persisted in UserDefaults, so the coordinator and
+/// the SwiftUI views (via @AppStorage) agree on the same flag.
+enum SyncDefaults {
+    /// True once the user has signed in with a real account (Apple/email).
+    static let accountLinkedKey = "syncAccountLinked"
+
+    static var isAccountLinked: Bool {
+        UserDefaults.standard.bool(forKey: accountLinkedKey)
+    }
+}
+
 /// Drives Pro-gated cross-platform progress sync: pull remote → additive-merge
 /// with local → apply locally → push the merged result. A no-op unless a
 /// backend is configured AND the user is Pro (`isProActive`). Free users keep
@@ -25,6 +36,9 @@ final class SyncCoordinator {
     /// when ineligible. Never throws — failures are logged and retried next time.
     func syncIfEligible(now: Date = Date()) async {
         guard backend.isConfigured else { return }
+        // Only sync once a real account is linked — never for a bare anonymous
+        // session (which gives no cross-device benefit and just litters the DB).
+        guard SyncDefaults.isAccountLinked else { return }
         guard let progress = fetchProgress(), progress.isProActive else { return }
 
         do {

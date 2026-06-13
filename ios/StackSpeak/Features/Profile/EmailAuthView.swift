@@ -10,7 +10,7 @@ struct EmailAuthView: View {
     @Environment(\.services) private var services
     @Environment(\.modelContext) private var modelContext
 
-    @AppStorage("syncAccountLinked") private var linked = false
+    @AppStorage(SyncDefaults.accountLinkedKey) private var linked = false
 
     private enum Mode: Hashable { case signIn, signUp }
     @State private var mode: Mode = .signIn

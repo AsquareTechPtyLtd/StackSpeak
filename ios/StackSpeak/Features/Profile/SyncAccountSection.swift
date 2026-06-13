@@ -10,7 +10,7 @@ struct SyncAccountSection: View {
     @Environment(\.modelContext) private var modelContext
     @Environment(\.userProgress) private var userProgress
 
-    @AppStorage("syncAccountLinked") private var linked = false
+    @AppStorage(SyncDefaults.accountLinkedKey) private var linked = false
     @State private var rawNonce = ""
     @State private var errorMessage: String?
     @State private var isWorking = false
@@ -28,6 +28,14 @@ struct SyncAccountSection: View {
                 Label("profile.sync.signedIn", systemImage: "checkmark.icloud.fill")
                     .font(TypographyTokens.subheadline)
                     .foregroundColor(theme.colors.good)
+
+                Button(role: .destructive) { signOut() } label: {
+                    Text("profile.sync.signOut")
+                        .font(TypographyTokens.subheadline.weight(.medium))
+                        .foregroundColor(theme.colors.bad)
+                }
+                .buttonStyle(.plain)
+                .disabled(isWorking)
             } else {
                 Text("profile.sync.description")
                     .font(TypographyTokens.subheadline)
@@ -82,6 +90,16 @@ struct SyncAccountSection: View {
             if (error as? ASAuthorizationError)?.code != .canceled {
                 errorMessage = error.localizedDescription
             }
+        }
+    }
+
+    private func signOut() {
+        guard let services else { return }
+        isWorking = true
+        Task {
+            defer { isWorking = false }
+            await services.backend.signOut()
+            linked = false   // stops sync; local progress stays on device
         }
     }
 
