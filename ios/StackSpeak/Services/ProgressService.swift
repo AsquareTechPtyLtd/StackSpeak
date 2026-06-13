@@ -109,7 +109,22 @@ final class ProgressService: ProgressRepository {
 
     func completeDailySet(_ dailySet: DailySet, userProgress: UserProgress) throws {
         guard dailySet.isComplete else { return }
+        // Idempotency: skip if the streak was already credited for today so a
+        // second call (e.g. from tests or a retry path) doesn't re-run the streak.
+        let calendar = Calendar.current
+        if let last = userProgress.lastCompletedDate,
+           calendar.isDate(last, inSameDayAs: Date()) {
+            return
+        }
         applyDailySetCompletion(dailySet, userProgress: userProgress)
+        try modelContext.save()
+    }
+
+    /// Unions the given raw-value stack identifiers into `userProgress.selectedStacks`
+    /// and persists the change. No-op for values already present. Moves the
+    /// formUnion + save out of the view layer (M8 fix).
+    func addOptionalStacks(_ rawValues: [String], to userProgress: UserProgress) throws {
+        userProgress.selectedStacks.formUnion(rawValues)
         try modelContext.save()
     }
 

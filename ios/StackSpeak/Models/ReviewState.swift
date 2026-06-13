@@ -48,6 +48,9 @@ final class ReviewState {
         // and permanently slow a struggled card.
         let qDelta = Double(5 - quality)
         let efAdjustment = SM2.easinessIncrement - qDelta * (SM2.easinessQualityCoeff + qDelta * SM2.easinessQualitySquaredCoeff)
+        // Capture EF before mutating it: SM-2 multiplies the interval by the OLD
+        // easiness factor, so the update must happen after the interval is computed.
+        let oldEF = easinessFactor
         easinessFactor = max(SM2.minEasiness, easinessFactor + efAdjustment)
 
         if quality < SM2.qualityFailThreshold {
@@ -57,7 +60,7 @@ final class ReviewState {
             switch repetitions {
             case 0: interval = SM2.firstInterval
             case 1: interval = SM2.secondInterval
-            default: interval = Int(Double(interval) * easinessFactor)
+            default: interval = Int(Double(interval) * oldEF)
             }
             repetitions += 1
         }

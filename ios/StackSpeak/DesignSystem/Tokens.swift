@@ -181,7 +181,16 @@ struct TypographyTokens {
     }
 
     static func jetBrainsMono(size: CGFloat, weight: Font.Weight = .regular) -> Font {
-        .custom("JetBrainsMono-Regular", size: size, relativeTo: .caption)
+        let postScriptName: String
+        switch weight {
+        case .medium:
+            postScriptName = "JetBrainsMono-Medium"
+        case .semibold, .bold, .heavy, .black:
+            postScriptName = "JetBrainsMono-SemiBold"
+        default:
+            postScriptName = "JetBrainsMono-Regular"
+        }
+        return .custom(postScriptName, size: size, relativeTo: .caption)
     }
 
     static func instrumentSerif(size: CGFloat, relativeTo textStyle: Font.TextStyle = .callout) -> Font {
@@ -251,7 +260,13 @@ extension TypographyTokens {
     /// Call once at app launch in DEBUG builds to confirm all custom fonts loaded correctly.
     static func assertCustomFontsLoaded() {
 #if DEBUG
-        let required = ["Inter-Regular", "JetBrainsMono-Regular", "InstrumentSerif-Italic"]
+        let required = [
+            "Inter-Regular",
+            "JetBrainsMono-Regular",
+            "JetBrainsMono-Medium",
+            "JetBrainsMono-SemiBold",
+            "InstrumentSerif-Italic"
+        ]
         for name in required {
             assert(
                 UIFont(name: name, size: 12) != nil,

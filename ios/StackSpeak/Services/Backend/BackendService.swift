@@ -11,15 +11,17 @@ protocol BackendService: Sendable {
     /// false the app runs fully local — no sign-in, no sync.
     var isConfigured: Bool { get }
 
-    /// Ensures there is a signed-in user (anonymous to start) and returns its id.
+    /// Resumes the signed-in user's session (from the cached token, else by
+    /// refreshing the stored one) and returns its id. There is no anonymous
+    /// fallback — throws `.notAuthenticated` if the user has not signed in.
     /// Cheap to call repeatedly — reuses the cached session when valid.
     @discardableResult
     func ensureSession() async throws -> BackendUserID
 
-    /// Signs in with an Apple ID token (native Sign in with Apple). Replaces the
-    /// current (anonymous) session with the Apple-linked user, so the same Apple
-    /// ID resolves to the same user across devices — the basis of cross-device
-    /// sync. `rawNonce` is the un-hashed nonce that was hashed onto the request.
+    /// Signs in with an Apple ID token (native Sign in with Apple), establishing
+    /// the Apple-linked session so the same Apple ID resolves to the same user
+    /// across devices — the basis of cross-device sync. `rawNonce` is the
+    /// un-hashed nonce that was hashed onto the request.
     @discardableResult
     func signInWithApple(idToken: String, rawNonce: String) async throws -> BackendUserID
 
@@ -59,6 +61,10 @@ enum BackendError: Error, Equatable {
     case notConfigured
     /// No valid session; sign in first.
     case notAuthenticated
+    /// The stored session was permanently revoked (HTTP 400/401/403 on refresh).
+    /// Callers should clear the linked-account flag and prompt re-auth; the
+    /// Keychain token has already been wiped by the time this is thrown.
+    case sessionExpired
     /// Transport/HTTP failure with the status code, when available.
     case http(status: Int)
     /// A server-provided message (e.g. "Invalid login credentials").
@@ -73,6 +79,7 @@ enum BackendError: Error, Equatable {
         case .message(let text): return text
         case .notConfigured: return String(localized: "sync.error.notConfigured")
         case .notAuthenticated: return String(localized: "sync.error.notAuthenticated")
+        case .sessionExpired: return String(localized: "sync.error.sessionExpired")
         default: return String(localized: "sync.error.generic")
         }
     }

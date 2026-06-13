@@ -39,7 +39,7 @@ extension HomeView {
     func lastTenDays() -> [CompletionDay] {
         let cal = Calendar.current
         let today = cal.startOfDay(for: Date())
-        let setsByDay = Dictionary(uniqueKeysWithValues: dailySets.map { ($0.dayString, $0) })
+        let setsByDay = Dictionary(dailySets.map { ($0.dayString, $0) }, uniquingKeysWith: { _, new in new })
         return (0..<10).reversed().map { offset in
             let date = cal.date(byAdding: .day, value: -offset, to: today) ?? today
             let key = DailySet.dayString(from: date)

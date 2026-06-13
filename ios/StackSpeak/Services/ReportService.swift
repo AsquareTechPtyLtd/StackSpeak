@@ -53,9 +53,9 @@ final class ReportService: ReportServiceProtocol {
         }
 
         // Capture scalars before leaving @MainActor — WordReport is not Sendable.
+        // Notes are stored locally only; they must not leave the device (privacy).
         let reportedAt = report.reportedAt
         let reasonRaw = report.reason
-        let notes = report.additionalNotes
         let level = report.userLevel
 
         Task.detached(priority: .background) {
@@ -64,7 +64,6 @@ final class ReportService: ReportServiceProtocol {
                 wordTerm: wordTerm,
                 stack: stack,
                 reason: reasonRaw,
-                additionalNotes: notes,
                 userLevel: level,
                 reportedAt: reportedAt
             )

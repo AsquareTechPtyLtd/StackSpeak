@@ -28,3 +28,24 @@ struct SectionHeader: View {
             .foregroundColor(theme.colors.inkMuted)
     }
 }
+
+#Preview("SectionHeader — Light") {
+    VStack(alignment: .leading, spacing: 16) {
+        SectionHeader("Definition")
+        SectionHeader("Tech context")
+        SectionHeader("Etymology")
+    }
+    .padding()
+    .withTheme(ThemeManager())
+}
+
+#Preview("SectionHeader — Dark") {
+    VStack(alignment: .leading, spacing: 16) {
+        SectionHeader("Definition")
+        SectionHeader("Tech context")
+        SectionHeader("Etymology")
+    }
+    .padding()
+    .withTheme(ThemeManager())
+    .preferredColorScheme(.dark)
+}

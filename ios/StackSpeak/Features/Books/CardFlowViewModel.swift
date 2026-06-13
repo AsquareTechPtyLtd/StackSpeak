@@ -64,11 +64,19 @@ final class CardFlowViewModel {
     }
 
     /// Resumes a chapter at a specific card if `bookProgress.currentCardId` falls
-    /// inside the loaded chapter. Otherwise leaves the index at 0.
+    /// inside the loaded chapter and is not the last card (i.e. the chapter was not
+    /// fully completed). If the saved position is the last card the chapter is already
+    /// done, so we reset to card 0 for a fresh read-through. Leaves the index at 0
+    /// when `cardId` is nil or not found in this chapter.
     func resumeIfPossible(at cardId: String?) {
         guard let cardId,
               let idx = cards.firstIndex(where: { $0.id == cardId }) else { return }
-        currentIndex = idx
+        // A saved position at the last card means the chapter is complete — start fresh.
+        if idx >= cards.count - 1 {
+            currentIndex = 0
+        } else {
+            currentIndex = idx
+        }
     }
 
     /// Move the cursor backwards. Clamped at 0.

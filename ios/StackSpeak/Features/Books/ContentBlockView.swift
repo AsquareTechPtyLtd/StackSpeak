@@ -37,7 +37,7 @@ struct ContentBlockView: View {
     // MARK: - Block builders
 
     private func paragraph(_ runs: [InlineRun]) -> some View {
-        InlineRunsText(runs: runs)
+        InlineRunsText(runs: runs, contextFont: TypographyTokens.body)
             .font(TypographyTokens.body)
             .foregroundColor(theme.colors.ink)
     }
@@ -65,7 +65,7 @@ struct ContentBlockView: View {
                         .font(TypographyTokens.body.monospacedDigit())
                         .foregroundColor(theme.colors.inkMuted)
                         .frame(minWidth: 22, alignment: .leading)
-                    InlineRunsText(runs: item)
+                    InlineRunsText(runs: item, contextFont: TypographyTokens.body)
                         .font(TypographyTokens.body)
                         .foregroundColor(theme.colors.ink)
                 }
@@ -106,7 +106,7 @@ struct ContentBlockView: View {
             Image(systemName: calloutIcon(variant))
                 .foregroundColor(tint)
                 .accessibilityHidden(true)
-            InlineRunsText(runs: runs)
+            InlineRunsText(runs: runs, contextFont: TypographyTokens.callout)
                 .font(TypographyTokens.callout)
                 .foregroundColor(theme.colors.ink)
         }
@@ -209,7 +209,7 @@ struct ContentBlockView: View {
             Text(column.label)
                 .font(TypographyTokens.footnote.weight(.semibold))
                 .foregroundColor(theme.colors.ink)
-            InlineRunsText(runs: column.runs)
+            InlineRunsText(runs: column.runs, contextFont: TypographyTokens.callout)
                 .font(TypographyTokens.callout)
                 .foregroundColor(theme.colors.inkMuted)
         }
@@ -217,48 +217,6 @@ struct ContentBlockView: View {
         .padding(theme.spacing.md)
         .background(theme.colors.surfaceAlt)
         .clipShape(.rect(cornerRadius: RadiusTokens.inline))
-    }
-}
-
-/// Resolves `[InlineRun]` into a single AttributedString for a `Text` view —
-/// preserves bold/italic/code/link composition without `Text` concatenation
-/// boilerplate. Returns plain text on parse failure.
-private struct InlineRunsText: View {
-    let runs: [InlineRun]
-
-    var body: some View {
-        Text(attributedString)
-    }
-
-    var attributedString: AttributedString {
-        var result = AttributedString()
-        for run in runs {
-            var part = AttributedString(run.text)
-            let marks = run.marks ?? []
-            // Accumulate font modifiers across marks instead of reassigning per
-            // mark — a [.bold, .italic] run previously kept only the last mark.
-            // A code mark sets the base typeface; bold/italic layer on top.
-            var font: Font? = marks.contains(.code) ? TypographyTokens.code : nil
-            for mark in marks {
-                switch mark {
-                case .bold:
-                    font = (font ?? TypographyTokens.body).weight(.semibold)
-                case .italic:
-                    font = (font ?? TypographyTokens.body).italic()
-                case .code:
-                    break  // handled as the base font above
-                case .link:
-                    if let href = run.href, let url = URL(string: href) {
-                        part.link = url
-                    }
-                }
-            }
-            if let font {
-                part.font = font
-            }
-            result.append(part)
-        }
-        return result
     }
 }
 
@@ -324,23 +282,4 @@ private let previewBlocks: [ContentBlock] = [
     }
     .withTheme(ThemeManager())
     .preferredColorScheme(.dark)
-}
-
-extension ContentBlockView {
-    /// Pure helper — extracts the `href` for the first link mark in a list of runs,
-    /// if any. Used by tests + accessibility surfacing.
-    static func firstLinkHref(in runs: [InlineRun]) -> String? {
-        for run in runs {
-            if let marks = run.marks, marks.contains(.link), let href = run.href {
-                return href
-            }
-        }
-        return nil
-    }
-
-    /// Pure helper — resolves an image asset path against `bookId`'s images dir.
-    /// Used by tests; production rendering uses bundle lookup.
-    static func resolveImagePath(asset: String, bookId: String) -> String {
-        "books/\(bookId)/images/\(asset)"
-    }
 }

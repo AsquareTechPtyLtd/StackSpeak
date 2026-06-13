@@ -63,6 +63,10 @@ struct BooksTabView: View {
                 message: "books.load.failed.message"
             )
             .background(theme.colors.bg)
+        } else if viewModel.isLoading {
+            ProgressView()
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .background(theme.colors.bg)
         } else if viewModel.books.isEmpty {
             EmptyStateView(
                 icon: "books.vertical",

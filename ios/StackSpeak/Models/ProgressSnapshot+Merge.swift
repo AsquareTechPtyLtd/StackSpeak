@@ -1,8 +1,9 @@
 import Foundation
 
-// Additive merge: reconciling two devices that diverged offline must never
-// *lose* progress (a mastered word, a streak, an SRS interval). So sets union,
-// counters take the max, and per-item records keep the more-advanced side.
+// Merge strategy: reconciling two devices that diverged offline must never lose
+// monotonic progress (mastered words, streaks, SRS intervals) — those sets union
+// and counters take the max. User preferences (bookmarks, selected stacks) and
+// paired rotation state (seed + cursor) use last-write-wins from newerByUpdate.
 // Pure and deterministic — heavily unit-tested.
 extension ProgressSnapshot {
     static func merge(local: ProgressSnapshot, remote: ProgressSnapshot) -> ProgressSnapshot {
@@ -10,7 +11,9 @@ extension ProgressSnapshot {
         // side completed more recently; longest streak is a high-water mark → max.
         let localNewer = (local.lastCompletedDate ?? .distantPast) >= (remote.lastCompletedDate ?? .distantPast)
         let recentSide = localNewer ? local : remote
-        // Rotation seed/cursor: keep the more recently written side's seed; cursor → max.
+        // Rotation state: both seed and cursor come from the more recently written side
+        // so they stay paired — mixing seed from one side with cursor from the other
+        // would index the wrong position in the shuffle.
         let newerByUpdate = local.updatedAt >= remote.updatedAt ? local : remote
 
         return ProgressSnapshot(
@@ -23,12 +26,18 @@ extension ProgressSnapshot {
             didCompleteOnboarding: local.didCompleteOnboarding || remote.didCompleteOnboarding,
             practicedWordIds: union(local.practicedWordIds, remote.practicedWordIds),
             masteredWordIds: union(local.masteredWordIds, remote.masteredWordIds),
-            bookmarkedWordIds: union(local.bookmarkedWordIds, remote.bookmarkedWordIds),
+            // H1: bookmarks are a user preference, not monotonic progress — union would
+            // permanently prevent un-bookmarking. Use last-write-wins instead.
+            bookmarkedWordIds: newerByUpdate.bookmarkedWordIds,
             wordsWithTwoCorrectIds: union(local.wordsWithTwoCorrectIds, remote.wordsWithTwoCorrectIds),
             wordsCreditedForLevelIds: union(local.wordsCreditedForLevelIds, remote.wordsCreditedForLevelIds),
-            selectedStacks: union(local.selectedStacks, remote.selectedStacks),
+            // H2: stack selection is a preference — union reverses intentional deselection.
+            selectedStacks: newerByUpdate.selectedStacks,
+            // LOW: keep shuffleSeed and wordQueueCursor from the same side so the cursor
+            // indexes the correct shuffle. Pairing the winning seed with the max cursor
+            // from the other seed would produce wrong word ordering.
             shuffleSeed: newerByUpdate.shuffleSeed,
-            wordQueueCursor: max(local.wordQueueCursor, remote.wordQueueCursor),
+            wordQueueCursor: newerByUpdate.wordQueueCursor,
             reviewStates: mergeReviewStates(local.reviewStates, remote.reviewStates),
             assessmentResults: mergeById(local.assessmentResults, remote.assessmentResults, id: \.id),
             practicedSentences: mergeSentences(local.practicedSentences, remote.practicedSentences),
@@ -77,12 +86,17 @@ extension ProgressSnapshot {
     }
 
     /// Practiced sentences have no id; dedupe by (word, timestamp, text).
+    /// C1: Use whole-second timestamps in the key because ISO-8601 encoding (used
+    /// by JSONEncoder) truncates to whole seconds — sub-second floats would never
+    /// match the decoded value and every sync would re-append all sentences.
     private static func mergeSentences(_ a: [PracticedSentenceDTO], _ b: [PracticedSentenceDTO]) -> [PracticedSentenceDTO] {
+        func key(_ s: PracticedSentenceDTO) -> String {
+            "\(s.wordId)|\(Int(s.createdAt.timeIntervalSince1970))|\(s.sentence)"
+        }
         var seen = Set<String>()
         var out: [PracticedSentenceDTO] = []
         for s in (a + b).sorted(by: { $0.createdAt < $1.createdAt }) {
-            let key = "\(s.wordId)|\(s.createdAt.timeIntervalSince1970)|\(s.sentence)"
-            if seen.insert(key).inserted { out.append(s) }
+            if seen.insert(key(s)).inserted { out.append(s) }
         }
         return out
     }

@@ -13,15 +13,32 @@ struct HomeView: View {
     @Environment(\.theme) var theme
     @Environment(\.services) var services
     @Environment(\.userProgress) var userProgress
-    @Environment(\.tabRouter) private var tabRouter
+    @Environment(\.tabRouter) var tabRouter
 
+    // Restrict to the last 10 days — `lastTenDays()` never looks further back, so
+    // there is no value in loading every historical row on every body eval.
     @Query var dailySets: [DailySet]
     @State var viewModel = HomeViewModel()
+
+    init() {
+        let cal = Calendar.current
+        // Compute the oldest day-string we could ever need (9 days ago).
+        let nineAgo = cal.date(byAdding: .day, value: -9, to: cal.startOfDay(for: Date())) ?? Date()
+        let cutoff = DailySet.dayString(from: nineAgo)
+        _dailySets = Query(filter: #Predicate<DailySet> { $0.dayString >= cutoff })
+    }
     @State var notificationAuthStatus: UNAuthorizationStatus = .notDetermined
     @State var showNotificationBanner = false
     @State var showNotificationPrompt = false
     @State private var showStackManagement = false
     @State var path: [UUID] = []
+
+    // Fresh-install / reinstall restore nudge: shown on Home only while there's
+    // no local progress and no linked account, so a returning user can find
+    // the sign-in path. Dismissal persists; the prompt also self-hides once any
+    // word is practiced or an account is linked.
+    @AppStorage("home.restorePromptDismissed") var restorePromptDismissed = false
+    @AppStorage(SyncDefaults.accountLinkedKey) var accountLinked = false
 
     var body: some View {
         NavigationStack(path: $path) {
@@ -127,6 +144,11 @@ struct HomeView: View {
     @ViewBuilder
     private func content(progress: UserProgress) -> some View {
         VStack(spacing: theme.spacing.md) {
+            if shouldShowRestorePrompt(progress) {
+                restorePrompt
+                    .padding(.horizontal, theme.spacing.lg)
+            }
+
             if showNotificationBanner && notificationAuthStatus == .denied && !progress.wordsPracticedIds.isEmpty {
                 notificationBanner
                     .padding(.horizontal, theme.spacing.lg)

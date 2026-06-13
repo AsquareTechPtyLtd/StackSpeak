@@ -2,11 +2,6 @@ import SwiftUI
 import SwiftData
 import Foundation
 
-enum CatalogStatus: Equatable {
-    case loading
-    case loaded(count: Int)
-}
-
 /// Container for all app services, injected via EnvironmentValues.
 /// Constructed once in StackSpeakApp and shared across the view hierarchy.
 /// Services are accessed via protocol types for testability.

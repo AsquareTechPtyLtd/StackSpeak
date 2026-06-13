@@ -187,6 +187,60 @@ struct InterleavingTests {
         #expect(selected.first?.word == "concept-in")
     }
 
+    // MARK: - Cursor advancement
+
+    @Test("Cursor advances past returned words when fewer than count distinct categories (prevents same-day repeat)")
+    func cursorAdvancesPastReturnedWordsOnFullPass() throws {
+        let service = try makeService()
+        // Only 2 categories — forces a full pass and backfill. Without the fix,
+        // the cursor would wrap back to startIndex and the next call would produce
+        // the identical 5-word set.
+        let words = (0..<10).map { i in
+            mockWord("word-\(i)", category: i.isMultiple(of: 2) ? "concepts" : "components")
+        }
+        let progress = mockProgress(stacks: ["test-stack"])
+
+        let (selected, nextCursor) = service.selectQualifyingWords(
+            from: words,
+            startingAt: 0,
+            userProgress: progress,
+            count: 5
+        )
+
+        #expect(selected.count == 5)
+        // The cursor must NOT be 0 (startIndex) — that would cause the next day
+        // to start from the same position and return identical words.
+        #expect(nextCursor != 0)
+        // The cursor should be exactly result.count positions ahead of startIndex.
+        #expect(nextCursor == 5 % words.count)
+    }
+
+    @Test("Cursor is unchanged (early-break path) when all 5 distinct categories are found")
+    func cursorReflectsEarlyBreakWhenAllCategoriesPresent() throws {
+        let service = try makeService()
+        let words = [
+            mockWord("concept-a", category: "concepts"),
+            mockWord("component-a", category: "components"),
+            mockWord("process-a", category: "processes"),
+            mockWord("pattern-a", category: "patterns"),
+            mockWord("quality-a", category: "qualities"),
+            mockWord("concept-b", category: "concepts"),   // extra word after the break
+        ]
+        let progress = mockProgress(stacks: ["test-stack"])
+
+        let (selected, nextCursor) = service.selectQualifyingWords(
+            from: words,
+            startingAt: 0,
+            userProgress: progress,
+            count: 5
+        )
+
+        #expect(selected.count == 5)
+        // All 5 categories found before scanning past position 4 (index 5 → cursor wraps to 5).
+        // The cursor lands right after the 5th qualifying word; it must not be 0.
+        #expect(nextCursor > 0)
+    }
+
     // MARK: - Result ordering
 
     @Test("Returns words ordered by category sequence")

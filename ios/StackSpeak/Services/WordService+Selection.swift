@@ -49,6 +49,7 @@ extension WordService {
         var cursor = startIndex % shuffled.count
         var seen = 0
         let limit = shuffled.count  // one full pass maximum
+        var brokeEarly = false
 
         while seen < limit {
             let word = shuffled[cursor]
@@ -61,7 +62,10 @@ extension WordService {
                 firstPerCategory[word.category] = word
                 categoryOrder.append(word.category)
                 // Enough distinct categories for a full, varied set — stop scanning.
-                if categoryOrder.count >= count { break }
+                if categoryOrder.count >= count {
+                    brokeEarly = true
+                    break
+                }
             } else {
                 backfillPool.append(word)
             }
@@ -75,7 +79,12 @@ extension WordService {
             backfillIndex += 1
         }
 
-        return (Array(result.prefix(count)), cursor)
+        // When we completed a full pass without hitting enough distinct categories,
+        // `cursor` has wrapped back to `startIndex`, so returning it as-is would
+        // cause the next day to pick the identical words. Advance past the words we
+        // actually returned so the queue moves forward through the shuffle.
+        let nextCursor = brokeEarly ? cursor : (startIndex + result.count) % shuffled.count
+        return (Array(result.prefix(count)), nextCursor)
     }
 
     private func qualifies(word: Word, for userProgress: UserProgress, activeStacks: Set<String>) -> Bool {

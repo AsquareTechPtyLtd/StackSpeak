@@ -68,7 +68,6 @@ struct CardFlowView: View {
         .toolbar { bottomBar }
         .sheet(isPresented: $showCapReached) {
             CapReachedSheet(
-                onAdjustLimit: { showCapReached = false },
                 onReadAnyway: handleReadAnyway,
                 onDismiss: { showCapReached = false }
             )
@@ -267,45 +266,6 @@ struct CardFlowView: View {
             logger.error("Failed to read bookmark state: \(error.localizedDescription, privacy: .public)")
             isBookmarked = false
         }
-    }
-}
-
-/// Sheet shown when the user has hit their self-set book daily cap.
-private struct CapReachedSheet: View {
-    @Environment(\.theme) private var theme
-    let onAdjustLimit: () -> Void
-    let onReadAnyway: () -> Void
-    let onDismiss: () -> Void
-
-    var body: some View {
-        VStack(spacing: theme.spacing.lg) {
-            Image(systemName: "leaf.fill")
-                .font(.system(.largeTitle))
-                .foregroundColor(theme.colors.good)
-                .padding(.top, theme.spacing.xl)
-            Text("books.cap.title")
-                .font(TypographyTokens.title2)
-                .foregroundColor(theme.colors.ink)
-            Text("books.cap.message")
-                .font(TypographyTokens.body)
-                .foregroundColor(theme.colors.inkMuted)
-                .multilineTextAlignment(.center)
-                .padding(.horizontal, theme.spacing.lg)
-            Spacer()
-            VStack(spacing: theme.spacing.sm) {
-                PrimaryCTAButton("books.cap.readAnyway", action: onReadAnyway)
-                Button("books.cap.adjustLimit", action: onAdjustLimit)
-                    .font(TypographyTokens.body)
-                    .foregroundColor(theme.colors.accent)
-                Button("common.cancel", action: onDismiss)
-                    .font(TypographyTokens.body)
-                    .foregroundColor(theme.colors.inkMuted)
-            }
-            .padding(.horizontal, theme.spacing.lg)
-            .padding(.bottom, theme.spacing.lg)
-        }
-        .frame(maxWidth: .infinity)
-        .background(theme.colors.bg)
     }
 }
 

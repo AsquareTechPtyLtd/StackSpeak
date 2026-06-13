@@ -25,6 +25,7 @@ protocol ProgressRepository {
     func unmarkWordMastered(_ wordId: UUID, userProgress: UserProgress) throws
     func toggleBookmark(_ wordId: UUID, userProgress: UserProgress) throws
     func completeDailySet(_ dailySet: DailySet, userProgress: UserProgress) throws
+    func addOptionalStacks(_ rawValues: [String], to userProgress: UserProgress) throws
     func recordAssessmentResult(
         wordId: UUID,
         isCorrect: Bool,

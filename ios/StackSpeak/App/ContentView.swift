@@ -37,19 +37,13 @@ struct ContentView: View {
         .onChange(of: userProgressList) { _, _ in
             checkOnboardingStatus()
         }
-        // Re-check notification authorization when app comes to foreground
+        // Pull/merge/push progress on foreground — no-op unless Pro + a
+        // backend is configured (SyncCoordinator gates internally).
         .onChange(of: scenePhase) { _, newPhase in
-            if newPhase == .active {
+            if newPhase == .active, let services {
                 Task {
-                    _ = await NotificationService.shared.checkAuthorizationStatus()
-                }
-                // Pull/merge/push progress on foreground — no-op unless Pro + a
-                // backend is configured (SyncCoordinator gates internally).
-                if let services {
-                    Task {
-                        await SyncCoordinator(backend: services.backend, modelContext: modelContext)
-                            .syncIfEligible()
-                    }
+                    await SyncCoordinator(backend: services.backend, modelContext: modelContext)
+                        .syncIfEligible()
                 }
             }
         }

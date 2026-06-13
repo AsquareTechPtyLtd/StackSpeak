@@ -64,8 +64,12 @@ extension SyncCoordinator {
     }
 
     private func applyPracticedSentences(_ dtos: [ProgressSnapshot.PracticedSentenceDTO], to p: UserProgress) {
+        // C1: Use whole-second timestamps in the dedup key on both sides. ISO-8601
+        // encoding (JSONEncoder) truncates to whole seconds, so sub-second floats
+        // from `timeIntervalSince1970` would never match decoded DTO timestamps and
+        // every sync would re-append all sentences.
         func key(_ wid: UUID, _ created: Date, _ text: String) -> String {
-            "\(wid)|\(created.timeIntervalSince1970)|\(text)"
+            "\(wid)|\(Int(created.timeIntervalSince1970))|\(text)"
         }
         var seen = Set(p.practicedSentences.map { key($0.wordId, $0.createdAt, $0.sentence) })
         for dto in dtos {

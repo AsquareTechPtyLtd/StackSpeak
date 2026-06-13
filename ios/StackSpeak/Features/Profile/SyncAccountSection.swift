@@ -1,9 +1,14 @@
 import SwiftUI
 import AuthenticationServices
 
-/// Profile "Sync" section. Cross-device sync is a Pro feature; a Pro user signs
-/// in with Apple so the same account links all their devices. The raw nonce is
-/// generated per request and passed to Supabase to bind the Apple token.
+/// Profile "Sync" section. Identity (sign-in) and entitlement (Pro) are
+/// independent: sign-in is always offered so a returning user can link an
+/// account and restore progress without re-buying. The *sync execution* stays
+/// Pro-gated (see `SyncCoordinator.syncIfEligible`) — a signed-in non-Pro user
+/// just has an account; pull/push doesn't run until Pro is active.
+///
+/// The raw nonce is generated per request and passed to Supabase to bind the
+/// Apple token.
 struct SyncAccountSection: View {
     @Environment(\.theme) private var theme
     @Environment(\.services) private var services
@@ -11,58 +16,37 @@ struct SyncAccountSection: View {
     @Environment(\.userProgress) private var userProgress
 
     @AppStorage(SyncDefaults.accountLinkedKey) private var linked = false
+    @AppStorage(SyncDefaults.lastSyncedAtKey) private var lastSyncedAt = 0.0
     @State private var rawNonce = ""
     @State private var errorMessage: String?
+    @State private var statusMessage: String?
     @State private var isWorking = false
     @State private var showEmailAuth = false
+    @State private var showProSheet = false
 
     private var isPro: Bool { userProgress?.isProActive ?? false }
 
+    /// Relative "last synced" string ("2 minutes ago"), or nil before the first
+    /// successful sync (0 = never).
+    private var lastSynced: String? {
+        guard lastSyncedAt > 0 else { return nil }
+        return Date(timeIntervalSince1970: lastSyncedAt)
+            .formatted(.relative(presentation: .named))
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: theme.spacing.sm) {
-            if !isPro {
-                Text("profile.sync.proOnly")
-                    .font(TypographyTokens.subheadline)
-                    .foregroundColor(theme.colors.inkMuted)
-            } else if linked {
-                Label("profile.sync.signedIn", systemImage: "checkmark.icloud.fill")
-                    .font(TypographyTokens.subheadline)
-                    .foregroundColor(theme.colors.good)
-
-                Button(role: .destructive) { signOut() } label: {
-                    Text("profile.sync.signOut")
-                        .font(TypographyTokens.subheadline.weight(.medium))
-                        .foregroundColor(theme.colors.bad)
-                }
-                .buttonStyle(.plain)
-                .disabled(isWorking)
+            if linked {
+                signedInState
             } else {
-                Text("profile.sync.description")
-                    .font(TypographyTokens.subheadline)
-                    .foregroundColor(theme.colors.inkMuted)
-
-                SignInWithAppleButton(.signIn) { request in
-                    rawNonce = AppleNonce.random()
-                    request.requestedScopes = [.fullName, .email]
-                    request.nonce = AppleNonce.sha256(rawNonce)
-                } onCompletion: { result in
-                    handle(result)
-                }
-                .signInWithAppleButtonStyle(theme.systemColorScheme == .dark ? .white : .black)
-                .frame(height: 44)
-                .clipShape(.rect(cornerRadius: RadiusTokens.card))
-                .disabled(isWorking)
-
-                Button { showEmailAuth = true } label: {
-                    Text("profile.sync.email")
-                        .font(TypographyTokens.subheadline.weight(.medium))
-                        .foregroundColor(theme.colors.accent)
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, theme.spacing.sm)
-                }
-                .buttonStyle(.plain)
+                signedOutState
             }
 
+            if let statusMessage {
+                Text(statusMessage)
+                    .font(TypographyTokens.caption)
+                    .foregroundColor(theme.colors.inkMuted)
+            }
             if let errorMessage {
                 Text(errorMessage)
                     .font(TypographyTokens.caption)
@@ -73,7 +57,102 @@ struct SyncAccountSection: View {
         .sheet(isPresented: $showEmailAuth) {
             EmailAuthView()
         }
+        .sheet(isPresented: $showProSheet) {
+            ProGateSheet()
+        }
     }
+
+    // MARK: - States
+
+    @ViewBuilder
+    private var signedInState: some View {
+        if isPro {
+            Label("profile.sync.signedIn", systemImage: "checkmark.icloud.fill")
+                .font(TypographyTokens.subheadline)
+                .foregroundColor(theme.colors.good)
+            if let lastSynced {
+                Text(String(format: String(localized: "profile.sync.lastSynced.format"), lastSynced))
+                    .font(TypographyTokens.caption)
+                    .foregroundColor(theme.colors.inkMuted)
+            }
+        } else {
+            Text("profile.sync.signedInNotPro")
+                .font(TypographyTokens.subheadline)
+                .foregroundColor(theme.colors.inkMuted)
+            getProButton
+        }
+        signOutButton
+    }
+
+    @ViewBuilder
+    private var signedOutState: some View {
+        Text("profile.sync.description")
+            .font(TypographyTokens.subheadline)
+            .foregroundColor(theme.colors.inkMuted)
+
+        SignInWithAppleButton(.signIn) { request in
+            rawNonce = AppleNonce.random()
+            // Only the identity token (JWT) is needed for the GoTrue id_token grant.
+            // Requesting fullName/email is unnecessary and exposes extra user data.
+            request.requestedScopes = []
+            request.nonce = AppleNonce.sha256(rawNonce)
+        } onCompletion: { result in
+            handle(result)
+        }
+        .signInWithAppleButtonStyle(theme.systemColorScheme == .dark ? .white : .black)
+        .frame(height: 44)
+        .clipShape(.rect(cornerRadius: RadiusTokens.card))
+        .disabled(isWorking)
+
+        Button { showEmailAuth = true } label: {
+            Text("profile.sync.email")
+                .font(TypographyTokens.subheadline.weight(.medium))
+                .foregroundColor(theme.colors.accent)
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, theme.spacing.sm)
+        }
+        .buttonStyle(.plain)
+        .disabled(isWorking)
+
+        Text("profile.sync.returning")
+            .font(TypographyTokens.caption)
+            .foregroundColor(theme.colors.inkMuted)
+        restoreButton
+    }
+
+    // MARK: - Buttons
+
+    private var restoreButton: some View {
+        Button { restore() } label: {
+            Text("profile.sync.restore")
+                .font(TypographyTokens.subheadline.weight(.medium))
+                .foregroundColor(theme.colors.accent)
+        }
+        .buttonStyle(.plain)
+        .disabled(isWorking)
+    }
+
+    private var getProButton: some View {
+        Button { showProSheet = true } label: {
+            Text("profile.sync.getPro")
+                .font(TypographyTokens.subheadline.weight(.semibold))
+                .foregroundColor(theme.colors.accent)
+        }
+        .buttonStyle(.plain)
+        .disabled(isWorking)
+    }
+
+    private var signOutButton: some View {
+        Button(role: .destructive) { signOut() } label: {
+            Text("profile.sync.signOut")
+                .font(TypographyTokens.subheadline.weight(.medium))
+                .foregroundColor(theme.colors.bad)
+        }
+        .buttonStyle(.plain)
+        .disabled(isWorking)
+    }
+
+    // MARK: - Actions
 
     private func handle(_ result: Result<ASAuthorization, Error>) {
         switch result {
@@ -96,6 +175,7 @@ struct SyncAccountSection: View {
     private func signOut() {
         guard let services else { return }
         isWorking = true
+        statusMessage = nil
         Task {
             defer { isWorking = false }
             await services.backend.signOut()
@@ -107,12 +187,14 @@ struct SyncAccountSection: View {
         guard let services else { return }
         isWorking = true
         errorMessage = nil
+        statusMessage = nil
         Task {
             defer { isWorking = false }
             do {
                 _ = try await services.backend.signInWithApple(idToken: idToken, rawNonce: rawNonce)
                 linked = true
                 // Push local progress up to the now-linked account immediately.
+                // No-ops until Pro is active (gated inside the coordinator).
                 await SyncCoordinator(backend: services.backend, modelContext: modelContext)
                     .syncIfEligible()
             } catch {
@@ -120,4 +202,35 @@ struct SyncAccountSection: View {
             }
         }
     }
+
+    private func restore() {
+        guard let services else { return }
+        isWorking = true
+        errorMessage = nil
+        statusMessage = nil
+        Task {
+            defer { isWorking = false }
+            do {
+                let restored = try await services.purchase.restorePurchases()
+                statusMessage = String(localized: restored
+                    ? "profile.sync.restore.done"
+                    : "profile.sync.restore.none")
+            } catch {
+                errorMessage = error.localizedDescription
+            }
+        }
+    }
+}
+
+#Preview("SyncAccountSection — Light") {
+    SyncAccountSection()
+        .padding()
+        .withTheme(ThemeManager())
+}
+
+#Preview("SyncAccountSection — Dark") {
+    SyncAccountSection()
+        .padding()
+        .withTheme(ThemeManager())
+        .preferredColorScheme(.dark)
 }

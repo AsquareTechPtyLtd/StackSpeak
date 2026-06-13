@@ -17,23 +17,62 @@ struct ProgressSnapshotMergeTests {
         )
     }
 
-    @Test("Word-id sets are unioned, never dropped")
+    @Test("Monotonic word-id sets are unioned; preference sets are last-write-wins")
     func unionsSets() {
         var a = base(); a.masteredWordIds = ["w1", "w2"]; a.bookmarkedWordIds = ["b1"]
         var b = base(); b.masteredWordIds = ["w2", "w3"]; b.bookmarkedWordIds = ["b2"]
         let m = ProgressSnapshot.merge(local: a, remote: b)
+        // Monotonic sets (mastered progress) always union — never drop a word.
         #expect(m.masteredWordIds == ["w1", "w2", "w3"])
-        #expect(m.bookmarkedWordIds == ["b1", "b2"])
+        // Bookmarks are a preference: union would reverse intentional un-bookmarking.
+        // When updatedAt ties, local wins (a.updatedAt >= b.updatedAt), so we get a's bookmarks.
+        #expect(m.bookmarkedWordIds == ["b1"])
     }
 
-    @Test("Level and longest streak take the maximum")
+    @Test("Un-bookmarking on the newer device is honoured")
+    func bookmarkLastWriteWins() {
+        var a = base(updatedAt: Date(timeIntervalSince1970: 2000))
+        a.bookmarkedWordIds = ["b1", "b2"]
+        var b = base(updatedAt: Date(timeIntervalSince1970: 3000))
+        b.bookmarkedWordIds = ["b1"]   // user un-bookmarked b2 on the newer device
+        let m = ProgressSnapshot.merge(local: a, remote: b)
+        // Newer device (b) wins — b2 should be gone, not resurrected by union.
+        #expect(m.bookmarkedWordIds == ["b1"])
+    }
+
+    @Test("Stack deselection on the newer device is honoured")
+    func stackDeselectionLastWriteWins() {
+        var a = base(updatedAt: Date(timeIntervalSince1970: 1000))
+        a.selectedStacks = ["api-basic", "gcp-basic"]
+        var b = base(updatedAt: Date(timeIntervalSince1970: 2000))
+        b.selectedStacks = ["api-basic"]   // user deselected gcp-basic on the newer device
+        let m = ProgressSnapshot.merge(local: a, remote: b)
+        // Newer device (b) wins — gcp-basic should be gone, not resurrected by union.
+        #expect(m.selectedStacks == ["api-basic"])
+    }
+
+    @Test("Level and longest streak take the maximum; cursor paired with seed from newerByUpdate")
     func maxCounters() {
         var a = base(); a.level = 8; a.longestStreak = 12; a.wordQueueCursor = 30
         var b = base(); b.level = 5; b.longestStreak = 20; b.wordQueueCursor = 10
         let m = ProgressSnapshot.merge(local: a, remote: b)
         #expect(m.level == 8)
         #expect(m.longestStreak == 20)
+        // Both snapshots have equal updatedAt, so local (a) wins for newerByUpdate.
+        // wordQueueCursor comes from newerByUpdate (a) = 30; same result as max() here.
         #expect(m.wordQueueCursor == 30)
+    }
+
+    @Test("wordQueueCursor stays paired with its shuffleSeed (newer side wins both)")
+    func cursorAndSeedPaired() {
+        var a = base(updatedAt: Date(timeIntervalSince1970: 1000))
+        a.shuffleSeed = "SEED-A"; a.wordQueueCursor = 5
+        var b = base(updatedAt: Date(timeIntervalSince1970: 2000))
+        b.shuffleSeed = "SEED-B"; b.wordQueueCursor = 3
+        let m = ProgressSnapshot.merge(local: a, remote: b)
+        // Newer side (b) should provide BOTH seed and cursor so they remain consistent.
+        #expect(m.shuffleSeed == "SEED-B")
+        #expect(m.wordQueueCursor == 3)
     }
 
     @Test("Current streak follows the most recently completed device")

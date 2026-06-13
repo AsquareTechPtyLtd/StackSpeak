@@ -66,6 +66,7 @@ struct BookDetailView: View {
             }
         }
         .task { await openBook() }
+        .onAppear { viewModel.refreshProgress(modelContext: modelContext) }
     }
 
     private var content: some View {

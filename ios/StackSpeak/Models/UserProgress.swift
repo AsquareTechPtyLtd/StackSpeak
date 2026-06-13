@@ -278,4 +278,34 @@ extension UserProgress {
     var wordsEligibleForAssessment: Set<UUID> {
         wordsPracticedIds.subtracting(wordsWithTwoCorrectIds)
     }
+
+    /// O(N+M) batch version of the review badge count.
+    ///
+    /// Builds a most-recent-result-per-word map in one pass over `assessmentResults`,
+    /// then applies the same eligibility rules as `canAttemptAssessment(for:)` across
+    /// `wordsEligibleForAssessment` — avoiding the O(N·M) scan that results from
+    /// calling `canAttemptAssessment` once per eligible word (each of which linearly
+    /// scans the whole results array).
+    func attemptableAssessmentCount(now: Date = Date()) -> Int {
+        // Build a map from wordId → most-recent AssessmentResult in one O(M) pass.
+        var latestByWord: [UUID: AssessmentResult] = [:]
+        for result in assessmentResults {
+            if let existing = latestByWord[result.wordId] {
+                if result.attemptedAt > existing.attemptedAt {
+                    latestByWord[result.wordId] = result
+                }
+            } else {
+                latestByWord[result.wordId] = result
+            }
+        }
+
+        // Apply the same logic as canAttemptAssessment(for:) across eligible words.
+        return wordsEligibleForAssessment.filter { wordId in
+            guard let last = latestByWord[wordId] else { return true }
+            if last.isCorrect {
+                return !Calendar.current.isDateInToday(last.attemptedAt)
+            }
+            return now.timeIntervalSince(last.attemptedAt) >= Self.wrongAnswerRetryCooldown
+        }.count
+    }
 }

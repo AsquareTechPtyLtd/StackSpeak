@@ -166,21 +166,57 @@ final class WordService: WordRepository {
     }
 
     func fetchWords(matching query: String, filters: WordFilters) throws -> [Word] {
-        // Apply text predicate at DB level when possible.
-        let predicate: Predicate<Word>? = query.isEmpty ? nil : #Predicate { word in
-            word.word.localizedStandardContains(query) ||
-            word.shortDefinition.localizedStandardContains(query)
+        // Build a compound predicate that pushes as much work to the DB as possible.
+        // Stack and level are persisted attributes — fold them in alongside the text
+        // search so SwiftData filters at the store rather than fetching ~2700 rows first.
+        // Mastered/bookmarked IDs come from CSV-derived Sets, which #Predicate cannot
+        // reference; those stay as in-memory Swift filters on the already-narrowed set.
+        let stackValue = filters.stack?.rawValue
+        let levelValue = filters.level
+
+        let predicate: Predicate<Word>
+        switch (query.isEmpty, stackValue, levelValue) {
+        case (true, nil, nil):
+            // No DB-filterable constraints — fetch everything.
+            predicate = #Predicate { _ in true }
+        case (false, nil, nil):
+            predicate = #Predicate { word in
+                word.word.localizedStandardContains(query) ||
+                word.shortDefinition.localizedStandardContains(query)
+            }
+        case (true, let sv?, nil):
+            predicate = #Predicate { word in word.stack == sv }
+        case (true, nil, let lv?):
+            predicate = #Predicate { word in word.unlockLevel == lv }
+        case (false, let sv?, nil):
+            predicate = #Predicate { word in
+                (word.word.localizedStandardContains(query) ||
+                 word.shortDefinition.localizedStandardContains(query)) &&
+                word.stack == sv
+            }
+        case (false, nil, let lv?):
+            predicate = #Predicate { word in
+                (word.word.localizedStandardContains(query) ||
+                 word.shortDefinition.localizedStandardContains(query)) &&
+                word.unlockLevel == lv
+            }
+        case (true, let sv?, let lv?):
+            predicate = #Predicate { word in
+                word.stack == sv && word.unlockLevel == lv
+            }
+        case (false, let sv?, let lv?):
+            predicate = #Predicate { word in
+                (word.word.localizedStandardContains(query) ||
+                 word.shortDefinition.localizedStandardContains(query)) &&
+                word.stack == sv && word.unlockLevel == lv
+            }
         }
 
         let descriptor = FetchDescriptor<Word>(predicate: predicate)
         var words = try modelContext.fetch(descriptor)
 
-        if let stack = filters.stack {
-            words = words.filter { $0.stack == stack.rawValue }
-        }
-        if let level = filters.level {
-            words = words.filter { $0.unlockLevel == level }
-        }
+        // Mastered/bookmarked filters operate on UUID Sets derived from CSV storage —
+        // not representable in a #Predicate, so applied in-memory on the narrowed set.
         if filters.masteredOnly, let ids = filters.masteredIds {
             words = words.filter { ids.contains($0.id) }
         }

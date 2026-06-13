@@ -91,3 +91,34 @@ struct CompletionTrackerRow: View {
                       completed, days.count)
     }
 }
+
+// MARK: - Previews
+
+private func previewDays() -> [CompletionDay] {
+    let calendar = Calendar.current
+    return (0..<10).map { offset in
+        let date = calendar.date(byAdding: .day, value: -(9 - offset), to: Date()) ?? Date()
+        let progress: Double
+        switch offset {
+        case 0...5: progress = 1.0       // complete days
+        case 6:     progress = 0.6       // partial day
+        case 7:     progress = 0.0       // missed day
+        case 8:     progress = 1.0       // complete
+        default:    progress = 0.0       // today — no progress yet
+        }
+        return CompletionDay(date: date, progress: progress, isToday: offset == 9)
+    }
+}
+
+#Preview("CompletionTrackerRow — Light") {
+    CompletionTrackerRow(days: previewDays())
+        .padding()
+        .withTheme(ThemeManager())
+}
+
+#Preview("CompletionTrackerRow — Dark") {
+    CompletionTrackerRow(days: previewDays())
+        .padding()
+        .withTheme(ThemeManager())
+        .preferredColorScheme(.dark)
+}

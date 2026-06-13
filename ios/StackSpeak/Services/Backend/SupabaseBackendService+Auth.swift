@@ -1,9 +1,10 @@
 import Foundation
 
 // GoTrue auth — split out per the <TypeName>+<Concern>.swift convention.
-// Anonymous-first: a user gets a session with no email/password, upgradeable to
-// Sign in with Apple / Google later. Requires "Allow anonymous sign-ins" in the
-// project's Auth settings.
+// Account-linked only: a session exists exclusively after a real sign-in
+// (Sign in with Apple / email-password). There is no anonymous session — sync
+// is Pro-gated and account-linked, so a bare anonymous user would only litter
+// the DB with rows that can never sync.
 extension SupabaseBackendService {
     /// Decoded GoTrue session response (`/auth/v1/signup`, `/auth/v1/token`).
     private struct AuthResponse: Decodable {
@@ -16,12 +17,33 @@ extension SupabaseBackendService {
     func ensureSession() async throws -> BackendUserID {
         // Already have a live access token this launch.
         if hasAccessToken, let uid = cachedUserId { return uid }
-        // Resume a persisted session by refreshing.
+        // Resume a persisted session by refreshing the stored token.
         if let refreshToken = storedRefreshToken {
-            if let uid = try? await refresh(refreshToken: refreshToken) { return uid }
+            do {
+                return try await refresh(refreshToken: refreshToken)
+            } catch BackendError.transport {
+                // Transient failure (network/URLSession error) — keep the Keychain
+                // token intact and surface it so the caller can stay silent/retry.
+                throw BackendError.transport
+            } catch BackendError.http(let status) where (400..<500).contains(status) {
+                // Permanent HTTP rejection (400/401/403 = token revoked/not found).
+                // Wipe the stale credential so the UI can prompt re-auth.
+                clearStoredSession()
+                throw BackendError.sessionExpired
+            } catch BackendError.message {
+                // GoTrue returned a structured error message on the refresh endpoint —
+                // this only happens when the token is definitively invalid/revoked.
+                clearStoredSession()
+                throw BackendError.sessionExpired
+            } catch {
+                // Any other error (e.g. decoding, 5xx) — treat as transient; don't clear.
+                throw error
+            }
         }
-        // Otherwise start a fresh anonymous session.
-        return try await signInAnonymously()
+        // No session and no resumable token — the user has not signed in. Callers
+        // are already gated on `isAccountLinked`, so this only fires if the stored
+        // session was lost; surface it rather than minting an anonymous user.
+        throw BackendError.notAuthenticated
     }
 
     // MARK: - Email / password
@@ -91,17 +113,7 @@ extension SupabaseBackendService {
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.httpBody = try Self.encode(Body(id_token: idToken, nonce: rawNonce))
         let (data, response) = try await send(request)
-        try Self.check(response)
-        return try apply(authData: data)
-    }
-
-    private func signInAnonymously() async throws -> BackendUserID {
-        var request = restRequest(path: "/auth/v1/signup", query: nil)
-        request.httpMethod = "POST"
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.httpBody = Data("{}".utf8)   // anonymous: no credentials
-        let (data, response) = try await send(request)
-        try Self.check(response)
+        try Self.checkREST(data, response)
         return try apply(authData: data)
     }
 
@@ -111,7 +123,7 @@ extension SupabaseBackendService {
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.httpBody = try Self.encode(["refresh_token": refreshToken])
         let (data, response) = try await send(request)
-        try Self.check(response)
+        try Self.checkREST(data, response)
         return try apply(authData: data)
     }
 

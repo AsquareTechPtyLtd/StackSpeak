@@ -128,3 +128,14 @@ struct EmailAuthView: View {
         }
     }
 }
+
+#Preview("EmailAuthView — Light") {
+    EmailAuthView()
+        .withTheme(ThemeManager())
+}
+
+#Preview("EmailAuthView — Dark") {
+    EmailAuthView()
+        .withTheme(ThemeManager())
+        .preferredColorScheme(.dark)
+}

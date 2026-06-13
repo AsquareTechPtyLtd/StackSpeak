@@ -70,3 +70,35 @@ struct EmptyStateView: View {
         .frame(maxWidth: .infinity)
     }
 }
+
+#Preview("EmptyStateView — Light") {
+    VStack {
+        EmptyStateView(
+            icon: "books.vertical",
+            title: "No books yet",
+            message: "Books will appear here as the catalog grows."
+        )
+        EmptyStateView(
+            icon: "rectangle.stack",
+            title: "No flashcards due today",
+            message: "Words you practice appear here the next day.",
+            actionTitle: "Browse the Library",
+            action: {}
+        )
+    }
+    .withTheme(ThemeManager())
+}
+
+#Preview("EmptyStateView — Dark") {
+    EmptyStateView(
+        icon: "rectangle.stack",
+        title: "No flashcards due today",
+        message: "Words you practice appear here the next day.",
+        actionTitle: "Browse the Library",
+        action: {},
+        secondaryActionTitle: "Manage stacks",
+        secondaryAction: {}
+    )
+    .withTheme(ThemeManager())
+    .preferredColorScheme(.dark)
+}

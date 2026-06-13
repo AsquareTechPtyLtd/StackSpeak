@@ -7,16 +7,18 @@ private let logger = Logger(category: "SupabaseBackendService")
 /// PostgREST over plain `URLSession` — no SDK, no SPM dependency (CLAUDE.md →
 /// "Backend & Sync"). An `actor` because it caches a mutable auth session.
 ///
-/// Endpoints are standard Supabase REST. Anonymous sign-in requires "Allow
-/// anonymous sign-ins" to be enabled in the project's Auth settings.
+/// Endpoints are standard Supabase REST. A session exists only after a real
+/// sign-in (Sign in with Apple / email-password) — there is no anonymous
+/// sign-in, so "Allow anonymous sign-ins" can stay disabled in the project.
 actor SupabaseBackendService: BackendService {
     nonisolated let config: SupabaseConfig
     private let urlSession: URLSession
+    private let keychain: KeychainStore
     private let defaults: UserDefaults
 
-    /// In-memory access token + cached user id; the refresh token persists so a
-    /// session survives relaunch. (Refresh token in UserDefaults is acceptable
-    /// for an anonymous session; move to Keychain when real sign-in lands.)
+    /// In-memory access token + cached user id; the refresh token persists in the
+    /// Keychain (a real-account credential — never UserDefaults) so a session
+    /// survives relaunch without leaking into unencrypted backups.
     private var accessToken: String?
     private var userId: BackendUserID?
 
@@ -26,9 +28,11 @@ actor SupabaseBackendService: BackendService {
 
     init(config: SupabaseConfig,
          urlSession: URLSession = .shared,
+         keychain: KeychainStore = KeychainStore(),
          defaults: UserDefaults = .standard) {
         self.config = config
         self.urlSession = urlSession
+        self.keychain = keychain
         self.defaults = defaults
     }
 
@@ -69,6 +73,7 @@ actor SupabaseBackendService: BackendService {
 
     /// A PostgREST/auth request pre-stamped with the apikey and (when present)
     /// the bearer access token.
+    // intentionally internal: shared with the +Auth extension in a separate file.
     func restRequest(path: String, query: String?) -> URLRequest {
         var components = URLComponents(url: config.url.appendingPathComponent(path),
                                        resolvingAgainstBaseURL: false)
@@ -81,6 +86,7 @@ actor SupabaseBackendService: BackendService {
         return request
     }
 
+    // intentionally internal: shared with the +Auth extension in a separate file.
     func send(_ request: URLRequest) async throws -> (Data, URLResponse) {
         do {
             return try await urlSession.data(for: request)
@@ -95,16 +101,39 @@ actor SupabaseBackendService: BackendService {
     func setSession(accessToken: String, refreshToken: String, userId: String) {
         self.accessToken = accessToken
         self.userId = userId
-        defaults.set(refreshToken, forKey: Self.refreshTokenKey)
+        keychain.set(refreshToken, for: Self.refreshTokenKey)
+        // Drop any legacy plaintext copy from before the Keychain migration.
+        defaults.removeObject(forKey: Self.refreshTokenKey)
     }
 
     var cachedUserId: BackendUserID? { userId }
     var hasAccessToken: Bool { accessToken != nil }
-    var storedRefreshToken: String? { defaults.string(forKey: Self.refreshTokenKey) }
+
+    /// Reads the persisted refresh token, transparently migrating a legacy
+    /// UserDefaults token into the Keychain on first access (so existing
+    /// sessions survive the upgrade without forcing a re-login).
+    var storedRefreshToken: String? {
+        if let token = keychain.get(Self.refreshTokenKey) { return token }
+        guard let legacy = defaults.string(forKey: Self.refreshTokenKey) else { return nil }
+        keychain.set(legacy, for: Self.refreshTokenKey)
+        defaults.removeObject(forKey: Self.refreshTokenKey)
+        return legacy
+    }
 
     func signOut() async {
         accessToken = nil
         userId = nil
+        keychain.delete(Self.refreshTokenKey)
+        defaults.removeObject(forKey: Self.refreshTokenKey)
+    }
+
+    /// Clears only the stored credentials (called after a permanent refresh
+    /// rejection so the UI can prompt re-auth). Does NOT call the GoTrue logout
+    /// endpoint — the token was already rejected server-side.
+    func clearStoredSession() {
+        accessToken = nil
+        userId = nil
+        keychain.delete(Self.refreshTokenKey)
         defaults.removeObject(forKey: Self.refreshTokenKey)
     }
 

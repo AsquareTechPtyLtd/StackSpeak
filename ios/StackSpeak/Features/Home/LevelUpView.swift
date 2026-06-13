@@ -1,5 +1,4 @@
 import SwiftUI
-import SwiftData
 import OSLog
 
 /// Level-up moment, split into two beats (LU1):
@@ -12,7 +11,6 @@ import OSLog
 struct LevelUpView: View {
     @Environment(\.theme) private var theme
     @Environment(\.dismiss) private var dismiss
-    @Environment(\.modelContext) private var modelContext
     @Environment(\.tabRouter) private var tabRouter
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
@@ -172,7 +170,7 @@ struct LevelUpView: View {
 struct LevelUpStackPickerSheet: View {
     @Environment(\.theme) private var theme
     @Environment(\.dismiss) private var dismiss
-    @Environment(\.modelContext) private var modelContext
+    @Environment(\.services) private var services
 
     private let logger = Logger(category: "LevelUp")
 
@@ -226,7 +224,9 @@ struct LevelUpStackPickerSheet: View {
                         .foregroundColor(theme.colors.inkMuted)
                 }
             }
-            .alert("saveError.title", isPresented: .constant(saveError != nil), presenting: saveError) { _ in
+            .alert("saveError.title", isPresented: Binding(get: { saveError != nil },
+                                                          set: { if !$0 { saveError = nil } }),
+                   presenting: saveError) { _ in
                 Button("common.ok") { saveError = nil }
             } message: { error in
                 Text(String(format: String(localized: "saveError.levelUpStacks.format"),
@@ -244,9 +244,11 @@ struct LevelUpStackPickerSheet: View {
     }
 
     private func saveAndDismiss() {
-        userProgress.selectedStacks.formUnion(selectedOptionalStacks.map { $0.rawValue })
         do {
-            try modelContext.save()
+            try services?.progress.addOptionalStacks(
+                selectedOptionalStacks.map { $0.rawValue },
+                to: userProgress
+            )
             dismiss()
         } catch {
             logger.error("Failed to save level-up stack selection: \(error.localizedDescription, privacy: .public)")

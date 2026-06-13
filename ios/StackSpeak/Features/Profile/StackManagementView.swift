@@ -116,7 +116,7 @@ struct StackManagementView: View {
                             .font(TypographyTokens.caption.weight(.semibold))
                             .foregroundColor(theme.colors.accent)
                             .padding(.horizontal, theme.spacing.sm)
-                            .padding(.vertical, 4)
+                            .padding(.vertical, theme.spacing.xs)
                             .background(theme.colors.accentBg)
                             .clipShape(Capsule())
                     }

@@ -54,3 +54,45 @@ struct TodayWordRow: View {
         .accessibilityLabel("\(word.word). \(isCompleted ? String(localized: "a11y.completed") : "")")
     }
 }
+
+// MARK: - Previews
+
+private func previewWord() -> Word {
+    Word(
+        id: UUID(),
+        word: "idempotent",
+        pronunciation: "/ˌaɪ.dəmˈpoʊ.tənt/",
+        partOfSpeech: "adjective",
+        shortDefinition: "Produces the same result no matter how many times it's applied.",
+        simpleDefinition: "Doing it once or a hundred times gives the same outcome.",
+        longDefinition: "An operation is idempotent if applying it multiple times has the same effect as applying it once.",
+        techContext: "REST APIs mark GET, PUT, and DELETE as idempotent.",
+        exampleSentence: "A DELETE request is idempotent — deleting a resource twice is the same as deleting it once.",
+        etymology: "From Latin idem (same) + potent (powerful).",
+        connector: "Think of a light switch that only turns off.",
+        codeExampleLanguage: "swift",
+        codeExampleCode: "",
+        stack: "basic-web",
+        unlockLevel: 1,
+        tags: ["api", "http"]
+    )
+}
+
+#Preview("TodayWordRow — Light") {
+    VStack(spacing: 8) {
+        TodayWordRow(number: 1, word: previewWord(), isCompleted: false)
+        TodayWordRow(number: 2, word: previewWord(), isCompleted: true)
+    }
+    .padding()
+    .withTheme(ThemeManager())
+}
+
+#Preview("TodayWordRow — Dark") {
+    VStack(spacing: 8) {
+        TodayWordRow(number: 1, word: previewWord(), isCompleted: false)
+        TodayWordRow(number: 2, word: previewWord(), isCompleted: true)
+    }
+    .padding()
+    .withTheme(ThemeManager())
+    .preferredColorScheme(.dark)
+}

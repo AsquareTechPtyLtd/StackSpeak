@@ -81,7 +81,7 @@ struct SelectableRow<Leading: View, Trailing: View>: View {
             HStack(spacing: theme.spacing.md) {
                 leading
 
-                VStack(alignment: .leading, spacing: 2) {
+                VStack(alignment: .leading, spacing: theme.spacing.xxs) {
                     Text(title)
                         .font(TypographyTokens.headline)
                         .foregroundColor(theme.colors.ink)
@@ -123,4 +123,31 @@ struct SelectableRow<Leading: View, Trailing: View>: View {
                 .foregroundColor(theme.colors.inkFaint)
         }
     }
+}
+
+#Preview("SelectableRow — Light") {
+    VStack(spacing: 0) {
+        SelectableRow(title: "Light mode", subtitle: "Always use light background",
+                      isSelected: true, role: .picker, action: {})
+        SelectableRow(title: "Dark mode", subtitle: "Always use dark background",
+                      isSelected: false, role: .picker, action: {})
+        SelectableRow(title: "Enable notifications", isSelected: true, role: .multiselect, action: {})
+        SelectableRow(title: "Manage Stacks", role: .navigation, action: {})
+    }
+    .padding()
+    .withTheme(ThemeManager())
+}
+
+#Preview("SelectableRow — Dark") {
+    VStack(spacing: 0) {
+        SelectableRow(title: "Light mode", subtitle: "Always use light background",
+                      isSelected: true, role: .picker, action: {})
+        SelectableRow(title: "Dark mode", subtitle: "Always use dark background",
+                      isSelected: false, role: .picker, action: {})
+        SelectableRow(title: "Enable notifications", isSelected: true, role: .multiselect, action: {})
+        SelectableRow(title: "Manage Stacks", role: .navigation, action: {})
+    }
+    .padding()
+    .withTheme(ThemeManager())
+    .preferredColorScheme(.dark)
 }
