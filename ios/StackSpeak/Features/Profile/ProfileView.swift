@@ -17,11 +17,11 @@ struct ProfileView: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: theme.spacing.xl) {
                     if let progress = userProgress {
+                        sectionGroup(progress.isProActive ? "profile.section.sync" : "profile.section.sync.pro") { SyncAccountSection() }
                         sectionGroup("profile.section.level") { levelSection(progress: progress) }
                         sectionGroup("profile.section.streak") { streakSection(progress: progress) }
                         sectionGroup("profile.section.stats") { statsSection(progress: progress) }
                         sectionGroup("profile.section.collections") { collectionSection(progress: progress) }
-                        sectionGroup("profile.section.sync") { SyncAccountSection() }
                         sectionGroup("profile.section.settings") { settingsSection(progress: progress) }
                     }
                 }

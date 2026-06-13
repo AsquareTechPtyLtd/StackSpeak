@@ -10,7 +10,7 @@ knows it's Supabase.
 
 1. **Create a free project** at supabase.com.
 2. **Apply the schema:** dashboard → SQL Editor → paste `migrations/0001_init_progress.sql` → Run. (Or `supabase db push` if using the CLI.)
-3. **Enable anonymous sign-in:** Auth → Providers → enable "Allow anonymous sign-ins".
+3. **Enable sign-in providers:** Auth → Providers → enable **Email** and **Apple**. (Anonymous sign-in is *not* used — a session is created only after a real sign-in, so "Allow anonymous sign-ins" can stay off.)
 4. **Configure the client:** copy `ios/StackSpeak/Resources/Supabase.example.plist` → `Supabase.plist` (same folder), fill in:
    - `SUPABASE_URL` — Project URL (Settings → API)
    - `SUPABASE_ANON_KEY` — the **anon / publishable** key (Settings → API)
@@ -32,7 +32,7 @@ One row per user in `public.progress`:
 
 | column | type | meaning |
 |---|---|---|
-| `user_id` | uuid (PK → `auth.users`) | the signed-in (anonymous) user |
+| `user_id` | uuid (PK → `auth.users`) | the signed-in user (Apple/email) |
 | `data` | jsonb | the platform-neutral `ProgressSnapshot` |
 | `schema_version` | int | bump when the snapshot shape changes |
 | `updated_at` | timestamptz | last write (sync/merge decisions) |

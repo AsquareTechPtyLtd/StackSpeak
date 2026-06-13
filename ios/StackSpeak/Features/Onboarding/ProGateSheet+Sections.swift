@@ -38,6 +38,7 @@ extension ProGateSheet {
         VStack(alignment: .leading, spacing: theme.spacing.sm) {
             featureRow("pro.gate.feature.stacks")
             featureRow("pro.gate.feature.books")
+            featureRow("pro.gate.feature.sync")
             featureRow("pro.gate.feature.future")
         }
         .frame(maxWidth: .infinity, alignment: .leading)
