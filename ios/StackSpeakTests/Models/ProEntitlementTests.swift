@@ -5,12 +5,45 @@ import Foundation
 @Suite("ProEntitlement — App Store → UserProgress mapping")
 struct ProEntitlementTests {
 
-    @Test("Product IDs cover exactly the monthly and yearly subscriptions")
+    @Test("Product IDs cover the monthly, yearly, and lifetime products")
     func productIds() {
         #expect(ProEntitlement.productIds == [
             "com.stackspeak.ios.pro.monthly",
-            "com.stackspeak.ios.pro.yearly"
+            "com.stackspeak.ios.pro.yearly",
+            "com.stackspeak.ios.pro.lifetime"
         ])
+        #expect(ProEntitlement.isLifetime("com.stackspeak.ios.pro.lifetime"))
+        #expect(!ProEntitlement.isLifetime("com.stackspeak.ios.pro.yearly"))
+    }
+
+    @Test("Applying a lifetime purchase grants permanent Pro")
+    func grantsLifetime() {
+        let p = UserProgress()
+        let changed = ProEntitlement.applyLifetime(to: p)
+        #expect(changed == true)
+        #expect(p.isLifetimePro == true)
+        #expect(p.isPro == true)
+        #expect(p.isProActive == true)
+    }
+
+    @Test("Lifetime Pro is active with no expiry, and even past a lapsed subscription")
+    func lifetimeOutlivesSubscriptionExpiry() {
+        let p = UserProgress()
+        p.proExpiryDate = Date().addingTimeInterval(-60 * 60 * 24)   // lapsed sub
+        ProEntitlement.applyLifetime(to: p)
+        #expect(p.isProActive == true)   // honoured regardless of expiry
+    }
+
+    @Test("Granting lifetime twice is idempotent")
+    func lifetimeIdempotent() {
+        let p = UserProgress()
+        #expect(ProEntitlement.applyLifetime(to: p) == true)
+        #expect(ProEntitlement.applyLifetime(to: p) == false)
+    }
+
+    @Test("A new UserProgress is not lifetime Pro")
+    func defaultsNotLifetime() {
+        #expect(UserProgress().isLifetimePro == false)
     }
 
     @Test("latestExpiry picks the furthest-out expiry")

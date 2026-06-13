@@ -75,7 +75,7 @@ extension ProGateSheet {
                         priceText: product.paywallPriceText,
                         trialText: product.paywallTrialText,
                         isSelected: product.id == selectedProductId,
-                        isBestValue: product.id == products.last?.id && products.count > 1,
+                        isBestValue: product.id == recommendedProductId && products.count > 1,
                         onSelect: { selectedProductId = product.id }
                     )
                 }
@@ -104,7 +104,7 @@ extension ProGateSheet {
             }
             .disabled(isPurchasing)
 
-            Text("pro.gate.legal")
+            Text(selectedProduct?.isLifetimePurchase == true ? "pro.gate.legal.lifetime" : "pro.gate.legal")
                 .font(TypographyTokens.caption)
                 .foregroundColor(theme.colors.inkFaint)
                 .multilineTextAlignment(.center)
@@ -124,6 +124,10 @@ extension ProGateSheet {
                 verbatim: String(format: String(localized: "pro.gate.cta.trial.days.format"), days),
                 isLoading: isPurchasing
             ) {
+                purchaseSelected()
+            }
+        } else if selectedProduct?.isLifetimePurchase == true {
+            PrimaryCTAButton("pro.gate.cta.lifetime", isLoading: isPurchasing) {
                 purchaseSelected()
             }
         } else {

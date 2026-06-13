@@ -3,15 +3,20 @@ import StoreKit
 
 extension Product {
     /// "$2.99 / month" — price from StoreKit, period suffix localized here.
+    /// A non-subscription product (the lifetime purchase) gets a one-time suffix.
     var paywallPriceText: String {
         let suffix: String
         switch subscription?.subscriptionPeriod.unit {
         case .month: suffix = String(localized: "pro.gate.period.month")
         case .year:  suffix = String(localized: "pro.gate.period.year")
+        case nil:    suffix = String(localized: "pro.gate.period.lifetime")
         default:     suffix = ""
         }
         return displayPrice + suffix
     }
+
+    /// True for the one-time lifetime purchase (no recurring subscription).
+    var isLifetimePurchase: Bool { subscription == nil }
 
     /// Free-trial length in days from the intro offer; nil when there is no
     /// free trial or the period doesn't reduce to days (month/year units).

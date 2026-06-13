@@ -5,9 +5,10 @@ import SwiftData
 // <TypeName>+<Concern>.swift convention to keep the primary file under the
 // size limit.
 extension UserProgress {
-    /// Single source of truth for Pro entitlement.
-    /// True only when the user has an active subscription with a future expiry.
+    /// Single source of truth for Pro entitlement. True when the user holds the
+    /// one-time lifetime purchase, or an active subscription with a future expiry.
     var isProActive: Bool {
+        if isLifetimePro { return true }
         guard isPro else { return false }
         guard let expiry = proExpiryDate else { return false }
         return expiry > Date()

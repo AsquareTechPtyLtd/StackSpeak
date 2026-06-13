@@ -80,14 +80,20 @@ struct ProGateSheet: View {
         selectedProduct?.subscription?.introductoryOffer?.paymentMode == .freeTrial
     }
 
+    /// The plan we recommend and default to: the priciest auto-renewing
+    /// subscription (yearly). The one-time lifetime option is offered but never
+    /// auto-selected or badged "best value", so we don't nudge the biggest charge.
+    var recommendedProductId: String? {
+        products.last(where: { !$0.isLifetimePurchase })?.id ?? products.last?.id
+    }
+
     // MARK: - Actions
 
     private func loadProducts() async {
         guard let services else { return }
         await services.purchase.loadProducts()
-        // Default to the yearly (most expensive) plan; products are sorted cheapest first.
         if selectedProductId == nil {
-            selectedProductId = services.purchase.proProducts.last?.id
+            selectedProductId = recommendedProductId
         }
     }
 

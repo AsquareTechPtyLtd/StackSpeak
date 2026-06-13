@@ -35,6 +35,9 @@ final class UserProgress {
 
     var isPro: Bool = false
     var proExpiryDate: Date? = nil
+    /// True after a one-time lifetime (non-consumable) purchase. Grants Pro
+    /// permanently — `isProActive` honours it regardless of `proExpiryDate`.
+    var isLifetimePro: Bool = false
 
     // MARK: - Daily-5 vocab load-more (Pro feature)
     // Hard cap at 25 cards/day. Reset at local midnight.
@@ -216,6 +219,7 @@ final class UserProgress {
         self.selectedStacksStorage = WordStack.mandatoryStacks(for: 1).map(\.rawValue).joined(separator: ",")
         self.isPro = false
         self.proExpiryDate = nil
+        self.isLifetimePro = false
         self.wordsLoadedToday = 0
         self.lastWordsLoadedResetDate = .distantPast
         self.dailyBookCardLimit = nil
