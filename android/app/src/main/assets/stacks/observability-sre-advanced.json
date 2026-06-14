@@ -251,7 +251,7 @@
       "word": "baggage",
       "pronunciation": "BAG-ij",
       "partOfSpeech": "noun",
-      "shortDefinition": "The W3C Baggage specification's mechanism for propagating application-level key-value context (tenant ID, user ID, A/B bucket) alongside trace context across service boundaries.",
+      "shortDefinition": "The W3C mechanism for propagating application-level key-value context (tenant, user, A/B bucket) alongside trace context across service boundaries.",
       "simpleDefinition": "Baggage carries business context through the entire distributed call chain. Attach a tenant ID at the API gateway, and every downstream span — database query, background job, third-party call — can read and tag itself with that tenant ID without it being explicitly passed through every function signature.",
       "longDefinition": "W3C Baggage (a companion spec to W3C Trace Context) defines the baggage HTTP header as a comma-separated list of key=value pairs: baggage: userId=abc123,tenantId=acme,abTest=checkout-v2. Any service in the call chain can read these values from the current OTel context and attach them as span attributes, making them available for filtering in the tracing backend. The key use cases: tenant ID in SaaS systems (attach once at the API gateway, available in every downstream span without explicit parameter passing), A/B test or feature flag state (enables filtering traces by experiment bucket to compare latency across variants), canary request marker (tag canary traffic for comparison in the trace backend), and deployment environment propagation. Critical caveats: baggage is propagated to every service in the call chain, including third-party services — never put credentials, PII, or sensitive data in baggage. Baggage values are also not automatically added to span attributes; you must explicitly read them and call span.set_attribute(). High-cardinality baggage values (full email addresses, full request bodies) will cause the same indexing cost problems as high-cardinality span attributes in Prometheus-adjacent backends.",
       "connector": "Think of baggage like a hotel keycard that gets checked at every door — attached once at check-in (API gateway), it travels with the guest (request) and grants context at every service interaction without the guest having to re-identify themselves.",
@@ -646,32 +646,31 @@
     },
     {
       "id": "obs-adv-0180-0000-0000-0000-000000000018",
-      "word": "idempotency",
-      "pronunciation": "eye-dem-POH-ten-see",
+      "word": "service map",
+      "pronunciation": "SUR-viss MAP",
       "partOfSpeech": "noun",
-      "shortDefinition": "The property of an operation that produces the same result whether executed once or many times — making retries safe without duplicate effects.",
-      "simpleDefinition": "An idempotent operation can be called multiple times with the same result as calling it once. Idempotency keys make POST operations safe to retry: the server recognizes a duplicate key and returns the stored result without re-executing the action. This is the prerequisite for safe retry logic in distributed systems.",
-      "longDefinition": "HTTP GET and DELETE are naturally idempotent: fetching or deleting the same resource twice has the same result as doing it once. HTTP POST is not: creating an order twice creates two orders. Idempotency keys make non-idempotent operations safe to retry. The standard mechanism: the client generates a unique idempotency key (UUID v4) for each logical operation, sends it in the request (HTTP header Idempotency-Key: <uuid> — the Stripe and PayPal convention), the server stores the key and its result atomically after the first successful execution, and on subsequent requests with the same key the server returns the stored result without re-executing. Keys are retained for a defined window (e.g., 24 hours) then expired. Idempotency keys require server-side storage (Redis or a database table). The atomicity of 'store key + execute operation' is critical: a race condition between two retries arriving simultaneously must result in exactly one execution. This is typically implemented as a Redis SET NX (set if not exists) on the key with a TTL, or a database INSERT with a unique constraint on the key column. In the context of observability and SRE: idempotency is essential for safe retry logic in distributed systems subject to transient failures. Without it, retries cause duplicate charges, double-booked resources, or data corruption. With it, retries become a safe reliability mechanism — the service can be retried aggressively without fear of duplicates.",
-      "connector": "Think of idempotency like a light switch — pressing 'on' once or five times in a row leaves the light in the same state. The effect is bounded by the intent, not by the number of attempts.",
-      "techContext": "Our payment service requires an Idempotency-Key header on all POST /charges calls. Stripe has the same requirement. If our payment service crashes mid-charge and the Stripe request was already made, we can retry with the same key and get the original result — no double charge.",
-      "exampleSentence": "After adding idempotency keys to our order creation API, we eliminated a class of duplicate-order bugs that had been blamed on intermittent network retries for over a year.",
+      "shortDefinition": "An auto-generated topology diagram derived from distributed trace data that shows all services and their live dependency relationships, including call volumes and error rates on each edge.",
+      "simpleDefinition": "A service map is a real-time graph where each node is a service and each edge is a live dependency between services discovered from trace propagation data. It answers 'which services call which?' without requiring manual documentation — and because it is generated from real production traffic, it shows relationships that architecture diagrams miss. During an incident, it instantly reveals whether the failing service is a leaf node or a shared platform dependency.",
+      "longDefinition": "Service maps (also called service dependency graphs or topology maps) are auto-generated visualizations derived from distributed tracing infrastructure. When distributed tracing is deployed, every inter-service call carries a trace context header (traceparent in W3C Trace Context, or X-B3-TraceId in Zipkin convention). The tracing backend receives spans from each service, each span recording the source service, destination service, operation, and outcome. By aggregating spans across all traces over a time window, the backend infers the directed graph of service dependencies. The result is a topology that is always current: if a new service starts calling an existing one, the edge appears in the map within minutes without any manual update. What service maps show: dependency direction (A → B means A calls B, B is A's dependency), call volume per edge (requests per second), error rate per edge (fraction of calls that fail), and latency per edge (p50/p95/p99). During incidents, service maps compress root-cause identification: an engineer can visually trace the error from the symptom (service A reporting errors) upstream through its dependencies to identify where errors originate. A shared dependency (one service called by many others) with a high error rate is the canonical pattern for a cascading failure — service maps make this pattern visible in under 10 seconds. Tools: Datadog APM service map, Jaeger dependency view, AWS X-Ray service map, Grafana Tempo service graph, Dynatrace Smartscape.",
+      "connector": "Think of a service map like a real-time airline route map — each airport is a service, each flight route is a dependency, and the map is always accurate because it is drawn from actual flight data, not from what the airline planned to fly.",
+      "techContext": "Datadog's service map revealed that our auth service had become a transitive dependency of 23 microservices — a dependency web that no team was aware of, and which explained why every major incident ended up involving the auth team even when auth itself was not the root cause.",
+      "exampleSentence": "The service map showed the checkout service receiving high error rates on its call to the inventory service, which was itself erroring on its call to the legacy ERP connector — the root cause was one hop deeper than the first alert suggested.",
       "codeExample": {
-        "language": "python",
-        "code": "# Server-side idempotency key handling with Redis\nimport uuid\nfrom redis import Redis\n\nredis = Redis()\n\ndef create_order(idempotency_key: str, payload: dict) -> dict:\n    # Try to reserve the key atomically\n    stored = redis.get(f\"idem:{idempotency_key}\")\n    if stored:\n        return json.loads(stored)  # Return cached result\n\n    # Execute the operation\n    result = _do_create_order(payload)\n\n    # Store with 24-hour TTL\n    redis.setex(\n        f\"idem:{idempotency_key}\",\n        86400,\n        json.dumps(result)\n    )\n    return result\n\n# Client generates a stable key per logical operation\nidempotency_key = str(uuid.uuid4())\nfor attempt in range(3):  # safe to retry\n    response = requests.post(\n        '/orders',\n        headers={'Idempotency-Key': idempotency_key},\n        json=order_payload\n    )"
+        "language": "yaml",
+        "code": "# OpenTelemetry trace context propagation (W3C standard)\n# Every inter-service HTTP call automatically carries:\n# traceparent: 00-<trace-id>-<parent-span-id>-<flags>\n\n# Example Python: instrumented outbound call generates an edge in the service map\nfrom opentelemetry.instrumentation.requests import RequestsInstrumentor\nRequestsInstrumentor().instrument()  # auto-instruments all requests calls\n\n# The tracing backend (Jaeger, Tempo, Datadog) aggregates spans\n# and builds the service graph from source_service → dest_service edges\n\n# Grafana Tempo: query the service graph\n# In Grafana, use the 'Service Graph' visualization type with Tempo datasource\n# to render the auto-generated topology from trace data"
       },
-      "etymology": "From Latin idem ('same') + potens ('powerful, capable'); in mathematics, a function f where f(f(x)) = f(x) for all x; in distributed systems, popularized by REST API design literature in the early 2000s.",
+      "etymology": "Compound of 'service' (Latin servitium, 'slavery, servitude'; in computing, an independent unit of functionality) + 'map' (Medieval Latin mappa, 'sheet, cloth'); the concept was popularized by Google's Dapper paper (2010) and adopted by Zipkin, Jaeger, and commercial APM tools as a standard distributed systems visualization.",
       "unlockLevel": 16,
       "tags": [
         "observability",
-        "reliability",
-        "distributed-systems",
-        "api"
+        "distributed-tracing",
+        "architecture"
       ],
-      "category": "concepts",
+      "category": "tools",
       "backingCard": {
         "bookId": "observability-sre",
-        "chapterId": "obs-ch05-designing-for-reliability",
-        "cardId": "obs-ch05-c010"
+        "chapterId": "obs-ch11-distributed-tracing-in-practice",
+        "cardId": "obs-ch11-c007"
       }
     },
     {
@@ -734,33 +733,31 @@
     },
     {
       "id": "obs-adv-0210-0000-0000-0000-000000000021",
-      "word": "rate limiting",
-      "pronunciation": "RAYT LIM-it-ing",
+      "word": "continuous profiling",
+      "pronunciation": "kun-TIN-yoo-us PROH-fy-ling",
       "partOfSpeech": "noun",
-      "shortDefinition": "A traffic control mechanism that enforces a maximum request rate per caller at the service entry point, protecting downstream resources from overload.",
-      "simpleDefinition": "Rate limiting is the front door guard. It enforces a maximum request rate per client — tokens per second, requests per minute — and rejects excess requests with HTTP 429 before they reach application logic. It protects the service from overload, abuse, and accidental traffic spikes from misbehaving clients.",
-      "longDefinition": "Rate limiting operates at the front door of a service — typically at the API gateway, reverse proxy (Nginx, Envoy), or Kubernetes ingress — before requests reach application logic. Its purpose is to protect the service and its downstream dependencies from overload and abuse. Common algorithms: token bucket (each caller has a bucket refilling at N tokens/second; each request consumes one token; empty bucket means rejection — allows short bursts up to bucket size without violating sustained rate), leaky bucket (requests enter a queue draining at a fixed rate; smooths traffic but disallows bursts — useful when downstream cannot tolerate even brief spikes), fixed window counter (count requests per caller per N-second window; simple but vulnerable to double-rate attacks at window boundaries where a caller uses N requests just before and N requests just after the reset), and sliding window log (track exact timestamps of recent requests; precise but memory-intensive). HTTP response: 429 Too Many Requests with a Retry-After header indicating when the caller can retry. Well-behaved clients respect this header and apply backoff. Rate limiting vs throttling: rate limiting is system-level protection (applies to any caller, focuses on preventing service overload), while throttling is tenant-level fairness in multi-tenant SaaS (applies to authenticated tenants, enforces per-plan capacity caps). Nginx, HAProxy, Envoy, Kong, and AWS API Gateway all implement rate limiting natively.",
-      "connector": "Think of rate limiting like a bouncer at a club with a maximum capacity — once the capacity is reached, new arrivals wait outside regardless of who they are. It's about the venue's safety, not the guest's identity.",
-      "techContext": "Our API gateway uses Envoy's token bucket rate limiter, configured at 100 requests/second per API key with a burst of 200. When a client hits the limit, Envoy returns 429 with Retry-After: 1. We track 429 rates per API key in Grafana to identify clients that need their integration fixed.",
-      "exampleSentence": "Rate limiting saved us when a customer accidentally deployed a misconfigured SDK that hammered our API at 10,000 requests per second — without it, the load would have cascaded to the database before the on-call engineer was paged.",
+      "shortDefinition": "Always-on production profiling that collects CPU and memory allocation samples at low overhead across a fleet, enabling performance regression detection and flame-graph analysis over arbitrary time windows.",
+      "simpleDefinition": "Traditional profiling is turned on briefly for a specific investigation and then disabled — it carries too much overhead to run always. Continuous profiling runs permanently in production at very low sampling rates (1–5% overhead) and stores profiling data alongside metrics and traces. It enables questions like 'did the deploy yesterday change which functions are consuming the most CPU?' by comparing flame graphs from before and after any event.",
+      "longDefinition": "Continuous profiling is the fourth signal of observability — complementing logs, metrics, and traces by providing code-level performance data. It was operationalized at scale by Google's Borg continuous profiler (described in Google's engineering blog) and popularized in open-source by projects like pprof (Go), async-profiler (Java), Pyroscope, and Grafana Pyroscope. It is now offered as a native capability in Datadog, Elastic, and cloud providers. How it works: a low-overhead sampling profiler runs inside each production process, sampling the call stack at regular intervals (e.g., 99 Hz — 99 times per second). Each sample records which function is executing at that moment, building a statistical picture of where CPU time is spent. Memory allocation profilers capture the call stacks responsible for heap allocations. Samples are aggregated into flame graphs — visualizations where the x-axis is time proportion and the y-axis is the call stack, making hot code paths immediately visible. The key differentiator from traditional profiling: continuous profiling data is indexed by metadata (service name, version, deployment SHA, region) so engineers can compare profiles across deploys, time ranges, and versions. 'Was the deploy on Tuesday the source of the CPU regression?' becomes answerable in seconds by comparing flame graphs from before and after. Continuous profiling is particularly valuable for long-running performance regressions that are invisible in metrics (a function that regresses from 0.5ms to 1ms average execution time may not be detectable in aggregate latency metrics but dominates the flame graph).",
+      "connector": "Think of continuous profiling like a fitness tracker that records your step count and heart rate all day — not a one-time medical test, but an always-on record that lets you correlate 'I was most active on Tuesday' with 'that's the day I changed my walking route.'",
+      "techContext": "Continuous profiling caught a CPU regression introduced by a dependency update that our metrics completely missed — p99 latency was unchanged, but the flame graph showed a new cryptography function consuming 18% of CPU time that had not been present in the previous deploy.",
+      "exampleSentence": "The production flame graph from continuous profiling showed that 40% of CPU time in the recommendation service was spent in JSON serialization of a nested object — switching to a pre-serialized cache field cut CPU consumption by 35% without changing observable latency.",
       "codeExample": {
-        "language": "yaml",
-        "code": "# Nginx rate limiting configuration\nhttp:\n  # Define a shared memory zone for rate tracking\n  limit_req_zone $http_x_api_key zone=api_per_key:10m rate=100r/s;\n\n  server:\n    listen 443 ssl;\n\n    location /api/ {\n      # Allow burst of 50 with nodelay, then queue up to 200 more\n      limit_req zone=api_per_key burst=200 nodelay;\n      limit_req_status 429;\n\n      # Add Retry-After header on 429\n      add_header Retry-After 1 always;\n\n      proxy_pass http://backend;\n    }\n  }"
+        "language": "bash",
+        "code": "# Grafana Pyroscope: instrument a Go application\n# go get github.com/grafana/pyroscope-go\n\n# In main.go:\n# profiler.Start(profiler.Config{\n#   ApplicationName: \"payment-service\",\n#   ServerAddress:   \"http://pyroscope:4040\",\n#   ProfileTypes: []profiler.ProfileType{\n#       profiler.ProfileCPU,\n#       profiler.ProfileAllocObjects,\n#       profiler.ProfileAllocSpace,\n#   },\n# })\n\n# pprof HTTP endpoint for Go services (always-on, low overhead)\n# import _ \"net/http/pprof\"\n# http.ListenAndServe(\":6060\", nil)\n\n# Pull a 30-second CPU profile:\ncurl http://localhost:6060/debug/pprof/profile?seconds=30 > cpu.prof\ngo tool pprof -http=:8080 cpu.prof"
       },
-      "etymology": "Compound of 'rate' (frequency of occurrence) + 'limiting' (constraining); the concept predates web APIs, originating in telecommunications traffic engineering.",
+      "etymology": "Continuous from Latin 'continuus' (uninterrupted, holding together); profiling from Latin 'profilare' (to draw in outline). 'Profiling' in computing means measuring resource usage per function. The compound 'continuous profiling' was popularized by Google's blog posts on their internal Borg continuous profiling infrastructure.",
       "unlockLevel": 16,
       "tags": [
         "observability",
-        "reliability",
-        "api",
-        "security",
-        "resilience"
+        "performance",
+        "profiling"
       ],
-      "category": "patterns",
+      "category": "tools",
       "backingCard": {
         "bookId": "observability-sre",
-        "chapterId": "obs-ch05-designing-for-reliability",
-        "cardId": "obs-ch05-c011"
+        "chapterId": "obs-ch03-instrumentation",
+        "cardId": "obs-ch03-c009"
       }
     },
     {
