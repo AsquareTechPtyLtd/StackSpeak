@@ -1,0 +1,1405 @@
+{
+  "chapterId": "dbi-ch12-distributed-transactions",
+  "shardIndex": 1,
+  "cards": [
+    {
+      "id": "dbi-ch12-c001",
+      "order": 1,
+      "title": "Distributed Transactions — The New Failure Modes",
+      "teaser": "A single-node transaction fails or succeeds as a unit. Spread that transaction across three machines and you immediately face a new adversary: partial failure. One node commits, another crashes before it can — and now your database is permanently inconsistent unless you designed for this case.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "On a single machine, atomicity is straightforward. The write-ahead log records the transaction's intent; crash recovery replays or undoes it. Every byte lives on the same disk, managed by the same process. Failure is total: either the machine is up or it is not."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Distribute a transaction across multiple nodes and the failure model changes completely. Three new adversaries appear:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Partial failure.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Node A commits; Node B crashes immediately after receiving the commit instruction. The database is now split: some nodes say the transaction succeeded, others say it did not."
+              }
+            ],
+            [
+              {
+                "text": "Network partition.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Messages between nodes are delayed indefinitely or never arrive. A node cannot distinguish \"the coordinator crashed\" from \"the network is slow\". Both look identical from outside."
+              }
+            ],
+            [
+              {
+                "text": "Non-deterministic message order.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " In a single process, instructions execute in program order. Across a network, \"send message A then message B\" does not guarantee A arrives before B — or arrives at all."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "These failure modes are why distributed transactions are genuinely hard. The protocols in this chapter — 2PC, 3PC, Paxos commit, Spanner's TrueTime — all exist to handle exactly these adversaries. Real systems that span multiple shards (CockroachDB, YugabyteDB, Google Spanner, MongoDB sharded clusters, TiDB) must implement one of these protocols for every cross-shard write."
+            }
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "warning",
+          "runs": [
+            {
+              "text": "The fundamental insight is that distributed transactions require agreement across machines — and reaching agreement in the presence of failures is a consensus problem. Every distributed transaction protocol is, at its core, a consensus protocol in disguise."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "A single-node transaction is easy: either everything happened or nothing did. A distributed transaction is hard because one machine can succeed while another crashes — leaving the database in a split state. All the fancy protocols in this chapter exist to prevent that split."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "dbi-ch12-c002",
+      "order": 2,
+      "title": "Consensus Fundamentals and FLP Impossibility",
+      "teaser": "Consensus — getting N distributed processes to agree on a single value — sounds simple. The FLP impossibility result (Fischer, Lynch, and Paterson, 1985) proved it is impossible to solve in an asynchronous system if even one process can fail. The practical escape hatch: real systems are not fully asynchronous.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "A consensus algorithm must satisfy three properties:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Agreement.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " All non-faulty processes decide on the same value."
+              }
+            ],
+            [
+              {
+                "text": "Validity.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " The decided value must be one that was actually proposed."
+              }
+            ],
+            [
+              {
+                "text": "Termination.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Every non-faulty process eventually decides."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The FLP impossibility result (Fischer, Lynch, and Paterson, 1985) proved that in a fully asynchronous message-passing system — where message delivery can be arbitrarily delayed but not lost, and processes can fail by stopping — no deterministic algorithm can satisfy all three properties simultaneously, even if only one process may fail."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The proof is subtle but the intuition is this: in a system where messages can be delayed arbitrarily, a slow process is indistinguishable from a crashed process. An algorithm that waits for a process to respond before deciding may wait forever (violating termination). An algorithm that proceeds without a response may decide without that process, which can lead to disagreement if the process was just slow and later responds with a conflicting value."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The practical escape hatch used by every real consensus system:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Timeouts.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Real networks are partially synchronous — they are asynchronous some of the time but synchronous most of the time. Systems use timeouts to suspect failures, accept occasional wrong suspicions, and retry. Paxos, Raft, and Zab all use this approach."
+              }
+            ],
+            [
+              {
+                "text": "Leader leases.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " A leader holds authority for a bounded time window. If it fails to renew, it steps down. Followers wait out the lease before electing a new leader, preventing split-brain."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "info",
+          "runs": [
+            {
+              "text": "FLP applies to a very specific model: deterministic algorithms in an asynchronous system. Randomized algorithms (adding coin flips) can achieve expected-case termination. Partially synchronous models (Dwork, Lynch, Stockmeyer 1988) show that eventual synchrony is sufficient. Every production consensus algorithm exploits one or both of these exits from the impossibility."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "FLP proved that in a network where messages can be delayed forever, it is mathematically impossible to build a consensus algorithm that always terminates — even if only one node can fail. The practical fix: real networks are usually fast, so use timeouts to detect failures and accept that you will occasionally be wrong about whether a node is dead or just slow."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "dbi-ch12-c003",
+      "order": 3,
+      "title": "Paxos — Single-Decree and the Quorum Idea",
+      "teaser": "Lamport's Paxos (1998) solves single-value consensus with three roles — proposer, acceptor, and learner — and a majority quorum rule that guarantees only one value can ever be chosen, no matter how many nodes fail or how messages are reordered.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Paxos (Lamport, \"The Part-Time Parliament\", 1998) was the first clearly correct solution to the consensus problem. It operates in two phases, with three roles:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Proposer.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Drives the protocol. Wants to get a value chosen."
+              }
+            ],
+            [
+              {
+                "text": "Acceptor.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Votes. Responds to proposals. A majority of acceptors must accept a value for it to be chosen."
+              }
+            ],
+            [
+              {
+                "text": "Learner.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Observes the outcome and acts on it. In a database, the learner is the component that applies the committed log entry."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "code",
+          "language": "text",
+          "text": "Phase 1a — Prepare:\n  Proposer → all Acceptors: Prepare(n)\n  (n is a unique proposal number, higher than any previously used)\n\nPhase 1b — Promise:\n  Acceptor → Proposer: Promise(n, (n_a, v_a))\n  (promise not to accept proposals < n; report highest already-accepted value)\n\nPhase 2a — Accept:\n  Proposer → majority of Acceptors: Accept(n, v)\n  (v = value from highest n_a seen in promises, or proposer's own value if none)\n\nPhase 2b — Accepted:\n  Acceptor → Learners: Accepted(n, v)\n  (learner decides when it hears Accepted from a majority)"
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The key invariant is the quorum overlap guarantee: any two majorities of N acceptors share at least one common member. That common member has seen both proposals, so a new proposer can always discover the previously chosen value in Phase 1 and propagate it — ensuring only one value ever gets chosen."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Single-decree Paxos chooses one value. Real databases need a sequence of decisions (a log). "
+            },
+            {
+              "text": "Multi-Paxos",
+              "marks": ["bold"]
+            },
+            {
+              "text": " runs repeated single-decree Paxos instances, one per log slot, with an optimization: elect a stable leader once and skip Phase 1 for subsequent slots while the leader is stable. This is what Apache ZooKeeper (Zab protocol), Google Chubby, and the early Spanner replication layer are based on."
+            }
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "info",
+          "runs": [
+            {
+              "text": "Paxos's safety proof is tight: it can never choose two different values for the same slot. Its liveness is not: two proposers can keep outbidding each other with higher proposal numbers (the \"dueling proposers\" problem), making no progress. Multi-Paxos with a stable leader avoids this in practice."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Paxos is a two-round voting protocol. First, a proposer gets promises from a majority of nodes (they agree not to accept anything older). Then it sends its value, and if a majority accepts, the value is chosen. Because any two majorities share at least one member, two proposers can never sneak different values past the quorum at the same time."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "dbi-ch12-c004",
+      "order": 4,
+      "title": "Raft — Understandable Consensus",
+      "teaser": "Raft (Ongaro and Ousterhout, 2014) was designed with one explicit goal: be understandable. It decomposes consensus into leader election, log replication, and safety, with a single leader per term handling all writes. CockroachDB, TiKV, and etcd all use Raft.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Raft (Ongaro and Ousterhout, \"In Search of an Understandable Consensus Algorithm\", 2014) makes different design choices than Paxos while achieving the same safety guarantees. Its core insight: decompose consensus into three nearly independent sub-problems."
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Leader election.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Time is divided into terms (monotonically increasing integers). Each term begins with an election. A candidate wins if it receives votes from a majority. The leader with the most up-to-date log wins elections — preventing a node with stale entries from becoming leader and overwriting committed data."
+              }
+            ],
+            [
+              {
+                "text": "Log replication.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " The leader receives all client writes, appends them to its log, and replicates them to followers. An entry is committed once it has been acknowledged by a majority. The leader then applies it to its state machine and notifies followers."
+              }
+            ],
+            [
+              {
+                "text": "Safety.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Once an entry is committed (majority acknowledged), no future leader will overwrite it. Raft ensures this via the leader completeness property: a leader always has all committed entries."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "code",
+          "language": "text",
+          "text": "Client Write Flow (Raft):\n\nClient → Leader:  AppendEntries(data)\nLeader → F1, F2:  AppendEntries RPC (index=42, term=5, data)\nF1, F2 → Leader:  ACK\nLeader → Client:  OK  (once majority = leader + 1 follower confirmed)\nLeader → F1, F2:  Commit(index=42)  (next heartbeat carries commitIndex)"
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Raft's key simplification over Paxos: a single leader per term owns all decisions. There is no need for the Paxos Phase 1 prepare dance on every log entry (same as Multi-Paxos with a stable leader, but specified explicitly). The leader's log is the authoritative source of truth; followers only ever copy from it, never propose competing entries."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Production users: "
+            },
+            {
+              "text": "CockroachDB",
+              "marks": ["bold"]
+            },
+            {
+              "text": " uses a Raft group per range (64 MiB data shard). "
+            },
+            {
+              "text": "TiKV",
+              "marks": ["bold"]
+            },
+            {
+              "text": " (backing TiDB) uses Raft per region. "
+            },
+            {
+              "text": "etcd",
+              "marks": ["bold"]
+            },
+            {
+              "text": " is the reference Raft implementation. "
+            },
+            {
+              "text": "FoundationDB",
+              "marks": ["bold"]
+            },
+            {
+              "text": " uses a Paxos-like protocol (Disk Paxos) for its transaction log, but Raft has become the more common choice in new systems."
+            }
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "info",
+          "runs": [
+            {
+              "text": "Raft and Multi-Paxos are equivalent in power; the primary difference is specification clarity. Raft's explicit separation of leader election, log replication, and safety makes it easier to implement correctly and to reason about during failures. The Raft paper includes a formal TLA+ specification."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Raft picks one leader per term who handles all writes. The leader replicates each entry to followers, and an entry is committed once a majority acknowledges it. If the leader dies, followers hold an election and the node with the most complete log wins — guaranteeing no committed entry is ever lost."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "dbi-ch12-c005",
+      "order": 5,
+      "title": "Two-Phase Commit (2PC)",
+      "teaser": "Two-phase commit is the workhorse protocol for distributed atomicity. A coordinator first asks all participants to prepare (vote yes or no), then — only if all vote yes — sends a global commit. X/Open XA standardized this interface. The fatal flaw: if the coordinator crashes after prepare, participants are stuck.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "2PC is the oldest and most widely deployed distributed transaction protocol. Every database that supports distributed transactions — PostgreSQL (via foreign data wrappers with XA), Oracle, IBM DB2, MySQL — implements it. The X/Open XA standard (1991) defines the API between a transaction manager and resource managers."
+            }
+          ]
+        },
+        {
+          "type": "code",
+          "language": "text",
+          "text": "Phase 1 — Prepare:\n\nCoordinator → Node A:  PREPARE tx_id\nCoordinator → Node B:  PREPARE tx_id\nCoordinator → Node C:  PREPARE tx_id\n\nNode A → Coordinator:  VOTE-YES   (logged to stable storage: \"prepared\")\nNode B → Coordinator:  VOTE-YES\nNode C → Coordinator:  VOTE-YES\n\nPhase 2 — Commit (all YES) or Abort (any NO):\n\nCoordinator: write COMMIT to own log\nCoordinator → Node A:  COMMIT tx_id\nCoordinator → Node B:  COMMIT tx_id\nCoordinator → Node C:  COMMIT tx_id\n\nNode A, B, C: apply, release locks, ACK"
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The prepare vote is a durable promise. Once a participant votes YES, it must be able to commit the transaction no matter what — even after a crash and restart. This means the participant must have written all transaction data to durable storage before voting YES. A YES vote with no durable backup is a lie."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The coordinator's decision record is the critical artifact. The coordinator writes \"COMMIT\" or \"ABORT\" to its own durable log before sending the Phase 2 messages. If it crashes after this write, recovery re-reads the decision and resends. If it crashes before this write, the transaction is aborted — participants time out and abort."
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Normal case cost:",
+                "marks": ["bold"]
+              },
+              {
+                "text": " 2 message round trips + 3 durability writes (each participant's prepare log, plus the coordinator's commit record)."
+              }
+            ],
+            [
+              {
+                "text": "Lock contention:",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Participants hold all transaction locks from prepare until they receive the Phase 2 decision. During this window — typically a few milliseconds, but unbounded if the coordinator is slow — those locks block other transactions."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "info",
+          "runs": [
+            {
+              "text": "The XA interface defines three operations: xa_start (begin), xa_end (end work), xa_prepare (Phase 1), xa_commit / xa_rollback (Phase 2). Any compliant resource manager — a database, a message queue, a file system — can participate in a 2PC transaction managed by an external transaction manager such as JTA in Java EE."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "2PC splits commit into two rounds. First, the coordinator asks every participant \"can you commit?\" — they write their data durably and say yes or no. If everyone says yes, the coordinator sends commit. If anyone says no, everyone aborts. The problem: participants hold locks between the two rounds and are stuck if the coordinator crashes in between."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "dbi-ch12-c006",
+      "order": 6,
+      "title": "The Coordinator Failure Problem",
+      "teaser": "After every participant votes YES in Phase 1, they surrender their autonomy — they can neither commit nor abort unilaterally. If the coordinator crashes before sending Phase 2, all participants are blocked indefinitely, holding locks, unable to make progress. This is 2PC's fundamental blocking problem.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The 2PC blocking problem is not a hypothetical edge case — it is the dominant failure mode of any distributed system using 2PC at sufficient scale. Consider the timeline:"
+            }
+          ]
+        },
+        {
+          "type": "code",
+          "language": "text",
+          "text": "Coordinator        Node A         Node B\n     |                |               |\n     |-- PREPARE ---->|               |\n     |-- PREPARE ------+------------->|\n     |                |               |\n     |<-- VOTE-YES ---|               |\n     |<-- VOTE-YES ------------------.|\n     |                |               |\n  [CRASH]             |               |\n                      |               |\n              holding locks     holding locks\n              in PREPARED       in PREPARED\n              state             state\n              (cannot abort,    (cannot abort,\n               cannot commit)    cannot commit)"
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Once Node A and Node B vote YES, they are in the "
+            },
+            {
+              "text": "prepared state",
+              "marks": ["italic"]
+            },
+            {
+              "text": ". They have promised to commit if told to. They cannot unilaterally abort, because Node B might have already received a COMMIT from the coordinator before it crashed. If A aborts while B commits, the transaction is atomically violated. So both must wait."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The only way out without a new protocol is to wait for the coordinator to recover. In a well-engineered system, this takes seconds to minutes (process restart + WAL recovery). But during that window, every row the transaction touched is locked. High-value tables under a long-blocked 2PC transaction can cause cascading timeouts across the entire application."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Can participants communicate to decide without the coordinator? In general, no. If A asks B \"did you get a COMMIT?\", B might say \"I only got PREPARE\". That tells A nothing definitive — maybe the coordinator committed to C (a third participant A doesn't know about) before crashing. This is the cooperative termination problem."
+            }
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "warning",
+          "runs": [
+            {
+              "text": "Production war story: in large deployments using XA transactions (Java EE / JTA with multiple databases or message queues), coordinator failure during peak traffic has caused hours-long lock storms. Netflix, Twitter, and others cited exactly this as a reason for moving away from 2PC toward event-driven sagas."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Once all participants say \"yes, I can commit\", they give up the right to decide on their own. They are waiting for the coordinator's final word. If the coordinator crashes at that exact moment, they are stuck — they cannot commit (maybe someone else got an abort) and cannot abort (maybe someone else got a commit). They just hold their locks and wait."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "dbi-ch12-c007",
+      "order": 7,
+      "title": "Three-Phase Commit (3PC)",
+      "teaser": "3PC inserts a pre-commit phase between prepare and commit, giving participants enough information to make a safe unilateral decision if the coordinator vanishes. It eliminates 2PC's blocking under crash failures — but remains unsafe under network partitions, where it can split-brain.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "3PC (Skeen, 1981) was designed to fix 2PC's blocking problem. It adds a third phase between prepare and commit, creating a new state — "
+            },
+            {
+              "text": "pre-committed",
+              "marks": ["italic"]
+            },
+            {
+              "text": " — that carries enough information for participants to decide without the coordinator."
+            }
+          ]
+        },
+        {
+          "type": "code",
+          "language": "text",
+          "text": "Phase 1 — Prepare:       (identical to 2PC)\n  Coordinator → all: PREPARE\n  All → Coordinator: VOTE-YES / VOTE-NO\n\nPhase 2 — Pre-Commit:    (new)\n  Coordinator → all: PRE-COMMIT   (only if all voted YES)\n  All → Coordinator: ACK-PRE-COMMIT\n\nPhase 3 — Commit:        (identical to 2PC)\n  Coordinator → all: COMMIT\n  All: apply, release locks"
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The insight is subtle. When a participant receives PRE-COMMIT, it knows two things: (1) all other participants voted YES (otherwise the coordinator would not have sent PRE-COMMIT), and (2) the coordinator has not yet sent COMMIT. If the coordinator now crashes, the participant in pre-committed state can safely drive the protocol to completion by contacting other participants. Everyone who received PRE-COMMIT knows it is safe to commit. Everyone still in prepared state knows it is safe to abort."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "However, 3PC fails under network partitions. If the network splits after PRE-COMMIT, one partition's new coordinator may decide to abort (participants in prepared state) while the other partition's participants decide to commit (they received PRE-COMMIT). The result: the split-brain that 2PC prevents by blocking."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "This is why 3PC never gained wide adoption in practice. Real networks partition; crash-only failure assumptions are unrealistic. The correct fix for 2PC's blocking problem is not 3PC but Paxos commit — which tolerates both crashes and partitions."
+            }
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "warning",
+          "runs": [
+            {
+              "text": "3PC is correct in the crash-recovery model (no partitions, asynchronous timing). It is unsafe in the more realistic crash-recovery-plus-partition model. Since CAP theorem tells us partitions happen in real systems, 3PC's safety guarantees do not hold in production deployments."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "3PC adds a middle phase that broadcasts \"all nodes are ready to commit\" before the actual commit. If the coordinator crashes, a surviving node can look at who got that middle message and safely decide to commit or abort without waiting. The flaw: if the network splits, two groups might reach different decisions independently — which is worse than blocking."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "dbi-ch12-c008",
+      "order": 8,
+      "title": "Paxos Commit — The Real Fix for Coordinator Failure",
+      "teaser": "Gray and Lamport's Paxos commit (2004) replaces 2PC's single coordinator with a Paxos consensus group for each participant's prepare/commit decision. No single point of failure can block the protocol. The cost: 3–5 message delays instead of 2PC's 1–2.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Paxos commit (Gray and Lamport, \"Consensus on Transaction Commit\", 2004) is the theoretically correct fix for 2PC's blocking problem. Instead of one coordinator making the commit decision, each participant's decision is committed via a separate Paxos instance run among a group of acceptors."
+            }
+          ]
+        },
+        {
+          "type": "code",
+          "language": "text",
+          "text": "Classic 2PC coordinator role:\n  One node → all participants: PREPARE / COMMIT\n\nPaxos commit architecture:\n  - One Paxos instance per participant (Paxos_A, Paxos_B, Paxos_C)\n  - Each Paxos instance runs among the same acceptor group (e.g., 3 nodes)\n  - Each participant is also the leader proposer for its own Paxos instance\n  - Overall result: COMMIT iff all Paxos instances chose PREPARED\n\nPaxos_A runs: accept PREPARED or ABORTED for Node A's vote\nPaxos_B runs: accept PREPARED or ABORTED for Node B's vote\nPaxos_C runs: accept PREPARED or ABORTED for Node C's vote\n\nLearner checks: if all three instances = PREPARED → commit globally"
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The key property: any acceptor who knows the result of all N participant Paxos instances can determine the overall transaction outcome — no coordinator needed. If the leader of one instance fails, any other node can take over as Paxos proposer and drive the instance to completion."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Message complexity comparison:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "2PC:",
+                "marks": ["bold"]
+              },
+              {
+                "text": " 2 round trips (prepare + commit), 2N messages (N participants)."
+              }
+            ],
+            [
+              {
+                "text": "Paxos commit:",
+                "marks": ["bold"]
+              },
+              {
+                "text": " 3–5 message delays (Paxos Phase 1 + Phase 2 + learn), but no single point of failure."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Google Spanner's distributed transaction protocol is a variant of Paxos commit: each shard's Raft or Paxos group serves as the acceptor group for that shard's prepare vote. The transaction coordinator is not a bottleneck because any shard replica can recover its local Paxos state independently."
+            }
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "info",
+          "runs": [
+            {
+              "text": "The Gray-Lamport paper formally proves Paxos commit is non-blocking: as long as a majority of acceptors in each instance are available, the protocol terminates. This is in sharp contrast to 2PC (blocks on coordinator failure) and 3PC (unsafe under partitions)."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Instead of one coordinator deciding whether to commit, Paxos commit runs a mini-Paxos vote for each participant's prepare decision. Any node can read the Paxos logs and figure out the outcome — no single coordinator can block the protocol. The price is more messages; the reward is that coordinator failure no longer means permanent blocking."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "dbi-ch12-c009",
+      "order": 9,
+      "title": "Spanner's TrueTime — Bounded Clock Uncertainty",
+      "teaser": "Google Spanner (Corbett et al., 2012) solved global ordering by exposing clock uncertainty directly. TrueTime's API does not return a timestamp — it returns an interval [earliest, latest] within which the true wall-clock time lies. GPS receivers and atomic clocks bound that interval to roughly ±7 ms.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Every distributed database needs some notion of time to order events. The naive approach — use NTP-synchronized system clocks — introduces unbounded skew: two machines can disagree on the current time by hundreds of milliseconds or more, invalidating any comparison of timestamps from different nodes."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Google Spanner (Corbett et al., \"Spanner: Google's Globally-Distributed Database\", 2012) took a different approach: instead of pretending clocks are synchronized, TrueTime makes clock uncertainty a first-class citizen of the API."
+            }
+          ]
+        },
+        {
+          "type": "code",
+          "language": "text",
+          "text": "TrueTime API:\n\n  TT.now()   → TTInterval { earliest: time, latest: time }\n  TT.after(t) → bool   (true if t has definitely passed)\n  TT.before(t) → bool  (true if t has definitely not arrived)\n\nExample:\n  TT.now() might return { earliest: 1700000000.007, latest: 1700000000.021 }\n  True wall-clock time is guaranteed within this interval.\n  epsilon (ε) = (latest - earliest) / 2 ≈ 7 ms typical, < 14 ms guaranteed.\n\nHardware:\n  Each Google datacenter has GPS receivers and atomic clocks.\n  GPS provides accuracy; atomic clocks provide stability if GPS signal is lost.\n  Software masters aggregate and distribute time; clients poll masters to\n  compute their local ε."
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The interval bound ε is the key quantity. As long as every node's TrueTime is within its published interval, and the intervals of two events do not overlap, we know with certainty which event happened first. If the intervals overlap, we cannot tell — and Spanner's commit-wait protocol handles this case by waiting until the intervals no longer overlap."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "This is the only production globally distributed database that uses physical time for ordering, rather than logical clocks (Lamport timestamps, vector clocks) or a centralized sequencer. CockroachDB uses a hybrid logical clock (HLC) approach that borrows the TrueTime idea but with NTP rather than dedicated atomic clock hardware."
+            }
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "info",
+          "runs": [
+            {
+              "text": "The hardware investment is substantial but the payoff is enormous: Spanner runs strong-consistency read-write transactions across geographically distributed data centers with no centralized timestamp oracle. The bounded uncertainty enables the commit-wait protocol that guarantees external consistency (see next card)."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Normal clocks drift. Spanner's TrueTime does not pretend they don't — instead it returns a time range: \"the real time is somewhere between these two values.\" GPS and atomic clocks keep that range small (about 7ms). Spanner then uses the range to make ordering decisions: if two events' time ranges don't overlap, the earlier one definitely came first."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "dbi-ch12-c010",
+      "order": 10,
+      "title": "External Consistency and Spanner's Commit-Wait",
+      "teaser": "External consistency is Spanner's strongest guarantee: if transaction T2 starts after T1 commits in real time, then T2's commit timestamp is greater than T1's. Achieving this without a global clock requires the commit-wait protocol: a transaction must wait until TT.after(s_commit) is true before releasing its results.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "External consistency is a stronger guarantee than serialisability. Serialisability says: the result looks as if transactions ran in some serial order. External consistency adds: that serial order must agree with real-world (wall-clock) order. If a user commits a transfer at 12:00:00.000 and another user reads the account balance at 12:00:00.001, they must see the transfer."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Spanner achieves external consistency via the "
+            },
+            {
+              "text": "commit-wait protocol",
+              "marks": ["bold"]
+            },
+            {
+              "text": ":"
+            }
+          ]
+        },
+        {
+          "type": "code",
+          "language": "text",
+          "text": "Spanner Commit-Wait:\n\n1. Transaction coordinator picks commit timestamp s = TT.now().latest\n   (upper bound of current true time).\n\n2. The transaction executes Paxos-based 2PC across involved shards.\n   Each shard acknowledges prepare at timestamp ≥ s.\n\n3. Coordinator logs commit record with timestamp s.\n\n4. Wait until TT.after(s) is true — i.e., until TT.now().earliest > s.\n   This guarantees that real wall time has advanced past s.\n\n5. Release locks and notify the client.\n\nWait duration:\n  TT.now().earliest > s  ⟹  true time > s\n  Wait ≈ 2ε ≈ 14ms in practice (twice the clock uncertainty).\n\nResult:\n  Any future TT.now() call on any node returns earliest > s,\n  so any transaction that starts after this commit will see\n  a start timestamp > s → it will see this transaction's effects."
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The wait adds roughly 2ε ≈ 14 ms to every read-write transaction's commit latency — a real cost. Spanner's designers judged this acceptable for the benefit: clients can rely on the database's ordering matching the real world, which dramatically simplifies application reasoning."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Read-only transactions in Spanner can use a timestamp in the past (outside the uncertainty window) and skip the commit-wait entirely, executing at full speed across replicas with no locks. This asymmetry — slow writes, fast reads — is a central design choice of Spanner's architecture."
+            }
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "info",
+          "runs": [
+            {
+              "text": "External consistency is sometimes called \"linearizability at the transaction level\" or \"strict serializability.\" It subsumes both linearizability (single-operation) and serializability (transaction-level). Spanner is, to date, the only globally distributed database that delivers this guarantee at scale."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "External consistency means: if I commit a write and then you start a transaction, you will see my write — no matter which datacenter you read from. Spanner achieves this by deliberately waiting after commit until the clock uncertainty window has passed. \"I committed at timestamp T, and I'll wait until I'm certain real time has moved past T before telling the client it's done.\""
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "dbi-ch12-c011",
+      "order": 11,
+      "title": "Distributed Snapshot Isolation",
+      "teaser": "Snapshot isolation across multiple nodes requires a globally consistent snapshot timestamp — a point at which every node agrees on what is \"before\" and \"after\". Without TrueTime, systems use hybrid logical clocks or a centralized timestamp oracle. The challenge: picking a snapshot that is complete on every shard.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Single-node snapshot isolation is straightforward: read the version of every row whose commit timestamp is ≤ the snapshot timestamp. Distributed snapshot isolation requires that timestamp to be meaningful across all nodes simultaneously — a globally consistent snapshot."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Three approaches in production systems:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "TrueTime snapshots (Spanner).",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Pick a snapshot timestamp S in the past (S < TT.now().earliest). Because all nodes' TrueTime intervals have upper bounds < TT.now().earliest, every committed transaction with commit timestamp ≤ S is guaranteed visible on every node. No coordination needed for reads."
+              }
+            ],
+            [
+              {
+                "text": "Centralized timestamp oracle (TiDB / TiKV).",
+                "marks": ["bold"]
+              },
+              {
+                "text": " A Placement Driver (PD) service issues monotonically increasing timestamps. Every transaction gets its start and commit timestamps from PD. Consistent reads use a timestamp from PD. The oracle is a single point of contention but is replicated via Raft for availability."
+              }
+            ],
+            [
+              {
+                "text": "Hybrid logical clocks (CockroachDB).",
+                "marks": ["bold"]
+              },
+              {
+                "text": " HLC combines a physical component (NTP wall clock) with a logical component (monotonically incrementing counter). On each message, nodes exchange HLC values and advance to the maximum seen. CockroachDB uses HLC-based timestamps and adds an uncertainty interval (similar to TrueTime but bounded by NTP accuracy, ±150–500ms), restarting transactions that read values within the uncertainty window."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The fundamental challenge in all approaches: a snapshot must be "
+            },
+            {
+              "text": "complete",
+              "marks": ["italic"]
+            },
+            {
+              "text": " — all transactions that committed before the snapshot timestamp must be visible. In a distributed system, a transaction's commit record may be written to Shard A before Shard B acknowledges it. The snapshot reader on Shard B must either wait for propagation or be prepared to restart if it encounters a \"future\" write."
+            }
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "info",
+          "runs": [
+            {
+              "text": "FoundationDB avoids the problem entirely by routing all reads and writes through a single ordered log (the transaction log), giving it a natural global ordering without clocks. The price is that the log is a bottleneck; FoundationDB compensates with extremely fast log commits (sub-millisecond on NVMe)."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Snapshot isolation means \"read the database as it was at a specific moment.\" Across many machines, getting all of them to agree on what that moment looks like is the hard part. Spanner uses atomic clocks to make timestamps trustworthy. TiDB uses a dedicated timestamp service. CockroachDB approximates the same result with smarter use of NTP plus transaction restarts when the result is ambiguous."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "dbi-ch12-c012",
+      "order": 12,
+      "title": "Distributed Deadlock Detection",
+      "teaser": "Deadlocks in a distributed system hide across machine boundaries — no single node has the full wait-for graph. Detection requires either periodically merging per-node graphs to find cross-node cycles, or a global deadlock detector that collects lock dependencies from all shards.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "A deadlock occurs when transactions form a cycle in the wait-for graph (WFG): T1 waits for T2, T2 waits for T3, T3 waits for T1. On a single node, the lock manager builds this graph continuously and can detect cycles immediately."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "In a sharded database, T1 might hold a lock on Shard A while waiting for a lock on Shard B held by T2, which is waiting for a lock on Shard A held by T1. Neither shard alone can see the cycle."
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Centralized global detector.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Each shard periodically sends its local WFG to a central detector node. The detector merges the graphs and checks for cycles. Simple to implement; single point of failure; detection latency = polling interval (typically 100ms–1s). Used by early VoltDB, IBM DB2 partitioned edition."
+              }
+            ],
+            [
+              {
+                "text": "Hierarchical detection.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Organize nodes in a tree. Local detectors merge WFGs within a subtree; the root sees the global graph. Reduces load on the root; detection latency is proportional to tree height."
+              }
+            ],
+            [
+              {
+                "text": "Edge chasing (probe-based).",
+                "marks": ["bold"]
+              },
+              {
+                "text": " When T waits for a lock held by T', T sends a probe message to T'. That probe propagates along the wait chain. If a probe returns to its originator, a cycle is detected. Chandy-Misra-Haas algorithm (1983). No central detector needed; probes can flood the network under high deadlock rates."
+              }
+            ],
+            [
+              {
+                "text": "Timeout-based approximation.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " If a transaction has been waiting longer than a threshold (e.g., 5 seconds), abort it. Not true deadlock detection — it also aborts slow transactions — but it is simple and bounded in impact. Used as a backstop in CockroachDB and YugabyteDB alongside cycle detection."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "info",
+          "runs": [
+            {
+              "text": "Spanner avoids distributed deadlock detection by using wound-wait: a newer transaction is always aborted (\"wounded\") when it conflicts with an older one. This eliminates cycles by construction — the wait graph is always a DAG — at the cost of more aborts than strictly necessary."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "A deadlock across machines is invisible to any single machine — each sees only its piece of the cycle. Solutions either merge all the pieces periodically at one place (centralized detector), chase the wait chain with probe messages (edge chasing), or just abort any transaction that's been waiting too long and hope that's good enough."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "dbi-ch12-c013",
+      "order": 13,
+      "title": "The Saga Pattern — 2PC Alternative for Long Transactions",
+      "teaser": "A saga decomposes a long-running business transaction into a sequence of local transactions, each with a corresponding compensating transaction. If any step fails, previously completed steps are undone by their compensations. No distributed lock is held across steps — at the cost of not providing ACID isolation.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "2PC holds locks across all participants for the duration of the distributed transaction. For sub-second OLTP transactions this is acceptable. For long-running business processes — book a flight, reserve a hotel, charge a card (each a separate service) — holding locks for minutes or hours is catastrophic for availability."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The saga pattern (Garcia-Molina and Salem, 1987) addresses this by treating a long-running transaction as a sequence of independent local transactions T1, T2, ..., Tn. Each Ti runs and commits immediately. If step Tk fails, the saga executes compensating transactions C(k-1), C(k-2), ..., C1 in reverse order to undo the already-committed work."
+            }
+          ]
+        },
+        {
+          "type": "code",
+          "language": "text",
+          "text": "Saga for: Book flight + Reserve hotel + Charge card\n\nForward sequence:\n  T1: Reserve flight seat      → commits immediately\n  T2: Reserve hotel room       → commits immediately\n  T3: Charge credit card       → commits immediately\n\nIf T3 fails (card declined):\n  C2: Cancel hotel reservation → compensating transaction\n  C1: Release flight seat      → compensating transaction\n\nIf T2 fails (hotel full):\n  C1: Release flight seat      → compensating transaction\n  (T3 never ran, no compensation needed)"
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Two coordination strategies:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Choreography.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Each service listens for events and knows which event to emit next. No central coordinator. Simple but hard to trace and debug as the saga grows."
+              }
+            ],
+            [
+              {
+                "text": "Orchestration.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " A central saga orchestrator tells each service what to do and handles failures. Explicit flow; easier to monitor. Netflix Conductor, Uber Cadence/Temporal, and Apache Camel all implement orchestrated sagas."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Sagas are widely used in microservices architectures precisely because they avoid distributed locking. Amazon uses them for order processing; Netflix for content licensing workflows; Uber for trip booking across drivers, map routing, and payment services."
+            }
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "warning",
+          "runs": [
+            {
+              "text": "Sagas do NOT provide isolation. Between T1 committing and C1 executing, other transactions can see partially completed saga state — a \"dirty\" intermediate. This is acceptable for many business workflows but must be explicitly designed for. Read-your-writes, phantom prevention, and write skew are all possible anomalies in a saga."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Instead of holding locks across all services for the full duration, a saga commits each step immediately and keeps a list of \"undo\" operations. If anything goes wrong, it runs the undos in reverse. No distributed locks, no 2PC coordinator — but other transactions can see half-done work while the saga is running."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "dbi-ch12-c014",
+      "order": 14,
+      "title": "Saga Compensation — Not a Rollback",
+      "teaser": "A compensating transaction reverses the business effect of a previous step — but it is not the same as a database rollback. The original transaction committed and its effects were visible. Compensation adds a new transaction that undoes those effects. Compensation logic must be written explicitly and may not be semantically reversible.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "A database rollback undoes writes at the storage level — no committed version of the data ever becomes visible. It is a transactional undo, transparent to other transactions."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "A compensating transaction is a "
+            },
+            {
+              "text": "new, separate transaction",
+              "marks": ["bold"]
+            },
+            {
+              "text": " that semantically reverses what a previous transaction did. It commits its own effects, which are visible to other transactions. The original transaction's committed state was visible to other readers from the moment it committed until the compensation runs."
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Semantic reversibility.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Some operations have natural compensations: \"reserve seat\" is reversed by \"release seat\". Others do not: \"send email\" has no compensation — you cannot unsend an email. Saga designers must handle non-reversible steps by designing business processes that tolerate them (e.g., send a cancellation email as the compensation)."
+              }
+            ],
+            [
+              {
+                "text": "Compensation ordering.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Compensations must be executed in reverse order of the original steps. C2 before C1, because C2's compensation may depend on the state established by T1 still being in place."
+              }
+            ],
+            [
+              {
+                "text": "Idempotency requirement.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " The saga orchestrator may retry a failed compensation. Every compensating transaction must be idempotent — safe to execute multiple times with the same outcome."
+              }
+            ],
+            [
+              {
+                "text": "Pivoting.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Once a saga reaches a step it cannot compensate (the \"pivot transaction\"), it must succeed or the saga fails permanently. Good saga design pushes uncompensable steps to the end of the sequence."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "info",
+          "runs": [
+            {
+              "text": "Temporal (formerly Uber Cadence) provides durable workflow execution where saga compensation logic is written as regular code. The platform guarantees that workflow code runs to completion even across process restarts, making compensation retries automatic and invisible to the developer."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Saga compensation is not a rewind button — you cannot un-commit a transaction. It is more like writing an apology: you run a new transaction that has the opposite business effect. \"I reserved a seat\" is compensated by \"I released that seat.\" Some things (like sending an email) cannot be compensated, so you design around them."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "dbi-ch12-c015",
+      "order": 15,
+      "title": "Idempotent Retries — The Foundation of Distributed Exactly-Once",
+      "teaser": "In a distributed system, a message delivery guarantee of \"at-least-once\" is achievable; \"exactly-once\" is not (in the general case, per FLP). The practical solution: make every operation idempotent. An idempotent operation produces the same result whether applied once or ten times, making retries safe.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "In a distributed system, the sender of a message cannot know with certainty whether the recipient processed it: the recipient might have processed it and crashed before acknowledging, or the network might have dropped the acknowledgment. The safe choice is to retry — but retrying a non-idempotent operation creates duplicates."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Idempotency is the standard solution. An operation f is idempotent if f(f(x)) = f(x): applying it twice produces the same result as applying it once."
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Idempotency keys.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " The client generates a unique key per operation (UUID or hash of the request). The server stores a record of processed keys in a durable store. On retry, the server recognises the duplicate key and returns the original result without re-executing. Stripe, Adyen, and most payment APIs use this pattern."
+              }
+            ],
+            [
+              {
+                "text": "Conditional writes.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Use optimistic concurrency: \"update balance to 90 where balance = 100\". If the update already ran, balance is no longer 100, and the conditional write is a no-op. AWS DynamoDB's conditional expressions and CAS (compare-and-swap) in Redis and etcd use this pattern."
+              }
+            ],
+            [
+              {
+                "text": "At-least-once + idempotency = effectively-once.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Kafka consumers use this: process the event, then commit the offset. If the consumer crashes after processing but before committing, it re-processes the event — but because the processing is idempotent, the result is identical. This is the standard model in Kafka Streams and Flink."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "For distributed transactions specifically: saga compensating transactions must be idempotent (the orchestrator may retry them). 2PC participants must be idempotent on commit/abort (the coordinator may resend Phase 2 after recovery). Paxos acceptors are idempotent by construction (accepting the same proposal twice is a no-op)."
+            }
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "info",
+          "runs": [
+            {
+              "text": "True exactly-once processing (not just effectively-once) requires distributed transactions — the consume-and-produce must be atomic. Kafka's transactional API achieves this by extending a 2PC-like protocol between the Kafka broker (participant) and the consumer's state store (participant), with a transaction coordinator inside the broker."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "\"Exactly once\" is hard in a network where messages can be lost or duplicated. The practical workaround: make every operation safe to repeat. An idempotent write does nothing different on the second attempt — the same row gets the same value, or the duplicate is detected and ignored. Retry all you want; the result is the same."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "dbi-ch12-c016",
+      "order": 16,
+      "title": "The Real Cost of Distributed Transactions",
+      "teaser": "Distributed transactions pay taxes that local transactions do not: extra network round trips, coordinator availability requirements, lock contention during the prepare window, and clock synchronization overhead. Most modern systems avoid them by design — partitioning data to keep transactions local wherever possible.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Distributed transactions are not just \"local transactions plus a bit of network overhead.\" The costs compound in ways that make them genuinely expensive at scale:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Latency.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Each phase of 2PC requires a network round trip. In a single datacenter, that is 0.1–1 ms per phase. Across datacenters, 30–150 ms per phase. A cross-region 2PC transaction easily costs 200–500 ms just in protocol overhead. Spanner's commit-wait adds another 2ε ≈ 14 ms even within a datacenter."
+              }
+            ],
+            [
+              {
+                "text": "Availability.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " A distributed transaction's availability is the product of the availability of all participants. If each shard is 99.9% available (8.7 hours downtime/year), a 5-shard transaction is only 99.5% available (44 hours downtime/year). The more nodes involved, the lower the combined availability."
+              }
+            ],
+            [
+              {
+                "text": "Lock contention.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Locks held across the prepare window block unrelated transactions on the same shards. Hot rows (high-traffic accounts, popular products) become bottlenecks if frequently involved in distributed transactions."
+              }
+            ],
+            [
+              {
+                "text": "Coordinator overhead.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " In 2PC, the coordinator is a single-threaded bottleneck for all transactions it manages. CockroachDB and Spanner distribute coordinator responsibilities (each transaction picks its own coordinator) to avoid this; older XA implementations use a central JTA server."
+              }
+            ],
+            [
+              {
+                "text": "Recovery complexity.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " In-doubt transactions (coordinator died mid-2PC) require manual intervention or a recovery protocol. DBA involvement in \"stuck\" XA transactions is a well-known operational burden in Java EE deployments."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The standard engineering response: "
+            },
+            {
+              "text": "design your data model to avoid distributed transactions",
+              "marks": ["bold"]
+            },
+            {
+              "text": ". Partition data such that the most common transactions touch only one shard. Denormalize where necessary. Accept eventual consistency across shard boundaries where strong consistency is not a business requirement. Reserve distributed transactions for the small fraction of operations that truly need them."
+            }
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "warning",
+          "runs": [
+            {
+              "text": "Google's own Spanner team advises designing schemas to minimize cross-shard transactions. The Spanner paper notes that 97%+ of Spanner transactions in production are single-shard — precisely because the teams partitioning and co-locating related data aggressively. The protocol exists as a correctness backstop, not the common path."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Every extra machine you involve in a transaction means extra network hops, extra locks held waiting for a reply, and one more node that can fail and leave you blocked. The practical lesson from every large-scale system — Spanner, CockroachDB, DynamoDB — is to design your data layout so transactions usually stay on one machine, and pay the distributed transaction cost only when you absolutely must."
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

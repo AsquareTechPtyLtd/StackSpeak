@@ -1,0 +1,2689 @@
+{
+  "chapterId": "wdd-ch06-performance-and-internals",
+  "shardIndex": 1,
+  "cards": [
+    {
+      "id": "wdd-ch06-c001",
+      "order": 1,
+      "title": "Vectorized Execution Explained",
+      "teaser": "DuckDB processes thousands of rows at once per operation — not one row at a time — and that single change explains most of its speed advantage.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Traditional SQL engines use the \"volcano model\" (also called iterator model): each operator calls "
+            },
+            {
+              "text": "next()",
+              "marks": [
+                "code"
+              ]
+            },
+            {
+              "text": " on its child, which returns one row, which is passed up the pipeline. Elegant, but expensive — one function call per row, per operator, on millions of rows adds up to billions of function calls."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "DuckDB uses "
+            },
+            {
+              "text": "vectorized execution",
+              "marks": [
+                "bold"
+              ]
+            },
+            {
+              "text": ": each operator processes a batch of rows — by default 2,048 rows per vector — in a single call. One "
+            },
+            {
+              "text": "next()",
+              "marks": [
+                "code"
+              ]
+            },
+            {
+              "text": " call returns 2,048 rows, not one."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Why batching is faster:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "CPU cache efficiency.",
+                "marks": [
+                  "bold"
+                ]
+              },
+              {
+                "text": " A 2,048-row vector of "
+              },
+              {
+                "text": "int64",
+                "marks": [
+                  "code"
+                ]
+              },
+              {
+                "text": " values fits in L2 cache. Processing it entirely before moving on keeps the data hot."
+              }
+            ],
+            [
+              {
+                "text": "SIMD utilization.",
+                "marks": [
+                  "bold"
+                ]
+              },
+              {
+                "text": " Modern CPUs (x86 AVX2/AVX-512, ARM NEON) can perform arithmetic on 4–16 values simultaneously. Tight numeric loops over a contiguous array allow the compiler and CPU to auto-vectorize — one instruction, multiple data points."
+              }
+            ],
+            [
+              {
+                "text": "Reduced function call overhead.",
+                "marks": [
+                  "bold"
+                ]
+              },
+              {
+                "text": " Operator dispatch happens once per 2,048 rows, not once per row."
+              }
+            ],
+            [
+              {
+                "text": "Better branch prediction.",
+                "marks": [
+                  "bold"
+                ]
+              },
+              {
+                "text": " Null checks and type dispatches happen at the vector boundary, not inline per row."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Real-world implication: on a 10-million-row "
+            },
+            {
+              "text": "SUM(revenue)",
+              "marks": [
+                "code"
+              ]
+            },
+            {
+              "text": " query, DuckDB issues roughly 4,883 vector calls. The volcano model issues 10,000,000 row-level calls. The arithmetic alone makes vectorized execution orders of magnitude cheaper for scan-heavy analytics."
+            }
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "info",
+          "runs": [
+            {
+              "text": "The vector size of 2,048 rows is tunable via "
+            },
+            {
+              "text": "SET vector_size = 4096",
+              "marks": [
+                "code"
+              ]
+            },
+            {
+              "text": ", but the default is well-calibrated for modern L2 cache sizes. Changing it rarely improves real-world performance without profiling first."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Like the difference between processing a batch of images in one GPU kernel call versus submitting each image as a separate CPU task — the overhead of dispatch dominates when the unit of work is too small."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "wdd-ch06-c002",
+      "order": 2,
+      "title": "Columnar Storage and Compression",
+      "teaser": "Storing data column-by-column lets DuckDB compress aggressively and skip entire column chunks without reading them — the layout is inseparable from the performance.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Row-oriented storage (PostgreSQL, SQLite) writes each row contiguously: "
+            },
+            {
+              "text": "(id, name, price, region, ...)",
+              "marks": [
+                "code"
+              ]
+            },
+            {
+              "text": " packed together. To compute "
+            },
+            {
+              "text": "SUM(price)",
+              "marks": [
+                "code"
+              ]
+            },
+            {
+              "text": ", the engine reads every byte of every row to extract just the "
+            },
+            {
+              "text": "price",
+              "marks": [
+                "code"
+              ]
+            },
+            {
+              "text": " column."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "DuckDB stores data "
+            },
+            {
+              "text": "column-by-column",
+              "marks": [
+                "bold"
+              ]
+            },
+            {
+              "text": ": all "
+            },
+            {
+              "text": "price",
+              "marks": [
+                "code"
+              ]
+            },
+            {
+              "text": " values together, all "
+            },
+            {
+              "text": "region",
+              "marks": [
+                "code"
+              ]
+            },
+            {
+              "text": " values together. A "
+            },
+            {
+              "text": "SUM(price)",
+              "marks": [
+                "code"
+              ]
+            },
+            {
+              "text": " query reads only the "
+            },
+            {
+              "text": "price",
+              "marks": [
+                "code"
+              ]
+            },
+            {
+              "text": " column — skipping every other column entirely."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Two performance benefits fall directly from this layout:"
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Compression ratio:",
+              "marks": [
+                "bold"
+              ]
+            },
+            {
+              "text": " Values in the same column are the same type and often correlated. A "
+            },
+            {
+              "text": "region",
+              "marks": [
+                "code"
+              ]
+            },
+            {
+              "text": " column with values "
+            },
+            {
+              "text": "['us-east', 'us-west', 'eu-central']",
+              "marks": [
+                "code"
+              ]
+            },
+            {
+              "text": " repeated millions of times compresses to near nothing with dictionary encoding. A "
+            },
+            {
+              "text": "price",
+              "marks": [
+                "code"
+              ]
+            },
+            {
+              "text": " column of floats near the same magnitude compresses well with frame-of-reference encoding. Row storage mixes types and disrupts these patterns — columnar storage enables compression rates of 5–20x on typical analytical data."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Column pruning:",
+              "marks": [
+                "bold"
+              ]
+            },
+            {
+              "text": " If a query references 3 out of 50 columns, DuckDB reads 3 column segments from disk. The other 47 are never accessed. On a 10GB table with 50 columns, a 3-column query might read 600MB instead of 10GB."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "DuckDB uses several encoding schemes automatically:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Dictionary encoding for low-cardinality strings"
+              }
+            ],
+            [
+              {
+                "text": "RLE (run-length encoding) for repeated values"
+              }
+            ],
+            [
+              {
+                "text": "Frame-of-reference for numeric columns with small ranges"
+              }
+            ],
+            [
+              {
+                "text": "Bit-packing for small integers"
+              }
+            ]
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "tip",
+          "runs": [
+            {
+              "text": "Columnar compression means "
+            },
+            {
+              "text": "COPY",
+              "marks": [
+                "code"
+              ]
+            },
+            {
+              "text": " to Parquet and querying Parquet directly often produces better performance than equivalent CSV queries — the column layout and compression do the work before the query even runs."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Like a spreadsheet where you store each column in a separate array — computing a column sum becomes a tight loop over contiguous memory rather than a scattered read across a row-interleaved heap."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "wdd-ch06-c003",
+      "order": 3,
+      "title": "Zone Maps and Predicate Pushdown",
+      "teaser": "DuckDB tracks min/max values per column chunk and uses them to skip entire blocks of data before evaluating any rows — a technique that makes WHERE clauses much cheaper.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "DuckDB divides each column into "
+            },
+            {
+              "text": "row groups",
+              "marks": [
+                "bold"
+              ]
+            },
+            {
+              "text": " of 122,880 rows (the default). For each row group, it stores a "
+            },
+            {
+              "text": "zone map",
+              "marks": [
+                "bold"
+              ]
+            },
+            {
+              "text": ": the minimum and maximum value of that column chunk."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "When a query has a filter predicate, DuckDB consults the zone maps before reading any data:"
+            }
+          ]
+        },
+        {
+          "type": "code",
+          "language": "sql",
+          "code": "SELECT * FROM orders WHERE order_date >= '2025-01-01';"
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "If the "
+            },
+            {
+              "text": "order_date",
+              "marks": [
+                "code"
+              ]
+            },
+            {
+              "text": " zone map for a row group shows "
+            },
+            {
+              "text": "max = '2024-12-31'",
+              "marks": [
+                "code"
+              ]
+            },
+            {
+              "text": ", the entire row group is skipped without reading a single row. On a sorted or partially sorted column, this eliminates the majority of I/O for range queries."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "This is called "
+            },
+            {
+              "text": "predicate pushdown",
+              "marks": [
+                "bold"
+              ]
+            },
+            {
+              "text": " — filters are pushed down to the storage layer and evaluated as early as possible, before data is decoded and materialized."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "How to maximize zone map effectiveness:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Sort your data on filter columns.",
+                "marks": [
+                  "bold"
+                ]
+              },
+              {
+                "text": " If you frequently filter by "
+              },
+              {
+                "text": "event_date",
+                "marks": [
+                  "code"
+                ]
+              },
+              {
+                "text": ", sort the Parquet file by "
+              },
+              {
+                "text": "event_date",
+                "marks": [
+                  "code"
+                ]
+              },
+              {
+                "text": " before writing. This concentrates relevant rows into fewer row groups."
+              }
+            ],
+            [
+              {
+                "text": "Use the right data type.",
+                "marks": [
+                  "bold"
+                ]
+              },
+              {
+                "text": " A "
+              },
+              {
+                "text": "DATE",
+                "marks": [
+                  "code"
+                ]
+              },
+              {
+                "text": " column gets better zone map benefit than a "
+              },
+              {
+                "text": "VARCHAR",
+                "marks": [
+                  "code"
+                ]
+              },
+              {
+                "text": " column containing date strings — string comparisons work but numeric comparisons are more precise."
+              }
+            ],
+            [
+              {
+                "text": "Avoid functions on filter columns.",
+                "marks": [
+                  "bold"
+                ]
+              },
+              {
+                "text": " "
+              },
+              {
+                "text": "WHERE year(order_date) = 2025",
+                "marks": [
+                  "code"
+                ]
+              },
+              {
+                "text": " cannot use zone maps. "
+              },
+              {
+                "text": "WHERE order_date BETWEEN '2025-01-01' AND '2025-12-31'",
+                "marks": [
+                  "code"
+                ]
+              },
+              {
+                "text": " can."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "tip",
+          "runs": [
+            {
+              "text": "For large Parquet files you query repeatedly by date range, pre-sorting on the date column before writing can reduce query time by 80–90% on selective filters. Use "
+            },
+            {
+              "text": "COPY (SELECT * FROM tbl ORDER BY event_date) TO 'sorted.parquet'",
+              "marks": [
+                "code"
+              ]
+            },
+            {
+              "text": "."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Like a book index — instead of reading every page to find mentions of a term, you consult a structure that tells you exactly which pages to skip."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "wdd-ch06-c004",
+      "order": 4,
+      "title": "Parallel Query Execution",
+      "teaser": "DuckDB automatically splits scans, joins, and aggregations across all available CPU cores — parallelism is on by default and requires no query hints.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "DuckDB parallelizes query execution at the operator level across all available CPU cores. This happens automatically — no "
+            },
+            {
+              "text": "PARALLEL",
+              "marks": [
+                "code"
+              ]
+            },
+            {
+              "text": " hints, no partitioning declarations, no explicit configuration required for the default behavior."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "How parallelism works per operator type:"
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Table scans:",
+              "marks": [
+                "bold"
+              ]
+            },
+            {
+              "text": " The row group list is divided across threads. With 8 cores and 100 row groups, each thread scans ~12–13 row groups independently."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Aggregations:",
+              "marks": [
+                "bold"
+              ]
+            },
+            {
+              "text": " Each thread aggregates its partition of rows into a local hash table. Thread-local results are merged in a final reduction step. This avoids write contention on a shared hash table."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Hash joins:",
+              "marks": [
+                "bold"
+              ]
+            },
+            {
+              "text": " The build phase (loading the smaller table into a hash table) is parallelized. The probe phase (scanning the larger table and probing the hash table) is also parallelized across threads with a shared read-only hash table."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Sorting:",
+              "marks": [
+                "bold"
+              ]
+            },
+            {
+              "text": " Parallel sort uses a split-then-merge strategy similar to external merge sort, with each thread sorting its partition independently before merging."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Controlling thread count:"
+            }
+          ]
+        },
+        {
+          "type": "code",
+          "language": "sql",
+          "code": "-- Check current setting\nSELECT current_setting('threads');\n\n-- Set for the session\nSET threads = 4;\n\n-- Set at connection time (Python)\ncon = duckdb.connect()\ncon.execute(\"SET threads = 4\")"
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "DuckDB defaults to the number of logical CPU cores. On a shared machine or container with constrained CPU quotas, set "
+            },
+            {
+              "text": "threads",
+              "marks": [
+                "code"
+              ]
+            },
+            {
+              "text": " explicitly to avoid oversubscription."
+            }
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "warning",
+          "runs": [
+            {
+              "text": "On CI runners or containers with cgroup CPU limits, DuckDB may detect the physical core count of the host rather than the cgroup limit. Always set "
+            },
+            {
+              "text": "threads",
+              "marks": [
+                "code"
+              ]
+            },
+            {
+              "text": " explicitly in constrained environments to match your actual CPU budget."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Like map-reduce at the single-node level — each core runs a local map phase, then a shared reduce phase merges the partial results."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "wdd-ch06-c005",
+      "order": 5,
+      "title": "The Query Optimizer",
+      "teaser": "DuckDB's optimizer uses cardinality statistics and a dynamic programming join order search — it makes better join ordering decisions than most heuristic-based systems.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "DuckDB's query optimizer operates in several stages before execution:"
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Logical optimization:",
+              "marks": [
+                "bold"
+              ]
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Predicate pushdown — moves filters as close to the scan as possible."
+              }
+            ],
+            [
+              {
+                "text": "Projection pushdown — eliminates unused columns early."
+              }
+            ],
+            [
+              {
+                "text": "Common subexpression elimination — avoids recomputing identical expressions."
+              }
+            ],
+            [
+              {
+                "text": "Filter and join reordering — uses selectivity estimates to order filters cheaply-first."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Join order optimization:",
+              "marks": [
+                "bold"
+              ]
+            },
+            {
+              "text": " DuckDB uses a "
+            },
+            {
+              "text": "dynamic programming (DP) join order optimizer",
+              "marks": [
+                "bold"
+              ]
+            },
+            {
+              "text": " for queries with up to a configurable number of tables (default 10). For queries with more tables it falls back to a greedy algorithm. The DP optimizer considers all possible join orders and selects the one with the lowest estimated cost — significantly better than left-deep heuristics used by many simpler systems."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Statistics:",
+              "marks": [
+                "bold"
+              ]
+            },
+            {
+              "text": " The optimizer uses column statistics (min, max, distinct count, null fraction) gathered during writes and "
+            },
+            {
+              "text": "ANALYZE",
+              "marks": [
+                "code"
+              ]
+            },
+            {
+              "text": " to estimate cardinalities. More accurate statistics → better join order decisions."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Adaptive query execution:",
+              "marks": [
+                "bold"
+              ]
+            },
+            {
+              "text": " DuckDB can switch between hash join and nested loop join mid-query based on observed row counts. If a join's build side turns out to be larger than estimated, the optimizer adapts rather than committing to a bad plan upfront."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Running "
+            },
+            {
+              "text": "ANALYZE",
+              "marks": [
+                "code"
+              ]
+            },
+            {
+              "text": " after bulk loads:"
+            }
+          ]
+        },
+        {
+          "type": "code",
+          "language": "sql",
+          "code": "ANALYZE;           -- update statistics for all tables\nANALYZE my_table;  -- update for one table"
+        },
+        {
+          "type": "callout",
+          "variant": "tip",
+          "runs": [
+            {
+              "text": "On tables that receive large batch inserts, run "
+            },
+            {
+              "text": "ANALYZE",
+              "marks": [
+                "code"
+              ]
+            },
+            {
+              "text": " before the next complex query. Stale statistics are the most common cause of unexpectedly slow queries in DuckDB."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Like a chess engine evaluating positions several moves ahead — the DP optimizer exhaustively searches the space of join orderings rather than committing to the first reasonable-looking plan."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "wdd-ch06-c006",
+      "order": 6,
+      "title": "Reading EXPLAIN Output",
+      "teaser": "EXPLAIN shows the physical query plan DuckDB will execute — reading it takes five minutes to learn and saves hours of guessing why a query is slow.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "DuckDB supports two forms of query plan inspection:"
+            }
+          ]
+        },
+        {
+          "type": "code",
+          "language": "sql",
+          "code": "-- Logical plan (before optimization)\nEXPLAIN SELECT region, SUM(revenue) FROM orders GROUP BY region;\n\n-- Physical plan with timing and row counts (after execution)\nEXPLAIN ANALYZE SELECT region, SUM(revenue) FROM orders GROUP BY region;"
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Key operators to recognize in EXPLAIN output:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "SEQ_SCAN",
+                "marks": [
+                  "bold"
+                ]
+              },
+              {
+                "text": " — sequential column scan. Expected for analytical queries. Shows which columns were read and any filters pushed to the scan."
+              }
+            ],
+            [
+              {
+                "text": "FILTER",
+                "marks": [
+                  "bold"
+                ]
+              },
+              {
+                "text": " — a filter not pushed to the scan (e.g., applied after a join). If you see FILTER above a SEQ_SCAN on a selective predicate, the optimizer may be missing statistics."
+              }
+            ],
+            [
+              {
+                "text": "HASH_JOIN",
+                "marks": [
+                  "bold"
+                ]
+              },
+              {
+                "text": " — standard hash join. Shows build side (smaller table) and probe side. Check estimated vs actual row counts."
+              }
+            ],
+            [
+              {
+                "text": "HASH_GROUP_BY",
+                "marks": [
+                  "bold"
+                ]
+              },
+              {
+                "text": " — parallel aggregation via hash table. Expected for GROUP BY."
+              }
+            ],
+            [
+              {
+                "text": "ORDER_BY",
+                "marks": [
+                  "bold"
+                ]
+              },
+              {
+                "text": " — sort operation. Expensive on large tables — confirm it is necessary."
+              }
+            ],
+            [
+              {
+                "text": "PROJECTION",
+                "marks": [
+                  "bold"
+                ]
+              },
+              {
+                "text": " — column projection step. Usually cheap."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "What to look for:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Large estimated vs actual row count mismatch",
+                "marks": [
+                  "bold"
+                ]
+              },
+              {
+                "text": " — stale statistics, run "
+              },
+              {
+                "text": "ANALYZE",
+                "marks": [
+                  "code"
+                ]
+              },
+              {
+                "text": "."
+              }
+            ],
+            [
+              {
+                "text": "FILTER above SEQ_SCAN on a selective column",
+                "marks": [
+                  "bold"
+                ]
+              },
+              {
+                "text": " — predicate pushdown is not happening; check if the filter uses a function on the column."
+              }
+            ],
+            [
+              {
+                "text": "Unexpected nested loop joins",
+                "marks": [
+                  "bold"
+                ]
+              },
+              {
+                "text": " — may indicate the optimizer chose a suboptimal plan due to bad statistics."
+              }
+            ],
+            [
+              {
+                "text": "High rows in ORDER_BY",
+                "marks": [
+                  "bold"
+                ]
+              },
+              {
+                "text": " — sorting is often the bottleneck for queries that do not need full ordering; consider "
+              },
+              {
+                "text": "LIMIT",
+                "marks": [
+                  "code"
+                ]
+              },
+              {
+                "text": " or replacing with "
+              },
+              {
+                "text": "QUALIFY",
+                "marks": [
+                  "code"
+                ]
+              },
+              {
+                "text": " for top-N patterns."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "info",
+          "runs": [
+            {
+              "text": "EXPLAIN ANALYZE",
+              "marks": [
+                "code"
+              ]
+            },
+            {
+              "text": " actually runs the query. Use it on queries you are already running — do not run it on long queries just to inspect the plan, as you will pay the full execution cost."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Like reading a compiler's assembly output — most of the time you do not need it, but when a hot path is unexpectedly slow, it is the fastest way to understand what the machine is actually doing."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "wdd-ch06-c007",
+      "order": 7,
+      "title": "Memory Management and the Buffer Pool",
+      "teaser": "DuckDB manages its own memory pool with a configurable limit — understanding how it uses memory prevents OOM surprises on shared machines.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "DuckDB uses an internal "
+            },
+            {
+              "text": "buffer pool",
+              "marks": [
+                "bold"
+              ]
+            },
+            {
+              "text": " to manage memory for query execution. All intermediate results, hash tables, sort buffers, and column data in flight pass through this pool."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The default memory limit is "
+            },
+            {
+              "text": "80% of available system RAM",
+              "marks": [
+                "bold"
+              ]
+            },
+            {
+              "text": ". On a laptop with 16GB RAM that means DuckDB will use up to ~12.8GB before taking action. On a shared CI runner with 4GB of RAM shared across processes, this default is almost always wrong."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Setting the memory limit:"
+            }
+          ]
+        },
+        {
+          "type": "code",
+          "language": "sql",
+          "code": "SET memory_limit = '4GB';"
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Or at connection time in Python:"
+            }
+          ]
+        },
+        {
+          "type": "code",
+          "language": "python",
+          "code": "con = duckdb.connect()\ncon.execute(\"SET memory_limit = '4GB'\")"
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "What DuckDB tracks toward the memory limit:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Column data loaded into the buffer pool"
+              }
+            ],
+            [
+              {
+                "text": "Hash tables for joins and aggregations"
+              }
+            ],
+            [
+              {
+                "text": "Sort buffers"
+              }
+            ],
+            [
+              {
+                "text": "Intermediate projection results"
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "What is NOT tracked:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Python objects that reference DuckDB results (after "
+              },
+              {
+                "text": "fetchall()",
+                "marks": [
+                  "code"
+                ]
+              },
+              {
+                "text": ", the data is in Python's heap, not DuckDB's)"
+              }
+            ],
+            [
+              {
+                "text": "Arrow zero-copy results (memory is shared, counted once)"
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Checking current memory usage:"
+            }
+          ]
+        },
+        {
+          "type": "code",
+          "language": "sql",
+          "code": "SELECT * FROM duckdb_memory();"
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "This returns a breakdown of memory used by category — useful when debugging unexpectedly high consumption."
+            }
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "tip",
+          "runs": [
+            {
+              "text": "Setting "
+            },
+            {
+              "text": "memory_limit",
+              "marks": [
+                "code"
+              ]
+            },
+            {
+              "text": " lower than the default is safe and does not degrade correctness — DuckDB will spill to disk when the limit is reached. Set it to leave headroom for other processes, especially in containers."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Like setting a JVM heap size with "
+            },
+            {
+              "text": "-Xmx",
+              "marks": [
+                "code"
+              ]
+            },
+            {
+              "text": " — the runtime needs an explicit ceiling or it will consume as much as the OS allows, which is often more than a shared environment can afford."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "wdd-ch06-c008",
+      "order": 8,
+      "title": "Spilling to Disk When Memory Is Exhausted",
+      "teaser": "When a query exceeds the memory limit, DuckDB spills intermediate results to temporary files on disk — the query still completes, but slower.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "DuckDB does not crash or error when a query exceeds "
+            },
+            {
+              "text": "memory_limit",
+              "marks": [
+                "code"
+              ]
+            },
+            {
+              "text": ". Instead, it "
+            },
+            {
+              "text": "spills",
+              "marks": [
+                "bold"
+              ]
+            },
+            {
+              "text": " intermediate data (hash tables, sort buffers) to a temporary directory on disk, processes from disk, and then cleans up afterward. This is called "
+            },
+            {
+              "text": "out-of-core",
+              "marks": [
+                "bold"
+              ]
+            },
+            {
+              "text": " or "
+            },
+            {
+              "text": "external",
+              "marks": [
+                "bold"
+              ]
+            },
+            {
+              "text": " processing."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Operations that support spilling:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Hash joins",
+                "marks": [
+                  "bold"
+                ]
+              },
+              {
+                "text": " — the build-side hash table is partitioned and the overflow written to temp files."
+              }
+            ],
+            [
+              {
+                "text": "Hash aggregations",
+                "marks": [
+                  "bold"
+                ]
+              },
+              {
+                "text": " — partial aggregation hash tables spill when full."
+              }
+            ],
+            [
+              {
+                "text": "Sort",
+                "marks": [
+                  "bold"
+                ]
+              },
+              {
+                "text": " — external merge sort writes sorted runs to disk and merges them."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Operations that do not spill (and will error if memory is insufficient):"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Window functions with very large frames"
+              }
+            ],
+            [
+              {
+                "text": "Some complex subquery materializations"
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Configuring the temp directory:"
+            }
+          ]
+        },
+        {
+          "type": "code",
+          "language": "sql",
+          "code": "SET temp_directory = '/path/to/fast/disk';"
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Default is the same directory as the database file (or the OS temp directory for in-memory databases). If spilling is expected, point this at a fast local NVMe drive rather than a network-mounted volume."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Detecting spilling:"
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Run "
+            },
+            {
+              "text": "EXPLAIN ANALYZE",
+              "marks": [
+                "code"
+              ]
+            },
+            {
+              "text": " and look for "
+            },
+            {
+              "text": "(Spilled to Disk)",
+              "marks": [
+                "code"
+              ]
+            },
+            {
+              "text": " annotations on hash join and hash group-by operators. If you see spilling on a query that runs frequently:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Increase "
+              },
+              {
+                "text": "memory_limit",
+                "marks": [
+                  "code"
+                ]
+              },
+              {
+                "text": " if the machine has spare RAM."
+              }
+            ],
+            [
+              {
+                "text": "Reduce the query's intermediate data (push filters earlier, reduce join fanout)."
+              }
+            ],
+            [
+              {
+                "text": "If spilling is unavoidable, ensure "
+              },
+              {
+                "text": "temp_directory",
+                "marks": [
+                  "code"
+                ]
+              },
+              {
+                "text": " is on fast local storage."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "warning",
+          "runs": [
+            {
+              "text": "Spilling to a network filesystem (NFS, EFS, SMB) can make a query 100x slower than the same query on a local disk. Always configure "
+            },
+            {
+              "text": "temp_directory",
+              "marks": [
+                "code"
+              ]
+            },
+            {
+              "text": " to a local path if you expect memory-intensive queries."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Like a database sort that pages through a B-tree when it cannot fit the sort key in RAM — it still produces correct results, just with disk I/O replacing in-memory operations."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "wdd-ch06-c009",
+      "order": 9,
+      "title": "The .duckdb File Format",
+      "teaser": "DuckDB's file format stores data in a columnar block structure with a catalog, row groups, and a checkpoint mechanism — knowing the layout explains WAL behavior and file sizes.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "A "
+            },
+            {
+              "text": ".duckdb",
+              "marks": [
+                "code"
+              ]
+            },
+            {
+              "text": " file is a self-contained binary file with several internal layers:"
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Storage layout:",
+              "marks": [
+                "bold"
+              ]
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "A file header with a magic number ("
+              },
+              {
+                "text": "DUCK",
+                "marks": [
+                  "code"
+                ]
+              },
+              {
+                "text": ") and version metadata."
+              }
+            ],
+            [
+              {
+                "text": "A "
+              },
+              {
+                "text": "catalog",
+                "marks": [
+                  "bold"
+                ]
+              },
+              {
+                "text": " segment storing table definitions, indexes, and schema metadata."
+              }
+            ],
+            [
+              {
+                "text": "Column segments",
+                "marks": [
+                  "bold"
+                ]
+              },
+              {
+                "text": " — the actual columnar data, organized into row groups of 122,880 rows each."
+              }
+            ],
+            [
+              {
+                "text": "Each column segment stores compressed column chunks with accompanying zone maps (min/max metadata)."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Checkpointing:",
+              "marks": [
+                "bold"
+              ]
+            },
+            {
+              "text": " DuckDB writes changes in memory first, then periodically "
+            },
+            {
+              "text": "checkpoints",
+              "marks": [
+                "bold"
+              ]
+            },
+            {
+              "text": " — serializing the in-memory state to the "
+            },
+            {
+              "text": ".duckdb",
+              "marks": [
+                "code"
+              ]
+            },
+            {
+              "text": " file. Checkpointing happens:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "On a clean shutdown."
+              }
+            ],
+            [
+              {
+                "text": "After a configurable number of WAL writes ("
+              },
+              {
+                "text": "wal_autocheckpoint",
+                "marks": [
+                  "code"
+                ]
+              },
+              {
+                "text": ", default: 1,000 blocks)."
+              }
+            ],
+            [
+              {
+                "text": "When explicitly called with "
+              },
+              {
+                "text": "CHECKPOINT;",
+                "marks": [
+                  "code"
+                ]
+              },
+              {
+                "text": "."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "WAL (Write-Ahead Log):",
+              "marks": [
+                "bold"
+              ]
+            },
+            {
+              "text": " Before data is checkpointed to the main file, it is appended to a "
+            },
+            {
+              "text": ".duckdb.wal",
+              "marks": [
+                "code"
+              ]
+            },
+            {
+              "text": " file. This ensures crash recovery — on next open, DuckDB replays the WAL to recover any un-checkpointed writes."
+            }
+          ]
+        },
+        {
+          "type": "code",
+          "language": "sql",
+          "code": "-- Force an immediate checkpoint\nCHECKPOINT;\n\n-- Force checkpoint with WAL deletion\nFORCE CHECKPOINT;"
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "File size behavior: "
+            },
+            {
+              "text": ".duckdb",
+              "marks": [
+                "code"
+              ]
+            },
+            {
+              "text": " files do not automatically shrink after deletes. Run "
+            },
+            {
+              "text": "VACUUM;",
+              "marks": [
+                "code"
+              ]
+            },
+            {
+              "text": " to reclaim space from deleted rows. Run "
+            },
+            {
+              "text": "VACUUM FULL;",
+              "marks": [
+                "code"
+              ]
+            },
+            {
+              "text": " to rewrite and compact the file (takes a write lock for the duration)."
+            }
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "info",
+          "runs": [
+            {
+              "text": "The "
+            },
+            {
+              "text": ".duckdb",
+              "marks": [
+                "code"
+              ]
+            },
+            {
+              "text": " and "
+            },
+            {
+              "text": ".duckdb.wal",
+              "marks": [
+                "code"
+              ]
+            },
+            {
+              "text": " files must always travel together. Copying the "
+            },
+            {
+              "text": ".duckdb",
+              "marks": [
+                "code"
+              ]
+            },
+            {
+              "text": " file without the "
+            },
+            {
+              "text": ".wal",
+              "marks": [
+                "code"
+              ]
+            },
+            {
+              "text": " file (if one exists) may produce a database that is missing recent writes. Copy both, or use "
+            },
+            {
+              "text": "EXPORT DATABASE",
+              "marks": [
+                "code"
+              ]
+            },
+            {
+              "text": " for safe portable exports."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Like Git's object store and ref log — the main file is the stable committed state, the WAL is the in-flight transaction log, and a checkpoint is the equivalent of a garbage-collected pack operation."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "wdd-ch06-c010",
+      "order": 10,
+      "title": "Benchmarking DuckDB Queries",
+      "teaser": "EXPLAIN ANALYZE gives per-operator timing and row counts — but accurate benchmarking requires warm-up runs, realistic data sizes, and measuring the right thing.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Using EXPLAIN ANALYZE:",
+              "marks": [
+                "bold"
+              ]
+            }
+          ]
+        },
+        {
+          "type": "code",
+          "language": "sql",
+          "code": "EXPLAIN ANALYZE\nSELECT region, SUM(revenue), COUNT(*)\nFROM orders\nWHERE order_date >= '2025-01-01'\nGROUP BY region\nORDER BY SUM(revenue) DESC;"
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Output includes:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Estimated vs actual row counts per operator"
+              }
+            ],
+            [
+              {
+                "text": "CPU time per operator"
+              }
+            ],
+            [
+              {
+                "text": "Whether any operator spilled to disk"
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Timing queries directly:",
+              "marks": [
+                "bold"
+              ]
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "DuckDB tracks query timing automatically. After any query, "
+            },
+            {
+              "text": "duckdb_profiling_output()",
+              "marks": [
+                "code"
+              ]
+            },
+            {
+              "text": " returns the most recent profiling data:"
+            }
+          ]
+        },
+        {
+          "type": "code",
+          "language": "sql",
+          "code": "PRAGMA enable_profiling;\nSELECT region, SUM(revenue) FROM orders GROUP BY region;\nSELECT * FROM duckdb_profiling_output();"
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Benchmarking best practices:",
+              "marks": [
+                "bold"
+              ]
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Warm up the buffer pool.",
+                "marks": [
+                  "bold"
+                ]
+              },
+              {
+                "text": " Run the query once before timing — the first run loads column chunks into the buffer pool. Subsequent runs are faster. If benchmarking cold-start I/O performance, clear the OS page cache between runs."
+              }
+            ],
+            [
+              {
+                "text": "Use realistic data volumes.",
+                "marks": [
+                  "bold"
+                ]
+              },
+              {
+                "text": " DuckDB's vectorized execution has overhead that only pays off at scale. A 10,000-row table benchmarks worse relative to SQLite than a 10,000,000-row table."
+              }
+            ],
+            [
+              {
+                "text": "Time at the right layer.",
+                "marks": [
+                  "bold"
+                ]
+              },
+              {
+                "text": " Timing in Python includes Python's "
+              },
+              {
+                "text": "fetchall()",
+                "marks": [
+                  "code"
+                ]
+              },
+              {
+                "text": " overhead. Time the SQL execution separately: "
+              },
+              {
+                "text": "con.execute(query).fetchdf()",
+                "marks": [
+                  "code"
+                ]
+              },
+              {
+                "text": " vs timing just "
+              },
+              {
+                "text": "con.execute(query)",
+                "marks": [
+                  "code"
+                ]
+              },
+              {
+                "text": " to isolate query time from result materialization time."
+              }
+            ],
+            [
+              {
+                "text": "Disable result output.",
+                "marks": [
+                  "bold"
+                ]
+              },
+              {
+                "text": " For microbenchmarks, use "
+              },
+              {
+                "text": "SELECT COUNT(*) FROM (...)",
+                "marks": [
+                  "code"
+                ]
+              },
+              {
+                "text": " to force evaluation without materializing the full result set."
+              }
+            ],
+            [
+              {
+                "text": "Watch for caching effects.",
+                "marks": [
+                  "bold"
+                ]
+              },
+              {
+                "text": " DuckDB caches parsed queries and compiled pipelines. The second run of an identical query is sometimes faster than the first by 5–15% due to pipeline caching."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "tip",
+          "runs": [
+            {
+              "text": "For macro-benchmarks comparing DuckDB configurations (different thread counts, memory limits, file formats), use the TPC-H or TPC-DS benchmark datasets — they are available as DuckDB shell scripts via the "
+            },
+            {
+              "text": "tpch",
+              "marks": [
+                "code"
+              ]
+            },
+            {
+              "text": " and "
+            },
+            {
+              "text": "tpcds",
+              "marks": [
+                "code"
+              ]
+            },
+            {
+              "text": " extensions."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Like profiling a web server with "
+            },
+            {
+              "text": "ab",
+              "marks": [
+                "code"
+              ]
+            },
+            {
+              "text": " or "
+            },
+            {
+              "text": "wrk",
+              "marks": [
+                "code"
+              ]
+            },
+            {
+              "text": " — a single-run timing number is almost meaningless; percentiles across warm, repeated runs with realistic load reveal the actual behavior."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "wdd-ch06-c011",
+      "order": 11,
+      "title": "Pipelines and the Push-Based Execution Model",
+      "teaser": "DuckDB uses a push-based pipeline execution model internally — understanding it explains why some query shapes are faster and how parallel execution is structured.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "DuckDB's execution engine uses a "
+            },
+            {
+              "text": "push-based",
+              "marks": [
+                "bold"
+              ]
+            },
+            {
+              "text": " (also called \"morsel-driven\") model rather than the pull-based volcano iterator model."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "In the pull model: the top operator pulls rows from its children — control flows top-down, data flows bottom-up via function return values."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "In the push model: operators are compiled into "
+            },
+            {
+              "text": "pipelines",
+              "marks": [
+                "bold"
+              ]
+            },
+            {
+              "text": " — chains of operators that can be executed with a single pass over the data. The source (a scan) pushes vectors through the pipeline until it hits a "
+            },
+            {
+              "text": "pipeline breaker",
+              "marks": [
+                "bold"
+              ]
+            },
+            {
+              "text": " — an operation that must see all input before producing output."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Pipeline breakers include:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Hash joins (must build the full hash table before probing)"
+              }
+            ],
+            [
+              {
+                "text": "Sort operations"
+              }
+            ],
+            [
+              {
+                "text": "Hash aggregations (final merge step)"
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Why pipelines matter:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "A pipeline with no breakers can be parallelized trivially — split the scan across threads, each thread runs the full pipeline on its partition."
+              }
+            ],
+            [
+              {
+                "text": "Pipeline-parallel execution avoids thread synchronization until a breaker is reached."
+              }
+            ],
+            [
+              {
+                "text": "DuckDB compiles each pipeline into a tight execution loop. Column vectors flow through filter, project, and expression operators without intermediate materialization."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "In practice, a query like:"
+            }
+          ]
+        },
+        {
+          "type": "code",
+          "language": "sql",
+          "code": "SELECT region, SUM(price * quantity)\nFROM orders\nWHERE status = 'shipped'\nGROUP BY region"
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Compiles into two pipelines:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "numbered",
+          "items": [
+            [
+              {
+                "text": "Scan → Filter → Project → Build hash aggregation table (breaker)"
+              }
+            ],
+            [
+              {
+                "text": "Finalize and return hash aggregation results"
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Each pipeline runs parallel across all threads, synchronizing only at the breaker boundary."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Like an assembly line where each station passes the part to the next without stopping — the pipeline flows continuously until it hits an operation (like quality inspection) that requires accumulating the full batch."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "wdd-ch06-c012",
+      "order": 12,
+      "title": "Adaptive Radix Tree Indexes",
+      "teaser": "DuckDB supports ART (Adaptive Radix Tree) indexes for point lookups — they help specific query patterns but are rarely needed for analytical workloads.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "DuckDB supports "
+            },
+            {
+              "text": "ART (Adaptive Radix Tree)",
+              "marks": [
+                "bold"
+              ]
+            },
+            {
+              "text": " indexes — a trie-based data structure that provides O(k) lookup time (where k is key length) and compact memory usage compared to B-trees."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Creating an index:"
+            }
+          ]
+        },
+        {
+          "type": "code",
+          "language": "sql",
+          "code": "CREATE INDEX idx_orders_id ON orders(id);\nCREATE UNIQUE INDEX idx_users_email ON users(email);"
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "When ART indexes help:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Point lookups: "
+              },
+              {
+                "text": "WHERE id = 12345",
+                "marks": [
+                  "code"
+                ]
+              }
+            ],
+            [
+              {
+                "text": "Unique constraint enforcement"
+              }
+            ],
+            [
+              {
+                "text": "Range scans on highly selective predicates (returning < 0.1% of rows)"
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "When ART indexes do not help (and add overhead):"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Full table scans — DuckDB always does a full scan regardless of index presence for non-selective predicates"
+              }
+            ],
+            [
+              {
+                "text": "Aggregations over large fractions of a table"
+              }
+            ],
+            [
+              {
+                "text": "Analytical queries that read most of the column data anyway"
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The overhead of maintaining an index:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Index entries are updated on every INSERT, UPDATE, DELETE — write-heavy tables with indexes are slower to load"
+              }
+            ],
+            [
+              {
+                "text": "Indexes consume memory proportional to the number of indexed rows"
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "For most DuckDB analytical workloads, "
+            },
+            {
+              "text": "zone maps (automatic) and column pruning are more impactful than explicit indexes",
+              "marks": [
+                "bold"
+              ]
+            },
+            {
+              "text": ". Add an index only after confirming via "
+            },
+            {
+              "text": "EXPLAIN ANALYZE",
+              "marks": [
+                "code"
+              ]
+            },
+            {
+              "text": " that a non-selective point lookup is the actual bottleneck."
+            }
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "tip",
+          "runs": [
+            {
+              "text": "DuckDB does not require indexes for aggregation performance — zone maps and columnar layout do that work. Treat ART indexes as a targeted tool for point lookup patterns, not a general performance default."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Like adding an index to a database table in PostgreSQL — it speeds up lookups at the cost of write overhead, but for full-table analytical scans it provides no benefit and just adds maintenance cost."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "wdd-ch06-c013",
+      "order": 13,
+      "title": "Profiling with duckdb_profiling_output",
+      "teaser": "DuckDB's built-in profiling system captures per-operator timing and cardinality data without external tools — enabling systematic performance diagnosis inside a single SQL session.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "DuckDB has a built-in profiling mode that captures detailed execution statistics for the most recently run query."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Enabling and reading profiling:"
+            }
+          ]
+        },
+        {
+          "type": "code",
+          "language": "sql",
+          "code": "PRAGMA enable_profiling;\nPRAGMA profiling_output = 'json';  -- options: 'json', 'query_tree'\n\n-- Run a query\nSELECT region, SUM(revenue) FROM orders GROUP BY region;\n\n-- Read the profile\nSELECT * FROM duckdb_profiling_output();"
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The JSON output includes a tree of operators with the following per-node fields:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "operator_type",
+                "marks": [
+                  "code"
+                ]
+              },
+              {
+                "text": " — e.g., "
+              },
+              {
+                "text": "HASH_GROUP_BY",
+                "marks": [
+                  "code"
+                ]
+              },
+              {
+                "text": ", "
+              },
+              {
+                "text": "SEQ_SCAN",
+                "marks": [
+                  "code"
+                ]
+              },
+              {
+                "text": ", "
+              },
+              {
+                "text": "HASH_JOIN",
+                "marks": [
+                  "code"
+                ]
+              }
+            ],
+            [
+              {
+                "text": "rows_scanned",
+                "marks": [
+                  "code"
+                ]
+              },
+              {
+                "text": " — rows read from storage"
+              }
+            ],
+            [
+              {
+                "text": "result_set_size",
+                "marks": [
+                  "code"
+                ]
+              },
+              {
+                "text": " — rows produced by this operator (after filtering)"
+              }
+            ],
+            [
+              {
+                "text": "cpu_time",
+                "marks": [
+                  "code"
+                ]
+              },
+              {
+                "text": " — wall-clock time spent in this operator"
+              }
+            ],
+            [
+              {
+                "text": "extra_info",
+                "marks": [
+                  "code"
+                ]
+              },
+              {
+                "text": " — operator-specific details (e.g., columns scanned, join keys, filter expressions)"
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Useful diagnostic patterns:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "High `rows_scanned` with low `result_set_size`",
+                "marks": [
+                  "bold"
+                ]
+              },
+              {
+                "text": " on a SEQ_SCAN indicates a selective filter that is not using zone maps. Check if the filter column has sorted data or if it could benefit from an index."
+              }
+            ],
+            [
+              {
+                "text": "High `cpu_time` on HASH_JOIN build side",
+                "marks": [
+                  "bold"
+                ]
+              },
+              {
+                "text": " relative to probe side indicates the build table is larger than expected — check join direction."
+              }
+            ],
+            [
+              {
+                "text": "`extra_info` showing spill",
+                "marks": [
+                  "bold"
+                ]
+              },
+              {
+                "text": " on hash operators means memory limit was hit — increase limit or tune the query."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Disabling profiling when done:"
+            }
+          ]
+        },
+        {
+          "type": "code",
+          "language": "sql",
+          "code": "PRAGMA disable_profiling;"
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Profiling adds ~2–5% overhead per query. Leave it disabled in production code paths and enable it only during active investigation."
+            }
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "info",
+          "runs": [
+            {
+              "text": "The "
+            },
+            {
+              "text": "json",
+              "marks": [
+                "code"
+              ]
+            },
+            {
+              "text": " profiling format is machine-readable and can be parsed with "
+            },
+            {
+              "text": "json_extract()",
+              "marks": [
+                "code"
+              ]
+            },
+            {
+              "text": " directly in DuckDB for automated performance monitoring pipelines."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Like Node.js's "
+            },
+            {
+              "text": "--prof",
+              "marks": [
+                "code"
+              ]
+            },
+            {
+              "text": " flag combined with "
+            },
+            {
+              "text": "node --prof-process",
+              "marks": [
+                "code"
+              ]
+            },
+            {
+              "text": " — the engine captures detailed timing data internally during execution, and you read it as structured output rather than instrumenting your code externally."
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

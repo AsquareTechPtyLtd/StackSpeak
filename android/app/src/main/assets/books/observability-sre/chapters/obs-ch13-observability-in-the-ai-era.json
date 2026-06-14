@@ -1,0 +1,1433 @@
+{
+  "chapterId": "obs-ch13-observability-in-the-ai-era",
+  "shardIndex": 13,
+  "cards": [
+    {
+      "id": "obs-ch13-c001",
+      "order": 1,
+      "title": "The New Frontier: Why AI Systems Need Different Observability",
+      "teaser": "Traditional observability was designed around deterministic code — given the same inputs, you get the same outputs. LLMs break that contract. The same prompt can produce different responses on successive calls, making classical metrics like error rate and latency incomplete without quality-layer signals.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Note: this chapter is a snapshot with a 9-month refresh cadence. LLM observability is moving faster than any other area of the field. The vendors cited will change. The underlying problems — how do you know your AI system is behaving correctly? — will not."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Classical observability answers three questions about a service: is it up, how fast is it responding, and is it producing errors? For deterministic services, this is sufficient. If the code path is the same and the inputs are the same, the behavior is the same. You can reason about correctness from structure."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "LLMs and AI-augmented systems break each of these assumptions:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Non-determinism.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " The same prompt produces different outputs on different calls, even at temperature=0 in practice. Error rate measures failures; it cannot measure quality of non-failing responses."
+              }
+            ],
+            [
+              {
+                "text": "Semantic correctness is not binary.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " A response can be grammatically correct, non-erroring, and confidently wrong. A traditional health check has no way to distinguish a correct answer from a plausible-sounding hallucination."
+              }
+            ],
+            [
+              {
+                "text": "Cost is a first-class output.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Calling an LLM API consumes tokens that have a direct dollar cost. A system that doubles its token consumption due to a prompt change is degraded even if its latency and error rate are unchanged."
+              }
+            ],
+            [
+              {
+                "text": "The trace shape is new.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Traditional traces flow through services and databases with bounded call depths. An agent that reasons in a loop — thinking, calling tools, retrying, revising — produces a fundamentally different trace shape: variable depth, recursive structure, and state that evolves across multiple turns."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The response is not to abandon traditional observability — latency, error rate, and availability still matter — but to extend it with a new layer: quality signals, cost signals, and multi-step trace semantics that the traditional stack was not designed to capture."
+            }
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "info",
+          "runs": [
+            {
+              "text": "The emerging consensus, reflected in the OpenTelemetry GenAI semantic conventions draft (opentelemetry.io/docs/specs/semconv/gen-ai/), is to treat LLM calls as a new class of span with additional attributes: model, prompt tokens, completion tokens, finish reason, and cost. The underlying trace structure remains OTel; the span schema is extended."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Classical observability tells you if your service is up, fast, and error-free. AI systems add a fourth question: is the output any good? A response can be non-erroring and wrong, cheap and slow, or fast and hallucinated. You need new signals to see that."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "obs-ch13-c002",
+      "order": 2,
+      "title": "LLM Observability: Tracing Prompt → Tokens → Response",
+      "teaser": "An LLM call has a richer internal structure than an HTTP request. Observing it means capturing what went in (the prompt, its version, its token count), what came back (the completion, finish reason, model version), and what it cost — as a structured span, not a log line.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "An LLM call is not a black box. Between the moment you send a prompt and the moment you receive a response, there is a measurable sequence of events that a well-instrumented system captures as a structured span:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Prompt (input):",
+                "marks": ["bold"]
+              },
+              {
+                "text": " The full text sent to the model, its version identifier, the model name and version requested, and the sampling parameters (temperature, top_p, max_tokens)."
+              }
+            ],
+            [
+              {
+                "text": "Token accounting:",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Prompt token count, completion token count, and total token count. These are returned by all major LLM APIs in the usage field and should be emitted as span attributes, not discarded."
+              }
+            ],
+            [
+              {
+                "text": "Completion (output):",
+                "marks": ["bold"]
+              },
+              {
+                "text": " The model's response text, the finish reason (stop, length, tool_call, content_filter), and the response model version (which may differ from the requested version during model rollouts)."
+              }
+            ],
+            [
+              {
+                "text": "Timing:",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Wall-clock start, time-to-first-token (TTFT), and total duration. These three together give you a complete picture of LLM latency — a topic covered in the LLM latency card."
+              }
+            ],
+            [
+              {
+                "text": "Cost:",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Computed from token counts and the model's pricing at request time. Attaching cost to the span makes it aggregatable across traces, requests, and deployments."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The OpenTelemetry GenAI semantic conventions draft formalizes the attribute names for these fields. Key attributes include "
+            },
+            {
+              "text": "gen_ai.system",
+              "marks": ["code"]
+            },
+            {
+              "text": " (e.g., ",
+              "marks": []
+            },
+            {
+              "text": "openai",
+              "marks": ["code"]
+            },
+            {
+              "text": "), ",
+              "marks": []
+            },
+            {
+              "text": "gen_ai.request.model",
+              "marks": ["code"]
+            },
+            {
+              "text": ", ",
+              "marks": []
+            },
+            {
+              "text": "gen_ai.usage.input_tokens",
+              "marks": ["code"]
+            },
+            {
+              "text": ", and ",
+              "marks": []
+            },
+            {
+              "text": "gen_ai.usage.output_tokens",
+              "marks": ["code"]
+            },
+            {
+              "text": ". Using the draft conventions now — even before they are stable — positions your instrumentation to align with the ecosystem as it converges."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Logging the prompt and completion to the span is a privacy and compliance decision as well as an engineering one. Systems handling PII or regulated data need prompt-scrubbing at the instrumentation layer, not as an afterthought. LangFuse and Arize Phoenix both offer masking hooks at ingest time."
+            }
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "warning",
+          "runs": [
+            {
+              "text": "Do not discard finish_reason. A finish_reason of length means the model ran out of tokens before completing its response — the output is truncated, not complete. A system that treats a length-truncated response as a successful response has a silent correctness failure that no latency or error metric will surface."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Tracing an LLM call means capturing what you sent, what came back, how many tokens were used, how long each stage took, and what it cost — as a structured span with standard attribute names, not buried in a log file."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "obs-ch13-c003",
+      "order": 3,
+      "title": "LLM Latency: TTFT vs Full-Response — New SLI Shapes",
+      "teaser": "LLM latency is not one number. Time-to-first-token (TTFT) determines perceived responsiveness; full-response time determines downstream availability. A streaming API that starts fast but takes 30 seconds to complete has completely different SLI implications from a non-streaming API with a 3-second P99.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "For synchronous services, latency is simple: time from request to response. LLMs — especially when serving long completions or operating in streaming mode — split this into two distinct measurements that require separate SLI definitions:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Time to First Token (TTFT).",
+                "marks": ["bold"]
+              },
+              {
+                "text": " The interval from sending the prompt to receiving the first completion token. TTFT drives perceived responsiveness in interactive applications. A chat interface with a 2-second TTFT feels responsive even if the full response takes 10 seconds; the same application with a 6-second TTFT feels unresponsive regardless of how fast the stream completes."
+              }
+            ],
+            [
+              {
+                "text": "Time to Last Token / End-to-End Latency.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " The total wall-clock time from prompt to completion. For downstream systems — RAG pipelines, agents that pass LLM output to the next step — this is the latency that matters for SLOs. A slow full-response blocks the downstream regardless of how fast the stream started."
+              }
+            ],
+            [
+              {
+                "text": "Tokens per Second (generation rate).",
+                "marks": ["bold"]
+              },
+              {
+                "text": " The throughput of the completion stream. A low tokens-per-second rate is a signal of model server saturation or network degradation. Combined with TTFT, it gives a complete latency picture: fast start, fast stream vs. fast start, slow stream vs. slow start, fast stream."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "SLI design for LLM latency requires deciding which measurement matters for each use case:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Interactive chat / real-time UI:",
+                "marks": ["bold"]
+              },
+              {
+                "text": " SLI on TTFT. Users perceive responsiveness from first token. SLO example: P95 TTFT < 1.5s."
+              }
+            ],
+            [
+              {
+                "text": "Batch summarization / pipeline step:",
+                "marks": ["bold"]
+              },
+              {
+                "text": " SLI on end-to-end latency. The downstream does not care about streaming. SLO example: P95 end-to-end < 15s for a 2000-token completion."
+              }
+            ],
+            [
+              {
+                "text": "Agent tool-use loop:",
+                "marks": ["bold"]
+              },
+              {
+                "text": " SLI on per-step latency and total agent execution time. Both matter: a slow LLM step blocks tool dispatch; a long-running agent loop exhausts user patience and incurs cost."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "info",
+          "runs": [
+            {
+              "text": "Model provider SLAs typically cover API availability and request-level latency. They do not cover TTFT for streaming endpoints or generation rate degradation. If your user-facing SLO depends on TTFT, you need to measure it yourself — the provider's status page will not surface it."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "LLM latency is two numbers: time to first token (how fast the response starts) and total response time (how long until it finishes). A chat interface cares about the first; a pipeline step cares about the second. Your SLIs need to measure both."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "obs-ch13-c004",
+      "order": 4,
+      "title": "Token Cost Telemetry: Cost as a First-Class Signal",
+      "teaser": "Token cost is a service metric, not a billing artifact. $/request and $/day should live in the same dashboards as latency and error rate. A prompt change that reduces quality and doubles token consumption is a regression even if the error rate stays at zero.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Traditional services have a cost of ownership — infrastructure, engineering, operations — but the marginal cost of a single request is effectively zero. LLM APIs break this model: every request consumes a measurable quantity of tokens with a direct dollar cost. A service that makes 100,000 LLM calls per day has a cost curve that must be tracked as a service metric."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Cost telemetry pipeline:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Capture token counts at the span level.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Every LLM call span should carry prompt_tokens, completion_tokens, and total_tokens as attributes. These are returned by all major providers in the API response."
+              }
+            ],
+            [
+              {
+                "text": "Compute cost at ingest.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Multiply token counts by the model's per-token pricing at request time and attach the computed cost as a span attribute. Use the model name and version to look up the price — pricing varies by model tier and can change without notice."
+              }
+            ],
+            [
+              {
+                "text": "Aggregate by dimensions that matter.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Cost should be aggregatable by user, by feature, by prompt template version, and by environment. A feature that accounts for 5% of traffic but 40% of cost is a target for optimization. A cost spike correlated with a prompt template change is a regression signal."
+              }
+            ],
+            [
+              {
+                "text": "Set cost-based SLOs and alerts.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Define a cost SLO: e.g., average cost per active user per day < $0.02. Alert when daily cost exceeds a budget threshold. These are business constraints that belong in the same on-call runbook as latency and availability."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Helicone and LangFuse both provide cost tracking out of the box, attached to their LLM proxy. Arize Phoenix and Weights & Biases Weave attach cost to traces. For custom instrumentation, the OTel GenAI convention draft reserves "
+            },
+            {
+              "text": "gen_ai.usage.cost",
+              "marks": ["code"]
+            },
+            {
+              "text": " as an attribute, though the canonical attribute is still under discussion."
+            }
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "warning",
+          "runs": [
+            {
+              "text": "Prompt engineers who optimize for quality without tracking token count routinely produce prompts that are qualitatively better and economically catastrophic. A chain-of-thought prompt that improves accuracy by 8% while tripling token consumption may be the wrong trade-off at scale. Cost telemetry makes the trade-off visible before it becomes a budget incident."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Every LLM call has a price tag. Track cost per request and per day the same way you track latency — on a dashboard, with alerts. A prompt change that doubles your costs without doubling your value is a regression, even if error rate stays at zero."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "obs-ch13-c005",
+      "order": 5,
+      "title": "Prompt Versioning: Observability for Prompt Changes",
+      "teaser": "A prompt is software. Changing it changes system behavior. Without versioning and A/B measurement, a prompt change is a dark deployment — you ship it and hope for the best. Prompt versioning closes the feedback loop.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "In a traditional service, a code change produces a new build, deployed through a pipeline, with tests at each stage. Behavioral changes are visible in version control. In LLM-augmented systems, a "
+            },
+            {
+              "text": "prompt change",
+              "marks": ["italic"]
+            },
+            {
+              "text": " is a behavioral change that often bypasses all of this — it is edited in a database, applied immediately, and its effects are measured only through downstream complaints."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The underlying problem: how do you know your prompt change didn't regress quality? The answer is prompt versioning with instrumented comparison."
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Version every prompt.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Store prompts in version control or a prompt registry (LangSmith, LangFuse, and Helicone all provide prompt management). Every deployment attaches a prompt version identifier to LLM call spans."
+              }
+            ],
+            [
+              {
+                "text": "Tag spans with prompt version.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " All LLM call spans should carry a prompt_version attribute. This makes it possible to slice quality metrics, cost metrics, and latency metrics by prompt version — a prerequisite for comparison."
+              }
+            ],
+            [
+              {
+                "text": "Run A/B comparisons at the trace level.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Shadow old and new prompt versions against the same inputs. Compare output quality scores, token counts, latency, and cost. Promote the new version only if quality holds or improves and cost does not regress."
+              }
+            ],
+            [
+              {
+                "text": "Treat prompt rollout like a canary deployment.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Route 5% of traffic to the new prompt version, observe quality and cost signals, then ramp. Rollback is changing the version pointer in the registry — instantaneous and safe."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "LangSmith's prompt hub and LangFuse's prompt management features implement this pattern directly. Both store versioned prompts, attach version metadata to traces, and provide comparison views. Arize Phoenix and Weights & Biases Weave support prompt-version slicing in their experiment tracking views."
+            }
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "info",
+          "runs": [
+            {
+              "text": "The prompt-as-software framing has a direct implication for incident response: if a quality regression occurs and you have prompt versioning, the first question in the runbook is \"was a prompt version changed in the preceding 24 hours?\" Without versioning, this question is unanswerable."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "A prompt change is a code change — it changes your system's behavior. Version your prompts, tag every LLM call with its prompt version, and A/B test changes before full rollout. Otherwise you're shipping blind."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "obs-ch13-c006",
+      "order": 6,
+      "title": "Evaluation as Observability: LLM-as-Judge and Continuous Evals",
+      "teaser": "Evaluation is not just a pre-deployment gate — it is a continuous observability signal. Running eval scores as metrics in your monitoring stack means you detect quality regressions the same way you detect latency regressions: from a dashboard, with an alert, before users file support tickets.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Traditional software quality signals — test pass rate, code coverage — are binary and run at build time. LLM quality is continuous, probabilistic, and drifts between deployments due to model updates, data distribution shifts, and prompt changes. Evaluation must be continuous, not just pre-deployment."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Three categories of continuous evaluation:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "LLM-as-judge.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " A separate LLM (often a larger, more capable model) evaluates the output of the production LLM against criteria: correctness, relevance, coherence, safety. The judge produces a numeric score that is attached to the trace as a span attribute. This works well for criteria that are hard to express as heuristics but easy to articulate in natural language: \"Does the response answer the user's question without introducing information not present in the context?\""
+              }
+            ],
+            [
+              {
+                "text": "Reference-based evaluation.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Compare LLM outputs to a ground-truth answer set using similarity metrics (BLEU, ROUGE, BERTScore) or exact match. Useful when a correct answer is known and deterministic. Less useful for open-ended generation tasks where multiple correct answers exist."
+              }
+            ],
+            [
+              {
+                "text": "Heuristic evaluation.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Rule-based checks that run cheaply at high volume: response length distribution, keyword presence, format compliance (is the JSON valid?), profanity or PII detection. Heuristic evals are the first line — they catch obvious regressions without the cost of an LLM judge call."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Operationalizing evals as observability means:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Sample production traffic",
+                "marks": ["bold"]
+              },
+              {
+                "text": " and run evals asynchronously against the sampled traces. Running evals synchronously on every request is too expensive; sampling 1-5% provides sufficient signal without doubling inference costs."
+              }
+            ],
+            [
+              {
+                "text": "Emit eval scores as metrics",
+                "marks": ["bold"]
+              },
+              {
+                "text": " with the same dimensionality as your other LLM metrics: by model version, prompt version, user segment, and feature. A P10 quality score drop sliced by prompt version is an actionable signal."
+              }
+            ],
+            [
+              {
+                "text": "Alert on quality SLO breaches",
+                "marks": ["bold"]
+              },
+              {
+                "text": " the same way you alert on latency SLO breaches. A quality SLO might be: \"P50 relevance score > 0.75 over any 1-hour window.\" LangSmith and Arize Phoenix both provide native eval-to-metric pipelines."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "warning",
+          "runs": [
+            {
+              "text": "LLM-as-judge has a known failure mode: it inherits the biases of the judge model. A judge that prefers verbose answers will score verbose responses higher regardless of accuracy. Calibrate judge scores against human ratings on a held-out set before trusting them as production signals."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Eval scores should run continuously in production — sampled from real traffic — and show up on the same dashboards as latency. When quality drops, an alert fires, just like when P99 latency spikes. Evaluation is not just a pre-launch gate; it is an ongoing signal."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "obs-ch13-c007",
+      "order": 7,
+      "title": "Hallucination Detection: Grounding and Factuality Scoring",
+      "teaser": "A hallucination is a response that is confidently wrong — the model asserts a fact not present in its context or knowledge. Detecting hallucinations at scale requires automated groundedness scoring: a signal that answers whether each claim in the output is supported by the provided context.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Hallucination detection frames a specific problem: given an LLM's response and the context it was given (retrieved documents, system prompt, conversation history), does the response make claims that are not supported by that context? This is the "
+            },
+            {
+              "text": "groundedness",
+              "marks": ["italic"]
+            },
+            {
+              "text": " question."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Approaches to automated hallucination detection:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Entailment-based scoring.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " NLI (Natural Language Inference) models are trained to classify whether a hypothesis is entailed by, contradicted by, or neutral to a premise. Applied to LLM outputs: for each claim in the response, does the retrieved context entail it? A high fraction of contradicted claims is a hallucination signal."
+              }
+            ],
+            [
+              {
+                "text": "LLM-as-judge for groundedness.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " A judge prompt asks: \"Does the following response contain any claims not supported by the provided context? List them.\" Combined with a binary or scored output, this produces a groundedness score attachable to the trace. Used by Arize Phoenix and LangSmith in their built-in evaluators."
+              }
+            ],
+            [
+              {
+                "text": "Citation checking.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " If the LLM is prompted to cite its sources (a retrieval-augmented generation pattern), automated checks can verify that cited documents actually contain the claimed information. A low citation accuracy rate is a hallucination proxy."
+              }
+            ],
+            [
+              {
+                "text": "Consistency sampling.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Query the same prompt multiple times at higher temperature and measure response consistency. Inconsistent factual claims across samples signal low confidence — the model is sampling from a broad distribution rather than retrieving a known fact."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Operationally, groundedness scores should be:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Attached to traces as span attributes.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " This makes them filterable and aggregatable alongside cost and latency."
+              }
+            ],
+            [
+              {
+                "text": "Used to gate human review queues.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Low-groundedness responses should be routed to human reviewers — especially in high-stakes domains (medical, legal, financial)."
+              }
+            ],
+            [
+              {
+                "text": "Trended over time by model version.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " A model update that shifts the groundedness distribution is a regression signal, even if the update claims other improvements."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "info",
+          "runs": [
+            {
+              "text": "Groundedness scoring is only meaningful for retrieval-augmented systems where the context is explicit. For open-domain generation without a provided context, detecting hallucination requires a separate factuality check against an external knowledge base — a harder and more expensive problem."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Hallucination detection asks: did the model say something that is not in the context it was given? You can measure this automatically using NLI models or an LLM judge. Attach groundedness scores to your traces so you can alert when the model starts making things up at scale."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "obs-ch13-c008",
+      "order": 8,
+      "title": "Agent Observability: Tool Calls, State, and Retries",
+      "teaser": "An agent is not a single LLM call — it is a loop that reasons, calls tools, receives results, and decides what to do next. Observing an agent means capturing the full loop as a structured trace, with each tool call and each LLM reasoning step as a distinct span.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Agent observability extends LLM observability with three dimensions that single-call tracing does not cover:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Tool call observability.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Each time the agent invokes a tool — a web search, a database query, a code executor, an external API — that invocation should be a child span of the parent agent trace. The span captures: tool name, input parameters, output, latency, and success/failure. Without this, you cannot distinguish an agent that is slow because of slow LLM reasoning from one that is slow because of a slow tool."
+              }
+            ],
+            [
+              {
+                "text": "State observability.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Agents maintain state across turns: the conversation history, the scratchpad, the list of completed sub-tasks. State size is a performance signal — a growing context window increases both latency and cost per step. State content is a correctness signal — agents that lose track of previously established facts in a long session are exhibiting a known failure mode."
+              }
+            ],
+            [
+              {
+                "text": "Retry and loop observability.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Agents that cannot accomplish a task often enter retry loops: they call the same tool repeatedly, rephrase the same question, or get stuck oscillating between two states. A rapidly-incrementing step count is the primary canary for agent runaway. Trace the retry count per agent session and alert when it exceeds a threshold."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Agent-level metrics to track alongside individual span metrics:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Steps per task:",
+                "marks": ["bold"]
+              },
+              {
+                "text": " P50/P95 steps to task completion. A distribution shift (tasks requiring more steps) signals model regression or task difficulty increase."
+              }
+            ],
+            [
+              {
+                "text": "Tool call success rate:",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Fraction of tool calls that return a successful result. A drop in tool success rate is often an infrastructure issue (tool latency, API rate limiting) not a model issue."
+              }
+            ],
+            [
+              {
+                "text": "Task completion rate:",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Fraction of agent sessions that reach a terminal state (success or defined failure) vs. time out or get stuck in a loop."
+              }
+            ],
+            [
+              {
+                "text": "Context window utilization:",
+                "marks": ["bold"]
+              },
+              {
+                "text": " What fraction of the model's context window is consumed by step N of a session? An agent that hits the context window limit mid-task fails silently in many frameworks."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "warning",
+          "runs": [
+            {
+              "text": "Most agent frameworks (LangChain, LlamaIndex, AutoGen) emit traces automatically when connected to an OTel-compatible backend or a vendor like LangSmith. Do not hand-instrument agent loops — rely on the framework's instrumentation layer and focus your custom instrumentation on the business-level signals (task completion rate, steps-to-completion distribution) that the framework cannot compute automatically."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "An agent is a loop, not a single call. To observe it, trace every tool call, track how much state it's carrying, and watch for retry spirals. A step count that keeps climbing without the task finishing is your primary signal that something has gone wrong."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "obs-ch13-c009",
+      "order": 9,
+      "title": "Multi-Step Agent Traces: The New Trace Shape",
+      "teaser": "A ReAct-pattern agent produces a trace that looks nothing like a microservice trace. It is a tree of alternating reasoning steps and tool calls, with variable depth and recursive structure. Visualizing and querying this trace shape requires purpose-built tooling.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The ReAct pattern (Reason + Act) is the dominant execution pattern for LLM agents. Each step is: Think → Act (tool call) → Observe (tool result) → Think → Act → ... → Answer. A plan-execute-reflect variant adds an upfront planning step and a reflection step after each execution block."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "ASCII diagram of a multi-step agent trace:"
+            }
+          ]
+        },
+        {
+          "type": "code",
+          "language": "text",
+          "text": "agent_session (root span)\n├── step_1: llm_reasoning\n│   └── [span attrs: model, tokens, TTFT, prompt_version]\n├── step_2: tool_call: web_search\n│   └── [span attrs: query, result_count, latency, success]\n├── step_3: llm_reasoning   (observes search result)\n│   └── [span attrs: model, tokens, context_window_pct]\n├── step_4: tool_call: code_executor\n│   └── [span attrs: code, stdout, exit_code, latency]\n├── step_5: llm_reasoning   (observes code output)\n│   └── [span attrs: model, tokens]\n├── step_6: tool_call: web_search  (retry — different query)\n│   └── [span attrs: query, result_count, latency, retry=true]\n└── step_7: llm_reasoning   (final answer)\n    └── [span attrs: model, tokens, finish_reason=stop]\n\nagent_session attrs:\n  task_id, user_id, total_steps=7, total_tokens=8420,\n  total_cost=$0.042, wall_time=34.2s, outcome=success"
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The key structural differences from a microservice trace:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Variable depth.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " The same task can take 3 steps or 15 depending on what the agent finds. Unlike a microservice trace where depth is determined by code structure, agent trace depth is determined by runtime behavior."
+              }
+            ],
+            [
+              {
+                "text": "Alternating span types.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " LLM reasoning spans and tool call spans have different attributes and different performance profiles. They must be visualized and queried separately."
+              }
+            ],
+            [
+              {
+                "text": "Session-level aggregates matter.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Total steps, total tokens, total cost, and outcome are session-level attributes that cannot be derived from a single span — they require the root span to aggregate across all children."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "LangSmith, LangFuse, and Arize Phoenix all render agent traces as trees rather than linear waterfalls, and support filtering by step type, tool name, and session outcome. Standard OTel backends (Jaeger, Tempo) can store the spans but lack native agent-trace visualization — the GenAI semantic conventions work is partially motivated by enabling generic backends to render these traces correctly."
+            }
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "info",
+          "runs": [
+            {
+              "text": "The OpenTelemetry GenAI semantic conventions draft (under the CNCF OTel SIG AI/ML working group) defines span kind values for LLM calls (gen_ai.client) and introduces the concept of agent spans as a first-class span kind. The draft is evolving — subscribe to the GitHub issue tracker at github.com/open-telemetry/semantic-conventions rather than treating any specific attribute set as stable."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "An agent trace is a tree of alternating think-and-act steps with variable depth. It looks nothing like a microservice waterfall. The root span carries the session totals — steps, tokens, cost, outcome — and the children show exactly what the agent did at each step."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "obs-ch13-c010",
+      "order": 10,
+      "title": "RAG Observability: Retrieval Quality and Context Utilization",
+      "teaser": "A RAG system has two failure modes that a pure LLM call does not: bad retrieval (the wrong documents come back) and poor grounding (the LLM ignores the good documents that do come back). Both require their own observability layer.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Retrieval-Augmented Generation (RAG) prepends a retrieval step to the LLM call: embed the user query, search the vector database for semantically similar documents, stuff the results into the context window, then generate a response conditioned on the retrieved content. Each stage can fail independently."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The three RAG-specific observability dimensions:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Retrieval quality.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Did the vector search return relevant documents? Signals: recall@k (fraction of relevant documents in top-k results), precision@k (fraction of top-k results that are relevant), mean reciprocal rank (MRR). These require either a labeled relevance dataset or a judge LLM that scores retrieved documents against the query."
+              }
+            ],
+            [
+              {
+                "text": "Context window utilization.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " How much of the available context window is consumed by retrieved documents? A RAG system that retrieves 10 documents but can only fit 3 in the context window is silently discarding information. Measure: tokens_in_context / context_window_size. Trend this — a rising utilization rate means your document chunks are growing or your context window is too small."
+              }
+            ],
+            [
+              {
+                "text": "Groundedness (context adherence).",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Did the LLM's response draw from the retrieved documents, or did it ignore them and hallucinate? Groundedness scoring (covered in the hallucination card) is most meaningful in RAG systems, because the expected context is explicit and the claim that a response is grounded in that context is testable."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Vector database observability (covered in the next card) feeds into retrieval quality. The retrieval span in a RAG trace should carry: query embedding (or a hash), top-k results with their similarity scores, and retrieval latency. If retrieval quality degrades, the span attributes tell you whether the issue is in the vector DB (high latency, low similarity scores) or in the embedding model (degraded semantic alignment)."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "RAGAS (github.com/explodinggradients/ragas) is an open-source framework specifically for RAG evaluation that computes faithfulness, answer relevancy, context precision, and context recall scores. Designed to run as an eval pipeline against sampled production traces."
+            }
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "info",
+          "runs": [
+            {
+              "text": "A RAG system with poor retrieval quality cannot be fixed by improving the LLM. The LLM can only reason about what is in its context window. If the wrong documents are retrieved, even a perfect LLM will produce a grounded-but-wrong response — grounded in irrelevant context. Retrieval quality observability is upstream of response quality observability."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "A RAG system can fail in two places: retrieval (the wrong documents come back) or grounding (the LLM ignores the right documents). Track retrieval quality with recall and precision metrics, and measure context window utilization to know when you're silently dropping retrieved content."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "obs-ch13-c011",
+      "order": 11,
+      "title": "Vector DB Observability: Embedding Latency, Recall, and Index Drift",
+      "teaser": "A vector database is a service with observable performance characteristics. Embedding latency, query latency, recall@k, and index drift are the four signals that determine whether your vector search is a performance bottleneck or a silent correctness problem.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Vector databases (Pinecone, Weaviate, Chroma, pgvector, Qdrant) are the retrieval layer for RAG systems and many agent architectures. Like any data store, they have performance and correctness properties that require active monitoring. Unlike traditional databases, they have a "
+            },
+            {
+              "text": "recall dimension",
+              "marks": ["italic"]
+            },
+            {
+              "text": " — approximate nearest neighbor search can return the wrong results without raising an error."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The four vector DB observability signals:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Embedding latency.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " The time to embed a query (convert text to a vector using the embedding model). This is a separate call from the vector search and has its own latency profile. P95 embedding latency should be tracked as a component of total RAG latency. A spike in embedding latency is likely an embedding model provider issue, not a vector DB issue."
+              }
+            ],
+            [
+              {
+                "text": "Query (search) latency.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Time to execute the nearest-neighbor search against the index. Degrades with index size. Track P50/P95/P99 and alert on regressions. A sudden query latency increase that correlates with an index size increase is expected; one that does not is anomalous."
+              }
+            ],
+            [
+              {
+                "text": "Recall@k.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " The fraction of true nearest neighbors that appear in the top-k results. Approximate nearest neighbor algorithms (HNSW, IVF) trade recall for speed. After index parameter changes or large index updates, recall can silently degrade — the search returns plausible but suboptimal documents. Measure by running ground-truth recall benchmarks post-index-update."
+              }
+            ],
+            [
+              {
+                "text": "Index drift.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " The distribution of data in the vector space shifts as new documents are ingested. If the embedding model is updated (a newer version of text-embedding-ada is deployed) while the index still contains embeddings from the old model, queries and documents are in different vector spaces — retrieval quality collapses. Track embedding model version as a metadata field on every indexed document and alert if multiple versions coexist in the same index without re-indexing."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "warning",
+          "runs": [
+            {
+              "text": "Index drift caused by a silent embedding model version change is the most common undetected vector DB failure mode. The search continues to return results; they are just wrong. The signal is a groundedness score drop correlated with an embedding model deployment, not a vector DB error or latency spike."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "A vector database can fail silently — it returns results, but they are the wrong results. Track embedding latency, query latency, recall@k after index updates, and whether all documents and queries are using the same embedding model version. A model version mismatch will tank retrieval quality without raising an error."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "obs-ch13-c012",
+      "order": 12,
+      "title": "The LLM Observability Vendor Landscape",
+      "teaser": "LangSmith, LangFuse, Arize Phoenix, Helicone, and Weights & Biases Weave are the leading platforms as of this writing. They converge on the same core capabilities but diverge in integration depth, privacy model, and open-source availability. Choose by deployment model and data sensitivity, not feature comparison.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Note: this card is explicitly volatile. Vendor capabilities in LLM observability are changing quarterly. The framework for evaluating vendors will outlast the current feature matrices."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The five principal platforms and their differentiation as of mid-2026:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "LangSmith (LangChain, Inc.).",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Deepest integration with the LangChain ecosystem. Strong prompt hub (versioned prompts with deployment workflows), native LLM-as-judge evaluators, and dataset management for regression testing. Hosted SaaS only. Traces are stored in LangSmith's cloud — a data privacy consideration for regulated industries. Best choice if you are heavily invested in LangChain/LangGraph."
+              }
+            ],
+            [
+              {
+                "text": "LangFuse (open source, BSL licensed).",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Framework-agnostic. Self-hostable, which makes it the default choice for enterprises with data residency requirements. Strong prompt management, cost tracking, and eval pipeline. OTel-compatible ingestion. The combination of self-hosting and OTel compatibility makes LangFuse the most aligned with enterprise observability standards."
+              }
+            ],
+            [
+              {
+                "text": "Arize Phoenix (open source, Arize AI).",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Strongest evaluation and explainability tooling. Built-in groundedness, relevance, and toxicity evaluators using LLM-as-judge. Native support for embedding visualization and clustering — particularly useful for diagnosing retrieval quality failures. Phoenix is the open-source product; Arize is the enterprise SaaS version with MLOps integration."
+              }
+            ],
+            [
+              {
+                "text": "Helicone.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Proxy-based architecture — route your LLM API calls through Helicone and it captures traces, costs, and metrics without SDK instrumentation. Lowest integration friction. Strong cost analytics and prompt caching insights. Less capable on evaluation and agent tracing compared to LangSmith and LangFuse. Best for teams that want cost visibility and basic tracing without framework lock-in."
+              }
+            ],
+            [
+              {
+                "text": "Weights & Biases Weave.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Strongest lineage from the ML experimentation side. Weave connects LLM traces to the upstream training and fine-tuning experiments that produced the model — valuable for teams doing their own model development. Good eval framework and trace storage. The best choice for teams that already use W&B for model training."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Evaluation criteria that outlast vendor feature matrices: (1) Can you self-host or export your trace data? (2) Does it support OTel ingestion? (3) Can you run evals asynchronously against sampled production traffic? (4) Does the pricing model scale with your call volume? (5) Does it support your agent framework?"
+            }
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "info",
+          "runs": [
+            {
+              "text": "The OTel GenAI semantic conventions draft is the convergence point for this vendor landscape. As the conventions stabilize, the cost of switching between vendors drops — data ingested with standard OTel attributes is portable. Investing in OTel-compatible instrumentation now reduces vendor lock-in regardless of which platform wins the consolidation."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "LangSmith, LangFuse, Arize Phoenix, Helicone, and W&B Weave all solve the same core problem: trace LLM calls, track costs, and run evals. They differ in deployment model (SaaS vs. self-hosted) and depth of eval tooling. Choose based on data residency requirements and framework fit — and instrument with OTel conventions to stay portable."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "obs-ch13-c013",
+      "order": 13,
+      "title": "The AI-Era SLI: New Latency, Quality, and Cost Targets",
+      "teaser": "The AI era introduces a third axis of service quality alongside latency and availability: output quality. The AI-era SLI is a triplet — latency SLO, quality SLO, cost SLO — and all three must hold simultaneously for the service to be operating correctly.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Traditional SLIs map well to the properties of deterministic services: availability (is it up?), latency (is it fast?), and error rate (is it correct?). Error rate is binary — either the request succeeded or it did not. For LLM-augmented services, success is a spectrum, and the traditional SLI triplet is insufficient."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The AI-era SLI triplet:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Latency SLO.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Split into TTFT and end-to-end latency as described in the LLM latency card. Example: P95 TTFT < 2s AND P95 end-to-end < 20s for responses under 1000 tokens. Measured separately per model tier (fast model vs. reasoning model have different latency profiles)."
+              }
+            ],
+            [
+              {
+                "text": "Quality SLO.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " A continuous quality score (from eval-as-observability) must stay above a defined threshold. Example: rolling 1-hour P50 relevance score > 0.72, groundedness score > 0.80. Measured on sampled production traffic using asynchronous evals. Breaching the quality SLO triggers an alert and typically initiates a prompt rollback investigation."
+              }
+            ],
+            [
+              {
+                "text": "Cost SLO.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Average cost per request and total daily cost must stay within defined budget envelopes. Example: average cost per request < $0.008, daily cost < $500. A cost SLO breach does not degrade user experience directly but signals a budget incident. Cost SLOs also surface prompt or architecture regressions before they appear on the invoice."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Error budget accounting in the AI era requires extending the traditional error budget model. A classic error budget tracks availability or latency budget spend. An AI-era error budget might track:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Quality budget:",
+                "marks": ["bold"]
+              },
+              {
+                "text": " hours of quality SLO violation per rolling 30-day window."
+              }
+            ],
+            [
+              {
+                "text": "Cost budget:",
+                "marks": ["bold"]
+              },
+              {
+                "text": " monthly LLM spend vs. allocation; overage as a percentage."
+              }
+            ],
+            [
+              {
+                "text": "Hallucination budget:",
+                "marks": ["bold"]
+              },
+              {
+                "text": " maximum acceptable fraction of low-groundedness responses before a human review gate activates."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The three SLIs are not independent. A system under load may sacrifice quality (lower model tier, fewer retrieved documents) to preserve latency. A system that caches aggressively may reduce cost but drift toward stale responses. Making these trade-offs explicit — and surfacing them in dashboards — is the engineering discipline of AI-era reliability."
+            }
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "info",
+          "runs": [
+            {
+              "text": "The principles established in the earlier chapters of this book — SLIs grounded in user experience, error budgets as a decision-making framework, alerting on symptoms not causes — apply unchanged to AI-era SLIs. The signals are new; the discipline is the same. Observability for AI systems is observability, extended."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "An AI service has three dials, not two: latency, quality, and cost. All three need SLOs and all three need to hold at the same time. When you turn one dial — speed up responses by using a cheaper model — you might degrade the other two. Making those trade-offs visible is what AI-era observability is for."
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

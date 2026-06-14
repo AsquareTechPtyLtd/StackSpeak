@@ -1,0 +1,1600 @@
+{
+  "chapterId": "aws-ch03-serverless-with-lambda",
+  "shardIndex": 1,
+  "cards": [
+    {
+      "id": "aws-ch03-c001",
+      "order": 1,
+      "title": "Lambda and Event-Driven Execution",
+      "teaser": "Lambda runs your code in response to events — you don't manage servers, but you still need to understand what \"no servers\" actually means for your execution model",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Lambda is AWS's function-as-a-service runtime. You upload code (or a container image), define a handler, and Lambda runs it in response to an event. The function is the unit of deployment: one handler, one purpose, one set of resource limits."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "\"Serverless\" doesn't mean no servers — it means you don't provision, patch, or scale them. AWS manages a fleet of micro-VMs (Firecracker) behind the scenes. What you lose: persistent processes, long-running daemons, in-memory state between invocations. What you gain: zero idle cost, automatic horizontal scaling, no OS patching."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The execution environment lifecycle matters:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Init phase",
+                "marks": [
+                  "bold"
+                ]
+              },
+              {
+                "text": " — Lambda downloads your code, starts the runtime, and runs any initialization code outside your handler. This happens once per execution environment."
+              }
+            ],
+            [
+              {
+                "text": "Invoke phase",
+                "marks": [
+                  "bold"
+                ]
+              },
+              {
+                "text": " — your handler is called with the event payload and a context object."
+              }
+            ],
+            [
+              {
+                "text": "Shutdown phase",
+                "marks": [
+                  "bold"
+                ]
+              },
+              {
+                "text": " — the environment is frozen after the invocation completes and may be reused for future invocations, or discarded after a period of inactivity."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "A concrete example: an S3 "
+            },
+            {
+              "text": "PutObject",
+              "marks": [
+                "code"
+              ]
+            },
+            {
+              "text": " event triggers a Lambda that resizes an uploaded image. Lambda receives a JSON payload describing the bucket and key, your handler downloads the file, processes it, and writes the result. Lambda scales from zero to hundreds of concurrent invocations automatically — no Auto Scaling Group required."
+            }
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "info",
+          "runs": [
+            {
+              "text": "The execution environment freeze/thaw cycle is why you can cache clients (database connections, SDK clients) in module-level code — they survive across warm invocations of the same environment."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Lambda is like a vending machine for compute — you push the button (event), it dispenses the result, and you never think about who restocked it"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "aws-ch03-c002",
+      "order": 2,
+      "title": "Three Invocation Models",
+      "teaser": "How you invoke Lambda determines who handles errors and retries — getting this wrong means silently dropped events or cascading failures under load",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Lambda has three distinct invocation models, each with different error semantics."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Synchronous",
+              "marks": [
+                "bold"
+              ]
+            },
+            {
+              "text": " — the caller waits for the response. Examples: API Gateway, Application Load Balancer, Lambda URLs. If the function throws, the error is returned to the caller immediately. Retries are the caller's responsibility. Throttles (429s) propagate back to the caller as errors."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Asynchronous",
+              "marks": [
+                "bold"
+              ]
+            },
+            {
+              "text": " — the caller hands off the event and gets a 202 immediately. Examples: S3 event notifications, SNS, EventBridge. Lambda queues the event internally and invokes your function. On failure, Lambda retries twice with exponential backoff (roughly 1 min, then 2 min). After exhausting retries, the event goes to a dead letter queue or destination if configured. You never see the error unless you check CloudWatch or configure a failure destination."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Stream-based (polling)",
+              "marks": [
+                "bold"
+              ]
+            },
+            {
+              "text": " — Lambda polls a stream or queue on your behalf. Examples: Kinesis Data Streams, DynamoDB Streams, SQS. Lambda reads batches of records and invokes your function. On failure behavior differs by source: Kinesis/DynamoDB Streams retry the batch until it succeeds or expires (records are ordered; Lambda blocks progress until the batch clears). SQS retries until the message reaches its "
+            },
+            {
+              "text": "maxReceiveCount",
+              "marks": [
+                "code"
+              ]
+            },
+            {
+              "text": ", then routes to the DLQ."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Key tradeoff table:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Synchronous: low latency, caller-managed retries, tight coupling"
+              }
+            ],
+            [
+              {
+                "text": "Asynchronous: decoupled, managed retries, at-least-once delivery"
+              }
+            ],
+            [
+              {
+                "text": "Stream-based: ordered (Kinesis/DDB) or unordered (SQS), backpressure handled by batch size"
+              }
+            ]
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "warning",
+          "runs": [
+            {
+              "text": "Async invocations that fail silently are a common production bug. If you're using S3 triggers or SNS without a DLQ configured, failed invocations vanish with no alert."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "It's the difference between a synchronous function call, a fire-and-forget message to a queue, and a background thread reading from a log — same code, completely different failure contract"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "aws-ch03-c003",
+      "order": 3,
+      "title": "Cold Starts — Latency You Don't Control",
+      "teaser": "The first invocation of a Lambda function pays a startup tax that can range from 100ms to over a second — knowing what drives it is the first step to managing it",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "A cold start happens when Lambda has no warm execution environment to reuse. This triggers the full init phase: downloading your deployment package, starting the runtime process, and running your initialization code. The result is added latency before your handler even begins."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Typical cold start latencies by runtime:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Node.js / Python: 100–300ms"
+              }
+            ],
+            [
+              {
+                "text": ".NET / Java: 500ms–1s+"
+              }
+            ],
+            [
+              {
+                "text": "Container images: 1–3s+ (image pull overhead)"
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The JVM is the worst offender — class loading and JIT compilation add hundreds of milliseconds. AWS introduced "
+            },
+            {
+              "text": "SnapStart",
+              "marks": [
+                "bold"
+              ]
+            },
+            {
+              "text": " for Java 21 (and Java 17 with Corretto) to mitigate this: Lambda snapshots the initialized execution environment and restores from that snapshot on cold start, cutting Java cold starts to under 1 second in most cases."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Provisioned Concurrency",
+              "marks": [
+                "bold"
+              ]
+            },
+            {
+              "text": " is the blunt-force solution: you pay Lambda to keep N execution environments pre-initialized and warm at all times. Those environments have zero cold start. Cost: you pay for provisioned concurrency per GB-second even when idle, so it's not free."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "When cold starts matter most:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "User-facing synchronous APIs (human latency perception ~300ms)"
+              }
+            ],
+            [
+              {
+                "text": "Latency-sensitive financial or trading workloads"
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "When cold starts don't matter:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Async background processing (S3, SNS, EventBridge)"
+              }
+            ],
+            [
+              {
+                "text": "Batch jobs"
+              }
+            ],
+            [
+              {
+                "text": "Internal tooling"
+              }
+            ]
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "tip",
+          "runs": [
+            {
+              "text": "Before paying for Provisioned Concurrency, check if you actually have a cold start problem — use CloudWatch's "
+            },
+            {
+              "text": "Init Duration",
+              "marks": [
+                "code"
+              ]
+            },
+            {
+              "text": " metric to measure how often and how long cold starts occur in production."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "A cold start is like the first compile — every subsequent run uses the cached bytecode, but the first person to the endpoint pays the full build cost"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "aws-ch03-c004",
+      "order": 4,
+      "title": "Lambda Layers — Shared Code Without Shared State",
+      "teaser": "Layers let you package libraries and shared code separately from your function, but the convenience comes with coupling risks you should understand before going all-in",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "A Lambda layer is a ZIP archive of code, libraries, or data that you attach to a function alongside its deployment package. The layer's contents are extracted to "
+            },
+            {
+              "text": "/opt",
+              "marks": [
+                "code"
+              ]
+            },
+            {
+              "text": " in the execution environment and are available to your function at runtime."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Common uses:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Python/Node.js dependencies (e.g., "
+              },
+              {
+                "text": "numpy",
+                "marks": [
+                  "code"
+                ]
+              },
+              {
+                "text": ", "
+              },
+              {
+                "text": "boto3",
+                "marks": [
+                  "code"
+                ]
+              },
+              {
+                "text": " extensions, "
+              },
+              {
+                "text": "axios",
+                "marks": [
+                  "code"
+                ]
+              },
+              {
+                "text": ")"
+              }
+            ],
+            [
+              {
+                "text": "Custom runtimes"
+              }
+            ],
+            [
+              {
+                "text": "Shared utility code across multiple Lambda functions"
+              }
+            ],
+            [
+              {
+                "text": "Configuration or data files that don't change often"
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Limits that matter:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "A function can reference "
+              },
+              {
+                "text": "up to 5 layers",
+                "marks": [
+                  "bold"
+                ]
+              },
+              {
+                "text": " simultaneously"
+              }
+            ],
+            [
+              {
+                "text": "The unzipped size of the function plus all layers must be under "
+              },
+              {
+                "text": "250MB",
+                "marks": [
+                  "bold"
+                ]
+              },
+              {
+                "text": " (or 10GB for container images)"
+              }
+            ],
+            [
+              {
+                "text": "Layers are versioned — when you publish a new layer version, functions keep using the old version until you update them explicitly"
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The coupling risk: if 50 functions reference layer version 3 of your shared utilities, updating the layer doesn't automatically update any function. You have to redeploy each one. This creates version drift — different functions running different versions of the same shared code, often invisibly."
+            }
+          ]
+        },
+        {
+          "type": "code",
+          "language": "bash",
+          "code": "# Attach a layer to a function via CLI\naws lambda update-function-configuration \\\n  --function-name my-function \\\n  --layers arn:aws:lambda:us-east-1:123456789:layer:my-utils:7"
+        },
+        {
+          "type": "callout",
+          "variant": "warning",
+          "runs": [
+            {
+              "text": "Layers are a distribution mechanism, not a module system. They don't enforce versioning contracts or give you dependency resolution. Treat them as a bundling convenience, not an architecture primitive."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "A Lambda layer is like a shared "
+            },
+            {
+              "text": "/usr/local/lib",
+              "marks": [
+                "code"
+              ]
+            },
+            {
+              "text": " — it's convenient until two functions need different versions of the same library and you realize there's no package manager enforcing compatibility"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "aws-ch03-c005",
+      "order": 5,
+      "title": "Concurrency Limits and Throttling",
+      "teaser": "Lambda scales automatically — until it hits a limit, at which point it silently throttles your function with a 429, and understanding the three concurrency controls is how you avoid that surprise",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Lambda concurrency = number of requests being handled simultaneously. Each invocation occupies one unit of concurrency for its duration."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Account-level concurrency limit:",
+              "marks": [
+                "bold"
+              ]
+            },
+            {
+              "text": " By default, all Lambda functions in an account/region share a pool of "
+            },
+            {
+              "text": "1,000 concurrent executions",
+              "marks": [
+                "bold"
+              ]
+            },
+            {
+              "text": ". You can request an increase via AWS Support. If your aggregate concurrency exceeds this, new invocations get throttled."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Reserved concurrency:",
+              "marks": [
+                "bold"
+              ]
+            },
+            {
+              "text": " You can allocate a fixed number of concurrent executions to a specific function. This does two things:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Guarantees",
+                "marks": [
+                  "bold"
+                ]
+              },
+              {
+                "text": " that function can always scale up to its reserved amount (taken from the account pool)"
+              }
+            ],
+            [
+              {
+                "text": "Caps",
+                "marks": [
+                  "bold"
+                ]
+              },
+              {
+                "text": " that function — it cannot exceed the reserved amount even if the account pool has headroom"
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Reserved concurrency of 0 effectively disables a function (useful for emergency shutoffs)."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Provisioned concurrency:",
+              "marks": [
+                "bold"
+              ]
+            },
+            {
+              "text": " Pre-initialized environments, already discussed for cold starts. Counts against your reserved concurrency allocation."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Throttling behavior:",
+              "marks": [
+                "bold"
+              ]
+            },
+            {
+              "text": " When a function is throttled, Lambda returns a 429 "
+            },
+            {
+              "text": "TooManyRequestsException",
+              "marks": [
+                "code"
+              ]
+            },
+            {
+              "text": ". Behavior depends on invocation model:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Synchronous: 429 returned to caller immediately"
+              }
+            ],
+            [
+              {
+                "text": "Asynchronous: Lambda retries internally for up to 6 hours"
+              }
+            ],
+            [
+              {
+                "text": "Stream-based: Lambda retries until the record expires or a bisect-on-error policy isolates the bad batch"
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Burst limits:",
+              "marks": [
+                "bold"
+              ]
+            },
+            {
+              "text": " Lambda can scale from 0 to 500–3,000 new concurrent executions per minute (varies by region), then 500/minute after that. Sudden traffic spikes can hit burst limits before they hit account limits."
+            }
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "tip",
+          "runs": [
+            {
+              "text": "Use reserved concurrency to protect downstream systems — if your function hits a database with a 100-connection pool, capping the function at 80 concurrent executions prevents connection exhaustion even during traffic spikes."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "It's like a connection pool with three dials: total connections in the building, connections reserved for your team's app, and connections you're paying to keep open even at midnight"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "aws-ch03-c006",
+      "order": 6,
+      "title": "Lambda URLs — HTTPS Without API Gateway",
+      "teaser": "Lambda URLs give your function a dedicated HTTPS endpoint in seconds — useful for simple cases, but knowing the auth and routing limits keeps you from outgrowing them without a plan",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "A Lambda function URL is a dedicated HTTPS endpoint AWS provisions directly for a function, bypassing API Gateway entirely. Format: "
+            },
+            {
+              "text": "https://<random-id>.lambda-url.<region>.on.aws",
+              "marks": [
+                "code"
+              ]
+            },
+            {
+              "text": "."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Auth modes:",
+              "marks": [
+                "bold"
+              ]
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "AWS_IAM",
+                "marks": [
+                  "code"
+                ]
+              },
+              {
+                "text": " — callers must sign requests with SigV4. Suitable for internal service-to-service calls where the caller has an IAM role."
+              }
+            ],
+            [
+              {
+                "text": "NONE",
+                "marks": [
+                  "code"
+                ]
+              },
+              {
+                "text": " — fully public, no auth. Your function must implement its own auth logic if needed. Suitable for public webhooks."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "When Lambda URLs make sense:",
+              "marks": [
+                "bold"
+              ]
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Single-function webhooks (Stripe, GitHub, Slack)"
+              }
+            ],
+            [
+              {
+                "text": "Internal microservices called by other AWS services with IAM roles"
+              }
+            ],
+            [
+              {
+                "text": "Rapid prototyping without standing up an API Gateway stack"
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "When to use API Gateway instead:",
+              "marks": [
+                "bold"
+              ]
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "You need request/response transformation, custom domain names, usage plans, or rate limiting per API key"
+              }
+            ],
+            [
+              {
+                "text": "You have multiple Lambda functions behind one domain with path-based routing"
+              }
+            ],
+            [
+              {
+                "text": "You need a WAF (Web Application Firewall) in front of the endpoint"
+              }
+            ],
+            [
+              {
+                "text": "You need request validation, mock integrations, or stage management"
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Lambda URLs support CORS configuration natively — you set allowed origins, headers, and methods directly on the function configuration."
+            }
+          ]
+        },
+        {
+          "type": "code",
+          "language": "json",
+          "code": "{\n  \"Cors\": {\n    \"AllowOrigins\": [\"https://myapp.com\"],\n    \"AllowMethods\": [\"GET\", \"POST\"],\n    \"AllowHeaders\": [\"Content-Type\"],\n    \"MaxAge\": 300\n  }\n}"
+        },
+        {
+          "type": "callout",
+          "variant": "info",
+          "runs": [
+            {
+              "text": "Lambda URLs do not support custom domains or path-based routing. If you need "
+            },
+            {
+              "text": "api.myapp.com/v1/users",
+              "marks": [
+                "code"
+              ]
+            },
+            {
+              "text": " and "
+            },
+            {
+              "text": "api.myapp.com/v1/orders",
+              "marks": [
+                "code"
+              ]
+            },
+            {
+              "text": " to hit different functions, you need API Gateway or a CloudFront distribution in front."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "A Lambda URL is like binding a function to "
+            },
+            {
+              "text": "localhost:3000",
+              "marks": [
+                "code"
+              ]
+            },
+            {
+              "text": " — dead simple, zero ceremony, and the right choice until you need a router"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "aws-ch03-c007",
+      "order": 7,
+      "title": "Step Functions — Orchestration Over Chaining",
+      "teaser": "When your workflow needs branching, retries, timeouts, or parallel execution, chaining Lambdas with ad-hoc state passing is the wrong architecture — Step Functions is the right one",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "AWS Step Functions is a managed orchestration service. You define a state machine in Amazon States Language (JSON/YAML), and Step Functions executes it, managing state, retries, and transitions between steps."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Why not just chain Lambdas?",
+              "marks": [
+                "bold"
+              ]
+            },
+            {
+              "text": " When Lambda A calls Lambda B synchronously, Lambda A's execution context is blocked waiting for B. You're paying for idle compute. Worse, error handling becomes ad-hoc: A's code decides what to do if B fails, and that logic is buried in application code rather than being explicit and observable."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Step Functions makes orchestration explicit:",
+              "marks": [
+                "bold"
+              ]
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Task states",
+                "marks": [
+                  "bold"
+                ]
+              },
+              {
+                "text": " invoke Lambda, ECS, SNS, SQS, Glue, or any AWS service"
+              }
+            ],
+            [
+              {
+                "text": "Choice states",
+                "marks": [
+                  "bold"
+                ]
+              },
+              {
+                "text": " branch based on output values — no "
+              },
+              {
+                "text": "if/else",
+                "marks": [
+                  "code"
+                ]
+              },
+              {
+                "text": " in application code"
+              }
+            ],
+            [
+              {
+                "text": "Wait states",
+                "marks": [
+                  "bold"
+                ]
+              },
+              {
+                "text": " pause for a duration or until an external signal (heartbeat pattern)"
+              }
+            ],
+            [
+              {
+                "text": "Parallel states",
+                "marks": [
+                  "bold"
+                ]
+              },
+              {
+                "text": " run branches concurrently and wait for all to complete"
+              }
+            ],
+            [
+              {
+                "text": "Map states",
+                "marks": [
+                  "bold"
+                ]
+              },
+              {
+                "text": " process arrays of items in parallel"
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Standard vs Express workflows:",
+              "marks": [
+                "bold"
+              ]
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Standard: up to 1 year duration, exactly-once execution semantics, full audit trail in execution history. $0.025 per 1,000 state transitions. Best for business-critical, long-running processes."
+              }
+            ],
+            [
+              {
+                "text": "Express: up to 5 minutes, at-least-once semantics, high-throughput (100,000 executions/second). $1 per million executions plus duration. Best for high-volume event processing."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Error handling is declarative:"
+            }
+          ]
+        },
+        {
+          "type": "code",
+          "language": "json",
+          "code": "\"Retry\": [{ \"ErrorEquals\": [\"Lambda.ServiceException\"], \"IntervalSeconds\": 2, \"MaxAttempts\": 3, \"BackoffRate\": 2 }],\n\"Catch\": [{ \"ErrorEquals\": [\"States.ALL\"], \"Next\": \"HandleFailure\" }]"
+        },
+        {
+          "type": "callout",
+          "variant": "warning",
+          "runs": [
+            {
+              "text": "Do not orchestrate Step Functions workflows from within a Lambda function — the Lambda pays for the time spent waiting. Use Step Functions to call Lambdas, not the other way around."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Chaining Lambdas for a multi-step workflow is like writing a distributed transaction with try/catch blocks — it works until failure mode number three, and then you wish you had a coordinator"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "aws-ch03-c008",
+      "order": 8,
+      "title": "Runtimes and the Execution Environment",
+      "teaser": "Lambda's execution environment gives you a predictable OS layer, a `/tmp` directory, and a reuse contract — knowing these lets you write faster functions and avoid a class of subtle bugs",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Lambda supports managed runtimes for Node.js (20.x, 18.x), Python (3.12, 3.11, 3.10), Java (21, 17, 11), .NET (8, 6), Go (1.x), and Ruby (3.2). You can also bring a custom runtime by providing a "
+            },
+            {
+              "text": "bootstrap",
+              "marks": [
+                "code"
+              ]
+            },
+            {
+              "text": " executable that implements the Lambda Runtime API — this is how Rust, C++, and other languages run on Lambda."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Container image support (up to 10GB) lets you package any runtime environment as an OCI image."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The execution environment:",
+              "marks": [
+                "bold"
+              ]
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Amazon Linux 2023 base"
+              }
+            ],
+            [
+              {
+                "text": "/tmp",
+                "marks": [
+                  "code"
+                ]
+              },
+              {
+                "text": " directory: 512MB by default, configurable up to "
+              },
+              {
+                "text": "10GB",
+                "marks": [
+                  "bold"
+                ]
+              },
+              {
+                "text": " — the only writable filesystem in the environment"
+              }
+            ],
+            [
+              {
+                "text": "Read-only: "
+              },
+              {
+                "text": "/var/task",
+                "marks": [
+                  "code"
+                ]
+              },
+              {
+                "text": " (your function code), "
+              },
+              {
+                "text": "/opt",
+                "marks": [
+                  "code"
+                ]
+              },
+              {
+                "text": " (layers)"
+              }
+            ],
+            [
+              {
+                "text": "Environment variables: set at deploy time, available via "
+              },
+              {
+                "text": "process.env",
+                "marks": [
+                  "code"
+                ]
+              },
+              {
+                "text": " / "
+              },
+              {
+                "text": "os.environ",
+                "marks": [
+                  "code"
+                ]
+              },
+              {
+                "text": " — do not put secrets here directly; use SSM Parameter Store or Secrets Manager and cache the result"
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Execution context reuse pattern:",
+              "marks": [
+                "bold"
+              ]
+            },
+            {
+              "text": " Lambda may reuse the same execution environment for multiple invocations. Module-level initialization (SDK clients, database connections, in-memory caches) persists across warm invocations. Use this deliberately:"
+            }
+          ]
+        },
+        {
+          "type": "code",
+          "language": "python",
+          "code": "import boto3\n# This runs once per execution environment, not per invocation\ndynamodb = boto3.resource('dynamodb')\ntable = dynamodb.Table('my-table')\n\ndef handler(event, context):\n    return table.get_item(Key={'id': event['id']})"
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Do not store invocation-specific state at module level — the next invocation will see stale values."
+            }
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "tip",
+          "runs": [
+            {
+              "text": "Write to "
+            },
+            {
+              "text": "/tmp",
+              "marks": [
+                "code"
+              ]
+            },
+            {
+              "text": " for scratch files (e.g., PDF generation, image processing), but don't assume it's empty — a warm environment carries over "
+            },
+            {
+              "text": "/tmp",
+              "marks": [
+                "code"
+              ]
+            },
+            {
+              "text": " contents from the previous invocation. Always generate unique filenames or clean up after yourself."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The execution environment is like a worker process that handles one request at a time — between requests it idles, global state is preserved, and you never know if you're getting a fresh worker or a recycled one"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "aws-ch03-c009",
+      "order": 9,
+      "title": "Function Sizing and Pricing",
+      "teaser": "Lambda memory controls CPU allocation too, not just RAM — and the pricing model rewards you for right-sizing rather than defaulting to 128MB and wondering why everything is slow",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Lambda's resource model is memory-centric. You allocate memory from "
+            },
+            {
+              "text": "128MB to 10,240MB (10GB)",
+              "marks": [
+                "bold"
+              ]
+            },
+            {
+              "text": " in 1MB increments. CPU and network bandwidth scale proportionally with memory: at 1,769MB you get the equivalent of one full vCPU, at 3,538MB you get two, and so on."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Timeout:",
+              "marks": [
+                "bold"
+              ]
+            },
+            {
+              "text": " Maximum 15 minutes per invocation. For anything longer, use Step Functions with a Lambda activity, ECS Fargate, or Batch."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Pricing has two components:",
+              "marks": [
+                "bold"
+              ]
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "numbered",
+          "items": [
+            [
+              {
+                "text": "Requests:",
+                "marks": [
+                  "bold"
+                ]
+              },
+              {
+                "text": " $0.20 per million invocations (first 1M/month free)"
+              }
+            ],
+            [
+              {
+                "text": "Duration:",
+                "marks": [
+                  "bold"
+                ]
+              },
+              {
+                "text": " $0.0000166667 per GB-second — memory allocated (in GB) × wall-clock time (in seconds)"
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Free tier: 400,000 GB-seconds per month, 1M requests per month."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Example:",
+              "marks": [
+                "bold"
+              ]
+            },
+            {
+              "text": " A 512MB function that runs for 500ms per invocation, invoked 10 million times per month:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "0.5GB × 0.5s × 10M = 2,500,000 GB-seconds"
+              }
+            ],
+            [
+              {
+                "text": "Duration cost: 2,500,000 × $0.0000166667 ≈ $41.67"
+              }
+            ],
+            [
+              {
+                "text": "Request cost: 10M × $0.0000002 = $2.00"
+              }
+            ],
+            [
+              {
+                "text": "Total: ~$43.67/month"
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "vs EC2:",
+              "marks": [
+                "bold"
+              ]
+            },
+            {
+              "text": " A "
+            },
+            {
+              "text": "t3.small",
+              "marks": [
+                "code"
+              ]
+            },
+            {
+              "text": " (2 vCPU, 2GB RAM) costs ~$15/month but runs 24/7 regardless of traffic. Lambda is cheaper for bursty workloads; EC2 is cheaper for sustained high-throughput workloads where Lambda would be running nearly continuously anyway."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Right-sizing: use AWS Lambda Power Tuning (open-source Step Functions state machine) to benchmark your function at multiple memory settings — sometimes doubling memory cuts duration enough that total GB-seconds decreases and your bill drops."
+            }
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "tip",
+          "runs": [
+            {
+              "text": "The 128MB default is rarely optimal. A function CPU-bound at 128MB may run 4x faster at 512MB for only 2x the GB-second cost — net cheaper, and with lower latency."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Lambda pricing is like renting a GPU by the millisecond — the spec you request changes both the speed and the rate, so the optimal choice isn't always the cheapest tier"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "aws-ch03-c010",
+      "order": 10,
+      "title": "Destinations and Dead Letter Queues",
+      "teaser": "Async Lambda invocations fail silently by default — destinations and DLQs are how you make failures observable and recoverable instead of invisible data loss",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "When Lambda is invoked asynchronously (S3, SNS, EventBridge) and the function fails after all retries, the event is dropped unless you've configured somewhere for it to go."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Dead Letter Queues (DLQs):",
+              "marks": [
+                "bold"
+              ]
+            },
+            {
+              "text": " An SQS queue or SNS topic that receives the original event payload when async invocation exhausts retries. Configured at the function level. The payload includes the original event plus metadata (error message, attempt count). You can re-process DLQ messages manually or with another Lambda."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Lambda Destinations",
+              "marks": [
+                "bold"
+              ]
+            },
+            {
+              "text": " (newer, preferred): Instead of just capturing failures, destinations let you route results — both success and failure — to a target. Supported targets: SQS, SNS, EventBridge, another Lambda function."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Difference between DLQs and destinations:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "DLQ only captures failures; destinations capture both success and failure"
+              }
+            ],
+            [
+              {
+                "text": "Destinations include the full invocation record (request, response, error), not just the original payload"
+              }
+            ],
+            [
+              {
+                "text": "Destinations are more flexible: you can fan out success events to EventBridge for downstream processing"
+              }
+            ]
+          ]
+        },
+        {
+          "type": "code",
+          "language": "json",
+          "code": "{\n  \"DestinationConfig\": {\n    \"OnSuccess\": { \"Destination\": \"arn:aws:sqs:us-east-1:123:success-queue\" },\n    \"OnFailure\": { \"Destination\": \"arn:aws:sqs:us-east-1:123:failure-queue\" }\n  }\n}"
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Why this matters operationally:",
+              "marks": [
+                "bold"
+              ]
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Without a DLQ or failure destination, a bug introduced into a Lambda processing S3 uploads silently drops every event that fails — no error in your application logs, just missing data."
+              }
+            ],
+            [
+              {
+                "text": "With a DLQ, those events accumulate in SQS. You fix the bug, redeploy, then replay the DLQ to recover the lost work."
+              }
+            ],
+            [
+              {
+                "text": "CloudWatch alarms on DLQ depth ("
+              },
+              {
+                "text": "ApproximateNumberOfMessagesVisible",
+                "marks": [
+                  "code"
+                ]
+              },
+              {
+                "text": ") give you an early warning before the data loss becomes a customer-visible incident."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "warning",
+          "runs": [
+            {
+              "text": "Every async Lambda function without a failure destination or DLQ is a silent data loss risk. Configure one before the function goes to production, not after the first incident."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "A DLQ for async Lambda is like a dead-letter branch in a CI pipeline — the job failed, but the artifact is still there so you can diagnose and re-run it instead of losing the work entirely"
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

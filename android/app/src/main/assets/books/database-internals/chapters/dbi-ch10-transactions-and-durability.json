@@ -1,0 +1,1298 @@
+{
+  "chapterId": "dbi-ch10-transactions-and-durability",
+  "shardIndex": 1,
+  "cards": [
+    {
+      "id": "dbi-ch10-c001",
+      "order": 1,
+      "title": "ACID at Engine Level — What the Engine Actually Guarantees",
+      "teaser": "Härder and Reuter coined ACID in 1983 as a framework for reasoning about transaction semantics. Engines implement it; marketing re-interprets it. The gap between the two is where bugs hide.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Theo Härder and Andreas Reuter's 1983 paper "
+            },
+            {
+              "text": "Principles of Transaction-Oriented Database Recovery",
+              "marks": ["italic"]
+            },
+            {
+              "text": " gave the field a vocabulary. The four properties — Atomicity, Consistency, Isolation, Durability — are constraints on what a correct implementation must deliver, not descriptions of how to deliver them."
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Atomicity.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " A transaction's writes are all-or-nothing. The engine achieves this via undo logging: if a transaction aborts at any point, every already-written change is rolled back. At the engine level this means maintaining before-images for every modified page."
+              }
+            ],
+            [
+              {
+                "text": "Consistency.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " The database moves from one valid state to another. This is partly an engine concern (constraints, referential integrity) and partly an application concern. The engine enforces schema-level invariants; logical correctness is the caller's responsibility."
+              }
+            ],
+            [
+              {
+                "text": "Isolation.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Concurrent transactions appear to execute serially. The engine achieves this through locking (2PL), MVCC, or a combination. The SQL standard defines four isolation levels, each permitting different anomalies."
+              }
+            ],
+            [
+              {
+                "text": "Durability.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Once a transaction commits, its effects survive any subsequent failure. The engine achieves this through WAL and careful fsync discipline. This card's siblings cover the mechanisms in detail."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The engine-level reality is humbler than the marketing reality. \"Durability\" means the WAL was flushed to the storage device before the commit acknowledgment was sent — it does not mean the storage device is reliable, battery-backed, or free of firmware bugs. \"Isolation\" at READ COMMITTED is not serializable, despite the label \"ACID compliant.\" The properties are defined relative to a threat model; always ask which threat model a given configuration assumes."
+            }
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "info",
+          "runs": [
+            {
+              "text": "Härder & Reuter 1983 is the canonical reference. The paper also introduced the term \"undo/redo logging\" and classified recovery algorithms by the four buffer policies (steal/no-steal, force/no-force) covered in this chapter."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "ACID is a contract. The engine promises all-or-nothing writes, orderly concurrent access, and that committed data survives crashes. What it cannot promise is that the hardware beneath it is honest about what it has actually persisted."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "dbi-ch10-c002",
+      "order": 2,
+      "title": "Single-Node Commit Protocol — From BEGIN to Durable",
+      "teaser": "A commit is not one step. It is a sequence: write log records, flush the WAL, write the commit record, flush again, then acknowledge. Each step has a precise role and a precise failure mode.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "On a single node, the commit path for a write transaction looks like this:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "numbered",
+          "items": [
+            [
+              {
+                "text": "BEGIN.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " The engine assigns a transaction ID and records an entry in the active transaction table."
+              }
+            ],
+            [
+              {
+                "text": "Modify pages.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Each write updates a buffer-pool page and appends a redo log record (and an undo log record for rollback support) to the in-memory WAL buffer."
+              }
+            ],
+            [
+              {
+                "text": "COMMIT issued.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " The engine appends a commit log record to the WAL buffer. This record is the durable marker of intent."
+              }
+            ],
+            [
+              {
+                "text": "WAL flush.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " The engine calls "
+              },
+              {
+                "text": "fsync()",
+                "marks": ["code"]
+              },
+              {
+                "text": " (or equivalent) on the WAL file. "
+              },
+              {
+                "text": "Only after this call returns successfully",
+                "marks": ["bold"]
+              },
+              {
+                "text": " is the transaction considered durable."
+              }
+            ],
+            [
+              {
+                "text": "Acknowledge.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " The engine sends the commit acknowledgment to the client. The transaction is now visible and its effects will survive any crash."
+              }
+            ],
+            [
+              {
+                "text": "Background data write.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " The buffer pool's dirty pages for this transaction are written to data files lazily, on the background checkpointer's schedule. The data flush does "
+              },
+              {
+                "text": "not",
+                "marks": ["italic"]
+              },
+              {
+                "text": " block the commit acknowledgment."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Step 4 is the durability bottleneck. Every synchronous commit involves at least one "
+            },
+            {
+              "text": "fsync()",
+              "marks": ["code"]
+            },
+            {
+              "text": " call, which is expensive — typically 1–10 ms on spinning disks, 50–200 µs on enterprise SSDs, and highly variable on cloud block storage. Everything about group commit, async commit, and delayed durability is an attempt to amortize or skip this cost."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Commit does not mean \"pages are written.\" It means \"the log record describing this transaction has been pushed to stable storage.\" Pages can follow later. If the machine crashes before they do, the log lets recovery replay them."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "dbi-ch10-c003",
+      "order": 3,
+      "title": "Group Commit — Amortizing the fsync Tax",
+      "teaser": "One fsync serves many commits. Group commit is the most impactful single optimization for write-heavy OLTP: it batches the durability flush across concurrent transactions, turning N fsyncs into one.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "A naive implementation calls "
+            },
+            {
+              "text": "fsync()",
+              "marks": ["code"]
+            },
+            {
+              "text": " once per committing transaction. Under 1 000 commits/s that means 1 000 fsyncs/s — a number that quickly saturates most storage devices. Group commit collapses concurrent fsyncs into a single call:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "numbered",
+          "items": [
+            [
+              {
+                "text": "Transactions queue at the WAL flush barrier.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " When T1 arrives to flush, it becomes the group leader. T2 and T3 that arrive while the flush is in progress join the queue."
+              }
+            ],
+            [
+              {
+                "text": "One fsync, one call.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " The group leader calls "
+              },
+              {
+                "text": "fsync()",
+                "marks": ["code"]
+              },
+              {
+                "text": " once, flushing the WAL log records of every group member in a single I/O pass."
+              }
+            ],
+            [
+              {
+                "text": "All members acknowledge simultaneously.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " When the flush returns, every waiting transaction is durably committed. All are acknowledged to their clients at once."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The throughput-vs-latency trade-off is explicit. Group commit improves throughput (fewer fsyncs per unit time) but slightly increases worst-case commit latency (the group leader waits for stragglers to join). PostgreSQL and MySQL InnoDB both implement group commit. PostgreSQL's implementation became effective post-9.0; before that, WAL locking serialized flushes and accidentally broke group commit behavior."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "MySQL InnoDB exposes "
+            },
+            {
+              "text": "innodb_flush_log_at_trx_commit",
+              "marks": ["code"]
+            },
+            {
+              "text": " to control flush behavior: "
+            },
+            {
+              "text": "1",
+              "marks": ["code"]
+            },
+            {
+              "text": " = flush and sync on every commit (full ACID); "
+            },
+            {
+              "text": "2",
+              "marks": ["code"]
+            },
+            {
+              "text": " = flush to OS cache on commit, sync every second (OS crash loses ≤1 s of data); "
+            },
+            {
+              "text": "0",
+              "marks": ["code"]
+            },
+            {
+              "text": " = neither flush nor sync on commit (fastest, loses up to 1 s on MySQL crash). PostgreSQL's equivalent is "
+            },
+            {
+              "text": "synchronous_commit",
+              "marks": ["code"]
+            },
+            {
+              "text": "."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Instead of flushing the disk once per commit, group commit lets several transactions pile up and then flushes them all in one shot. The disk does the same work; you just pay the I/O latency once per group instead of once per transaction."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "dbi-ch10-c004",
+      "order": 4,
+      "title": "fsync Semantics — The OS and Disk Can Lie",
+      "teaser": "fsync() is supposed to guarantee that data has reached stable storage. In practice, three distinct layers — the OS page cache, the disk firmware, and cloud block storage — each have documented failure modes that violate the guarantee.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "When "
+            },
+            {
+              "text": "fsync()",
+              "marks": ["code"]
+            },
+            {
+              "text": " returns "
+            },
+            {
+              "text": "0",
+              "marks": ["code"]
+            },
+            {
+              "text": " (success), POSIX says the data has reached the underlying hardware. This turns out to be a gentleman's agreement that not all parties honor."
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "The OS gotcha — Linux EIO semantics (2018 PostgreSQL fsync incident).",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Prior to kernel 4.13, if a write to a dirty page failed with "
+              },
+              {
+                "text": "EIO",
+                "marks": ["code"]
+              },
+              {
+                "text": " after the "
+              },
+              {
+                "text": "write()",
+                "marks": ["code"]
+              },
+              {
+                "text": " call returned, the page was silently dropped from the page cache. A subsequent "
+              },
+              {
+                "text": "fsync()",
+                "marks": ["code"]
+              },
+              {
+                "text": " returned "
+              },
+              {
+                "text": "0",
+                "marks": ["code"]
+              },
+              {
+                "text": " — success — because there was nothing left to flush. PostgreSQL believed the WAL was durable; it was not. Discovered and widely reported in 2018, this led to kernel fixes and changed how many databases handle write errors."
+              }
+            ],
+            [
+              {
+                "text": "The disk firmware gotcha — write cache without power loss protection.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Consumer SSDs and spinning disks commonly report "
+              },
+              {
+                "text": "fsync()",
+                "marks": ["code"]
+              },
+              {
+                "text": " success when data is only in the volatile drive cache, not on platters or NAND. A power loss before the drive drains its cache loses the data. Enterprise drives carry a capacitor-backed power-loss protection (PLP) circuit; consumer drives typically do not. Databases intended for production use must be run on PLP-capable hardware or battery-backed RAID controllers."
+              }
+            ],
+            [
+              {
+                "text": "The cloud block storage gotcha — durable writes are synchronous but expensive.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Cloud block devices (AWS EBS, GCP Persistent Disk) replicate writes synchronously, but each "
+              },
+              {
+                "text": "fsync()",
+                "marks": ["code"]
+              },
+              {
+                "text": " involves a network round-trip to the storage backend. Latency is 1–4 ms under normal load but can spike sharply under storage contention. This makes group commit even more critical in cloud deployments — batching reduces the number of network-latency-bound round trips per second."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "warning",
+          "runs": [
+            {
+              "text": "The 2018 PostgreSQL fsync issue (tracked in pgsql-hackers and CVE-adjacent advisories) revealed that a database can believe its WAL is durable when it is not. The kernel fix (marking pages as requiring re-write on EIO) landed in Linux 4.13, but databases on older kernels or with non-Linux kernels may still be exposed to similar failure modes."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The operating system, the disk, and the cloud each have conditions under which fsync returns \"success\" while data is actually lost. Durability is only as real as the weakest link in that chain."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "dbi-ch10-c005",
+      "order": 5,
+      "title": "WAL Flush vs Data File Flush — Only the Log Must Be Durable at Commit",
+      "teaser": "The key insight behind WAL performance: data pages do not need to be on disk when a transaction commits. Only the log does. This asymmetry lets the engine write data files lazily without sacrificing durability.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "WAL achieves durability while keeping data writes asynchronous. The logic is straightforward: if the log record describing a change is durable, recovery can always replay it onto the data page, regardless of whether the page was ever written. Therefore, the data page flush can be deferred indefinitely — until the buffer pool needs the page frame, or until a checkpoint."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The consequence is a strict ordering rule: the log record for a change must be flushed to disk "
+            },
+            {
+              "text": "before",
+              "marks": ["italic"]
+            },
+            {
+              "text": " the corresponding dirty data page is written to disk (the WAL protocol's log-before-data rule). If a dirty data page were to reach disk before its log record, and then a crash occurred between the two, recovery would have a data page modification without a log record to verify or undo it — a correctness violation."
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "WAL file flush at commit.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Synchronous. Blocks the commit acknowledgment. Typically a sequential append to the WAL file — the cheapest durable-write pattern available."
+              }
+            ],
+            [
+              {
+                "text": "Data file flush at checkpoint.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Asynchronous. Runs in the background. Writes modified pages to their home locations in the heap/index files. In PostgreSQL this is "
+              },
+              {
+                "text": "bgwriter",
+                "marks": ["code"]
+              },
+              {
+                "text": " / "
+              },
+              {
+                "text": "checkpointer",
+                "marks": ["code"]
+              },
+              {
+                "text": "; in InnoDB it is the page cleaner thread."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "This split is why a database can sustain high write throughput on magnetic disks: the critical-path I/O (WAL) is sequential and bounded, while the larger-volume data I/O (heap pages) is amortized over time."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Think of the WAL as a receipt and the data file as the shelf. The receipt must be filed the moment a transaction commits. The shelf can be restocked later. If everything burns down before restocking, the receipt is enough to restore what was supposed to be there."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "dbi-ch10-c006",
+      "order": 6,
+      "title": "Doublewrite Buffer — InnoDB's Defense Against Torn Pages",
+      "teaser": "A torn page is the nightmare scenario: a partial write leaves a data page in an inconsistent state that WAL cannot redo. MySQL InnoDB counters it by writing every page twice — first to a sequential buffer, then to its real location.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Page sizes in databases (typically 8 KB in PostgreSQL, 16 KB in InnoDB) are larger than the atomic write unit guaranteed by the storage layer (typically 512 bytes on spinning disks, 4 KB on modern drives and SSDs). A crash mid-page-write leaves a "
+            },
+            {
+              "text": "torn page",
+              "marks": ["bold"]
+            },
+            {
+              "text": " — a page where the first half reflects the new version and the second half still contains the old version. Such a page is neither the before-image nor the after-image."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "WAL redo cannot fix a torn page. Redo applies a log record to an existing page by reading the page, applying the delta, and writing it back. If the page is torn, the read returns corrupted data and the delta is applied to garbage."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "InnoDB's doublewrite buffer solves this. Before writing a dirty page to its home location, InnoDB first writes it to a dedicated sequential region in the tablespace (the doublewrite buffer). Once that write is flushed, the page is written to its home location. On crash recovery:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "numbered",
+          "items": [
+            [
+              {
+                "text": "InnoDB reads the page from its home location.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " If the page checksum validates, it is intact — use it."
+              }
+            ],
+            [
+              {
+                "text": "If the checksum fails (torn page),",
+                "marks": ["bold"]
+              },
+              {
+                "text": " InnoDB reads the copy from the doublewrite buffer. That copy is guaranteed to be complete. InnoDB copies it back to the home location and then applies redo as normal."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The cost is exactly what it sounds like: every page write is written twice, roughly doubling I/O for the background data flush path. This overhead is more tolerable on sequential media (spinning disks) and less tolerable on random-write SSDs where write amplification is already a concern. MySQL 8.0 moved the doublewrite buffer out of the system tablespace into dedicated files to reduce contention. On file systems with atomic writes (ZFS, certain configurations of ext4 and XFS with "
+            },
+            {
+              "text": "innodb_doublewrite=OFF",
+              "marks": ["code"]
+            },
+            {
+              "text": "), the doublewrite buffer can be disabled."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "InnoDB writes every page to a safe staging area before writing it to its real home. If a crash corrupts the real-home copy mid-write, the clean staging copy survives and can be used to start fresh."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "dbi-ch10-c007",
+      "order": 7,
+      "title": "Force vs No-Force — Must Dirty Pages Flush at Commit?",
+      "teaser": "Force policy requires all dirty pages from a committing transaction to be written to disk before the commit is acknowledged. No-force allows them to remain in the buffer pool. The choice defines whether redo logging is needed for recovery.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Härder and Reuter's 1983 paper identified two orthogonal axes for buffer management policy at commit time. The first axis is the "
+            },
+            {
+              "text": "force / no-force",
+              "marks": ["bold"]
+            },
+            {
+              "text": " choice:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Force.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " All dirty pages modified by the transaction must be written to their home locations in the data files "
+              },
+              {
+                "text": "before",
+                "marks": ["italic"]
+              },
+              {
+                "text": " the commit acknowledgment is sent. This guarantees that committed data is in the data files. Recovery after a crash never needs to redo any committed changes — they are already there."
+              }
+            ],
+            [
+              {
+                "text": "No-Force.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Dirty pages are "
+              },
+              {
+                "text": "not",
+                "marks": ["italic"]
+              },
+              {
+                "text": " required to be written before commit. They remain in the buffer pool and are written lazily during background checkpointing. Committed changes may not be in the data files at the moment of commit. Recovery after a crash must "
+              },
+              {
+                "text": "redo",
+                "marks": ["bold"]
+              },
+              {
+                "text": " any committed updates not yet in the data files."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Force eliminates the need for redo but pays a high commit-time price: random page writes are expensive, and the buffer pool cannot amortize them. No-Force moves that cost to background I/O, reducing commit latency at the expense of requiring redo log records. All modern RDBMS engines choose "
+            },
+            {
+              "text": "No-Force",
+              "marks": ["bold"]
+            },
+            {
+              "text": " — the durability gap is covered by WAL redo."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Force means \"I won't say you're committed until your pages are on disk.\" No-Force means \"I'll say you're committed now and write the pages later — but I'm keeping the log so I can reconstruct anything that didn't make it.\""
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "dbi-ch10-c008",
+      "order": 8,
+      "title": "Steal vs No-Steal — Can Dirty Pages Flush Before Commit?",
+      "teaser": "Steal policy allows the buffer pool to evict a dirty page before its transaction commits. No-steal prohibits it. This choice defines whether undo logging is required for recovery.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The second axis in Härder and Reuter's framework is "
+            },
+            {
+              "text": "steal / no-steal",
+              "marks": ["bold"]
+            },
+            {
+              "text": ", which governs whether the buffer pool can evict a page modified by an uncommitted transaction:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "No-Steal.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " A dirty page pinned by an in-flight transaction cannot be evicted to disk until the transaction commits or aborts. Abort is clean — uncommitted changes never reached disk, so undo is trivially handled in memory. No-steal eliminates the need for undo log records. It also means the buffer pool must be large enough to hold all dirty pages of all active transactions, which is impractical for long-running or large transactions."
+              }
+            ],
+            [
+              {
+                "text": "Steal.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " The buffer pool manager can evict any dirty page, even if the owning transaction has not yet committed. This is essential for large transactions — without steal, a transaction modifying 10 GB of data would require 10 GB of buffer pool. The cost: if the transaction later aborts, the evicted pages are already in the data files and must be "
+              },
+              {
+                "text": "undone",
+                "marks": ["bold"]
+              },
+              {
+                "text": " on disk. Steal requires before-image undo log records."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "No-Steal is used in some append-only or shadow-paging systems (early System R used shadow paging, which is effectively no-steal). All modern WAL-based engines choose "
+            },
+            {
+              "text": "Steal",
+              "marks": ["bold"]
+            },
+            {
+              "text": " to avoid pinning large amounts of buffer pool memory to in-flight transactions."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "No-Steal means uncommitted pages never leave memory — rollback is just discarding them. Steal means pages can leave early, so rollback has to physically undo changes already written to disk."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "dbi-ch10-c009",
+      "order": 9,
+      "title": "The Buffer Policy Matrix — Four Choices, One Winner",
+      "teaser": "Steal/No-Steal and Force/No-Force combine into four possible buffer policies. Only one combination — Steal + No-Force — is practical for production OLTP. Understanding why the others are ruled out clarifies why ARIES logs both redo and undo.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The four combinations and their recovery implications:"
+            }
+          ]
+        },
+        {
+          "type": "table",
+          "headers": ["Policy", "Redo needed?", "Undo needed?", "Practical?"],
+          "rows": [
+            ["No-Steal + Force", "No", "No", "Impractical — pages pinned in memory AND flushed at commit. Maximum I/O pressure."],
+            ["No-Steal + No-Force", "Yes (redo)", "No", "Impractical — large transactions exhaust buffer pool (no eviction of uncommitted pages)."],
+            ["Steal + Force", "No", "Yes (undo)", "Poor — evictions are allowed, but every commit triggers synchronous random data-page I/O."],
+            ["Steal + No-Force", "Yes (redo)", "Yes (undo)", "The winner — lazy data writes, free eviction, covered by WAL redo+undo. Used by ARIES."]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Steal + No-Force is the dominant choice because it imposes no pinning constraint on the buffer pool and no synchronous data-file I/O at commit time. The trade-off is that the recovery algorithm must handle both redo (for committed updates not yet in data files) and undo (for uncommitted updates already in data files due to steal). ARIES handles both cases completely."
+            }
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "info",
+          "runs": [
+            {
+              "text": "No-Steal + Force is theoretically the simplest recovery model — no log replay needed — but it combines the worst performance characteristics of both axes. It is a useful thought experiment, not a practical design."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The four combinations trade off memory pressure, commit-time I/O, and recovery complexity. The one that minimizes both memory pressure and commit latency — Steal + No-Force — requires the most sophisticated recovery, which is why ARIES exists."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "dbi-ch10-c010",
+      "order": 10,
+      "title": "ARIES and the (Steal, No-Force) Choice — Redo and Undo Together",
+      "teaser": "ARIES — Algorithm for Recovery and Isolation Exploiting Semantics — is the recovery algorithm behind virtually every production RDBMS. It exists precisely because Steal + No-Force requires both redo and undo, and handling both correctly during crash recovery is subtle.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Mohan et al.'s 1992 paper "
+            },
+            {
+              "text": "ARIES: A Transaction Recovery Method Supporting Fine-Granularity Locking and Partial Rollbacks Using Write-Ahead Logging",
+              "marks": ["italic"]
+            },
+            {
+              "text": " formalized the recovery algorithm for Steal + No-Force systems. ARIES recovery proceeds in three phases:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "numbered",
+          "items": [
+            [
+              {
+                "text": "Analysis.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Scan forward from the last checkpoint. Reconstruct the dirty page table (which pages were dirty at crash time) and the transaction table (which transactions were active). This phase identifies the redo start point and the set of transactions that need undo."
+              }
+            ],
+            [
+              {
+                "text": "Redo.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Scan forward from the earliest "
+              },
+              {
+                "text": "recLSN",
+                "marks": ["code"]
+              },
+              {
+                "text": " in the dirty page table. Replay "
+              },
+              {
+                "text": "every",
+                "marks": ["italic"]
+              },
+              {
+                "text": " log record — including those for uncommitted transactions — unless the page's "
+              },
+              {
+                "text": "pageLSN",
+                "marks": ["code"]
+              },
+              {
+                "text": " shows the change is already present. This is repeating history: the database is restored to exactly the state it had at crash time, including in-flight transactions."
+              }
+            ],
+            [
+              {
+                "text": "Undo.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Roll back all transactions that were active at crash time, in reverse LSN order, using the undo log records (before-images). Compensation Log Records (CLRs) are written for each undo step, making undo itself restartable after a second crash."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The Steal policy drives the need for undo: committed-before-crash data may not be in data files (covered by redo), and uncommitted-before-crash data may be in data files (covered by undo). The No-Force policy drives the need for redo. ARIES handles both by first repeating history completely (redo), then surgically removing the in-flight work (undo)."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "PostgreSQL, MySQL InnoDB, SQL Server, and DB2 all implement variations of ARIES. The paper is one of the most-cited works in systems research."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "ARIES recovers by first rewinding to exactly the crash state (redo everything, including partial transactions), then cleanly aborting the unfinished work (undo active transactions). It does this in two separate passes rather than trying to filter during redo, which makes the algorithm correct even if recovery itself is interrupted by another crash."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "dbi-ch10-c011",
+      "order": 11,
+      "title": "Savepoints — Partial Rollback Within a Transaction",
+      "teaser": "A savepoint is a named marker inside a transaction that you can roll back to without aborting the entire transaction. Supported by SQL standard syntax, savepoints let applications implement nested error handling without sacrificing the outer transaction's work.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "All-or-nothing atomicity is the default, but applications often need finer granularity: try an operation, if it fails, undo just that part and try something else, then commit the whole. Savepoints provide this:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "SAVEPOINT name",
+                "marks": ["code"]
+              },
+              {
+                "text": " — marks the current point in the transaction. The engine records the current LSN and any in-memory state needed to undo subsequent work."
+              }
+            ],
+            [
+              {
+                "text": "ROLLBACK TO SAVEPOINT name",
+                "marks": ["code"]
+              },
+              {
+                "text": " — undoes all work done since the savepoint was established. Work before the savepoint is preserved. The transaction remains open."
+              }
+            ],
+            [
+              {
+                "text": "RELEASE SAVEPOINT name",
+                "marks": ["code"]
+              },
+              {
+                "text": " — discards the savepoint marker. The transaction continues; you simply can no longer roll back to that point. Work done since the savepoint is kept."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "At the engine level, "
+            },
+            {
+              "text": "ROLLBACK TO SAVEPOINT",
+              "marks": ["code"]
+            },
+            {
+              "text": " is a partial undo: the engine traverses the undo chain from the current "
+            },
+            {
+              "text": "lastLSN",
+              "marks": ["code"]
+            },
+            {
+              "text": " backward to the LSN recorded at savepoint creation, applying before-images. In ARIES, each undo step writes a Compensation Log Record (CLR), so even a partial rollback is recoverable."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "PostgreSQL implements savepoints fully, including within transactions that have already encountered errors (unlike standard SQL which requires a rollback after an error). ORMs and frameworks rely on savepoints heavily — Django's "
+            },
+            {
+              "text": "atomic()",
+              "marks": ["code"]
+            },
+            {
+              "text": " context manager emits a savepoint when nested inside an outer "
+            },
+            {
+              "text": "atomic()",
+              "marks": ["code"]
+            },
+            {
+              "text": "."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "A savepoint is a bookmark. If something goes wrong after the bookmark, you can flip back to it and continue from there, without losing everything you did before the bookmark."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "dbi-ch10-c012",
+      "order": 12,
+      "title": "Read-Only Transaction Optimization — Skipping the Durability Path",
+      "teaser": "A transaction that issues no writes cannot violate durability — there is nothing to persist. Engines that detect read-only transactions early can skip lock acquisition, WAL writes, and commit overhead entirely.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Read-only transactions have different requirements than read-write transactions. They require a consistent view of the database (isolation), but they produce no changes that need to be committed or recovered. Engines exploit this:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "No WAL writes.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " A read-only transaction never appends to the WAL. Commit is a no-op from a durability perspective."
+              }
+            ],
+            [
+              {
+                "text": "No write locks.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Under MVCC, read-only transactions see a consistent snapshot without acquiring any row-level write locks. This eliminates lock contention with concurrent writers."
+              }
+            ],
+            [
+              {
+                "text": "No transaction ID assignment (PostgreSQL optimization).",
+                "marks": ["bold"]
+              },
+              {
+                "text": " PostgreSQL assigns full transaction IDs (XIDs) only to transactions that produce writes. Read-only transactions use a virtual XID that is not persisted and does not consume XID space. This matters for the XID wraparound problem: read-only workloads do not accelerate the clock."
+              }
+            ],
+            [
+              {
+                "text": "Explicit hint.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " "
+              },
+              {
+                "text": "BEGIN TRANSACTION READ ONLY",
+                "marks": ["code"]
+              },
+              {
+                "text": " (SQL standard) or "
+              },
+              {
+                "text": "SET TRANSACTION READ ONLY",
+                "marks": ["code"]
+              },
+              {
+                "text": " signals intent early. The engine can optimize immediately rather than retroactively discovering no writes occurred."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "On PostgreSQL, "
+            },
+            {
+              "text": "synchronous_commit = off",
+              "marks": ["code"]
+            },
+            {
+              "text": " for read-only replicas further reduces overhead — there is no commit WAL record to wait for at all. In SQL Server, "
+            },
+            {
+              "text": "READ_COMMITTED_SNAPSHOT",
+              "marks": ["code"]
+            },
+            {
+              "text": " mode enables row-versioning for read-only queries, eliminating the need for shared locks on read."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "If a transaction never writes anything, the engine can skip the entire durability pipeline — no WAL, no locks on data, no commit record. The engine just needs to give the transaction a consistent snapshot to read from."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "dbi-ch10-c013",
+      "order": 13,
+      "title": "Long-Running Transactions and Snapshot Bloat — MVCC's Hidden Cost",
+      "teaser": "MVCC keeps old row versions visible for as long as any active transaction might need them. A single long-running transaction can pin the entire history of a hot table, exhausting storage and crippling vacuum.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "MVCC achieves isolation without blocking reads by maintaining multiple versions of each row. When a row is updated, the old version is not deleted — it is retained in case an older snapshot still needs it. This is clean and efficient when transactions are short. It becomes a serious operational problem when they are not."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The mechanism: every MVCC engine tracks a "
+            },
+            {
+              "text": "horizon",
+              "marks": ["bold"]
+            },
+            {
+              "text": " — the oldest transaction snapshot still in use. Row versions older than the horizon are safe to remove. Versions newer than the horizon must be retained. A long-running transaction moves the horizon backward, forcing the engine to keep every version created after the transaction started."
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "PostgreSQL table bloat.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Dead row versions (dead tuples) accumulate in the heap until "
+              },
+              {
+                "text": "VACUUM",
+                "marks": ["code"]
+              },
+              {
+                "text": " can reclaim them. A long-running transaction blocks autovacuum from reclaiming any tuples created after it started. A busy table receiving 1 000 updates/second generates 1 000 dead tuples/second; after an hour-long transaction, that is 3.6 million unreclaimed dead tuples, with a corresponding increase in table and index size."
+              }
+            ],
+            [
+              {
+                "text": "PostgreSQL XID wraparound risk.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " PostgreSQL's 32-bit XID space means the database risks wraparound (treating old data as new) if XIDs are not frozen regularly. Autovacuum handles freezing, but it cannot freeze tuples visible to an active transaction. A transaction running for days can push the database toward the wraparound danger zone."
+              }
+            ],
+            [
+              {
+                "text": "MySQL InnoDB undo log growth.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " InnoDB stores old row versions in the undo tablespace. A long-running transaction prevents purging of the undo log. InnoDB's purge thread is blocked at the oldest active read view. Undo tablespace growth degrades read performance (longer version chains to traverse) and consumes disk."
+              }
+            ],
+            [
+              {
+                "text": "Operational mitigations.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Set statement and transaction timeouts ("
+              },
+              {
+                "text": "statement_timeout",
+                "marks": ["code"]
+              },
+              {
+                "text": " / "
+              },
+              {
+                "text": "idle_in_transaction_session_timeout",
+                "marks": ["code"]
+              },
+              {
+                "text": " in PostgreSQL). Monitor "
+              },
+              {
+                "text": "pg_stat_activity",
+                "marks": ["code"]
+              },
+              {
+                "text": " for long-running transactions. Terminate stuck transactions before they cause bloat. Avoid running analytical queries (which inherently hold long snapshots) against the same cluster as high-churn OLTP workloads."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "warning",
+          "runs": [
+            {
+              "text": "A single idle transaction left open by a forgotten client connection is enough to pin the MVCC horizon for the duration. This is one of the most common causes of unexpected table bloat in production PostgreSQL systems. Always set idle_in_transaction_session_timeout."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "MVCC must keep old row versions alive for as long as any transaction might read them. A transaction that runs for an hour forces the database to keep an hour's worth of dead versions sitting around. The longer the transaction, the bigger the pile of obsolete data that cannot be cleaned up."
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

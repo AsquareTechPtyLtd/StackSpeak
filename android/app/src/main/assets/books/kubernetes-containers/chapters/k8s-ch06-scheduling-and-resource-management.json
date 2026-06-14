@@ -1,0 +1,1243 @@
+{
+  "chapterId": "k8s-ch06-scheduling-and-resource-management",
+  "shardIndex": 1,
+  "cards": [
+    {
+      "id": "k8s-ch06-c001",
+      "order": 1,
+      "title": "The kube-scheduler: Filter and Score",
+      "teaser": "kube-scheduler does not randomly place pods — it runs every unscheduled pod through a two-phase pipeline: first it eliminates nodes that cannot host the pod (Filter), then it ranks the survivors to find the best fit (Score). Understanding these phases explains every placement decision.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "When you create a pod with no "
+            },
+            {
+              "text": "nodeName",
+              "marks": ["code"]
+            },
+            {
+              "text": " set, kube-scheduler watches for it via the API server, then runs the scheduling cycle:"
+            }
+          ]
+        },
+        {
+          "type": "code",
+          "lang": "text",
+          "code": "Scheduling cycle\n┌──────────────────────────────────────┐\n│  1. FILTER (feasibility)             │\n│     ─ NodeResourcesFit               │\n│       (requests fit available?)      │\n│     ─ NodeSelector / NodeAffinity    │\n│     ─ TaintToleration                │\n│     ─ PodTopologySpread              │\n│     ─ VolumeBinding, etc.            │\n│                                      │\n│  2. SCORE (priority)                 │\n│     ─ LeastAllocated (spread load)   │\n│     ─ NodeAffinity preferred rules   │\n│     ─ PodAffinity preferred rules    │\n│     ─ ImageLocality (image cached?)  │\n│                                      │\n│  3. BIND                             │\n│     Sets pod.spec.nodeName via API   │\n└──────────────────────────────────────┘"
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Filter plugins eliminate nodes — a node that fails any Filter plugin is removed from consideration entirely. Score plugins then assign 0-100 scores to the remaining nodes; the scheduler picks the highest scorer (breaking ties randomly)."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The "
+            },
+            {
+              "text": "pluggable scheduling framework",
+              "marks": ["bold"]
+            },
+            {
+              "text": " (introduced in Kubernetes 1.15) lets you register custom plugins at any extension point: PreFilter, Filter, PreScore, Score, Reserve, Permit, PreBind, Bind, PostBind, Unreserve. This is how tools like "
+            },
+            {
+              "text": "Volcano",
+              "marks": ["italic"]
+            },
+            {
+              "text": " (batch/GPU workloads) and "
+            },
+            {
+              "text": "Coscheduler",
+              "marks": ["italic"]
+            },
+            {
+              "text": " (gang scheduling) extend scheduling without forking the core."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "You can also run "
+            },
+            {
+              "text": "multiple scheduler profiles",
+              "marks": ["bold"]
+            },
+            {
+              "text": " in a single kube-scheduler binary, selecting per-pod which profile to use via "
+            },
+            {
+              "text": "schedulerName",
+              "marks": ["code"]
+            },
+            {
+              "text": " in the pod spec. This is the recommended way to handle workloads with fundamentally different placement requirements in the same cluster."
+            }
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "info",
+          "runs": [
+            {
+              "text": "If no node passes all Filter plugins the pod remains Pending indefinitely with a FailedScheduling event. kubectl describe pod will show the reason from each plugin (e.g., \"Insufficient cpu\", \"node(s) had untolerated taint\")."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The scheduler first crosses off every node that cannot physically host the pod, then ranks the remaining nodes and picks the best one. Plugins let you inject custom logic at either phase."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "k8s-ch06-c002",
+      "order": 2,
+      "title": "Requests vs Limits: The Resource Contract",
+      "teaser": "Kubernetes distinguishes between what a container is guaranteed to get (request) and the maximum it can consume (limit). These two numbers drive scheduling, OOM-kill decisions, and billing in managed clusters — getting them wrong is the most common source of both waste and instability.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Every container can declare "
+            },
+            {
+              "text": "resources.requests",
+              "marks": ["code"]
+            },
+            {
+              "text": " and "
+            },
+            {
+              "text": "resources.limits",
+              "marks": ["code"]
+            },
+            {
+              "text": " for CPU and memory:"
+            }
+          ]
+        },
+        {
+          "type": "code",
+          "lang": "yaml",
+          "code": "resources:\n  requests:\n    cpu: \"250m\"       # scheduler accounting\n    memory: \"128Mi\"   # scheduler accounting\n  limits:\n    cpu: \"1\"          # kernel throttle ceiling\n    memory: \"256Mi\"   # OOM-kill trigger"
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Request",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — what the scheduler uses for bin-packing. The scheduler sums all pod requests on a node and only places a new pod if the node has enough remaining capacity. The actual runtime usage can be more or less."
+              }
+            ],
+            [
+              {
+                "text": "Limit",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — enforced by the kernel cgroups. CPU limits are enforced via CPU throttling (the process is paused when it exceeds its quota). Memory limits are enforced by OOM-kill — when a container exceeds its memory limit the kernel kills a process inside it."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Key asymmetry: the scheduler only sees requests. A node can be \"scheduled full\" (sum of requests equals allocatable capacity) while actual CPU usage is 20%. Conversely, if a container has no CPU limit, it can burst up to 100% of idle CPU, which is often desirable for batch workloads."
+            }
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "warning",
+          "runs": [
+            {
+              "text": "Setting a CPU limit is not always correct. It causes throttling even when the node has spare capacity, which adds latency to latency-sensitive services. Many production teams omit CPU limits and rely on requests for scheduling correctness, while keeping memory limits to prevent runaway allocations."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "A request is a reservation that affects where the pod lands; a limit is a ceiling enforced by the kernel. The scheduler cares about requests; cgroups enforce limits."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "k8s-ch06-c003",
+      "order": 3,
+      "title": "CPU Units: Millicores and Throttling",
+      "teaser": "CPU is measured in cores — but Kubernetes uses millicores so you can express fractions. 1000m = 1 core. CPU limits do not cause OOM-kills; they cause throttling, which silently degrades latency in ways that are often misdiagnosed as application bugs.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "CPU resource quantities use the "
+            },
+            {
+              "text": "m",
+              "marks": ["code"]
+            },
+            {
+              "text": " suffix for millicores:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "1000m = 1 core = 1 vCPU = 1 AWS vCPU = 1 GCP vCPU"
+              }
+            ],
+            [
+              {
+                "text": "500m = 0.5 core (half a CPU)"
+              }
+            ],
+            [
+              {
+                "text": "100m = one tenth of a CPU"
+              }
+            ],
+            [
+              {
+                "text": "You can write \"1\" (no suffix) instead of \"1000m\" — they are identical"
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Under the hood, CPU limits are implemented via Linux CFS (Completely Fair Scheduler) quotas. The kernel measures CPU usage in 100ms windows. If a container with a 250m limit burns its 25ms quota within a window, it is throttled for the rest of that 100ms window — even if the node has 15 idle cores."
+            }
+          ]
+        },
+        {
+          "type": "code",
+          "lang": "text",
+          "code": "CFS throttling example (250m limit on a 1-core node):\n\nWindow [0ms ─────────────── 100ms]\n        ├─ 25ms running ─┤  THROTTLED (75ms wait)\n                                ▲\n               even if node is idle"
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "This is why CPU throttling degrades p99 latency disproportionately — a GC pause or burst of incoming requests can exhaust the quota for a window, causing tail latency spikes that do not show up in average CPU utilization metrics. The tool "
+            },
+            {
+              "text": "throttlectl",
+              "marks": ["italic"]
+            },
+            {
+              "text": " or cAdvisor's "
+            },
+            {
+              "text": "container_cpu_cfs_throttled_seconds_total",
+              "marks": ["code"]
+            },
+            {
+              "text": " metric exposes actual throttle time."
+            }
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "info",
+          "runs": [
+            {
+              "text": "CPU is compressible: a container that exceeds its limit is slowed down, not killed. Memory is incompressible: a container that exceeds its limit is killed. This is the fundamental behavioral difference between the two resource types."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "1000m equals one CPU core. CPU limits enforce a time-slice quota via the kernel; when a container exhausts its quota for the current 100ms window, it is paused — even if no other process needs the CPU."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "k8s-ch06-c004",
+      "order": 4,
+      "title": "Memory Units: Bytes, Mi vs M, Gi vs G",
+      "teaser": "Memory quantities in Kubernetes are bytes by default, but the suffixes matter: Mi means mebibytes (1024-based) while M means megabytes (1000-based). Using M when you mean Mi undersizes your container by about 5%, which can cause mysterious OOM-kills under load.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Kubernetes memory quantities follow the same suffix conventions as storage in the SI and IEC standards:"
+            }
+          ]
+        },
+        {
+          "type": "code",
+          "lang": "text",
+          "code": "Suffix  Base   Example   Actual bytes\n──────  ────   ───────   ────────────\n(none)  1      128       128 bytes\nK       1000   128K      128,000 bytes\nM       1000²  128M      128,000,000 bytes  (megabytes)\nG       1000³  1G        1,000,000,000 bytes\nKi      1024   128Ki     131,072 bytes\nMi      1024²  128Mi     134,217,728 bytes  (mebibytes)\nGi      1024³  1Gi       1,073,741,824 bytes"
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "When operators write "
+            },
+            {
+              "text": "512M",
+              "marks": ["code"]
+            },
+            {
+              "text": " they almost always intend 512 mebibytes (the \"old\" meaning of megabyte from computer memory). But "
+            },
+            {
+              "text": "512M",
+              "marks": ["code"]
+            },
+            {
+              "text": " gives 512,000,000 bytes while "
+            },
+            {
+              "text": "512Mi",
+              "marks": ["code"]
+            },
+            {
+              "text": " gives 536,870,912 bytes — about 5% more. Undersizing a JVM heap or Node.js --max-old-space-size by 5% under peak load is enough to trigger OOM."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The practical rule: "
+            },
+            {
+              "text": "always use Mi and Gi",
+              "marks": ["bold"]
+            },
+            {
+              "text": " for memory resource quantities. They match what every runtime, OS, and monitoring tool reports when they say \"MB\" or \"GB\" in a developer context."
+            }
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "warning",
+          "runs": [
+            {
+              "text": "kubectl top node and kubectl top pod report memory in Mi (mebibytes). Your limits should be in Mi/Gi to avoid confusion when comparing metrics to limits."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Mi means 1024-based mebibytes; M means 1000-based megabytes. They differ by about 5%. Always use Mi and Gi in Kubernetes resource specs unless you specifically need SI decimal units."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "k8s-ch06-c005",
+      "order": 5,
+      "title": "QoS Classes and OOM-Kill Priority",
+      "teaser": "Kubernetes assigns every pod exactly one of three Quality of Service classes — Guaranteed, Burstable, or BestEffort — based solely on its resource configuration. When a node runs out of memory, the kubelet evicts BestEffort pods first, then Burstable, and kills Guaranteed pods last.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "QoS class is inferred automatically; you never set it directly. The rules:"
+            }
+          ]
+        },
+        {
+          "type": "code",
+          "lang": "text",
+          "code": "QoS class determination:\n\n  GUARANTEED\n    Every container sets requests AND limits\n    AND requests == limits for every resource\n    (CPU and memory both)\n\n  BURSTABLE\n    At least one container sets a request or limit\n    but the pod does not qualify as Guaranteed\n\n  BESTEFFORT\n    No container sets any request or limit\n\nOOM-kill eviction order (lowest priority first):\n  BestEffort → Burstable → Guaranteed"
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The kubelet's eviction manager monitors memory pressure and node-level thresholds. When available memory crosses "
+            },
+            {
+              "text": "evictionHard.memory.available",
+              "marks": ["code"]
+            },
+            {
+              "text": " (default: 100Mi), it starts terminating pods. The Linux OOM killer is a lower-level backstop that acts when cgroup memory limits are exceeded — it uses an OOM score adjusted by QoS class."
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Guaranteed pods",
+                "marks": ["bold"]
+              },
+              {
+                "text": " get OOM score -997, making the kernel very unlikely to kill them."
+              }
+            ],
+            [
+              {
+                "text": "BestEffort pods",
+                "marks": ["bold"]
+              },
+              {
+                "text": " get OOM score 1000 — the kernel's first target."
+              }
+            ],
+            [
+              {
+                "text": "Burstable pods",
+                "marks": ["bold"]
+              },
+              {
+                "text": " land between 2 and 999 based on how much memory they are over their request."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "info",
+          "runs": [
+            {
+              "text": "Setting requests == limits for critical pods gives them Guaranteed QoS. This is the recommended configuration for production stateful workloads (databases, caches) and latency-sensitive services. The downside is that the pod cannot burst beyond its request even when the node has spare capacity."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "QoS class is automatically derived from your resource config. Guaranteed means requests equal limits. When the node is under memory pressure, BestEffort pods die first, then Burstable, then Guaranteed last."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "k8s-ch06-c006",
+      "order": 6,
+      "title": "Node Selectors: The Basic Placement Primitive",
+      "teaser": "nodeSelector is the simplest way to constrain which nodes a pod can land on: specify a map of key-value pairs, and the scheduler only considers nodes with all of those labels. It is a hard constraint — if no matching node exists, the pod stays Pending.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Node labels are arbitrary key-value strings attached to node objects. Cloud providers automatically add standard labels: "
+            },
+            {
+              "text": "kubernetes.io/arch",
+              "marks": ["code"]
+            },
+            {
+              "text": ", "
+            },
+            {
+              "text": "kubernetes.io/os",
+              "marks": ["code"]
+            },
+            {
+              "text": ", "
+            },
+            {
+              "text": "topology.kubernetes.io/zone",
+              "marks": ["code"]
+            },
+            {
+              "text": ", "
+            },
+            {
+              "text": "node.kubernetes.io/instance-type",
+              "marks": ["code"]
+            },
+            {
+              "text": ". You add custom ones with "
+            },
+            {
+              "text": "kubectl label node <name> disktype=ssd",
+              "marks": ["code"]
+            },
+            {
+              "text": "."
+            }
+          ]
+        },
+        {
+          "type": "code",
+          "lang": "yaml",
+          "code": "apiVersion: v1\nkind: Pod\nmetadata:\n  name: gpu-job\nspec:\n  nodeSelector:\n    accelerator: nvidia-tesla-t4   # custom label\n    kubernetes.io/arch: amd64      # built-in label\n  containers:\n  - name: trainer\n    image: pytorch/pytorch:2.3.0-cuda12.1-cudnn8-runtime"
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "This pod will only land on a node that has "
+            },
+            {
+              "text": "both",
+              "marks": ["bold"]
+            },
+            {
+              "text": " labels. All nodeSelector entries must match — it is an implicit AND."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "nodeSelector has two limitations that motivated Node Affinity:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Only equality matching",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — you cannot express \"node is in zone us-east1-a OR us-east1-b\"."
+              }
+            ],
+            [
+              {
+                "text": "Always hard",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — there is no way to express a preference that the scheduler should try but can violate if needed."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "info",
+          "runs": [
+            {
+              "text": "nodeSelector still works and is not deprecated. Use it when the placement rule is simple and always hard. Reach for Node Affinity only when you need OR logic, In/NotIn/Exists operators, or soft preferences."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "nodeSelector is a key-value map — every entry must match a node label, and all entries must match. It is simple, hard, and equality-only. If no node matches, the pod sits Pending."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "k8s-ch06-c007",
+      "order": 7,
+      "title": "Node Affinity: Required and Preferred Rules",
+      "teaser": "Node Affinity replaces nodeSelector with a richer expression language. Required rules (hard) must be satisfied or the pod stays Pending. Preferred rules (soft) add scoring weight — the scheduler tries to honor them but will place the pod elsewhere if no match exists.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Node Affinity uses two fields under "
+            },
+            {
+              "text": "spec.affinity.nodeAffinity",
+              "marks": ["code"]
+            },
+            {
+              "text": ":"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "requiredDuringSchedulingIgnoredDuringExecution",
+                "marks": ["code"]
+              },
+              {
+                "text": " — hard rule, Filter phase. The pod is only scheduled on matching nodes. \"IgnoredDuringExecution\" means if a node's labels change after scheduling, the pod is NOT evicted."
+              }
+            ],
+            [
+              {
+                "text": "preferredDuringSchedulingIgnoredDuringExecution",
+                "marks": ["code"]
+              },
+              {
+                "text": " — soft rule, Score phase. Each term has a weight (1-100) added to the node's score if the term matches."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "code",
+          "lang": "yaml",
+          "code": "affinity:\n  nodeAffinity:\n    requiredDuringSchedulingIgnoredDuringExecution:\n      nodeSelectorTerms:\n      - matchExpressions:\n        - key: topology.kubernetes.io/zone\n          operator: In\n          values: [us-east1-a, us-east1-b]   # OR within the list\n    preferredDuringSchedulingIgnoredDuringExecution:\n    - weight: 80\n      preference:\n        matchExpressions:\n        - key: disktype\n          operator: In\n          values: [ssd]"
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Supported operators: "
+            },
+            {
+              "text": "In",
+              "marks": ["code"]
+            },
+            {
+              "text": ", "
+            },
+            {
+              "text": "NotIn",
+              "marks": ["code"]
+            },
+            {
+              "text": ", "
+            },
+            {
+              "text": "Exists",
+              "marks": ["code"]
+            },
+            {
+              "text": ", "
+            },
+            {
+              "text": "DoesNotExist",
+              "marks": ["code"]
+            },
+            {
+              "text": ", "
+            },
+            {
+              "text": "Gt",
+              "marks": ["code"]
+            },
+            {
+              "text": ", "
+            },
+            {
+              "text": "Lt",
+              "marks": ["code"]
+            },
+            {
+              "text": ". Multiple terms in "
+            },
+            {
+              "text": "nodeSelectorTerms",
+              "marks": ["code"]
+            },
+            {
+              "text": " are ORed. Multiple "
+            },
+            {
+              "text": "matchExpressions",
+              "marks": ["code"]
+            },
+            {
+              "text": " within a term are ANDed."
+            }
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "info",
+          "runs": [
+            {
+              "text": "A future RequiredDuringExecution variant (\"RequiredDuringSchedulingRequiredDuringExecution\") is planned to evict pods when node labels no longer match. It is not yet GA."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Node Affinity comes in hard (required) and soft (preferred) flavors. Hard rules use the Filter phase and block placement; soft rules use the Score phase and nudge placement. Both support richer operators than nodeSelector's equality-only matching."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "k8s-ch06-c008",
+      "order": 8,
+      "title": "Pod Affinity: Co-locating Pods",
+      "teaser": "Pod Affinity lets you schedule pods relative to other pods already running in the cluster. The classic use case: place a caching sidecar or a data-locality-sensitive worker on the same node as the pod it needs to be close to.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Pod Affinity does not look at node labels — it looks at the labels of "
+            },
+            {
+              "text": "other pods",
+              "marks": ["bold"]
+            },
+            {
+              "text": " already running in the cluster. You specify a "
+            },
+            {
+              "text": "labelSelector",
+              "marks": ["code"]
+            },
+            {
+              "text": " that matches the target pods and a "
+            },
+            {
+              "text": "topologyKey",
+              "marks": ["code"]
+            },
+            {
+              "text": " that defines the scope (node, zone, rack, etc.)."
+            }
+          ]
+        },
+        {
+          "type": "code",
+          "lang": "yaml",
+          "code": "# Place this pod on the same NODE as pods labeled app=cache\naffinity:\n  podAffinity:\n    requiredDuringSchedulingIgnoredDuringExecution:\n    - labelSelector:\n        matchLabels:\n          app: cache\n      topologyKey: kubernetes.io/hostname   # \"same node\"\n\n# Soft preference: same zone as app=backend\n    preferredDuringSchedulingIgnoredDuringExecution:\n    - weight: 50\n      podAffinityTerm:\n        labelSelector:\n          matchLabels:\n            app: backend\n        topologyKey: topology.kubernetes.io/zone   # \"same zone\""
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The "
+            },
+            {
+              "text": "topologyKey",
+              "marks": ["code"]
+            },
+            {
+              "text": " is the label key used to define the topology domain. "
+            },
+            {
+              "text": "kubernetes.io/hostname",
+              "marks": ["code"]
+            },
+            {
+              "text": " gives node-level co-location; "
+            },
+            {
+              "text": "topology.kubernetes.io/zone",
+              "marks": ["code"]
+            },
+            {
+              "text": " gives zone-level co-location (the pod can land on any node in the same zone as any matching pod)."
+            }
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "warning",
+          "runs": [
+            {
+              "text": "Pod Affinity is O(N*M) in the scheduler — it must inspect all running pods for each candidate node. In large clusters with thousands of pods, required pod affinity rules can significantly slow scheduling. Use preferred rules or topology spread constraints where possible."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Pod Affinity says \"schedule me near pods matching these labels.\" The topologyKey defines what 'near' means — same node, same zone, or same rack. It is the co-location primitive."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "k8s-ch06-c009",
+      "order": 9,
+      "title": "Pod Anti-Affinity: Spreading Pods Apart",
+      "teaser": "Pod Anti-Affinity is the inverse of Pod Affinity — it repels new pods away from existing pods. The most important use case: ensuring that replicas of a Deployment do not all land on the same node, so a single node failure does not take down the entire service.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Pod Anti-Affinity uses the same "
+            },
+            {
+              "text": "podAntiAffinity",
+              "marks": ["code"]
+            },
+            {
+              "text": " field with identical syntax. The canonical HA pattern:"
+            }
+          ]
+        },
+        {
+          "type": "code",
+          "lang": "yaml",
+          "code": "# Spread replicas across nodes — required\naffinity:\n  podAntiAffinity:\n    requiredDuringSchedulingIgnoredDuringExecution:\n    - labelSelector:\n        matchLabels:\n          app: api-server       # matches ourselves\n      topologyKey: kubernetes.io/hostname   # no two on same node\n\n# Soft preference: spread across zones\n    preferredDuringSchedulingIgnoredDuringExecution:\n    - weight: 100\n      podAffinityTerm:\n        labelSelector:\n          matchLabels:\n            app: api-server\n        topologyKey: topology.kubernetes.io/zone"
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "When the labelSelector matches the pod's own labels (as above), it means \"do not schedule me on any node where an identical pod already runs.\" This turns the Deployment into a one-replica-per-node arrangement."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Required anti-affinity is a hard ceiling on replicas per domain. If your Deployment requests 5 replicas but only 3 nodes match the selector, 2 pods will remain Pending permanently. Topology Spread Constraints (introduced later) give more flexible spreading semantics."
+            }
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "info",
+          "runs": [
+            {
+              "text": "Prefer soft (preferred) anti-affinity for most HA use cases. Hard anti-affinity blocks scaling beyond the number of topology domains and can cause Pending pods after node failures. The soft version will still spread replicas across nodes when possible."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Pod Anti-Affinity pushes pods away from existing pods matching a label selector. The most useful application: prevent all replicas of a service from landing on the same node, so a node failure only kills one replica."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "k8s-ch06-c010",
+      "order": 10,
+      "title": "Taints and Tolerations: Node-Side Repulsion",
+      "teaser": "Taints are node-side repulsion rules: a tainted node repels all pods that do not explicitly tolerate the taint. Tolerations are pod-side exceptions. Together they let you dedicate nodes to specific workloads, mark nodes as special hardware, or implement safe node draining.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Node Affinity says \"pods prefer (or require) certain nodes.\" Taints invert the model: nodes repel certain pods. You add a taint to a node with "
+            },
+            {
+              "text": "kubectl taint nodes <node> key=value:Effect",
+              "marks": ["code"]
+            },
+            {
+              "text": ". There are three effects:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "NoSchedule",
+                "marks": ["code"]
+              },
+              {
+                "text": " — new pods without a matching toleration will not be scheduled here. Existing pods are unaffected."
+              }
+            ],
+            [
+              {
+                "text": "PreferNoSchedule",
+                "marks": ["code"]
+              },
+              {
+                "text": " — soft version of NoSchedule. The scheduler avoids the node but will use it if no untainted node fits."
+              }
+            ],
+            [
+              {
+                "text": "NoExecute",
+                "marks": ["code"]
+              },
+              {
+                "text": " — new pods are not scheduled AND existing pods without a toleration are evicted. Used for node draining and node-problem-detector scenarios."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "code",
+          "lang": "yaml",
+          "code": "# Add taint to node (shell)\nkubectl taint nodes gpu-node-1 dedicated=gpu:NoSchedule\n\n# Pod toleration\nspec:\n  tolerations:\n  - key: \"dedicated\"\n    operator: \"Equal\"\n    value: \"gpu\"\n    effect: \"NoSchedule\"\n  - key: \"node.kubernetes.io/not-ready\"   # built-in taint\n    operator: \"Exists\"\n    effect: \"NoExecute\"\n    tolerationSeconds: 300   # evict after 5 min if node stays not-ready"
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Kubernetes itself adds built-in taints automatically: "
+            },
+            {
+              "text": "node.kubernetes.io/not-ready",
+              "marks": ["code"]
+            },
+            {
+              "text": ", "
+            },
+            {
+              "text": "node.kubernetes.io/unreachable",
+              "marks": ["code"]
+            },
+            {
+              "text": ", "
+            },
+            {
+              "text": "node.kubernetes.io/disk-pressure",
+              "marks": ["code"]
+            },
+            {
+              "text": ". DaemonSets and critical system pods carry tolerations for these to keep running even on impaired nodes."
+            }
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "info",
+          "runs": [
+            {
+              "text": "Taints + tolerations handle the \"dedicated nodes\" pattern: taint GPU nodes with dedicated=gpu:NoSchedule, then only give GPU workloads the matching toleration. Other pods will never land on GPU nodes, keeping them for GPU jobs only."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "A taint is a repulsion rule on a node. A toleration is a pod's pass to ignore a specific taint. Only pods with the matching toleration can land on (or stay on) a tainted node."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "k8s-ch06-c011",
+      "order": 11,
+      "title": "Topology Spread Constraints",
+      "teaser": "Topology Spread Constraints let you declare how evenly pods should be distributed across topology domains — zones, nodes, racks — and how much imbalance to tolerate before blocking placement. They supersede pod anti-affinity for spreading use cases.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Topology Spread Constraints were GA in Kubernetes 1.24. They express: \"distribute pods across domains defined by label X, with at most Y more pods in any domain than the least-loaded domain.\""
+            }
+          ]
+        },
+        {
+          "type": "code",
+          "lang": "yaml",
+          "code": "spec:\n  topologySpreadConstraints:\n  - maxSkew: 1                         # max imbalance allowed\n    topologyKey: topology.kubernetes.io/zone\n    whenUnsatisfiable: DoNotSchedule   # hard (or ScheduleAnyway for soft)\n    labelSelector:\n      matchLabels:\n        app: api-server\n  - maxSkew: 2\n    topologyKey: kubernetes.io/hostname\n    whenUnsatisfiable: ScheduleAnyway  # soft — still schedules if skew exceeded\n    labelSelector:\n      matchLabels:\n        app: api-server"
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "maxSkew: 1",
+                "marks": ["code"]
+              },
+              {
+                "text": " — no zone may have more than 1 pod more than the least-loaded zone."
+              }
+            ],
+            [
+              {
+                "text": "DoNotSchedule",
+                "marks": ["code"]
+              },
+              {
+                "text": " — hard; block if placing would violate maxSkew."
+              }
+            ],
+            [
+              {
+                "text": "ScheduleAnyway",
+                "marks": ["code"]
+              },
+              {
+                "text": " — soft; score nodes to minimize skew but place regardless."
+              }
+            ],
+            [
+              {
+                "text": "minDomains",
+                "marks": ["code"]
+              },
+              {
+                "text": " (1.25+) — require a minimum number of eligible topology domains before enforcing the spread."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Topology Spread Constraints are strictly more expressive than pod anti-affinity for spreading: anti-affinity blocks \"same domain as any replica\" while TSC controls the ratio, allowing multiple replicas per domain as long as balance is maintained."
+            }
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "info",
+          "runs": [
+            {
+              "text": "You can set cluster-wide default topologySpreadConstraints in the scheduler configuration (KubeSchedulerConfiguration), applying them to all pods that do not specify their own — useful for enforcing zone spread organization-wide."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Topology Spread Constraints say: across domains defined by a node label, keep the pod count balanced to within maxSkew replicas. They are more nuanced than anti-affinity — they allow multiple replicas per domain, just not too many more than any other domain."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "k8s-ch06-c012",
+      "order": 12,
+      "title": "Resource Quotas and LimitRange",
+      "teaser": "ResourceQuota caps the total resources a namespace can consume — preventing one team's workload from monopolizing cluster capacity. LimitRange sets per-container defaults and bounds, ensuring containers in the namespace get sensible resource configurations even when none are specified.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "These two objects are namespace-level governors operating at different scopes:"
+            }
+          ]
+        },
+        {
+          "type": "code",
+          "lang": "yaml",
+          "code": "# ResourceQuota — namespace totals\napiVersion: v1\nkind: ResourceQuota\nmetadata:\n  name: team-quota\n  namespace: team-alpha\nspec:\n  hard:\n    requests.cpu: \"20\"          # sum of all pod CPU requests\n    requests.memory: 40Gi       # sum of all pod memory requests\n    limits.cpu: \"40\"\n    limits.memory: 80Gi\n    pods: \"50\"                  # max pod count\n    count/deployments.apps: \"10\"\n---\n# LimitRange — per-container defaults and bounds\napiVersion: v1\nkind: LimitRange\nmetadata:\n  name: default-limits\n  namespace: team-alpha\nspec:\n  limits:\n  - type: Container\n    default:              # applied when limit is omitted\n      cpu: \"500m\"\n      memory: 256Mi\n    defaultRequest:       # applied when request is omitted\n      cpu: \"100m\"\n      memory: 128Mi\n    max:                  # upper bound — exceeding blocks pod creation\n      cpu: \"4\"\n      memory: 8Gi\n    min:                  # lower bound\n      cpu: \"10m\"\n      memory: 32Mi"
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The interaction is important: if a ResourceQuota is active in a namespace, every pod "
+            },
+            {
+              "text": "must",
+              "marks": ["bold"]
+            },
+            {
+              "text": " specify resource requests and limits, or the API server rejects the pod. A LimitRange with defaults solves this by injecting requests/limits automatically for containers that omit them."
+            }
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "info",
+          "runs": [
+            {
+              "text": "ResourceQuota also governs non-resource objects: count/services, count/configmaps, count/secrets, persistentvolumeclaims, etc. This lets platform teams prevent namespace sprawl as well as resource sprawl."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "ResourceQuota is a namespace budget — the total your team can spend. LimitRange is a guardrail — the minimum and maximum any single container can request, plus defaults applied when a container specifies nothing."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "k8s-ch06-c013",
+      "order": 13,
+      "title": "HPA vs VPA: Scaling Out vs Scaling Up",
+      "teaser": "The Horizontal Pod Autoscaler changes how many pod replicas run. The Vertical Pod Autoscaler changes how much CPU and memory each replica requests. They solve different problems — and using both for CPU/memory on the same Deployment at the same time causes unstable feedback loops.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Both autoscalers address resource mismatch, but with opposite levers:"
+            }
+          ]
+        },
+        {
+          "type": "code",
+          "lang": "yaml",
+          "code": "# HPA — scale replica count based on CPU or custom metrics\napiVersion: autoscaling/v2\nkind: HorizontalPodAutoscaler\nmetadata:\n  name: api-hpa\nspec:\n  scaleTargetRef:\n    apiVersion: apps/v1\n    kind: Deployment\n    name: api-server\n  minReplicas: 2\n  maxReplicas: 20\n  metrics:\n  - type: Resource\n    resource:\n      name: cpu\n      target:\n        type: Utilization\n        averageUtilization: 60   # scale to keep avg CPU at 60%\n  - type: Pods\n    pods:\n      metric:\n        name: requests_per_second\n      target:\n        type: AverageValue\n        averageValue: \"1k\""
+        },
+        {
+          "type": "code",
+          "lang": "yaml",
+          "code": "# VPA — recommend or auto-set requests/limits per container\napiVersion: autoscaling.k8s.io/v1\nkind: VerticalPodAutoscaler\nmetadata:\n  name: api-vpa\nspec:\n  targetRef:\n    apiVersion: apps/v1\n    kind: Deployment\n    name: api-server\n  updatePolicy:\n    updateMode: \"Auto\"    # or \"Off\" (recommendations only) or \"Initial\"\n  resourcePolicy:\n    containerPolicies:\n    - containerName: \"*\"\n      minAllowed:\n        cpu: 50m\n        memory: 64Mi\n      maxAllowed:\n        cpu: \"4\"\n        memory: 4Gi"
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "HPA",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — best for stateless services where traffic scales horizontally. Reacts to metrics in near real-time. Does not require pod restarts."
+              }
+            ],
+            [
+              {
+                "text": "VPA",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — best for workloads whose optimal right-size is unknown (right-sizing JVM heaps, ML training jobs). In Auto mode, VPA evicts and recreates pods — causing a brief disruption. VPA also runs in Off mode as a pure recommendation engine."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The mutual exclusion rule: "
+            },
+            {
+              "text": "do not use HPA on CPU/memory AND VPA Auto on the same target simultaneously.",
+              "marks": ["bold"]
+            },
+            {
+              "text": " VPA changes the requests that HPA uses to calculate utilization ratios, causing oscillation. The safe combinations: HPA on custom metrics (requests/sec) + VPA Auto, or HPA on CPU + VPA Off (recommendations only)."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Both autoscalers need underlying node capacity. "
+            },
+            {
+              "text": "Cluster Autoscaler",
+              "marks": ["bold"]
+            },
+            {
+              "text": " (the original cluster-level autoscaler, supported by AWS, GCP, Azure) and "
+            },
+            {
+              "text": "Karpenter",
+              "marks": ["bold"]
+            },
+            {
+              "text": " (AWS-native, much faster node provisioning, also available on Azure) provision new nodes when the scheduler cannot find capacity. HPA creates the demand; the cluster autoscaler or Karpenter supplies the nodes."
+            }
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "warning",
+          "runs": [
+            {
+              "text": "VPA in Auto mode evicts pods to apply new resource settings. This is disruptive for single-replica Deployments and stateful workloads. Always use PodDisruptionBudgets and set minReplicas > 1 before enabling VPA Auto in production."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "HPA adds or removes pod replicas based on load metrics. VPA changes the CPU/memory size of each pod. Both together on the same CPU/memory signals cause a feedback loop — pick one or use them on different metrics."
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

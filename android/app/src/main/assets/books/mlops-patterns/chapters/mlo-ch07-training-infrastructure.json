@@ -1,0 +1,1370 @@
+{
+  "chapterId": "mlo-ch07-training-infrastructure",
+  "shardIndex": 7,
+  "cards": [
+    {
+      "id": "mlo-ch07-c001",
+      "order": 1,
+      "title": "Why Distributed Training Exists",
+      "teaser": "A single GPU runs out of memory. A single node runs out of bandwidth. Distributed training is not an optimization — it is a necessity once the model or the dataset exceeds what one device can hold.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Modern ML has two problems that single-device training cannot solve:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Model size exceeds device memory.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " GPT-3 has 175B parameters. At FP16, that is ~350 GB — a single A100 GPU has 80 GB of HBM. Even storing the parameters, optimizer state, and activations for one forward pass requires multiple devices."
+              }
+            ],
+            [
+              {
+                "text": "Data throughput becomes the bottleneck.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Training a BERT-scale model on 1 trillion tokens at single-GPU throughput would take years. Splitting the work across hundreds of accelerators is the only path to a usable training time."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Distributed training introduces coordination overhead — gradient synchronization, communication latency, fault tolerance — that is absent in single-device training. Every distributed strategy is a different answer to the question: how do we pay that overhead as cheaply as possible?"
+            }
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "info",
+          "runs": [
+            {
+              "text": "The two axes of scale are independent: a model that fits on one GPU but trains on 1TB of data benefits from data parallelism. A model that does not fit on one GPU but trains on a modest dataset needs model parallelism. Real large-scale training typically needs both at once."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Distributed training exists for two reasons: the model is too big to fit on one device, or training on one device would take too long. Every distributed strategy is a different way to split the problem across multiple machines."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "mlo-ch07-c002",
+      "order": 2,
+      "title": "Data Parallelism",
+      "teaser": "Data parallelism replicates the full model on every device, splits the training data across devices, and aggregates gradients. It is the simplest and most widely used form of distributed training.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "In data parallel training, each device (GPU or TPU) holds an identical copy of the model. The training batch is split into shards — one shard per device. Each device runs a full forward and backward pass on its shard, producing local gradients. Those gradients are then aggregated across all devices to produce a global gradient update that is applied identically on every device."
+            }
+          ]
+        },
+        {
+          "type": "code",
+          "language": "text",
+          "code": "Data Parallel (4 GPUs, batch size 256 = 64 per GPU)\n\n  Full dataset\n      |\n  ----+----+----+----\n  |        |        |        |\nGPU0    GPU1    GPU2    GPU3\n[model] [model] [model] [model]\nbatch0  batch1  batch2  batch3\n  |        |        |        |\ngrad0   grad1   grad2   grad3\n  |        |        |        |\n  +--------+--------+--------+\n         AllReduce\n         global_grad\n  |        |        |        |\nupdate  update  update  update\n(identical on all GPUs)"
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Data parallelism scales well because the communication pattern is predictable: one gradient synchronization per step, with volume proportional to the model size (not the data size). Modern implementations use AllReduce (not a parameter server) for this synchronization."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The fundamental constraint: each replica must hold the complete model. If the model exceeds per-device memory, data parallelism alone is insufficient."
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "PyTorch DDP",
+                "marks": ["bold"]
+              },
+              {
+                "text": " (DistributedDataParallel) is the standard implementation. It overlaps gradient communication with the backward pass for efficiency."
+              }
+            ],
+            [
+              {
+                "text": "Effective batch size",
+                "marks": ["bold"]
+              },
+              {
+                "text": " = per-device batch size x number of devices. Learning rate scaling rules (linear scaling, warmup) must be applied accordingly."
+              }
+            ]
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Data parallelism means: every GPU has a complete copy of the model, but each GPU trains on different data. After each step, they average their gradients so all copies stay identical. It is the easiest form of distributed training and the first one to reach for."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "mlo-ch07-c003",
+      "order": 3,
+      "title": "Model Parallelism",
+      "teaser": "When the model itself does not fit on a single device, model parallelism splits the model — not the data — across devices. Two main flavors: pipeline parallelism and tensor parallelism.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Model parallelism partitions the model parameters across multiple devices, so that each device holds only a portion of the model. Unlike data parallelism, where every device sees the full model, here each device sees only its shard."
+            }
+          ]
+        },
+        {
+          "type": "code",
+          "language": "text",
+          "code": "Data Parallel vs Model Parallel\n\nData Parallel                 Model Parallel\n\n GPU0   GPU1   GPU2           GPU0    GPU1    GPU2\n[full] [full] [full]         [L1-L4] [L5-L8] [L9-L12]\n  |      |      |              |        |        |\nbatch0 batch1 batch2          forward: GPU0->GPU1->GPU2\n  |      |      |              backward: GPU2->GPU1->GPU0\ngrad sync <--->               (activations pass between GPUs)"
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Model parallelism introduces activation communication overhead between devices: the output of one device's layers must be transferred to the next device as input. This inter-device bandwidth is often the bottleneck, which is why model-parallel configurations prefer NVLink (within a node) over Ethernet or InfiniBand (across nodes)."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The two strategies for splitting a model are:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Pipeline parallelism",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — split the model by layer groups (stages); devices work sequentially on each micro-batch."
+              }
+            ],
+            [
+              {
+                "text": "Tensor parallelism",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — split individual weight matrices across devices; devices work in parallel on different columns/rows."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "In practice, large-scale training combines data parallelism, pipeline parallelism, and tensor parallelism simultaneously — a configuration called 3D parallelism. Megatron-LM and DeepSpeed are the dominant frameworks implementing this."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Model parallelism is for when the model is too big for one GPU: you cut the model into pieces and put each piece on a different GPU. The catch is that the GPUs now need to talk to each other constantly as data flows through the layers."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "mlo-ch07-c004",
+      "order": 4,
+      "title": "The Parameter Server Architecture",
+      "teaser": "The parameter server was the first widely adopted approach to distributed gradient aggregation. It works — but a centralized server is a bottleneck and a single point of failure. AllReduce has largely replaced it.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The parameter server (PS) pattern, popularized by Distbelief (Dean et al., 2012) and Li et al.'s parameter server paper (2014), separates the cluster into two roles:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Workers",
+                "marks": ["bold"]
+              },
+              {
+                "text": " compute gradients on data shards and push them to the parameter server."
+              }
+            ],
+            [
+              {
+                "text": "Parameter servers",
+                "marks": ["bold"]
+              },
+              {
+                "text": " accumulate gradients, apply the optimizer update, and push updated weights back to workers."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "code",
+          "language": "text",
+          "code": "Parameter Server vs AllReduce\n\nParameter Server                  AllReduce (Ring)\n\nWorker1 --push grad--> [PS]       W1 -- W2\nWorker2 --push grad--> [PS]       |      |\nWorker3 --push grad--> [PS]       W4 -- W3\n[PS]   --pull weights-> Workers   (each worker talks to 2 neighbors)\n\nBottleneck: PS bandwidth          No central bottleneck\nSingle point of failure           Fault requires full restart\nAsync updates possible            Typically synchronous\nGood for sparse gradients         Good for dense gradients"
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The parameter server's key advantage is support for asynchronous gradient updates: workers do not need to wait for each other. This helps when workers have heterogeneous speeds (straggler mitigation). However, asynchronous updates introduce gradient staleness — a worker may apply a gradient computed on weights that are N steps out of date, degrading convergence."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The fundamental problem is bandwidth concentration. All workers push to and pull from the same PS machines. As the number of workers grows, the PS becomes the bandwidth bottleneck — even with sharded PS (multiple PS nodes), the fan-in creates hot spots. Dense gradients (e.g., transformer attention weights) hit this limit quickly."
+            }
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "info",
+          "runs": [
+            {
+              "text": "TensorFlow originally shipped with parameter server support as its primary distributed strategy (tf.distribute.experimental.ParameterServerStrategy). It remains useful for certain sparse embedding workloads (recommendation models), where not all parameters are updated in every step."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "A parameter server is a central machine that collects gradients from all workers, averages them, updates the model, and sends the new weights back. It works, but it becomes the traffic jam as you add more workers — everything goes through one place."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "mlo-ch07-c005",
+      "order": 5,
+      "title": "AllReduce — The Modern Default",
+      "teaser": "AllReduce eliminates the central bottleneck of the parameter server by making every worker both a sender and a receiver. It is the backbone of modern distributed deep learning — implemented in NCCL and popularized by Horovod.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "AllReduce is a collective communication operation from the MPI standard: every process contributes a value, and every process receives the same reduced result (the sum or mean). Applied to gradient aggregation, each GPU broadcasts its gradients and receives the globally averaged gradient — without any central server."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The most efficient topology for AllReduce over GPUs is the ring algorithm:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "GPUs are arranged in a logical ring.",
+                "marks": []
+              }
+            ],
+            [
+              {
+                "text": "In the Reduce-Scatter phase, each GPU sends a gradient chunk to its right neighbor and accumulates a chunk from its left neighbor. After N-1 rounds, each GPU holds the reduced sum for one chunk."
+              }
+            ],
+            [
+              {
+                "text": "In the AllGather phase, each GPU broadcasts its reduced chunk around the ring. After N-1 rounds, every GPU holds the full reduced gradient."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Total data transferred per GPU is constant at "
+            },
+            {
+              "text": "2 x (N-1)/N x gradient_size",
+              "marks": ["code"]
+            },
+            {
+              "text": " — essentially 2x the gradient size regardless of the number of GPUs. This is a key result: adding more GPUs does not increase the per-GPU communication burden."
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "NCCL",
+                "marks": ["bold"]
+              },
+              {
+                "text": " (NVIDIA Collective Communications Library) is the standard AllReduce implementation for NVIDIA GPUs. It exploits NVLink for intra-node and InfiniBand for inter-node communication."
+              }
+            ],
+            [
+              {
+                "text": "Horovod",
+                "marks": ["bold"]
+              },
+              {
+                "text": " (Uber, 2018) is a framework-agnostic wrapper around AllReduce that works with TensorFlow, PyTorch, and MXNet. It made ring-AllReduce accessible with minimal code changes."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "info",
+          "runs": [
+            {
+              "text": "PyTorch DDP uses NCCL AllReduce internally. For most data-parallel workloads, you get ring-AllReduce automatically. Horovod is now mainly used for legacy TensorFlow workflows or multi-framework shops."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "AllReduce makes every GPU talk to its two neighbors in a ring, passing gradient pieces around until everyone ends up with the averaged gradient. No central server needed — and crucially, adding more GPUs does not create more traffic for any single GPU."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "mlo-ch07-c006",
+      "order": 6,
+      "title": "Pipeline Parallelism",
+      "teaser": "Pipeline parallelism assigns different layers of the model to different devices, then schedules multiple micro-batches so devices run concurrently. The challenge is the pipeline bubble — idle time when devices wait for upstream stages.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "In pipeline parallelism, the model is partitioned into sequential stages, each placed on a different device. Stage 1 processes layers 1–4, stage 2 processes layers 5–8, and so on. A single micro-batch flows through the pipeline: stage 1 runs the forward pass, passes activations to stage 2, which runs its forward pass, and so on."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The naive implementation (GPipe, Google 2018) creates a pipeline bubble:"
+            }
+          ]
+        },
+        {
+          "type": "code",
+          "language": "text",
+          "code": "Naive pipeline (4 stages, 1 micro-batch) -- bubble problem:\n\nTime: 1   2   3   4   5   6   7   8\nGPU0: [F] [.] [.] [.] [B] [.] [.] [.]\nGPU1: [.] [F] [.] [.] [.] [B] [.] [.]\nGPU2: [.] [.] [F] [.] [.] [.] [B] [.]\nGPU3: [.] [.] [.] [F] [.] [.] [.] [B]\n\n[F]=Forward  [B]=Backward  [.]=idle (bubble)\nBubble fraction = (p-1)/(m+p-1)  where p=stages, m=micro-batches\n\nWith 8 micro-batches (GPipe scheduling):\nGPU0: [F0][F1][F2][F3][F4][F5][F6][F7][B7][B6]...\n(bubble shrinks as m >> p)"
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "PipeDream (Microsoft, 2019) and its variants use 1F1B (one forward, one backward) scheduling to reduce peak activation memory and shrink the bubble further. Megatron-LM implements interleaved pipeline schedules for transformer models."
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Ideal for transformer architectures",
+                "marks": ["bold"]
+              },
+              {
+                "text": " where each layer block has similar compute cost — predictable stage sizing."
+              }
+            ],
+            [
+              {
+                "text": "Communication is between adjacent stages only",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — bandwidth requirement is proportional to activation size, not weight size."
+              }
+            ],
+            [
+              {
+                "text": "Requires careful load balancing",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — if one stage is slower, all upstream stages idle waiting."
+              }
+            ]
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Pipeline parallelism is like an assembly line: each GPU handles a different section of the model, and mini-batches flow through one stage at a time. The problem is idle time — a GPU has to wait for the previous GPU to finish before it can start. The fix is to keep multiple mini-batches in flight simultaneously."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "mlo-ch07-c007",
+      "order": 7,
+      "title": "Tensor Parallelism",
+      "teaser": "Tensor parallelism splits individual weight matrices across devices, letting multiple GPUs collaborate on a single layer's computation simultaneously. It achieves near-linear compute scaling within a node where NVLink bandwidth is high enough.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Tensor parallelism partitions individual tensors — specifically the large weight matrices inside a layer — across multiple devices. Instead of device 1 computing all of layer N and passing the result to device 2, multiple devices each compute a portion of layer N in parallel."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The canonical example is a transformer attention layer. The attention projection matrix can be split column-wise across devices: each GPU holds a subset of attention heads and computes those heads independently. An AllReduce merges the outputs before the next layer."
+            }
+          ]
+        },
+        {
+          "type": "code",
+          "language": "text",
+          "code": "Tensor Parallel: column-parallel linear layer\n\nInput X (full, on all GPUs via broadcast)\n\nGPU0: X @ W[:,0:d/2] = Y0   (first half of output dims)\nGPU1: X @ W[:,d/2:d] = Y1   (second half of output dims)\n\nAllGather --> Y = [Y0 | Y1]  (reassemble full output)"
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Tensor parallelism requires a synchronization point (AllReduce or AllGather) after each tensor-parallel layer. This communication happens on every forward pass of every layer, making it bandwidth-intensive. It works well only when interconnect bandwidth is very high — in practice, NVLink within a node (600 GB/s on A100 NVLink) is sufficient; inter-node Ethernet is usually not."
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Megatron-LM",
+                "marks": ["bold"]
+              },
+              {
+                "text": " from NVIDIA introduced tensor parallelism for GPT-style models and remains the reference implementation."
+              }
+            ],
+            [
+              {
+                "text": "Degree of tensor parallelism",
+                "marks": ["bold"]
+              },
+              {
+                "text": " is typically 4 or 8 (one node of GPUs) — beyond that, inter-node bandwidth makes it inefficient."
+              }
+            ]
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Tensor parallelism splits a single weight matrix across multiple GPUs so they compute different parts of the same layer at the same time. It is very fast because the GPUs stay synchronized inside the node where connections are extremely fast — but it does not work well across machines."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "mlo-ch07-c008",
+      "order": 8,
+      "title": "Mixed Precision Training",
+      "teaser": "Mixed precision training uses FP16 for most compute and FP32 for critical accumulations. It roughly doubles throughput on modern GPUs and halves memory usage, with minimal accuracy cost when implemented correctly.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "FP32 (32-bit float) has historically been the default for training because of its numerical stability. FP16 (16-bit float) uses half the memory and is processed at 2-8x higher FLOP rates on tensor cores. The challenge: FP16 has limited dynamic range (max ~65,504) and precision, causing gradient underflow or overflow during training."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The NVIDIA / Baidu mixed precision recipe (Micikevicius et al., 2018) solves this with three techniques:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "FP16 forward and backward pass.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Matrix multiplications, convolutions, and activations run in FP16 to exploit tensor core throughput."
+              }
+            ],
+            [
+              {
+                "text": "FP32 master weights.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " A full-precision copy of the model parameters is maintained for the optimizer update. The FP16 copy is derived from it each step. Small weight updates that would be rounded to zero in FP16 are preserved in FP32."
+              }
+            ],
+            [
+              {
+                "text": "Loss scaling.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Gradients in FP16 easily underflow (become exactly zero). The loss is multiplied by a large scalar before the backward pass, and gradients are divided by the same scalar before the weight update. This keeps gradient values in FP16's representable range."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "BF16 (bfloat16) is now preferred over FP16 for training on modern hardware (A100, H100, TPU v3+). BF16 has the same exponent range as FP32 (avoiding the overflow problem), with lower mantissa precision. It eliminates the need for loss scaling in most cases."
+            }
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "info",
+          "runs": [
+            {
+              "text": "PyTorch AMP (Automatic Mixed Precision) via torch.cuda.amp.autocast() handles the FP16/FP32 switching automatically. In practice, enabling AMP and a GradScaler is a 2-line change that typically yields 1.5–2x throughput improvement on A100s."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Mixed precision training uses low-precision math for the heavy lifting (making it faster and smaller in memory), but keeps a high-precision copy of the weights for the update step where rounding errors would matter. You get most of the speed for almost none of the accuracy loss."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "mlo-ch07-c009",
+      "order": 9,
+      "title": "Kubeflow Training Operator",
+      "teaser": "The Kubeflow Training Operator brings distributed ML training to Kubernetes through custom resource definitions — TFJob, PyTorchJob, MPIJob — turning multi-node training runs into first-class Kubernetes workloads.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The Training Operator (formerly tf-operator) extends Kubernetes with ML-aware custom resources. Instead of manually orchestrating pods, headless services, and environment variables for distributed training, you declare a training job and the operator handles pod creation, inter-pod networking, and failure handling."
+            }
+          ]
+        },
+        {
+          "type": "code",
+          "language": "yaml",
+          "code": "apiVersion: kubeflow.org/v1\nkind: PyTorchJob\nmetadata:\n  name: resnet-training\nspec:\n  pytorchReplicaSpecs:\n    Master:\n      replicas: 1\n      template:\n        spec:\n          containers:\n          - name: pytorch\n            image: my-training-image:latest\n            resources:\n              limits:\n                nvidia.com/gpu: 1\n    Worker:\n      replicas: 3\n      template:\n        spec:\n          containers:\n          - name: pytorch\n            image: my-training-image:latest\n            resources:\n              limits:\n                nvidia.com/gpu: 1"
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The operator automatically:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Creates one pod per replica and assigns roles (master, worker)."
+              }
+            ],
+            [
+              {
+                "text": "Sets ",
+                "marks": []
+              },
+              {
+                "text": "MASTER_ADDR",
+                "marks": ["code"]
+              },
+              {
+                "text": ", ",
+                "marks": []
+              },
+              {
+                "text": "WORLD_SIZE",
+                "marks": ["code"]
+              },
+              {
+                "text": ", and ",
+                "marks": []
+              },
+              {
+                "text": "RANK",
+                "marks": ["code"]
+              },
+              {
+                "text": " environment variables that PyTorch's distributed init reads automatically."
+              }
+            ],
+            [
+              {
+                "text": "Tracks job success/failure and exposes status via the CRD."
+              }
+            ],
+            [
+              {
+                "text": "Supports restart policies for preemption and node failures."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The Training Operator integrates with Kubeflow Pipelines for end-to-end ML workflow orchestration and with Katib for hyperparameter optimization. It supports TFJob (TensorFlow), PyTorchJob, MXNetJob, MPIJob (for Horovod), and XGBoostJob."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The Kubeflow Training Operator lets you describe a distributed training job in a YAML file the same way you describe a Kubernetes Deployment. It takes care of launching the right pods, wiring them together, and tracking whether the job succeeded or failed."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "mlo-ch07-c010",
+      "order": 10,
+      "title": "SageMaker Training",
+      "teaser": "Amazon SageMaker Training is a managed service that launches, scales, and terminates training infrastructure on demand. It provides built-in distributed strategies, automatic model checkpointing to S3, and first-class spot instance support.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "SageMaker Training abstracts away cluster management: you specify the training script, the instance type, the instance count, and the data location in S3. SageMaker provisions the cluster, copies data to local storage on the instances, runs the training, copies the output model to S3, and tears down the cluster — all automatically."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Key SageMaker training capabilities:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "SageMaker Distributed Data Parallel (SMDDP)",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — AWS's optimized AllReduce library. Claims 20-30% higher throughput than vanilla NCCL in multi-node scenarios by using adaptive thresholding and server-side gradient fusion."
+              }
+            ],
+            [
+              {
+                "text": "SageMaker Model Parallel (SMP)",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — automatic pipeline and tensor parallelism. The library can partition the model across devices without manually annotating which layers go where."
+              }
+            ],
+            [
+              {
+                "text": "SageMaker Experiments",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — built-in tracking of hyperparameters, metrics, and artifacts for each training run."
+              }
+            ],
+            [
+              {
+                "text": "Managed Spot Training",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — SageMaker handles spot interruption and automatic checkpoint restore. You specify ",
+                "marks": []
+              },
+              {
+                "text": "use_spot_instances=True",
+                "marks": ["code"]
+              },
+              {
+                "text": " and a checkpoint S3 path; SageMaker does the rest."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "info",
+          "runs": [
+            {
+              "text": "SageMaker Training can reduce costs significantly compared to on-demand EC2 instances with GPU. Managed Spot Training typically saves 70-90% over on-demand pricing for interruptible workloads — the main requirement is that your training script saves checkpoints regularly."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "SageMaker Training means you hand AWS your training script and tell it how many GPUs you want — it rents the machines, sets them up, runs the job, saves the model to S3, and shuts everything down. You never SSH into a training server."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "mlo-ch07-c011",
+      "order": 11,
+      "title": "Vertex AI Training",
+      "teaser": "Vertex AI Training is Google Cloud's managed training service, tightly integrated with GCS, BigQuery, and Google's TPU infrastructure. It provides custom training jobs, hyperparameter tuning, and first-class support for distributed strategies across clouds.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Vertex AI Training (formerly AI Platform Training) is GCP's answer to SageMaker Training. You submit a custom training job specifying a container image, machine type, replica counts, and an accelerator type (GPU or TPU)."
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Custom training jobs",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — bring any container. TensorFlow, PyTorch, JAX, or custom frameworks all work. Vertex handles provisioning, execution, and artifact storage to GCS."
+              }
+            ],
+            [
+              {
+                "text": "Distribution strategies",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — Vertex integrates with TensorFlow's ",
+                "marks": []
+              },
+              {
+                "text": "tf.distribute.MirroredStrategy",
+                "marks": ["code"]
+              },
+              {
+                "text": " and ",
+                "marks": []
+              },
+              {
+                "text": "MultiWorkerMirroredStrategy",
+                "marks": ["code"]
+              },
+              {
+                "text": " out of the box, setting up the required environment variables automatically."
+              }
+            ],
+            [
+              {
+                "text": "Vertex AI Vizier",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — integrated Bayesian hyperparameter optimization (equivalent to SageMaker Automatic Model Tuning)."
+              }
+            ],
+            [
+              {
+                "text": "TPU support",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — Vertex is the primary path to Cloud TPU Pods. You can request TPU v4 slices directly as the accelerator type, making JAX/XLA-based training workflows natural."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Cross-cloud comparison: SageMaker and Vertex AI offer equivalent managed capabilities. The decision driver is usually the rest of the data stack — if data lives in BigQuery and model serving will use Vertex AI Prediction endpoints, Vertex training is the natural choice. If data lives in S3 and the team is AWS-native, SageMaker wins."
+            }
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "info",
+          "runs": [
+            {
+              "text": "Vertex AI Training pricing is per-second for the provisioned hardware, with no additional managed service markup — you pay the underlying GPU/TPU rate plus a small Vertex overhead. The cost model is comparable to SageMaker once you account for equivalent instance types."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Vertex AI Training is GCP's managed training service — like SageMaker, but on Google Cloud, with better native support for TPUs. You describe the job, Google provisions the hardware, runs it, and puts the model in Cloud Storage."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "mlo-ch07-c012",
+      "order": 12,
+      "title": "GPU vs TPU Economics",
+      "teaser": "GPUs and TPUs have different cost-per-FLOP profiles, memory architectures, and ecosystem fit. The choice is rarely about raw FLOP counts — it is about matrix size, batch size, framework compatibility, and where the training workload lives.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "GPUs (NVIDIA A100, H100) and TPUs (Google TPU v4, v5) both target ML training, but with different design philosophies:"
+            }
+          ]
+        },
+        {
+          "type": "code",
+          "language": "text",
+          "code": "GPU vs TPU — decision factors\n\n                    GPU (H100)           TPU v4\n-----------------------------------------------------------\nPeak BF16 FLOPS     989 TFLOPS           275 TFLOPS (chip)\nHBM Memory          80 GB                32 GB HBM\nMulti-node fabric   InfiniBand/NVLink     TPU ICI (3D torus)\nFramework support   All (PyTorch, TF,     Best: JAX, TF\n                    JAX, MXNet)\nSpot/preemptible    Yes (EC2 spot,        Yes (Preemptible\n                    GCP spot)            TPU)\nCost on GCP         ~$3.50/h per A100    ~$2.40/h per TPU v4\n                    (approx)             chip (approx)\nIdeal batch size    Flexible             Large (XLA-optimized)\nDocker/custom       Full support         Limited (no apt-get\ncontainer support                        on host)"
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "When GPUs win:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "PyTorch-based codebases.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " TPU support in PyTorch (via torch_xla) exists but lags behind CUDA in ecosystem maturity."
+              }
+            ],
+            [
+              {
+                "text": "Small to medium batch sizes.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " TPU performance degrades for small batches because XLA compilation targets large, regular tensor operations."
+              }
+            ],
+            [
+              {
+                "text": "Custom CUDA kernels.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " If your model uses custom ops, GPUs with CUDA are the only viable choice."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "When TPUs win:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "JAX/XLA workloads.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " JAX is designed for TPU-like hardware. Training LLMs in JAX on TPU Pods is significantly cheaper per FLOP than NVIDIA alternatives at the same scale."
+              }
+            ],
+            [
+              {
+                "text": "Very large scale.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " TPU v4 Pods (up to 4096 chips) have 3D torus interconnects (ICI) with very high bisection bandwidth — better collective communication scaling than InfiniBand for transformer-scale workloads."
+              }
+            ]
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "GPUs are general-purpose and work with everything; TPUs are specialized, cheaper per computation at large scale, but require JAX or TensorFlow and large batch sizes to hit their peak performance. Most teams use GPUs unless they are doing large-scale training on GCP with JAX."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "mlo-ch07-c013",
+      "order": 13,
+      "title": "Spot Training and Checkpoint Discipline",
+      "teaser": "Spot and preemptible GPU instances cost 60-90% less than on-demand but can be reclaimed with 2 minutes notice. The only safe way to use them for training is rigorous checkpoint discipline — saving state frequently enough that interruptions are a minor nuisance, not a catastrophe.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Spot instances (AWS), Preemptible VMs (GCP), and Spot VMs (Azure) offer deep discounts on unused capacity. For ML training — which is stateless between checkpoints and inherently long-running — they are a natural fit. The catch is that the cloud provider can reclaim the instance at any time with a short warning (2 minutes on AWS, 30 seconds on GCP)."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Checkpoint discipline is the practice of saving model state at regular intervals so that a preemption loses at most N minutes of training, not hours or days:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Save frequently.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Every 500–2000 steps is common for LLM-scale training. The cost of saving a checkpoint to S3/GCS is typically less than 1% of step time."
+              }
+            ],
+            [
+              {
+                "text": "Save completely.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " A checkpoint must include model weights, optimizer state (critical for Adam's moment estimates), and the RNG state. Missing any of these means the resume does not reproduce the same training dynamics."
+              }
+            ],
+            [
+              {
+                "text": "Resume automatically.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Training code should check for an existing checkpoint at startup and resume from it without human intervention. On SageMaker Managed Spot Training and Vertex preemptible VMs, this happens automatically if configured."
+              }
+            ],
+            [
+              {
+                "text": "Rotate checkpoints.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Keep the last N checkpoints (3-5 is typical). Older checkpoints can be deleted to control storage costs."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "warning",
+          "runs": [
+            {
+              "text": "The biggest spot training failure mode is not preemption itself — it is preemption of a distributed job where some workers are reclaimed and others are not. Without proper fault-tolerant training (PyTorch's elastic training, TorchElastic), a single node failure kills the entire job. Always use the framework's elastic training mode for multi-node spot runs."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Spot training means using cheap but interruptible cloud GPUs. The rule is simple: save your training progress to object storage every few hundred steps. When the cloud takes your GPU back, you restart from the last checkpoint and lose only a few minutes of work instead of hours."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "mlo-ch07-c014",
+      "order": 14,
+      "title": "ZeRO — Memory-Efficient Data Parallelism",
+      "teaser": "DeepSpeed's ZeRO optimizer shards optimizer state, gradients, and model parameters across data-parallel ranks, dramatically reducing per-GPU memory — enabling model-scale training without model parallelism's communication overhead.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Standard data parallelism replicates the full model, optimizer state, and gradient buffers on every GPU. For a 6B parameter model with Adam optimizer, this is roughly 72 GB per GPU (parameters in FP16 + FP32 master weights + FP32 first and second moments). An A100 with 80 GB fills up fast."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "ZeRO (Zero Redundancy Optimizer, Rajbhandari et al., 2020) eliminates this redundancy by partitioning across ranks:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "ZeRO Stage 1",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — partition optimizer state across ranks. Memory reduction: ~4x."
+              }
+            ],
+            [
+              {
+                "text": "ZeRO Stage 2",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — additionally partition gradients. Memory reduction: ~8x."
+              }
+            ],
+            [
+              {
+                "text": "ZeRO Stage 3",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — additionally partition model parameters. Memory reduction: proportional to number of ranks. A 64-GPU run gets 64x reduction."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "ZeRO-3 can train arbitrarily large models in a data-parallel style without needing explicit pipeline or tensor parallelism, at the cost of slightly more AllGather communication. DeepSpeed (Microsoft) implements ZeRO for PyTorch. Hugging Face Accelerate and PyTorch FSDP (Fully Sharded Data Parallel) implement equivalent sharding."
+            }
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "info",
+          "runs": [
+            {
+              "text": "PyTorch FSDP (FullyShardedDataParallel), introduced in PyTorch 1.11, is functionally equivalent to ZeRO Stage 3 and is the recommended approach for large model training in pure PyTorch without the DeepSpeed dependency."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "ZeRO is a trick where instead of every GPU keeping a full copy of the model weights and optimizer state, you split those across all GPUs. Each GPU only stores its slice. When a GPU needs someone else's slice, it fetches it on the fly. You get the memory savings of model parallelism with most of the simplicity of data parallelism."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "mlo-ch07-c015",
+      "order": 15,
+      "title": "Gradient Accumulation and Effective Batch Size",
+      "teaser": "Gradient accumulation runs multiple forward-backward passes before each optimizer step, simulating a larger batch than GPU memory allows. It is the simplest way to scale effective batch size when you cannot scale hardware.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Large batch training is often beneficial for model quality (more gradient signal per update) and is also necessary for efficient distributed training (small batches leave GPU tensor cores underutilized). But memory limits constrain the per-device batch size."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Gradient accumulation separates the concept of the micro-batch (what fits in memory for one pass) from the global batch (what you want to use for one optimizer step):"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Run N forward-backward passes without calling",
+                "marks": []
+              },
+              {
+                "text": " optimizer.step()",
+                "marks": ["code"]
+              },
+              {
+                "text": ", accumulating gradients."
+              }
+            ],
+            [
+              {
+                "text": "On the Nth pass, call",
+                "marks": []
+              },
+              {
+                "text": " optimizer.step()",
+                "marks": ["code"]
+              },
+              {
+                "text": " and",
+                "marks": []
+              },
+              {
+                "text": " optimizer.zero_grad()",
+                "marks": ["code"]
+              },
+              {
+                "text": "."
+              }
+            ],
+            [
+              {
+                "text": "Effective batch size = micro_batch_size x gradient_accumulation_steps x num_GPUs."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The cost: N forward-backward passes take N times as long as one. Gradient accumulation trades time for memory — you cannot speed up training beyond what per-device batch size would give you. It is most useful when memory is the bottleneck but compute is plentiful (single-GPU fine-tuning of large models) or when you want to match the batch size recipe of a published model without having the same number of GPUs."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Gradient accumulation means: do several small forward passes, add up the gradients each time, then update the weights once at the end. The result looks to the optimizer like you trained on one big batch, even though you only ever had a small batch in memory at once."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "mlo-ch07-c016",
+      "order": 16,
+      "title": "Choosing a Distributed Strategy",
+      "teaser": "Data parallel, pipeline parallel, tensor parallel, and ZeRO are not mutually exclusive. Real large-scale training combines them based on model size, hardware topology, and bandwidth constraints. Understanding the decision tree separates practitioners from configuration copiers.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "A practical decision framework for distributed training strategy:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Model fits on one GPU.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Use data parallelism (DDP or FSDP Stage 1/2). This is the simplest and most efficient configuration. Scale batch size and learning rate with the number of GPUs."
+              }
+            ],
+            [
+              {
+                "text": "Model does not fit on one GPU, cluster is a single node.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Use FSDP Stage 3 or ZeRO Stage 3. NVLink provides enough bandwidth for intra-node parameter sharding. Avoid model parallelism unless the model is transformer-based and Megatron-LM is an option."
+              }
+            ],
+            [
+              {
+                "text": "Model does not fit on one GPU, cluster spans multiple nodes.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Use 3D parallelism: tensor parallelism within a node (NVLink), pipeline parallelism across nodes (InfiniBand), data parallelism across pipeline replicas. This is how GPT-3 and similar were trained."
+              }
+            ],
+            [
+              {
+                "text": "Recommendation / sparse embedding models.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Parameter server may outperform AllReduce for sparse gradient workloads. Embedding tables with millions of rows have sparse updates; AllReduce over dense gradient tensors wastes bandwidth."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "warning",
+          "runs": [
+            {
+              "text": "Communication is usually the bottleneck in distributed training, not compute. Profile inter-GPU bandwidth utilization before adding more nodes. A 2-node job spending 40% of time in AllReduce communication will not benefit from adding a third node — fixing the communication pattern will."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Start with data parallelism — it is the simplest and scales well. Only add model parallelism when the model literally does not fit on one GPU. At very large scale, combine all three strategies: tensor parallel within a node, pipeline parallel across nodes, data parallel across replicas."
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

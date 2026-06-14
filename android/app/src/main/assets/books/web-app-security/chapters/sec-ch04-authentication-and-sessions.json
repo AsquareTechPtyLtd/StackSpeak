@@ -1,0 +1,1794 @@
+{
+  "chapterId": "sec-ch04-authentication-and-sessions",
+  "shardIndex": 4,
+  "cards": [
+    {
+      "id": "sec-ch04-c001",
+      "order": 1,
+      "title": "Password Hashing: Why Not Encryption",
+      "teaser": "Passwords must be hashed, not encrypted. Encryption is reversible — if attackers steal your key they get every password. Hashing is a one-way function: you can verify a password without ever storing or recovering it.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The core requirement of password storage is asymmetry: the server must be able to verify \"this password is correct\" without being able to answer \"what is the password?\". Encryption fails this requirement. A ciphertext can be decrypted; a well-chosen hash cannot be reversed."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "But not any hash will do. General-purpose hash functions like SHA-256 or MD5 are designed to be "
+            },
+            {
+              "text": "fast",
+              "marks": ["bold"]
+            },
+            {
+              "text": " — SHA-256 can compute billions of hashes per second on a GPU. An attacker with a leaked database and a GPU cluster can exhaust all 8-character passwords in hours. Password hashing algorithms are deliberately slow."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The four production-recommended algorithms, in order of current preference:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Argon2id",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — winner of the Password Hashing Competition (2015). Configurable memory cost, time cost, and parallelism. The "
+              },
+              {
+                "text": "id",
+                "marks": ["code"]
+              },
+              {
+                "text": " variant combines Argon2i (side-channel resistance) and Argon2d (GPU resistance). OWASP first recommendation for new systems."
+              }
+            ],
+            [
+              {
+                "text": "bcrypt",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — designed in 1999 by Niels Provos and David Mazieres. A work factor (cost parameter) makes it tunable. Built-in 72-byte input limit is a footgun — passwords over 72 bytes are silently truncated. Widely supported; acceptable for existing systems."
+              }
+            ],
+            [
+              {
+                "text": "scrypt",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — memory-hard, which raises the cost of ASIC attacks. More complex to tune correctly than Argon2id; Argon2id is preferred for new code."
+              }
+            ],
+            [
+              {
+                "text": "PBKDF2",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — NIST-recommended; FIPS-compliant environments often require it. Uses an underlying PRF (typically HMAC-SHA256). Weaker memory hardness than the others; use only when compliance requires it."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "warning",
+          "runs": [
+            {
+              "text": "Never use MD5, SHA-1, SHA-256, or SHA-512 to hash passwords directly. These are fast general-purpose functions. Using them for passwords is not a configuration choice — it is a vulnerability."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Hashing a password means running it through a one-way function: easy to compute forward, infeasible to reverse. The algorithm must also be deliberately slow so that an attacker who steals the hash database cannot guess every password in an afternoon."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "sec-ch04-c002",
+      "order": 2,
+      "title": "Salts and Peppers",
+      "teaser": "A salt makes each password hash unique, defeating precomputed rainbow tables. A pepper adds a server-side secret that makes offline cracking infeasible even if the database leaks. They solve different threat models and live in different places.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Without a salt, two users with the same password produce the same hash. An attacker can precompute a dictionary of hashes once and look up millions of passwords instantly — this is a rainbow table attack. A "
+            },
+            {
+              "text": "salt",
+              "marks": ["bold"]
+            },
+            {
+              "text": " is a random value, unique per user, prepended or combined with the password before hashing. It forces the attacker to crack each hash individually."
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Salt properties:",
+                "marks": ["bold"]
+              },
+              {
+                "text": " cryptographically random; at least 16 bytes; unique per password record; stored alongside the hash in the database (it is not a secret)."
+              }
+            ],
+            [
+              {
+                "text": "Argon2id, bcrypt, and scrypt generate and embed a salt automatically.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " You do not manage salts manually when using these libraries — the output string (e.g., "
+              },
+              {
+                "text": "$2b$12$...",
+                "marks": ["code"]
+              },
+              {
+                "text": " for bcrypt) encodes the algorithm, cost, salt, and hash together."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "A "
+            },
+            {
+              "text": "pepper",
+              "marks": ["bold"]
+            },
+            {
+              "text": " is a server-side secret mixed into the hash computation. Unlike the salt, it is "
+            },
+            {
+              "text": "not",
+              "marks": ["italic"]
+            },
+            {
+              "text": " stored in the database. It lives in the application's secret store (HSM, Vault, environment variable). This means that even if the entire password database leaks, an attacker cannot crack hashes offline without also obtaining the pepper."
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Typical pepper implementation:",
+                "marks": ["bold"]
+              },
+              {
+                "text": " HMAC the password with the pepper secret before passing it to the hashing function. Alternatively, encrypt the hash output with a key stored in an HSM."
+              }
+            ],
+            [
+              {
+                "text": "Pepper rotation risk:",
+                "marks": ["bold"]
+              },
+              {
+                "text": " rotating a pepper invalidates all existing hashes. Re-hash on next login; support multiple active peppers during transition."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "info",
+          "runs": [
+            {
+              "text": "Salt = stored with the hash, defeats precomputation. Pepper = kept separate from the database, defeats offline cracking after a DB breach. Both together give defense in depth."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "A salt is a random value stored next to the hash that makes every hash unique. A pepper is a secret stored on the server that makes offline cracking impossible without it. Salts are public; peppers are secret."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "sec-ch04-c003",
+      "order": 3,
+      "title": "Password Policy Done Right",
+      "teaser": "NIST SP 800-63B reversed decades of password advice. Mandatory rotation, complexity rules, and security questions are counterproductive. Long passphrases, breach-list screening, and no periodic rotation are the modern standard.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "NIST SP 800-63B (2017, updated 2024) fundamentally changed the guidance on password policy based on research into how people actually behave. The old model — 90-day rotation, upper+lower+number+symbol, banned dictionary words — consistently produced weaker security because users adapted with predictable patterns: "
+            },
+            {
+              "text": "Summer2024!",
+              "marks": ["code"]
+            },
+            {
+              "text": " becomes "
+            },
+            {
+              "text": "Summer2025!",
+              "marks": ["code"]
+            },
+            {
+              "text": " next quarter."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Current NIST-aligned guidance:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Minimum length of 8 characters, maximum of at least 64.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Length is the strongest single predictor of password strength. Support long passphrases — they are memorable and hard to crack."
+              }
+            ],
+            [
+              {
+                "text": "Screen against breach databases.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " The 2019 Collection #1 breach exposed 773 million email/password pairs; HaveIBeenPwned's k-anonymity API lets you check a password hash prefix without sending the full hash. If a password appears in known breach data, reject it — no matter how complex it looks."
+              }
+            ],
+            [
+              {
+                "text": "No mandatory periodic rotation.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Require rotation only on evidence of compromise. Arbitrary rotation produces weaker passwords and reuse patterns."
+              }
+            ],
+            [
+              {
+                "text": "No arbitrary complexity rules.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Composition requirements (must include a number, must include a symbol) do not reliably increase entropy and increase friction. Length requirements and breach screening do more."
+              }
+            ],
+            [
+              {
+                "text": "No security questions.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Mother's maiden name and first pet's name are facts, not secrets — often findable on social media. NIST explicitly prohibits knowledge-based authentication for account recovery."
+              }
+            ],
+            [
+              {
+                "text": "Show password strength feedback.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Use a strength estimator (like the zxcvbn algorithm) to give users actionable feedback, not a misleading bar that awards checkmarks for adding a '!' to the end."
+              }
+            ]
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Good password policy in three sentences: require length, not complexity. Check against known-breached passwords. Never force rotation unless the password was actually compromised."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "sec-ch04-c004",
+      "order": 4,
+      "title": "Session Cookies: Attributes That Matter",
+      "teaser": "A session cookie that survives XSS, transmits over HTTP, or can be sent cross-site in a forged request is a broken session cookie. Four attributes — HttpOnly, Secure, SameSite, and the __Host- prefix — each close a distinct attack class.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The session cookie is the credential that proves a user is authenticated. Its security properties determine whether an attacker can steal it, forge it, or intercept it. Each attribute addresses a specific threat:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "HttpOnly",
+                "marks": ["code"]
+              },
+              {
+                "text": " — prevents JavaScript from reading the cookie via "
+              },
+              {
+                "text": "document.cookie",
+                "marks": ["code"]
+              },
+              {
+                "text": ". This blocks the most common XSS payload: a script injected into the page that exfiltrates the session token to an attacker's server. Without "
+              },
+              {
+                "text": "HttpOnly",
+                "marks": ["code"]
+              },
+              {
+                "text": ", any XSS vulnerability becomes a session hijack."
+              }
+            ],
+            [
+              {
+                "text": "Secure",
+                "marks": ["code"]
+              },
+              {
+                "text": " — instructs the browser to only send the cookie over HTTPS connections. Without this, a user on an open Wi-Fi network who accidentally visits the HTTP version of the site sends their session token in cleartext."
+              }
+            ],
+            [
+              {
+                "text": "SameSite=Strict",
+                "marks": ["code"]
+              },
+              {
+                "text": " — the cookie is only sent when the request originates from the same site. Blocks CSRF completely: a malicious form on "
+              },
+              {
+                "text": "evil.com",
+                "marks": ["code"]
+              },
+              {
+                "text": " POSTing to "
+              },
+              {
+                "text": "bank.com",
+                "marks": ["code"]
+              },
+              {
+                "text": " will not include the session cookie. "
+              },
+              {
+                "text": "SameSite=Lax",
+                "marks": ["code"]
+              },
+              {
+                "text": " (the browser default) allows top-level GET navigations (clicking links) but blocks cross-site POSTs."
+              }
+            ],
+            [
+              {
+                "text": "__Host-",
+                "marks": ["code"]
+              },
+              {
+                "text": " prefix — a cookie named "
+              },
+              {
+                "text": "__Host-session",
+                "marks": ["code"]
+              },
+              {
+                "text": " is enforced by the browser to only be sent to the exact host (no subdomains), requires the "
+              },
+              {
+                "text": "Secure",
+                "marks": ["code"]
+              },
+              {
+                "text": " attribute, and must have "
+              },
+              {
+                "text": "Path=/",
+                "marks": ["code"]
+              },
+              {
+                "text": ". This prevents a compromised subdomain ("
+              },
+              {
+                "text": "static.example.com",
+                "marks": ["code"]
+              },
+              {
+                "text": ") from setting cookies that are sent to "
+              },
+              {
+                "text": "app.example.com",
+                "marks": ["code"]
+              },
+              {
+                "text": "."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "info",
+          "runs": [
+            {
+              "text": "A well-configured session cookie: Set-Cookie: __Host-session=<token>; Secure; HttpOnly; SameSite=Strict; Path=/. Each attribute is independently necessary — omitting any one reopens the corresponding attack class."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "HttpOnly stops XSS from reading the cookie. Secure stops it travelling over HTTP. SameSite stops CSRF from including it in cross-site requests. The __Host- prefix stops subdomain takeover from setting cookies for your domain. All four together."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "sec-ch04-c005",
+      "order": 5,
+      "title": "JWT Structure and Anatomy",
+      "teaser": "A JSON Web Token is three Base64URL-encoded JSON objects separated by dots: a header declaring the algorithm, a payload carrying the claims, and a signature binding them. Understanding what each part contains — and what it doesn't — is the foundation of secure JWT use.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "A JWT looks like: "
+            },
+            {
+              "text": "eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJ1c2VyXzEyMyIsImlzcyI6ImF1dGgudXMuZXhhbXBsZS5jb20iLCJhdWQiOiJhcGkudXMuZXhhbXBsZS5jb20iLCJleHAiOjE3MzQ1Njc4OTAsImlhdCI6MTczNDU2NDI5MCwicm9sZXMiOlsiZWRpdG9yIl19.SIGNATURE",
+              "marks": ["code"]
+            },
+            {
+              "text": ". The three Base64URL segments decode as follows:"
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Header (decoded):"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "{ \"alg\": \"RS256\", \"typ\": \"JWT\" }",
+                "marks": ["code"]
+              },
+              {
+                "text": " — declares the signing algorithm ("
+              },
+              {
+                "text": "RS256",
+                "marks": ["code"]
+              },
+              {
+                "text": " = RSA + SHA-256) and token type."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Payload (decoded, real example):"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "sub",
+                "marks": ["code"]
+              },
+              {
+                "text": " — subject (the user identifier): "
+              },
+              {
+                "text": "\"user_123\"",
+                "marks": ["code"]
+              }
+            ],
+            [
+              {
+                "text": "iss",
+                "marks": ["code"]
+              },
+              {
+                "text": " — issuer: "
+              },
+              {
+                "text": "\"auth.us.example.com\"",
+                "marks": ["code"]
+              }
+            ],
+            [
+              {
+                "text": "aud",
+                "marks": ["code"]
+              },
+              {
+                "text": " — audience (intended recipient): "
+              },
+              {
+                "text": "\"api.us.example.com\"",
+                "marks": ["code"]
+              }
+            ],
+            [
+              {
+                "text": "exp",
+                "marks": ["code"]
+              },
+              {
+                "text": " — expiry Unix timestamp: "
+              },
+              {
+                "text": "1734567890",
+                "marks": ["code"]
+              }
+            ],
+            [
+              {
+                "text": "iat",
+                "marks": ["code"]
+              },
+              {
+                "text": " — issued-at timestamp: "
+              },
+              {
+                "text": "1734564290",
+                "marks": ["code"]
+              }
+            ],
+            [
+              {
+                "text": "roles",
+                "marks": ["code"]
+              },
+              {
+                "text": " — custom claim: "
+              },
+              {
+                "text": "[\"editor\"]",
+                "marks": ["code"]
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The signature is computed over "
+            },
+            {
+              "text": "Base64URL(header) + \".\" + Base64URL(payload)",
+              "marks": ["code"]
+            },
+            {
+              "text": " using the private key. Anyone with the corresponding public key can verify the signature, confirming the token was issued by a trusted party and has not been tampered with."
+            }
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "warning",
+          "runs": [
+            {
+              "text": "JWT payload claims are Base64URL-encoded, not encrypted. Anyone who intercepts or holds a JWT can read every claim. Never put sensitive data (passwords, PII, secrets) in a JWT payload unless the entire token is also encrypted (JWE)."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "A JWT is three JSON blobs joined by dots. The first says what algorithm signed it. The second carries claims about the user. The third is the cryptographic proof the first two haven't been tampered with. The payload is readable by anyone — it's not encrypted."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "sec-ch04-c006",
+      "order": 6,
+      "title": "JWT Pitfalls: Where Implementations Break",
+      "teaser": "JWTs have accumulated a hall of shame of implementation vulnerabilities: the alg=none attack, RS256/HS256 key confusion, weak secrets, and missing claim validation. Every JWT library has shipped at least one of these bugs.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "JWT's specification choices created a class of vulnerabilities that have appeared in production in Netflix, Auth0, and dozens of open-source libraries:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "alg=none attack.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " The JWT spec allows "
+              },
+              {
+                "text": "\"alg\": \"none\"",
+                "marks": ["code"]
+              },
+              {
+                "text": " to indicate an unsecured token. Early implementations (and some current ones) that accept the algorithm from the header rather than hardcoding an expected algorithm will accept a forged token with no signature at all. An attacker crafts "
+              },
+              {
+                "text": "{\"alg\":\"none\"}.{\"sub\":\"admin\"}.",
+                "marks": ["code"]
+              },
+              {
+                "text": " and the server accepts it. Fix: always hardcode the expected algorithm in your verification code, never trust the header's "
+              },
+              {
+                "text": "alg",
+                "marks": ["code"]
+              },
+              {
+                "text": " field."
+              }
+            ],
+            [
+              {
+                "text": "RS256/HS256 key confusion.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " An asymmetric RS256 token is signed with a private key and verified with the public key. If a library accepts either RS256 or HS256 (symmetric HMAC), an attacker can forge a token by signing it with HS256 using the server's public key as the HMAC secret — which is not a secret at all. Fix: verify tokens against the specific algorithm and key type expected, never against a generic set."
+              }
+            ],
+            [
+              {
+                "text": "Weak symmetric secrets.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " HS256-signed JWTs are only as strong as their secret. Short or predictable secrets can be brute-forced offline against a captured token. Fix: use at least 256 bits of cryptographically random key material for HS256, or switch to RS256/ES256."
+              }
+            ],
+            [
+              {
+                "text": "Missing claim validation.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " A valid signature alone is not enough. Implementations that skip validating "
+              },
+              {
+                "text": "exp",
+                "marks": ["code"]
+              },
+              {
+                "text": " (expiry), "
+              },
+              {
+                "text": "aud",
+                "marks": ["code"]
+              },
+              {
+                "text": " (audience), or "
+              },
+              {
+                "text": "iss",
+                "marks": ["code"]
+              },
+              {
+                "text": " (issuer) allow attackers to replay expired tokens or tokens issued for other services."
+              }
+            ],
+            [
+              {
+                "text": "The \"JWT is overrated\" critique.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Tim McLean's 2015 analysis and subsequent literature argues that JWT's complexity — multiple algorithms, optional claims, nested structures — creates surface area that simpler opaque tokens avoid entirely. Most applications that use JWT could use opaque session tokens with equal security and fewer pitfalls."
+              }
+            ]
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "JWT pitfalls cluster around trusting the token's own header too much: accepting any algorithm including none, mixing up asymmetric and symmetric keys, and forgetting to check expiry and audience. The signature alone proves nothing if you verify it against the wrong key or skip checking the claims."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "sec-ch04-c007",
+      "order": 7,
+      "title": "Opaque Tokens vs JWTs: When Each Fits",
+      "teaser": "Opaque tokens are random identifiers that require a database or cache lookup. JWTs are self-contained and require no lookup. Each fits different system topologies — choosing the wrong one creates either unnecessary infrastructure or irrevocability problems.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "An "
+            },
+            {
+              "text": "opaque token",
+              "marks": ["bold"]
+            },
+            {
+              "text": " is a random string (e.g., a UUID or 32-byte random value) that means nothing by itself. The server validates it by looking it up in a database or Redis cache that maps token → user/permissions. This requires a network round-trip on every request but enables instant revocation: delete the row."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "A "
+            },
+            {
+              "text": "JWT",
+              "marks": ["bold"]
+            },
+            {
+              "text": " is self-contained — the server validates it by verifying the signature with a public key it already holds. No database lookup is needed. This makes JWTs attractive for distributed systems and microservices architectures where a central session store creates a bottleneck."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The fundamental tradeoff is revocability:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Opaque tokens",
+                "marks": ["bold"]
+              },
+              {
+                "text": " can be revoked instantly. Log out = delete token from store. Compromise detected = delete token. User deactivated = delete all their tokens. The cost is a storage/lookup dependency."
+              }
+            ],
+            [
+              {
+                "text": "JWTs",
+                "marks": ["bold"]
+              },
+              {
+                "text": " cannot be revoked before expiry without maintaining a blocklist — which reintroduces the database dependency and eliminates the statelessness advantage. A stolen JWT is valid until it expires. Short expiry (15 minutes) with refresh tokens mitigates but does not eliminate this."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Decision heuristic: use JWTs as "
+            },
+            {
+              "text": "short-lived access tokens",
+              "marks": ["bold"]
+            },
+            {
+              "text": " passed between services in a microservices backend, where revocation latency is acceptable. Use opaque tokens as "
+            },
+            {
+              "text": "session tokens",
+              "marks": ["bold"]
+            },
+            {
+              "text": " in browser sessions where immediate revocation (logout, account lock) is a user-visible requirement."
+            }
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "info",
+          "runs": [
+            {
+              "text": "OAuth 2.0 itself specifies opaque access tokens by default. JWT access tokens are an extension. Many systems use opaque refresh tokens (long-lived, revocable) combined with JWT access tokens (short-lived, stateless). This hybrid captures the benefits of both."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "An opaque token is just a key in a database — fast to revoke, requires a lookup. A JWT carries its own proof of validity — no lookup needed, but you can't revoke it until it expires. Use JWTs for short-lived service-to-service credentials; use opaque tokens where instant logout matters."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "sec-ch04-c008",
+      "order": 8,
+      "title": "OAuth 2.1 and the Authorization-Code Flow with PKCE",
+      "teaser": "OAuth 2.1 is the consolidation of OAuth 2.0 plus the security best practices from RFC 6749, 6819, 7636, and 9700. Authorization-code with PKCE is the only flow recommended for all client types. The implicit and password-grant flows are removed.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "OAuth 2.0 (RFC 6749, 2012) was a framework, not a protocol — it defined slots for multiple grant types, leaving enough flexibility that implementations diverged dangerously. OAuth 2.1 (RFC 9700, 2024) collapses the framework into a single secure profile: authorization-code flow with PKCE (Proof Key for Code Exchange) for all clients, whether confidential server-side apps or public mobile/SPA clients."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Authorization-code + PKCE flow:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "The ASCII sequence below shows the full exchange:",
+                "marks": ["bold"]
+              }
+            ]
+          ]
+        },
+        {
+          "type": "code",
+          "language": "text",
+          "code": "Browser/App           Authorization Server        Resource Server\n    |                        |                          |\n    |--- (1) Generate -----> |                          |\n    |    code_verifier       |                          |\n    |    code_challenge =    |                          |\n    |    BASE64URL(          |                          |\n    |      SHA256(verifier)) |                          |\n    |                        |                          |\n    |--- (2) GET /authorize?----->                      |\n    |    response_type=code  |                          |\n    |    client_id=...       |                          |\n    |    redirect_uri=...    |                          |\n    |    code_challenge=...  |                          |\n    |    code_challenge_method=S256                     |\n    |                        |                          |\n    |    [user logs in at Authorization Server]         |\n    |                        |                          |\n    |<-- (3) redirect to ----|                          |\n    |    redirect_uri?       |                          |\n    |    code=AUTH_CODE      |                          |\n    |                        |                          |\n    |--- (4) POST /token --->|                          |\n    |    code=AUTH_CODE      |                          |\n    |    code_verifier=...   |                          |\n    |    client_id=...       |                          |\n    |                        |                          |\n    |    [server verifies:   |                          |\n    |     SHA256(verifier)   |                          |\n    |     == code_challenge] |                          |\n    |                        |                          |\n    |<-- (5) access_token ---|                          |\n    |        refresh_token   |                          |\n    |        (+ id_token if OIDC)                       |\n    |                        |                          |\n    |--- (6) API request with Bearer token ----------->|\n    |                        |                          |\n    |<-- (7) protected resource ----------------------<|"
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "PKCE solves the authorization code interception attack. Without it, a malicious app on the same device could register the same redirect URI and receive the authorization code. With PKCE, the code is useless without the "
+            },
+            {
+              "text": "code_verifier",
+              "marks": ["code"]
+            },
+            {
+              "text": " that only the legitimate client holds."
+            }
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "warning",
+          "runs": [
+            {
+              "text": "OAuth 2.1 removes: the Implicit grant (tokens in URL fragments, visible in browser history and logs); the Resource Owner Password Credentials grant (hands the authorization server your username and password directly, defeating the delegation model). Never implement these in new code."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "OAuth delegates access without sharing passwords. The authorization-code flow sends the user to a login page, gets back a short-lived code, then exchanges the code for tokens. PKCE ties the exchange to the specific client that started it, so a stolen code is useless."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "sec-ch04-c009",
+      "order": 9,
+      "title": "OpenID Connect: OAuth 2.0 Plus Identity",
+      "teaser": "OAuth 2.0 handles authorization — delegating access to resources. It says nothing about who the user is. OpenID Connect adds an identity layer: an ID token that asserts who authenticated, with a standardized claim set and a UserInfo endpoint.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "OAuth 2.0 is designed to answer one question: \"Is this access token permitted to act on behalf of some user?\" It does not answer \"Which user?\" or \"Did they just log in?\". Many applications need both — to delegate API access "
+            },
+            {
+              "text": "and",
+              "marks": ["italic"]
+            },
+            {
+              "text": " to know the identity of the person who granted it. OpenID Connect (OIDC) adds this identity layer on top of OAuth 2.0."
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "The ID Token",
+                "marks": ["bold"]
+              },
+              {
+                "text": " is a JWT returned alongside the access token in the token endpoint response. It contains standardized claims: "
+              },
+              {
+                "text": "sub",
+                "marks": ["code"]
+              },
+              {
+                "text": " (user identifier), "
+              },
+              {
+                "text": "email",
+                "marks": ["code"]
+              },
+              {
+                "text": ", "
+              },
+              {
+                "text": "name",
+                "marks": ["code"]
+              },
+              {
+                "text": ", "
+              },
+              {
+                "text": "auth_time",
+                "marks": ["code"]
+              },
+              {
+                "text": " (when they authenticated), and "
+              },
+              {
+                "text": "nonce",
+                "marks": ["code"]
+              },
+              {
+                "text": " (a replay-prevention value). It is signed by the Identity Provider (IdP) and validated by the relying party (your application)."
+              }
+            ],
+            [
+              {
+                "text": "Scopes",
+                "marks": ["bold"]
+              },
+              {
+                "text": " extend the standard: "
+              },
+              {
+                "text": "openid",
+                "marks": ["code"]
+              },
+              {
+                "text": " (required to trigger OIDC), "
+              },
+              {
+                "text": "profile",
+                "marks": ["code"]
+              },
+              {
+                "text": " (name, picture), "
+              },
+              {
+                "text": "email",
+                "marks": ["code"]
+              },
+              {
+                "text": " (email + verified flag), "
+              },
+              {
+                "text": "address",
+                "marks": ["code"]
+              },
+              {
+                "text": ", "
+              },
+              {
+                "text": "phone",
+                "marks": ["code"]
+              },
+              {
+                "text": "."
+              }
+            ],
+            [
+              {
+                "text": "The UserInfo endpoint",
+                "marks": ["bold"]
+              },
+              {
+                "text": " is an OAuth-protected API at the IdP that returns user claims on demand, scoped to the granted permissions. Applications can call it with the access token to get up-to-date profile data instead of relying on stale ID token claims."
+              }
+            ],
+            [
+              {
+                "text": "Discovery document",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — OIDC providers expose a JSON metadata document at "
+              },
+              {
+                "text": "/.well-known/openid-configuration",
+                "marks": ["code"]
+              },
+              {
+                "text": " listing their endpoints, supported algorithms, and public keys (JWKS). Clients use it for automatic configuration."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "info",
+          "runs": [
+            {
+              "text": "Use the access token to call APIs. Use the ID token to establish user identity in your application. Never use the access token to determine who the user is — its structure and claims are specific to the resource server, not the identity layer."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "OAuth lets a user say \"this app can access my files.\" OIDC adds \"and here is a signed token proving who that user is.\" OAuth is for authorization; OIDC is for authentication. You usually want both."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "sec-ch04-c010",
+      "order": 10,
+      "title": "Multi-Factor Authentication: TOTP, Push, SMS, and Hardware Keys",
+      "teaser": "MFA gates access on something the user knows (password) plus something they have (phone, hardware key). TOTP and hardware keys are strong; SMS is weak but better than nothing. The choice determines which attacker models are defeated.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Multi-factor authentication requires presenting at least two independent factors from different categories: knowledge (password, PIN), possession (phone, hardware key), or inherence (biometrics). A second factor blocks attacks that have already obtained the password — credential stuffing, phishing, database breaches."
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "TOTP (Time-based One-Time Password, RFC 6238)",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — an authenticator app (Google Authenticator, Authy) generates a 6-digit code by computing HMAC-SHA1 over a shared secret and the current 30-second time window. Strong against password replay; weak against real-time phishing (attacker relays the code in the same 30-second window). Needs a secure backup/recovery flow — losing the device loses the account."
+              }
+            ],
+            [
+              {
+                "text": "Push notifications",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — the user receives a push prompt on their phone and taps approve or deny. Convenient; subject to MFA fatigue attacks (Uber 2022: attacker sends 20+ push notifications until the exhausted user approves one). Mitigate by requiring the user to enter a number shown on screen, not just tap approve."
+              }
+            ],
+            [
+              {
+                "text": "SMS OTP",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — a code is texted to the user's phone number. Weak: SIM swapping (convincing a carrier to transfer the number to the attacker's SIM) is a well-documented attack. SS7 interception can intercept SMS in transit. NIST SP 800-63B deprecated SMS OTP as a primary MFA mechanism for high-value accounts. It remains \"better than nothing\" for consumer applications where hardware key enrollment is impractical."
+              }
+            ],
+            [
+              {
+                "text": "Hardware security keys (FIDO U2F/FIDO2)",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — a physical device (YubiKey, Titan Key) plugged via USB or tapped via NFC. The browser passes the challenge to the key; the key signs it with a private key bound to the specific origin. Phishing-resistant by design — the key refuses to sign challenges from incorrect domains. The strongest broadly deployable MFA factor."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "warning",
+          "runs": [
+            {
+              "text": "MFA fatigue is real. Push-based MFA that asks only \"approve or deny?\" without number matching is vulnerable to users approving attacker requests out of fatigue or confusion. Uber's 2022 breach started with a contractor approving a push request the attacker sent repeatedly at 1 AM."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "MFA adds a second proof of identity beyond your password. A time-based code from an app is good. A physical hardware key is better. An SMS code is weak because phone numbers can be hijacked. Any MFA beats none."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "sec-ch04-c011",
+      "order": 11,
+      "title": "FIDO2 and WebAuthn: Phishing-Resistant Authentication",
+      "teaser": "WebAuthn is the W3C API that lets browsers use public-key cryptography for authentication. The server stores a public key; the user's device holds the private key. The origin is cryptographically bound to every challenge — making it impossible to phish.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The FIDO2 project (Fast Identity Online) consists of two complementary standards: WebAuthn (W3C) for the browser API and CTAP2 (Client-to-Authenticator Protocol) for communication between the browser and external authenticators (USB/NFC/BLE devices). Together they define a phishing-resistant authentication protocol now supported by all major browsers and platforms."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Registration flow:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Server generates a challenge and sends it to the browser with the Relying Party ID (the domain)."
+              }
+            ],
+            [
+              {
+                "text": "The browser calls "
+              },
+              {
+                "text": "navigator.credentials.create()",
+                "marks": ["code"]
+              },
+              {
+                "text": ". The authenticator (device TPM, embedded Secure Enclave, or external hardware key) generates a key pair bound to this origin."
+              }
+            ],
+            [
+              {
+                "text": "The public key and a credential ID are sent to the server and stored against the user's account."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Authentication flow:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Server sends a fresh random challenge."
+              }
+            ],
+            [
+              {
+                "text": "Browser calls "
+              },
+              {
+                "text": "navigator.credentials.get()",
+                "marks": ["code"]
+              },
+              {
+                "text": ". The authenticator signs the challenge "
+              },
+              {
+                "text": "plus the current origin",
+                "marks": ["italic"]
+              },
+              {
+                "text": " with the private key."
+              }
+            ],
+            [
+              {
+                "text": "Server verifies the signature against the stored public key and checks that the Relying Party ID in the signed data matches its own domain."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The phishing-resistance property comes from the origin binding: if the user is tricked into visiting "
+            },
+            {
+              "text": "bank-secure-login.evil.com",
+              "marks": ["code"]
+            },
+            {
+              "text": ", the authenticator will sign a challenge with origin "
+            },
+            {
+              "text": "evil.com",
+              "marks": ["code"]
+            },
+            {
+              "text": ", which the real server will reject. The authenticator cannot be tricked into signing for the wrong origin."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "WebAuthn works like a padlock the website never sees the key to. When you register, the device creates a keypair bound to that exact website. When you log in, the device signs a challenge — but only for the real site, never for a phishing page, because the domain is baked into every signature."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "sec-ch04-c012",
+      "order": 12,
+      "title": "Passkeys: WebAuthn for Everyone",
+      "teaser": "Passkeys are WebAuthn credentials that sync across devices through platform providers (iCloud Keychain, Google Password Manager). They replace passwords with cryptographic proof of device possession, backed by device biometrics — phishing-resistant without hardware token complexity.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Traditional WebAuthn credentials are bound to a single authenticator. Lose the device and you lose access. For consumer applications, this creates an unacceptable recovery burden. "
+            },
+            {
+              "text": "Passkeys",
+              "marks": ["bold"]
+            },
+            {
+              "text": " solve this: the private key is stored in a platform keychain (Apple iCloud Keychain, Google Password Manager, Windows Hello) that syncs end-to-end encrypted across a user's devices."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Under the hood, passkeys are standard FIDO2/WebAuthn credentials. The web server implementation is identical. The difference is that the authenticator is now the platform itself — the user authenticates with Face ID, fingerprint, or PIN on any of their enrolled devices."
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Security properties:",
+                "marks": ["bold"]
+              },
+              {
+                "text": " same phishing resistance as hardware keys — origin is cryptographically bound to every assertion. No shared secret to steal. The private key never leaves the Secure Enclave."
+              }
+            ],
+            [
+              {
+                "text": "Cross-device authentication:",
+                "marks": ["bold"]
+              },
+              {
+                "text": " a user can scan a QR code with their phone to authenticate on a desktop browser they have never used before — the phone's passkey proves possession, and the session is established over an encrypted Bluetooth channel (CTAP2 hybrid transport)."
+              }
+            ],
+            [
+              {
+                "text": "Synced vs device-bound:",
+                "marks": ["bold"]
+              },
+              {
+                "text": " enterprise use cases may prefer device-bound passkeys (not synced) to ensure authentication requires a specific enrolled device, matching hardware security key behavior."
+              }
+            ],
+            [
+              {
+                "text": "Adoption trajectory:",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Google, Apple, Microsoft, PayPal, GitHub, and Amazon have all launched passkey support. The FIDO Alliance projects passkeys as the primary credential type for consumer web apps by 2027."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "info",
+          "runs": [
+            {
+              "text": "Passkeys do not require users to understand public-key cryptography. The UX is: tap a button, use Face ID. The cryptographic complexity is entirely abstracted by the platform. This is why passkeys are the consumer-viable path to phishing-resistant authentication at scale."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "A passkey is a cryptographic key pair where the private key lives in your phone's secure chip and syncs to your other devices. To log in, you use your fingerprint or face — the phone signs the challenge, the website verifies the signature. No password, no phishing, no SMS codes."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "sec-ch04-c013",
+      "order": 13,
+      "title": "Credential Stuffing: Automated Reuse at Scale",
+      "teaser": "Credential stuffing uses leaked username/password pairs from one breach to attack other sites. It succeeds because 60%+ of users reuse passwords. The 2019 Collection #1 breach gave attackers 773 million credentials to stuff. Defenses target the automation, not the credentials.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "When a major service is breached and its password database leaked — as happened with LinkedIn (2012, 117M records), Collection #1 (2019, 773M credentials), and Snowflake customer databases (2024, via credential stuffing of customers using no MFA) — attackers do not simply ransack the breached service. They use the credentials to attack every other service on the internet, betting on password reuse."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Credential stuffing differs from brute force: attackers are trying known username/password pairs, not guessing. Per-account lockout policies (\"lock after 10 attempts\") are largely ineffective because the attack distributes one attempt across millions of accounts. A single account may only be tried once."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Defense layers:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Multi-factor authentication.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " The most effective defense: a valid password is not sufficient to authenticate. Even a perfect credential stuffing attack fails if MFA is required."
+              }
+            ],
+            [
+              {
+                "text": "Bot detection and CAPTCHA.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Tools like Cloudflare Turnstile, Google reCAPTCHA, or behavioral biometrics (typing cadence, mouse movement) detect automated login attempts. Attackers use CAPTCHA-solving farms, so this is a speed bump, not a wall."
+              }
+            ],
+            [
+              {
+                "text": "Rate limiting and velocity checks.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Limit login attempts per IP, ASN, and device fingerprint. Flag unusual velocity — 10,000 login attempts across 10,000 different accounts from the same IP in one hour is a signal regardless of per-account rate limits."
+              }
+            ],
+            [
+              {
+                "text": "Credential breach screening on login.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Use HaveIBeenPwned's API to check submitted passwords against breach databases. Force a password reset if the credentials appear in known breach data."
+              }
+            ],
+            [
+              {
+                "text": "Device fingerprinting and impossible travel.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " A login from a new device in an unexpected country immediately following a domestic login is anomalous. Step-up authentication or risk-based challenges handle these cases."
+              }
+            ]
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Credential stuffing is not hacking — it's taking stolen passwords from one breach and trying them everywhere else. It works because people reuse passwords. Defenses are aimed at detecting the automation, and MFA is the one control that defeats it even when the password is correct."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "sec-ch04-c014",
+      "order": 14,
+      "title": "Account Takeover: Defense in Depth",
+      "teaser": "Account takeover (ATO) is the broader attack class that includes credential stuffing, phishing, SIM swapping, and session hijacking. Defense requires layering: prevention (MFA, passkeys), detection (risk scoring, anomaly signals), and response (step-up auth, forced re-authentication).",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The Snowflake 2024 ATO campaign illustrates the modern threat model at scale. Attackers used credentials harvested by infostealer malware (software that captures saved browser passwords) to authenticate to Snowflake customer tenants that had not enabled MFA. 165 organizations were affected, including Ticketmaster (560 million records) and AT&T. No Snowflake platform vulnerability was exploited — only valid credentials with no second factor."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "ATO defense is a layered model — no single control stops all vectors:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Prevention layer.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " MFA (required, not optional). Passkeys where feasible. Strong password policy with breach screening. Phishing-resistant factors (hardware keys, passkeys) for high-value accounts."
+              }
+            ],
+            [
+              {
+                "text": "Detection layer — risk scoring.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Assign a risk score to each authentication event based on signals: new device, new country, unusual hour, impossible travel (login from London then Sydney 30 minutes later), failed MFA attempts, recent password reset, IP reputation, residential vs datacenter IP."
+              }
+            ],
+            [
+              {
+                "text": "Response layer — step-up authentication.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " When risk score exceeds a threshold, require an additional proof of identity before granting access or completing a high-value action. \"Your account was accessed from a new device — please enter the code sent to your email.\" This is contextual MFA, triggered by risk rather than at every login."
+              }
+            ],
+            [
+              {
+                "text": "Session anomaly detection.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " A stolen session cookie used from a different IP or User-Agent than the original authentication is anomalous. Token binding (binding sessions to TLS channel properties) is a stronger approach but has limited browser support. Re-authentication for sensitive actions provides a fallback."
+              }
+            ],
+            [
+              {
+                "text": "Notification and transparency.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Email the user on new device logins, password changes, and MFA changes. This is the last line: if an attacker takes over an account and adds their own MFA device, notifying the legitimate user creates an opportunity to detect and remediate."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "warning",
+          "runs": [
+            {
+              "text": "The Snowflake 2024 ATO: Mandiant's incident report found that attackers used infostealer malware credentials, all targeting tenants with no MFA enforced. Platform security was not breached. The lesson: MFA enforcement must be mandatory, not optional. Offering MFA but not requiring it leaves the attack surface open."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Account takeover is the end goal of credential stuffing, phishing, and session theft. Defense works in layers: stop most attacks with MFA, catch risky logins with anomaly scoring, force re-authentication when something looks wrong, and tell users when their account is accessed from a new place."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "sec-ch04-c015",
+      "order": 15,
+      "title": "Session Lifecycle: Issuance, Rotation, and Termination",
+      "teaser": "A secure session is not just well-attributed — it has a defined lifecycle: issued after successful authentication, rotated to prevent fixation, and terminable on logout, timeout, and privilege change. Each transition is a security boundary.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Session security is often reduced to cookie attributes, but the "
+            },
+            {
+              "text": "lifecycle",
+              "marks": ["italic"]
+            },
+            {
+              "text": " of a session — when it is created, how it changes, and when it ends — is equally important. Three lifecycle events each carry distinct risks:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Session fixation.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " An attacker forces the victim's browser to use a known session ID (via a URL parameter or unauthenticated cookie), then waits for the victim to authenticate. If the session ID is not rotated on login, the attacker now holds a valid authenticated session. Defense: issue a new session token immediately after authentication, invalidating any pre-authentication session."
+              }
+            ],
+            [
+              {
+                "text": "Idle and absolute timeouts.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " An idle timeout invalidates the session after a period of inactivity (e.g., 30 minutes). An absolute timeout invalidates it regardless of activity (e.g., 8 hours for a banking app, 30 days for a social media app). The OWASP guidance is to set both, calibrated to the application's risk tolerance and usage patterns."
+              }
+            ],
+            [
+              {
+                "text": "Logout and session termination.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Client-side logout (clearing the cookie) without server-side invalidation is not logout. The session token remains valid until it expires. True logout requires invalidating the server-side record. All sessions should be terminable, and privileged operations (password change, email change, billing update) should optionally invalidate all other concurrent sessions."
+              }
+            ],
+            [
+              {
+                "text": "Privilege escalation re-authentication.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " When a user performs a sensitive action — change password, add MFA, make a payment — require re-authentication or step-up MFA regardless of how recently the session was created. GitHub does this for SSH key addition; banks do this for wire transfers. This limits the damage of a stolen session."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "info",
+          "runs": [
+            {
+              "text": "Session tokens should be at least 128 bits of cryptographically random data. Use a CSPRNG (crypto.randomBytes in Node.js, os.urandom in Python, SecureRandom in Java). A 128-bit token has 2^128 possible values — brute-forcing is computationally infeasible."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "A session token needs to be born securely (fresh on login to prevent fixation), age safely (idle and absolute timeouts), and die completely (server-side invalidation, not just cookie deletion). Sensitive actions should require re-proof of identity even inside a valid session."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "sec-ch04-c016",
+      "order": 16,
+      "title": "Authentication Architecture: Bringing It Together",
+      "teaser": "A production authentication system layers password hashing, MFA, session lifecycle, token strategy, and anomaly detection into a coherent architecture. No layer is sufficient alone; each closes attack vectors the others leave open.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Summarizing the chapter's concepts as an architecture decision map:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Password storage:",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Argon2id with a per-user salt and a server-side pepper stored in a secrets manager. Migrate legacy bcrypt/PBKDF2 hashes on next login."
+              }
+            ],
+            [
+              {
+                "text": "Authentication protocol:",
+                "marks": ["bold"]
+              },
+              {
+                "text": " OIDC over OAuth 2.1 (authorization-code + PKCE) for delegated authentication. Handle your own sessions post-OIDC callback, or delegate entirely to an identity provider (Auth0, Okta, AWS Cognito)."
+              }
+            ],
+            [
+              {
+                "text": "Second factor:",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Offer passkeys as the primary credential for new users. Support TOTP as fallback. Require hardware key or passkey for privileged accounts. Accept SMS only as the last resort option for users who can't use stronger factors."
+              }
+            ],
+            [
+              {
+                "text": "Session tokens:",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Opaque tokens for browser sessions (HttpOnly, Secure, SameSite=Strict, __Host- prefix). Short-lived JWTs for service-to-service API authorization. Long-lived opaque refresh tokens stored in server-side store with immediate revocability."
+              }
+            ],
+            [
+              {
+                "text": "Risk detection:",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Score every authentication event on device, location, and velocity signals. Apply step-up MFA above a risk threshold. Log all authentication events to a SIEM with enough context to reconstruct the Snowflake-style scenario: which IP, which device, which account, which time."
+              }
+            ],
+            [
+              {
+                "text": "Password policy:",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Minimum 12 characters, maximum 128. Breach-list check (HaveIBeenPwned k-anonymity). No rotation unless compromised. No complexity rules. Show strength feedback."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "info",
+          "runs": [
+            {
+              "text": "Build vs buy decision: implementing OAuth 2.1, OIDC, MFA, and risk scoring correctly takes months of engineering and ongoing security review. Identity-as-a-Service (Auth0, Okta, AWS Cognito, Clerk) handles the protocol complexity, receives security patches, and is often the right call. What you must still own: your session lifecycle, your step-up auth triggers, and your MFA enforcement policy."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Authentication security is a stack: hash passwords so a breach doesn't reveal them, require a second factor so a leaked hash can't be cracked and replayed, issue well-configured session tokens, detect anomalies in real time, and require re-proof for sensitive actions. Each layer covers a gap the others leave."
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

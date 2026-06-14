@@ -1,0 +1,1323 @@
+{
+  "chapterId": "sec-ch11-appsec-in-ci-cd",
+  "shardIndex": 11,
+  "cards": [
+    {
+      "id": "sec-ch11-c001",
+      "order": 1,
+      "title": "Shift-Left Security",
+      "teaser": "Shift-left security is the discipline of moving security checks as close to the point of code creation as possible. Every stage earlier that a vulnerability is caught reduces remediation cost by an order of magnitude.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "\"Shift left\" is a spatial metaphor drawn from the pipeline diagram: stages flow left to right from commit through build, test, security, and deploy. Shifting security left means moving security checks toward the left edge — closer to where code is written, farther from where it ships."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The IBM Systems Science Institute cost-of-defect data, widely cited in the security industry, quantifies why this matters: a flaw found during design costs roughly $100 to fix; the same flaw found in production costs between $10,000 and $100,000. The multiplier is even larger for security vulnerabilities because production exposure may trigger credential rotation, incident response, customer notification, and regulatory disclosure."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The shift-left security stack, ordered from leftmost to rightmost enforcement point:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "IDE plugins",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — Snyk, SonarLint, and Semgrep IDE extensions surface findings as the developer types. Zero pipeline cost, zero feedback delay. Drawback: optional and developer-controlled."
+              }
+            ],
+            [
+              {
+                "text": "Pre-commit hooks",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — git hooks that run before a commit is recorded locally. Secret scanners (Gitleaks, TruffleHog, detect-secrets) and lightweight SAST prevent the most consequential classes of early-stage mistake."
+              }
+            ],
+            [
+              {
+                "text": "Pull-request gates",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — SAST and dependency scans run on the PR diff. Findings appear as PR comments and block merge when they exceed configured thresholds. This is the primary enforcement layer."
+              }
+            ],
+            [
+              {
+                "text": "Post-merge scans",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — full repository and image scans on merge to main. Catches issues that bypassed pre-commit hooks and issues requiring full dependency-graph analysis."
+              }
+            ],
+            [
+              {
+                "text": "Scheduled deep scans",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — nightly container scans against refreshed CVE feeds, DAST, and license audits. These are too slow for the PR path but catch vulnerabilities published after the original build."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "warning",
+          "runs": [
+            {
+              "text": "Pre-commit hooks are a developer convenience, not a security control. git commit --no-verify bypasses them silently. Never rely on pre-commit hooks as the sole enforcement mechanism for a policy that must hold. The pipeline gate enforces the policy; the hook reduces friction."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Shift-left security means catching problems as early as possible — ideally before the code is even committed — because the earlier you catch a security flaw, the cheaper and easier it is to fix."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "sec-ch11-c002",
+      "order": 2,
+      "title": "Security Gates",
+      "teaser": "A security gate is a pipeline-level pass/fail criterion that prevents an artifact from advancing until it meets a defined security standard. Without gates, security findings are advisory; with gates, they are mandatory.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Security gates encode the organization's risk tolerance into executable policy. A gate defines a threshold — no critical CVEs in the container image, no secrets in source, no high-severity SAST findings — and causes the pipeline to fail if the threshold is breached. The key property of a gate is that it is blocking: the artifact cannot advance unless the condition is satisfied."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Designing security gates requires three decisions for each check:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "What is the threshold?",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Block on CRITICAL only? CRITICAL and HIGH? Any finding with a CVSS score above 7.0? This is a risk tolerance decision, not a technical one. Different artifact types may warrant different thresholds."
+              }
+            ],
+            [
+              {
+                "text": "Where in the pipeline does the gate sit?",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Fast checks (secret scanning, lightweight SAST) belong in the PR hot path. Slow checks (full container scan, DAST) belong on merge to main or in a nightly job."
+              }
+            ],
+            [
+              {
+                "text": "How are bypasses handled?",
+                "marks": ["bold"]
+              },
+              {
+                "text": " A gate that can be bypassed without audit is not a gate. Bypasses must require explicit approval, generate an audit trail, and trigger a time-bounded remediation ticket."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "A representative pipeline gate structure using GitHub Actions:"
+            }
+          ]
+        },
+        {
+          "type": "code",
+          "language": "yaml",
+          "text": "name: Security Gates\non:\n  pull_request:\n    branches: [main]\n\njobs:\n  secret-scan:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/checkout@v4\n        with:\n          fetch-depth: 0\n      - name: Run Gitleaks\n        uses: gitleaks/gitleaks-action@v2\n        env:\n          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}\n\n  sast:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/checkout@v4\n      - name: Run Semgrep\n        uses: returntocorp/semgrep-action@v1\n        with:\n          config: >-\n            p/owasp-top-ten\n            p/secrets\n\n  container-scan:\n    runs-on: ubuntu-latest\n    needs: [secret-scan, sast]\n    steps:\n      - name: Run Trivy\n        uses: aquasecurity/trivy-action@master\n        with:\n          image-ref: ghcr.io/${{ github.repository }}:${{ github.sha }}\n          exit-code: \"1\"\n          severity: \"CRITICAL,HIGH\"\n          ignore-unfixed: true"
+        },
+        {
+          "type": "callout",
+          "variant": "info",
+          "runs": [
+            {
+              "text": "Security gates must be fast to survive. A SAST scan that adds 30 minutes to every PR will be disabled within months under delivery pressure. Design for sub-5-minute gates in the PR hot path; move slower checks to merge or nightly triggers."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "A security gate is a hard stop in the pipeline: if a defined security condition is not met, the build fails and the artifact cannot advance. It turns security policies from aspirational documents into enforced constraints."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "sec-ch11-c003",
+      "order": 3,
+      "title": "Secret Scanning — TruffleHog and Gitleaks",
+      "teaser": "A secret committed to a git repository is not private — it is permanently exposed to anyone with repository access. TruffleHog and Gitleaks scan commits and history to catch API keys, tokens, and passwords before they become permanent liabilities.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Secrets — API keys, OAuth tokens, database passwords, TLS private keys, AWS credentials — are the most immediately exploitable type of accidental exposure in CI/CD systems. Unlike a vulnerable library that requires exploitation skill, a leaked secret is immediately usable by anyone who finds it. And unlike vulnerable code, a secret in git history cannot be remediated by a patch: the git object is immutable. Once pushed, the only safe response is to rotate the credential."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The two primary open-source tools:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Gitleaks",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — high-performance secret scanner written in Go. Ships with a comprehensive ruleset covering 150+ secret patterns (AWS keys, GitHub tokens, Stripe keys, private keys, JWT secrets). Configurable via ",
+                "marks": []
+              },
+              {
+                "text": ".gitleaks.toml",
+                "marks": ["code"]
+              },
+              {
+                "text": " for custom patterns and allowlists. Runs as a pre-commit hook and as a CI job."
+              }
+            ],
+            [
+              {
+                "text": "TruffleHog",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — goes further than pattern matching: it actively validates detected secrets by attempting to authenticate against the target service. A TruffleHog \"verified\" finding means the secret is live and exploitable — not just that it looks like a secret."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "A layered secret-scanning setup with pre-commit and CI:"
+            }
+          ]
+        },
+        {
+          "type": "code",
+          "language": "yaml",
+          "text": "# .pre-commit-config.yaml — runs locally before every commit\nrepos:\n  - repo: https://github.com/gitleaks/gitleaks\n    rev: v8.18.0\n    hooks:\n      - id: gitleaks\n\n---\n# GitHub Actions CI job — catches what pre-commit misses\nname: Secret Scan\non: [push, pull_request]\n\njobs:\n  trufflehog:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/checkout@v4\n        with:\n          fetch-depth: 0\n      - name: TruffleHog scan\n        uses: trufflesecurity/trufflehog@main\n        with:\n          path: ./\n          base: ${{ github.event.repository.default_branch }}\n          extra_args: --only-verified"
+        },
+        {
+          "type": "callout",
+          "variant": "warning",
+          "runs": [
+            {
+              "text": "When a secret is found in git history: (1) revoke and rotate the credential immediately — do not assess impact first; (2) audit access logs for the credential from its introduction date; (3) use git-filter-repo or BFG Repo Cleaner to rewrite history and force-push; (4) notify affected parties per your incident response policy. History rewrite alone is insufficient — the secret was already exposed to everyone who pulled the repository."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "TruffleHog and Gitleaks scan your commits and history looking for passwords and API keys. TruffleHog's distinguishing feature is that it actually tries the found credentials to tell you which ones are still live and dangerous."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "sec-ch11-c004",
+      "order": 4,
+      "title": "IaC Scanning — Checkov, tfsec, Terrascan",
+      "teaser": "Infrastructure as Code files are code — and like application code, they contain security misconfigurations. Checkov, tfsec, and Terrascan scan Terraform, CloudFormation, and Kubernetes manifests before they are applied, catching open S3 buckets and over-privileged IAM roles at PR time.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Infrastructure as Code (IaC) has made infrastructure misconfigurations a code-level problem. A Terraform file that provisions a publicly accessible S3 bucket, an unencrypted RDS instance, or a permissive security group is a security vulnerability just as surely as an injection flaw in application code — and it can be caught by static analysis before the resource is ever created."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The three major open-source IaC scanners:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Checkov",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — from Bridgecrew/Palo Alto. Supports Terraform, CloudFormation, ARM templates, Kubernetes manifests, Helm charts, Dockerfiles, and GitHub Actions workflows. 750+ built-in checks mapped to CIS benchmarks and NIST 800-53. Extensible with custom Python checks."
+              }
+            ],
+            [
+              {
+                "text": "tfsec",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — Terraform-specialist scanner from Aqua Security (now part of Trivy's ecosystem). Deep Terraform knowledge: understands module references, variable interpolation, and data sources. Produces findings with CWE and OWASP mapping."
+              }
+            ],
+            [
+              {
+                "text": "Terrascan",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — from Accurics/Tenable. Multi-cloud, multi-framework. Uses Rego policies (same language as OPA), enabling teams to write custom policy checks in a well-established language."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "code",
+          "language": "yaml",
+          "text": "# GitHub Actions: scan Terraform on every PR\niac-scan:\n  runs-on: ubuntu-latest\n  steps:\n    - uses: actions/checkout@v4\n\n    - name: Checkov IaC scan\n      uses: bridgecrewio/checkov-action@master\n      with:\n        directory: infrastructure/\n        framework: terraform\n        soft_fail: false\n        output_format: sarif\n        output_file_path: checkov-results.sarif\n\n    - name: Upload SARIF to GitHub Code Scanning\n      uses: github/codeql-action/upload-sarif@v3\n      with:\n        sarif_file: checkov-results.sarif\n\n    - name: tfsec scan\n      uses: aquasecurity/tfsec-action@v1.0.0\n      with:\n        working_directory: infrastructure/\n        soft_fail: false"
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "IaC scanning catches the most common cloud misconfiguration categories: storage buckets with public access, databases without encryption at rest, security groups with ",
+              "marks": []
+            },
+            {
+              "text": "0.0.0.0/0",
+              "marks": ["code"]
+            },
+            {
+              "text": " ingress rules, overly permissive IAM policies, logging disabled on critical services, and lack of MFA enforcement. Many of the findings in real-world cloud breaches — Capital One, Twitch, Uber — were misconfiguration classes that IaC scanning would have detected."
+            }
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "info",
+          "runs": [
+            {
+              "text": "Upload IaC scan results in SARIF format to GitHub Code Scanning (or equivalent) so findings appear as PR annotations alongside application code findings. This gives developers a single view of security issues across application code and infrastructure, which dramatically improves triage rates."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Checkov and tfsec read your Terraform and Kubernetes files before they are applied and flag misconfigurations — like an S3 bucket that is accidentally public or a database with no encryption — the same way a linter catches code style issues."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "sec-ch11-c005",
+      "order": 5,
+      "title": "Container Scanning — Trivy and Grype",
+      "teaser": "Container images are layered archives of OS packages, language runtimes, and application dependencies. Trivy and Grype scan every layer against CVE databases to surface vulnerabilities before an image reaches a registry or a cluster.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "A container image is not a single artifact — it is a stack of filesystem layers, each containing OS packages and application libraries that independently carry CVEs. A Node.js application image might include a Debian base layer with OpenSSL, a Node.js runtime layer with npm packages, and an application layer with project dependencies. Vulnerabilities can exist in any layer, at any depth. Manual review is impossible; automated scanning at every build is the only practical approach."
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Trivy",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — from Aqua Security, CNCF project. Scans container images, filesystems, git repositories, IaC files, and SBOM documents. Aggregates vulnerability data from NVD, GitHub Advisory Database, and OS-specific feeds (Debian Security, Red Hat, Alpine secdb). Supports SARIF, JSON, and CycloneDX output. Can generate SBOMs."
+              }
+            ],
+            [
+              {
+                "text": "Grype",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — from Anchore. Pairs naturally with Syft (also from Anchore): Syft generates an SBOM, Grype matches it against vulnerability databases. This SBOM-first approach enables vulnerability scanning without re-analyzing the image — scan the SBOM document, not the image layers again."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "code",
+          "language": "yaml",
+          "text": "container-scan:\n  runs-on: ubuntu-latest\n  steps:\n    - name: Build image\n      run: docker build -t myapp:${{ github.sha }} .\n\n    - name: Trivy vulnerability scan\n      uses: aquasecurity/trivy-action@master\n      with:\n        image-ref: myapp:${{ github.sha }}\n        format: sarif\n        output: trivy-results.sarif\n        exit-code: \"1\"\n        severity: \"CRITICAL,HIGH\"\n        ignore-unfixed: true\n\n    - name: Upload Trivy results to Code Scanning\n      uses: github/codeql-action/upload-sarif@v3\n      if: always()\n      with:\n        sarif_file: trivy-results.sarif\n\n    - name: Grype scan (SBOM-first)\n      run: |\n        syft myapp:${{ github.sha }} -o cyclonedx-json > sbom.json\n        grype sbom:./sbom.json --fail-on high"
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The ",
+              "marks": []
+            },
+            {
+              "text": "--ignore-unfixed",
+              "marks": ["code"]
+            },
+            {
+              "text": " flag is a practical necessity: blocking on every CVE including those with no available fix will cause the pipeline to fail indefinitely on issues outside the team's control. Ignoring unfixed CVEs reduces noise; track them separately in a risk register with a mandatory review cadence (typically 30 days)."
+            }
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "info",
+          "runs": [
+            {
+              "text": "Use a minimal base image strategy to reduce the attack surface before scanning. Alpine Linux, Google Distroless, and Chainguard images ship without package managers, shells, or unnecessary utilities — cutting the CVE count in the base layer by 80-95% compared to debian:latest or ubuntu:latest."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Trivy and Grype x-ray every layer of a container image and compare every package they find against a database of known vulnerabilities, flagging ones that have published CVEs so you know what you are shipping."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "sec-ch11-c006",
+      "order": 6,
+      "title": "Image Signing in CI — Cosign and Keyless OIDC",
+      "teaser": "Cosign makes keyless container image signing the default: the CI workflow's OIDC identity acts as the signing key, Fulcio issues a short-lived certificate, and Rekor logs the event publicly. No key management required.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Traditional artifact signing required managing long-lived cryptographic key pairs — generating them, protecting the private key, rotating them periodically, and distributing public keys for verification. For most organizations, the key management overhead was prohibitive enough that signing was simply skipped. Sigstore was designed to eliminate that overhead entirely through the OIDC keyless signing pattern."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The keyless signing flow in GitHub Actions:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "The workflow requests an OIDC token",
+                "marks": ["bold"]
+              },
+              {
+                "text": " from GitHub's token service (requires ",
+                "marks": []
+              },
+              {
+                "text": "id-token: write",
+                "marks": ["code"]
+              },
+              {
+                "text": " permission). The token encodes the workflow identity: repository, ref, workflow file, run ID."
+              }
+            ],
+            [
+              {
+                "text": "Fulcio validates the OIDC token",
+                "marks": ["bold"]
+              },
+              {
+                "text": " and issues a short-lived X.509 certificate (valid 10 minutes) whose Subject Alternative Name encodes the workflow identity."
+              }
+            ],
+            [
+              {
+                "text": "Cosign signs the image digest",
+                "marks": ["bold"]
+              },
+              {
+                "text": " using the ephemeral key, attaches the signature to the OCI registry alongside the image, and logs the signing event to Rekor."
+              }
+            ],
+            [
+              {
+                "text": "Rekor provides a tamper-evident transparency log",
+                "marks": ["bold"]
+              },
+              {
+                "text": " of every signing event — analogous to Certificate Transparency for TLS. Anyone can audit what was signed, by which workflow, and when."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "code",
+          "language": "yaml",
+          "text": "sign-image:\n  runs-on: ubuntu-latest\n  needs: [container-scan]\n  permissions:\n    contents: read\n    packages: write\n    id-token: write   # required for keyless OIDC signing\n\n  steps:\n    - name: Install cosign\n      uses: sigstore/cosign-installer@v3\n\n    - name: Sign the container image\n      run: |\n        IMAGE=\"ghcr.io/${{ github.repository }}@${{ needs.build.outputs.digest }}\"\n        cosign sign --yes \"$IMAGE\"\n      # No key management needed — GitHub OIDC identity is the signer\n\n    # Verification at deploy time:\n    # cosign verify \\\n    #   --certificate-identity-regexp=\"https://github.com/myorg/myrepo/\" \\\n    #   --certificate-oidc-issuer=\"https://token.actions.githubusercontent.com\" \\\n    #   ghcr.io/myorg/myapp@sha256:abc123"
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Signing is only half the value. Verification must happen at deploy time — in the Kubernetes admission controller (via Kyverno or Sigstore Policy Controller), in the CD pipeline, or in an OPA policy. A signed image that is deployed without verifying the signature provides no supply chain assurance."
+            }
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "info",
+          "runs": [
+            {
+              "text": "Place the sign-image job after all security gates pass. Signing an image before it has cleared vulnerability scanning and secret checks creates a signed-but-insecure artifact — which is worse than an unsigned one, because it carries a false assurance of trustworthiness."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Keyless image signing means the CI workflow's identity is the signing key. Cosign proves the image was built by a specific GitHub Actions workflow — no passwords or private keys to manage or leak."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "sec-ch11-c007",
+      "order": 7,
+      "title": "Fuzz Testing — libFuzzer, AFL++, and OSS-Fuzz",
+      "teaser": "Fuzzing automatically generates malformed and unexpected inputs to a program, exercising code paths that unit tests never reach. Coverage-guided fuzzers like libFuzzer and AFL++ have found thousands of critical vulnerabilities in production software.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Fuzz testing (fuzzing) subjects a program to massive volumes of mutated, semi-random inputs while monitoring for crashes, hangs, assertion failures, and memory safety violations. Unlike unit tests — which verify known inputs produce known outputs — fuzzing discovers the unknown-unknown class of bug: inputs that a developer never imagined and therefore never wrote a test for."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The dominant paradigm is coverage-guided fuzzing: the fuzzer instruments the binary to track which code branches each input exercises. It mutates inputs that reach new coverage, building a corpus of interesting inputs that map the entire branch space of the target function over time."
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "libFuzzer",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — built into LLVM/Clang. Requires a fuzz target function with signature ",
+                "marks": []
+              },
+              {
+                "text": "LLVMFuzzerTestOneInput(const uint8_t *data, size_t size)",
+                "marks": ["code"]
+              },
+              {
+                "text": ". Pairs with AddressSanitizer (ASan) and MemorySanitizer (MSan) to detect heap overflows, use-after-free, and uninitialized reads."
+              }
+            ],
+            [
+              {
+                "text": "AFL++",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — community fork of American Fuzzy Lop. Language-agnostic binary fuzzer that can target programs without source code. Superior corpus scheduling and mutation strategies over the original AFL. Used heavily for network protocol and file format fuzzing."
+              }
+            ],
+            [
+              {
+                "text": "OSS-Fuzz",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — Google's free, continuous fuzzing infrastructure for open-source projects. Runs fuzz targets 24/7 on Google's infrastructure, reports crashes to maintainers, and has found over 10,000 vulnerabilities in projects including curl, OpenSSL, Chromium, and FreeType."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "code",
+          "language": "yaml",
+          "text": "# GitHub Actions: run fuzz tests for a limited duration in CI\nfuzz:\n  runs-on: ubuntu-latest\n  steps:\n    - uses: actions/checkout@v4\n\n    - name: Install LLVM/Clang with sanitizers\n      run: sudo apt-get install -y clang llvm\n\n    - name: Build fuzz target with ASan + libFuzzer\n      run: |\n        clang++ -fsanitize=address,fuzzer \\\n          -o fuzz_parser \\\n          src/fuzz_targets/parser_fuzzer.cpp src/parser.cpp\n\n    - name: Run fuzzer (60 seconds in CI, longer in nightly)\n      run: |\n        mkdir -p corpus\n        ./fuzz_parser \\\n          -max_total_time=60 \\\n          -artifact_prefix=crash- \\\n          corpus/\n\n    - name: Check for crash artifacts\n      run: |\n        if ls crash-* 1>/dev/null 2>&1; then\n          echo \"Fuzzer found crashes!\"\n          ls -la crash-*\n          exit 1\n        fi"
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Fuzz testing in CI requires a different integration model than unit tests: a 60-second fuzz run in every PR catches regressions in fuzz coverage and replays the existing corpus. Deeper fuzzing (hours or days) runs nightly or continuously via OSS-Fuzz integration. The corpus is a version-controlled artifact — preserve it between runs to avoid re-exploring the same territory."
+            }
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "info",
+          "runs": [
+            {
+              "text": "The highest-value fuzz targets are parsing and deserialization code: JSON parsers, XML parsers, image decoders, protocol decoders, and format validators. Any code that accepts untrusted external data and performs complex structural interpretation is a fuzz target candidate. Memory-safe languages (Rust, Go) still benefit from fuzzing for logic errors and panics even when memory safety is guaranteed."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "A fuzzer throws thousands of random and malformed inputs at a function and watches for crashes. It learns which inputs reach new code and focuses there, automatically discovering edge cases that no developer thought to test for."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "sec-ch11-c008",
+      "order": 8,
+      "title": "Policy as Code — OPA and Rego",
+      "teaser": "Open Policy Agent (OPA) is a general-purpose policy engine. Its Rego language expresses security and compliance rules as code that can be version-controlled, tested, and automatically evaluated in the pipeline against any structured data.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Security policies that live in wiki pages are aspirational. Security policies that live in code are enforced. Policy as Code is the practice of expressing organizational security and compliance requirements as machine-evaluable rules, version-controlled alongside application code, and evaluated automatically in the pipeline or at cluster admission time."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Open Policy Agent (OPA, pronounced \"oh-pah\") is a CNCF graduated project from Styra. It evaluates Rego policies against an input document and returns a decision. The input can be anything JSON-serializable: a Kubernetes manifest, a Terraform plan, a container image config, a GitHub Actions workflow file, an API request."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Rego is a declarative query language designed for policy. Core concepts:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Rules",
+                "marks": ["bold"]
+              },
+              {
+                "text": " are boolean expressions that evaluate to true/false given an input document."
+              }
+            ],
+            [
+              {
+                "text": "The ",
+                "marks": []
+              },
+              {
+                "text": "input",
+                "marks": ["code"]
+              },
+              {
+                "text": " document",
+                "marks": ["bold"]
+              },
+              {
+                "text": " is the data being evaluated (a Kubernetes pod spec, a Terraform resource config)."
+              }
+            ],
+            [
+              {
+                "text": "The ",
+                "marks": []
+              },
+              {
+                "text": "data",
+                "marks": ["code"]
+              },
+              {
+                "text": " document",
+                "marks": ["bold"]
+              },
+              {
+                "text": " is external reference data loaded alongside the policy (a list of approved base images, a CVE allowlist)."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "code",
+          "language": "rego",
+          "text": "# policy/container_security.rego\npackage pipeline.container\n\nimport future.keywords.if\nimport future.keywords.in\n\n# Deny containers running as root\ndeny[msg] if {\n  container := input.spec.containers[_]\n  not container.securityContext.runAsNonRoot\n  msg := sprintf(\"Container '%v' must set runAsNonRoot: true\", [container.name])\n}\n\n# Deny use of latest tag\ndeny[msg] if {\n  container := input.spec.containers[_]\n  endswith(container.image, \":latest\")\n  msg := sprintf(\"Container '%v' uses 'latest' tag — pin to a digest\", [container.name])\n}\n\n# Deny containers from unapproved registries\napproved_registries := {\"ghcr.io/myorg\", \"registry.example.com\"}\n\ndeny[msg] if {\n  container := input.spec.containers[_]\n  not any_approved(container.image)\n  msg := sprintf(\"Container '%v' uses unapproved registry\", [container.name])\n}\n\nany_approved(image) if {\n  some registry in approved_registries\n  startswith(image, registry)\n}"
+        },
+        {
+          "type": "callout",
+          "variant": "info",
+          "runs": [
+            {
+              "text": "Rego policies should be tested with OPA's built-in test framework (opa test). A policy without tests can drift silently from intent: the policy evaluates correctly for the inputs you thought of but incorrectly for the inputs you did not. Write test cases for both the allow and deny paths of every significant policy rule."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "OPA is a policy engine that answers questions like \"should this Kubernetes manifest be allowed to deploy?\" You write the rules in Rego, load them into OPA, and it evaluates any JSON document against your rules, returning a pass or fail decision."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "sec-ch11-c009",
+      "order": 9,
+      "title": "Conftest — Running OPA Policies Against Config Files",
+      "teaser": "Conftest is the CLI bridge between OPA policies and CI pipelines. It loads Rego policies and evaluates them against Kubernetes manifests, Terraform plans, Dockerfiles, and other config files — turning policy evaluation into a pipeline step.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "OPA is a policy engine; Conftest is the tool that makes OPA policies runnable in a CI pipeline. Conftest loads Rego policies from a ",
+              "marks": []
+            },
+            {
+              "text": "policy/",
+              "marks": ["code"]
+            },
+            {
+              "text": " directory, parses a target file (Kubernetes YAML, Dockerfile, Terraform JSON plan, GitHub Actions workflow), and evaluates the policies against it. It exits non-zero if any ",
+              "marks": []
+            },
+            {
+              "text": "deny",
+              "marks": ["code"]
+            },
+            {
+              "text": " rules fire — making it directly usable as a blocking pipeline gate."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Conftest supports multiple input parsers natively: YAML, JSON, TOML, INI, Dockerfile, HCL (Terraform), edn, and CUE. Policies from public registries (the Conftest policy hub) can be pulled with ",
+              "marks": []
+            },
+            {
+              "text": "conftest pull",
+              "marks": ["code"]
+            },
+            {
+              "text": " and shared as OCI artifacts."
+            }
+          ]
+        },
+        {
+          "type": "code",
+          "language": "yaml",
+          "text": "# GitHub Actions: evaluate OPA policies against Kubernetes manifests and Terraform plan\npolicy-gate:\n  runs-on: ubuntu-latest\n  steps:\n    - uses: actions/checkout@v4\n\n    - name: Install Conftest\n      run: |\n        wget https://github.com/open-policy-agent/conftest/releases/download/v0.51.0/conftest_0.51.0_linux_amd64.tar.gz\n        tar xzf conftest_*.tar.gz\n        sudo mv conftest /usr/local/bin/\n\n    - name: Evaluate policies against Kubernetes manifests\n      run: |\n        conftest test \\\n          --policy policy/ \\\n          kubernetes/*.yaml\n\n    - name: Generate Terraform plan JSON\n      run: |\n        terraform init\n        terraform plan -out=tfplan\n        terraform show -json tfplan > tfplan.json\n\n    - name: Evaluate policies against Terraform plan\n      run: |\n        conftest test \\\n          --policy policy/terraform/ \\\n          --input json \\\n          tfplan.json"
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The Terraform plan JSON evaluation pattern is particularly powerful: Conftest receives the complete planned resource changes before any infrastructure is created, enabling policies like \"no security group allows port 22 from 0.0.0.0/0\" or \"all S3 buckets must have server-side encryption\" to block misconfigurations at plan time — before a single cloud API call is made."
+            }
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "info",
+          "runs": [
+            {
+              "text": "Conftest's --policy flag accepts multiple directories, enabling layered policies: a base layer of organization-wide rules, a team-specific layer, and an environment-specific layer. Policies in inner layers can override or extend outer layers. This structure mirrors how compliance requirements actually work: global baseline, team customizations, per-environment exceptions."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Conftest is the command-line tool that runs your OPA policies against config files in the pipeline. You point it at Kubernetes YAML or a Terraform plan, and it checks whether those files pass all your security rules, failing the build if they do not."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "sec-ch11-c010",
+      "order": 10,
+      "title": "Sigstore + GitHub Actions OIDC — Keyless Signing in CI",
+      "teaser": "GitHub Actions OIDC tokens provide a cryptographic proof of CI workflow identity. Sigstore's Fulcio and Rekor use this token to enable keyless signing: no secrets stored, short-lived certificates, and a permanent public audit log of every signing event.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The Sigstore project (sigstore.dev), hosted by the Linux Foundation and supported by Google, Red Hat, and Chainguard, consists of three interlocking services:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Fulcio",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — a certificate authority that issues short-lived (10-minute) X.509 code signing certificates. The certificate's Subject Alternative Name encodes the OIDC identity claim: for GitHub Actions, this is the workflow run URL, making the signer's identity the CI workflow itself."
+              }
+            ],
+            [
+              {
+                "text": "Rekor",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — an append-only transparency log. Every signing event (certificate, artifact digest, timestamp) is recorded in Rekor. This creates a public, tamper-evident audit trail analogous to Certificate Transparency logs for TLS."
+              }
+            ],
+            [
+              {
+                "text": "Cosign",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — the CLI client. Orchestrates the OIDC exchange, signing, and Rekor logging. Also handles verification, attestation creation, and SBOM attachment."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The complete keyless signing and verification workflow:"
+            }
+          ]
+        },
+        {
+          "type": "code",
+          "language": "yaml",
+          "text": "# Full Sigstore + OIDC signing pipeline\njobs:\n  build-sign-attest:\n    runs-on: ubuntu-latest\n    permissions:\n      contents: read\n      packages: write\n      id-token: write      # CRITICAL: enables OIDC token issuance\n\n    outputs:\n      image-digest: ${{ steps.push.outputs.digest }}\n\n    steps:\n      - uses: actions/checkout@v4\n      - uses: sigstore/cosign-installer@v3\n\n      - name: Build and push image\n        id: push\n        uses: docker/build-push-action@v5\n        with:\n          push: true\n          tags: ghcr.io/${{ github.repository }}:${{ github.sha }}\n\n      - name: Sign image (keyless via GitHub OIDC)\n        run: |\n          cosign sign --yes \\\n            ghcr.io/${{ github.repository }}@${{ steps.push.outputs.digest }}\n\n      - name: Generate and attest SBOM\n        run: |\n          syft ghcr.io/${{ github.repository }}@${{ steps.push.outputs.digest }} \\\n            -o cyclonedx-json > sbom.json\n          cosign attest --yes \\\n            --predicate sbom.json \\\n            --type cyclonedx \\\n            ghcr.io/${{ github.repository }}@${{ steps.push.outputs.digest }}"
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Verification confirms both the signature and the identity of the signer. The ",
+              "marks": []
+            },
+            {
+              "text": "--certificate-identity-regexp",
+              "marks": ["code"]
+            },
+            {
+              "text": " flag ensures that only a specific workflow from a specific repository is accepted as valid — not just any Sigstore-signed image."
+            }
+          ]
+        },
+        {
+          "type": "code",
+          "language": "bash",
+          "text": "# Verify at deploy time: checks signature AND signer identity\ncosign verify \\\n  --certificate-identity-regexp=\"https://github.com/myorg/myapp/.github/workflows/\" \\\n  --certificate-oidc-issuer=\"https://token.actions.githubusercontent.com\" \\\n  ghcr.io/myorg/myapp@sha256:abc123"
+        },
+        {
+          "type": "callout",
+          "variant": "info",
+          "runs": [
+            {
+              "text": "Rekor entries are permanent and public. Every image signed keylessly via Sigstore has its signing event indexed in the public Rekor instance at rekor.sigstore.dev. This transparency is intentional — it prevents private signing of public artifacts. For air-gapped or confidential deployments, Sigstore supports self-hosted Fulcio and Rekor instances."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "GitHub Actions gets a short-lived identity token from GitHub. Sigstore's Fulcio turns that token into a temporary signing certificate, Cosign signs the image with it, and Rekor records the event publicly. The result: a verifiable proof that a specific workflow built this image, with no stored secrets anywhere."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "sec-ch11-c011",
+      "order": 11,
+      "title": "SBOM Generation in CI — Syft and Trivy SBOM Mode",
+      "teaser": "A Software Bill of Materials is a machine-readable ingredient list for a software artifact. Generated at build time by Syft or Trivy, it enables vulnerability re-scanning, license auditing, and rapid incident response when a zero-day is disclosed weeks after a build.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Executive Order 14028 (May 2021) required that all software sold to US federal agencies include an SBOM. NTIA guidance defines the minimum elements: supplier name, component name, version, unique identifiers, dependency relationships, SBOM author, and timestamp. Beyond compliance, SBOMs provide concrete operational benefits that make them valuable for any organization."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Two SBOM formats dominate:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "SPDX",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — Linux Foundation standard, ISO/IEC 5962:2021. Widely used in open source toolchains. Supported by Syft and the SPDX tools."
+              }
+            ],
+            [
+              {
+                "text": "CycloneDX",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — OWASP-governed, JSON/XML. Designed with security use cases in mind: native support for vulnerability enumeration, service dependencies, and hardware BOMs. Supported by Syft, cdxgen, and Trivy."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "code",
+          "language": "yaml",
+          "text": "sbom-generation:\n  runs-on: ubuntu-latest\n  steps:\n    - name: Generate SBOM with Syft\n      run: |\n        # Scan the container image and output CycloneDX JSON\n        syft ghcr.io/${{ github.repository }}@${{ needs.build.outputs.digest }} \\\n          -o cyclonedx-json=sbom.cyclonedx.json \\\n          -o spdx-json=sbom.spdx.json\n\n    - name: Generate SBOM with Trivy (alternative)\n      run: |\n        trivy image \\\n          --format cyclonedx \\\n          --output trivy-sbom.json \\\n          ghcr.io/${{ github.repository }}@${{ needs.build.outputs.digest }}\n\n    - name: Attach SBOM as signed attestation\n      run: |\n        cosign attest --yes \\\n          --predicate sbom.cyclonedx.json \\\n          --type cyclonedx \\\n          ghcr.io/${{ github.repository }}@${{ needs.build.outputs.digest }}\n\n    - name: Upload SBOM as build artifact\n      uses: actions/upload-artifact@v4\n      with:\n        name: sbom\n        path: sbom.*.json"
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The operational value of SBOMs materializes at incident response time. When Log4Shell (CVE-2021-44228) was disclosed, organizations without SBOMs spent days running scanners across every service to determine exposure. Organizations with SBOMs queried their SBOM store in minutes: ",
+              "marks": []
+            },
+            {
+              "text": "grype sbom:./sbom.json --add-cpe-if-none",
+              "marks": ["code"]
+            },
+            {
+              "text": " against the stored CycloneDX document identifies every artifact containing the affected library immediately."
+            }
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "info",
+          "runs": [
+            {
+              "text": "Attach the SBOM as an OCI attestation (via cosign attest) rather than storing it as a separate file. This binds the SBOM cryptographically to the specific image digest, making the relationship tamper-evident and causing the SBOM to travel with the image across registry copies — a critical property for multi-registry deployments."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "An SBOM is an ingredient list for your software artifact — every library and its version, generated at build time. When a new CVE is published, you can scan the SBOM documents for all your past builds in minutes to find which ones are affected, without re-scanning images."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "sec-ch11-c012",
+      "order": 12,
+      "title": "Vulnerability Prioritization — EPSS and KEV",
+      "teaser": "Most images contain hundreds of CVEs, but very few are ever exploited in the wild. EPSS (Exploit Prediction Scoring System) and CISA's Known Exploited Vulnerabilities catalog provide data-driven signal for which CVEs to fix first.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "A container image scan produces tens or hundreds of CVE findings. Attempting to remediate all of them is operationally impossible; it also is not the right objective. The goal is to prioritize vulnerabilities that are likely to be exploited, not merely all vulnerabilities that have been assigned a CVE number. CVSS scores alone are a poor proxy for exploitability: a CVSS 9.8 vulnerability with no public exploit code and no active threat activity poses less real-world risk than a CVSS 7.5 vulnerability with a Metasploit module."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Two data sources provide exploit-focused signal:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "EPSS (Exploit Prediction Scoring System)",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — published by FIRST.org (Forum of Incident Response and Security Teams). EPSS produces a daily probability score between 0 and 1 for each CVE: the estimated probability that this vulnerability will be exploited in the wild in the next 30 days. Scores are computed from threat intelligence feeds, exploit databases, and historical exploitation data. A CVE with an EPSS score above 0.5 has a 50%+ probability of exploitation — a very different signal than a high CVSS score."
+              }
+            ],
+            [
+              {
+                "text": "KEV (CISA Known Exploited Vulnerabilities catalog)",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — maintained by CISA (Cybersecurity and Infrastructure Security Agency). Lists CVEs that are known to be actively exploited against real targets. Federal agencies are required to remediate KEV entries within mandatory timelines (typically 2 weeks for critical infrastructure). Any KEV entry found in your dependency graph is a fix-immediately priority."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "code",
+          "language": "bash",
+          "text": "# Trivy integrates EPSS and KEV filtering natively (Trivy >= v0.50.0)\ntrivy image \\\n  --format json \\\n  --output scan.json \\\n  myapp:${{ github.sha }}\n\n# Filter results: only show KEV entries (fix immediately)\njq '[.Results[].Vulnerabilities[] | select(.KnownExploited == true)]' scan.json\n\n# Filter results: EPSS score >= 0.1 (top 10% of exploitation probability)\njq '[.Results[].Vulnerabilities[] | select(.EPSS.Score >= 0.1)] | sort_by(-.EPSS.Score)' scan.json\n\n# Grype supports KEV and EPSS filtering via --vex and JSON output\ngrype sbom:./sbom.json -o json | \\\n  jq '[.matches[] | select(.vulnerability.epss[0].score > 0.1)]'"
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "FIRST.org research on EPSS adoption shows that filtering by EPSS score > 0.1 reduces the actionable CVE list by 87% while missing fewer than 7% of vulnerabilities that are actually exploited. Combined with KEV filtering, this approach produces a tightly prioritized remediation queue that teams can actually work through."
+            }
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "warning",
+          "runs": [
+            {
+              "text": "Blocking the pipeline on every CRITICAL CVE regardless of exploitability will stall builds for unfixable transitive dependencies. A mature prioritization policy uses EPSS + KEV to determine what blocks the pipeline (KEV entries and EPSS > 0.5), what enters the remediation queue (EPSS 0.1-0.5 or CVSS HIGH), and what is tracked as low-priority technical debt (remaining CVEs)."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "CVSS tells you how bad a vulnerability could theoretically be; EPSS tells you how likely it is to actually be exploited in the next 30 days; and CISA's KEV list tells you which ones are already being used in attacks right now. Prioritize KEV and high-EPSS CVEs — not just high-CVSS ones."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "sec-ch11-c013",
+      "order": 13,
+      "title": "Continuous Compliance — CIS Benchmarks and NIST SP 800-53",
+      "teaser": "Continuous compliance maps pipeline security controls to regulatory frameworks — CIS Benchmarks for configuration hardening and NIST SP 800-53 for information security controls — so that audit evidence is generated automatically with every build rather than assembled manually before each audit.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Compliance frameworks define what must be true about a system; CI/CD pipelines are where the enforcement and evidence collection happen. Continuous compliance is the practice of generating audit evidence as a byproduct of the delivery pipeline rather than scrambling to assemble it before an annual audit."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The two dominant frameworks for technical security controls:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "CIS Benchmarks",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — published by the Center for Internet Security. Prescriptive configuration hardening guides for OS images, container runtimes, Kubernetes clusters, cloud provider configurations, and CI systems. Checkov and tfsec map their findings directly to CIS Benchmark controls. Running these scanners in CI constitutes both enforcement and evidence generation for the relevant CIS controls."
+              }
+            ],
+            [
+              {
+                "text": "NIST SP 800-53",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — NIST Special Publication 800-53 defines the security and privacy controls catalog for federal information systems. The control families most relevant to CI/CD: SA (System and Services Acquisition, including SA-11 Developer Security Testing), CM (Configuration Management, including CM-3 Configuration Change Control), and SI (System and Information Integrity, including SI-3 Malware Protection and SI-10 Information Input Validation)."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Continuous compliance implementation pattern:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Map each pipeline security control to a compliance framework requirement",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — for example, secret scanning maps to NIST CM-3 and SA-11; container scanning maps to SI-3; IaC scanning maps to CM-6 (Configuration Settings)."
+              }
+            ],
+            [
+              {
+                "text": "Generate structured evidence artifacts",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — SARIF reports from scanners, SBOM attestations, signed provenance records, and policy evaluation logs are all machine-readable audit evidence. Store them as build artifacts with a retention policy that satisfies your compliance requirements."
+              }
+            ],
+            [
+              {
+                "text": "Automate the mapping to compliance controls",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — tools like OpenSCAP, Compliance-Operator (on Kubernetes), and commercial platforms (Vanta, Drata, Secureframe) ingest pipeline artifacts and automatically populate compliance dashboards."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "code",
+          "language": "yaml",
+          "text": "# Compliance evidence collection job\ncompliance-evidence:\n  runs-on: ubuntu-latest\n  needs: [secret-scan, sast, container-scan, iac-scan, sign-image]\n  steps:\n    - name: Collect evidence artifacts\n      run: |\n        mkdir -p evidence/\n        cp scan-results.sarif evidence/sast-$(date +%Y%m%d).sarif    # SA-11\n        cp trivy-results.sarif evidence/sca-$(date +%Y%m%d).sarif     # SI-3\n        cp checkov-results.sarif evidence/iac-$(date +%Y%m%d).sarif   # CM-6\n        cp sbom.cyclonedx.json evidence/sbom-$(date +%Y%m%d).json     # SA-12\n\n    - name: Upload compliance evidence\n      uses: actions/upload-artifact@v4\n      with:\n        name: compliance-evidence-${{ github.sha }}\n        path: evidence/\n        retention-days: 365   # satisfy 1-year audit retention requirement"
+        },
+        {
+          "type": "callout",
+          "variant": "info",
+          "runs": [
+            {
+              "text": "The primary audit benefit of continuous compliance is that you already have the evidence when the auditor asks. A security program that collects evidence continuously generates it as a byproduct of normal operations. A security program that collects evidence annually spends weeks before each audit manually assembling screenshots, logs, and attestations — and inevitably discovers gaps that cannot be retroactively remediated."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Continuous compliance means your pipeline generates the audit evidence as a side effect of building software. Instead of scrambling to prove your security controls work before an annual audit, you have a year's worth of scan results, SBOM records, and signed artifacts ready to present."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "sec-ch11-c014",
+      "order": 14,
+      "title": "Putting It Together — A Full AppSec Pipeline",
+      "teaser": "A mature AppSec CI/CD pipeline integrates secret scanning, SAST, IaC scanning, container scanning, SBOM generation, image signing, and policy evaluation into a coherent system where security gates are layered, fast checks protect the PR hot path, and deep checks protect main.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The individual security tools covered in this chapter are components; a production AppSec pipeline integrates them into a system with deliberate placement, defined failure behavior, and a clear remediation path for every finding category."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Pipeline stage design by trigger:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Pre-commit (developer machine)",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — Gitleaks secret scanning, lightweight SAST (Semgrep with targeted rules). Fast, local, optional as enforcement but valuable as friction reducer."
+              }
+            ],
+            [
+              {
+                "text": "Pull request trigger",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — Gitleaks/TruffleHog CI mode (blocking), Semgrep SAST (blocking), IaC scanning with Checkov/tfsec (blocking), Conftest policy evaluation (blocking). All must complete in under 5 minutes."
+              }
+            ],
+            [
+              {
+                "text": "Post-merge to main",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — full container scan with Trivy using EPSS and KEV filtering (blocking on KEV and EPSS > 0.5), SBOM generation with Syft, image signing with Cosign+OIDC, provenance attestation, compliance evidence collection."
+              }
+            ],
+            [
+              {
+                "text": "Nightly scheduled",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — re-scan all production image SBOMs against refreshed CVE databases (new CVEs published since build), deep fuzz runs against fuzz corpus, DAST against staging environment."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "code",
+          "language": "yaml",
+          "text": "# Condensed full AppSec pipeline skeleton\nname: AppSec Pipeline\non:\n  pull_request:\n    branches: [main]\n  push:\n    branches: [main]\n\njobs:\n  # PR path: must be fast and blocking\n  secret-scan:\n    if: github.event_name == 'pull_request'\n    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/checkout@v4\n        with: { fetch-depth: 0 }\n      - uses: trufflesecurity/trufflehog@main\n        with: { extra_args: --only-verified }\n\n  sast:\n    if: github.event_name == 'pull_request'\n    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/checkout@v4\n      - uses: returntocorp/semgrep-action@v1\n        with: { config: \"p/owasp-top-ten p/secrets\" }\n\n  iac-policy:\n    if: github.event_name == 'pull_request'\n    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/checkout@v4\n      - uses: bridgecrewio/checkov-action@master\n        with: { directory: \"infrastructure/\", soft_fail: false }\n      - run: conftest test --policy policy/ kubernetes/\n\n  # Post-merge: deeper checks, signing, attestation\n  build-sign:\n    if: github.event_name == 'push'\n    runs-on: ubuntu-latest\n    permissions:\n      contents: read\n      packages: write\n      id-token: write\n    steps:\n      - uses: actions/checkout@v4\n      - uses: sigstore/cosign-installer@v3\n      - name: Build and push\n        id: build\n        uses: docker/build-push-action@v5\n        with: { push: true, tags: \"ghcr.io/${{ github.repository }}:${{ github.sha }}\" }\n      - name: Trivy scan with EPSS prioritization\n        run: |\n          trivy image --exit-code 1 --severity CRITICAL \\\n            --ignore-unfixed \\\n            ghcr.io/${{ github.repository }}@${{ steps.build.outputs.digest }}\n      - name: Generate SBOM and sign\n        run: |\n          syft ghcr.io/${{ github.repository }}@${{ steps.build.outputs.digest }} \\\n            -o cyclonedx-json=sbom.json\n          cosign sign --yes \\\n            ghcr.io/${{ github.repository }}@${{ steps.build.outputs.digest }}\n          cosign attest --yes --predicate sbom.json --type cyclonedx \\\n            ghcr.io/${{ github.repository }}@${{ steps.build.outputs.digest }}"
+        },
+        {
+          "type": "callout",
+          "variant": "warning",
+          "runs": [
+            {
+              "text": "A pipeline with all these tools but without defined ownership for findings is security theater. Assign explicit owners: the development team owns SAST and secret scan findings; the platform team owns IaC findings; a security champion or AppSec team owns CVE triage with defined SLAs. Security tools without process produce noise. Security tools with process produce accountability."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "A mature AppSec pipeline layers fast checks in the PR path and thorough checks on main: secret scanning and SAST block the PR, container scanning and signing happen post-merge, and nightly jobs re-scan what was already shipped against new CVE data. Each layer catches what the layer before it could not."
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
