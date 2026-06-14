@@ -24,6 +24,10 @@ struct ContentView: View {
             }
         }
         .environment(\.userProgress, userProgress)
+        // Force the user's light/dark choice (nil = follow system). This sets the
+        // trait collection that the dynamic ColorTokens resolve against, so colors
+        // stay correct even for views that bind to the default ThemeManager.
+        .preferredColorScheme(theme.forcedColorScheme)
         .task {
             checkOnboardingStatus()
         }

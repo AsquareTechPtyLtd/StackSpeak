@@ -6,9 +6,18 @@ final class ThemeManager {
     /// Set by the root view via `.onChange(of: colorScheme)` so `colors` can respond to system changes.
     var systemColorScheme: ColorScheme = .light
 
-    var colors: ColorTokens {
+    // Always the trait-resolved palette. The effective light/dark is driven by
+    // the rendering trait collection (system mode) or `.preferredColorScheme`
+    // (forced mode, applied at the root) — never by which ThemeManager instance a
+    // view happens to bind to. See `ColorTokens.dynamic`.
+    var colors: ColorTokens { .dynamic }
+
+    /// The scheme to force on the hierarchy: `nil` to follow the system, else the
+    /// user's explicit choice. The root applies this via `.preferredColorScheme`,
+    /// which sets the trait collection that `colors` reads.
+    var forcedColorScheme: ColorScheme? {
         switch preference {
-        case .system: return systemColorScheme == .dark ? .dark : .light
+        case .system: return nil
         case .light:  return .light
         case .dark:   return .dark
         }
