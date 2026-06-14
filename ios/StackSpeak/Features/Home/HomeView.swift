@@ -75,6 +75,11 @@ struct HomeView: View {
             .onChange(of: userProgress?.masteredWordIds) { _, _ in
                 Task { await reloadIfNeeded() }
             }
+            // Changing stacks (here or in Profile) should refresh today's
+            // incomplete words immediately, not wait for the next day.
+            .onChange(of: userProgress?.selectedStacks) { _, _ in
+                Task { await reconcileForStackChange() }
+            }
             .onChange(of: services?.catalogStatus) { _, newStatus in
                 if case .loaded = newStatus, viewModel.todaysWords.isEmpty {
                     Task { await reloadIfNeeded() }
@@ -162,6 +167,18 @@ struct HomeView: View {
         if let progress = userProgress, let services {
             await viewModel.loadTodaysWords(wordService: services.word, userProgress: progress)
         }
+    }
+
+    /// Swap out today's now-unqualified incomplete words for ones from the new
+    /// stack selection, then reload. Completed words are preserved.
+    private func reconcileForStackChange() async {
+        guard let progress = userProgress, let services else { return }
+        do {
+            try services.word.reconcileTodaysSetWithSelection(userProgress: progress)
+        } catch {
+            viewModel.errorMessage = error.localizedDescription
+        }
+        await viewModel.loadTodaysWords(wordService: services.word, userProgress: progress)
     }
 
     // MARK: - Main content

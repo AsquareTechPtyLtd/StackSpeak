@@ -15,6 +15,10 @@ protocol WordRepository {
     func generateDailySet(for date: Date, userProgress: UserProgress) throws -> DailySet
     @discardableResult
     func setDailyWordGoal(_ goal: Int, userProgress: UserProgress) throws -> DailySet
+    /// Reconciles today's set with the current stack selection (keeps completed
+    /// words, swaps incomplete ones that no longer qualify).
+    @discardableResult
+    func reconcileTodaysSetWithSelection(userProgress: UserProgress) throws -> DailySet?
 }
 
 /// Protocol for user progress data access
