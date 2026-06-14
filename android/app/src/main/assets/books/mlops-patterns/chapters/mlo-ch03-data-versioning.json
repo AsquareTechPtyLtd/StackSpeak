@@ -1,0 +1,1862 @@
+{
+  "chapterId": "mlo-ch03-data-versioning",
+  "shardIndex": 3,
+  "cards": [
+    {
+      "id": "mlo-ch03-c001",
+      "order": 1,
+      "title": "The Data Versioning Problem",
+      "teaser": "A model is a function of code AND data. Version your code perfectly and ignore data versioning and you still cannot reproduce last quarter's results — because the training set has changed underfoot.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Software reproducibility has a solved half and an unsolved half. The solved half is code: git gives every commit a SHA, every dependency a pinned version, every build a deterministic input. The unsolved half — until recently — was data."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "A machine learning model is the product of three things: code, data, and hyperparameters. If any one of those three inputs changes, the output model changes. Code versioning is mature. Hyperparameter logging is easy — a YAML file next to the training run covers it. Data versioning is the hard part, and the one most teams skip."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Without versioned data, teams face these recurring failures:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Model regression mystery.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Retrained model performs worse than the production model. Commit history is clean. But the training data has had rows appended, corrected, or deleted since the production model was trained."
+              }
+            ],
+            [
+              {
+                "text": "Audit failure.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Regulatory review asks: \"What data did this model train on?\" The team cannot answer because the dataset was a live S3 bucket that has been modified hundreds of times."
+              }
+            ],
+            [
+              {
+                "text": "Experiment irreproducibility.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " A researcher checks out a six-month-old experiment branch, runs training, and gets different results than the paper records — because the dataset pointer was never pinned."
+              }
+            ],
+            [
+              {
+                "text": "Data drift concealment.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Without versioned snapshots, teams cannot diff datasets to understand when and how distributions shifted."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Data versioning is the practice of treating datasets as first-class versioned artifacts — giving every dataset state a unique, immutable identity so that any model training run can be reproduced exactly, any data change can be audited, and any regression can be bisected back to a data change."
+            }
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "info",
+          "runs": [
+            {
+              "text": "The reproducibility crisis in ML research is partly a data versioning crisis. A 2021 study found that fewer than 25% of published ML papers could be exactly reproduced — data availability and versioning were the most common blockers, not code quality."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Code versioning alone is not enough: a model trained on different data is a different model, even if the code is identical. Data versioning gives every dataset state a permanent identity so you can reproduce any result from any point in time."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "mlo-ch03-c002",
+      "order": 2,
+      "title": "Why Git Doesn't Work for Data",
+      "teaser": "Git is a brilliant tool for text. Apply it naively to a 50 GB training set and you will corrupt your repository, exhaust your colleagues' disk space, and slow every clone to a crawl. Git was not designed for this problem.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Git's object model stores every version of every file as a zlib-compressed blob. For text files, this is efficient: adjacent versions of a source file differ by a few lines, and git's delta compression keeps storage manageable. For binary files — CSV dumps, Parquet files, HDF5 matrices, image archives — the model breaks down entirely."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Specific failure modes when using git for data:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Repository bloat.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " A 1 GB dataset committed three times means 3 GB in the git object store, permanently. Git history is append-only — you cannot remove objects without rewriting history and force-pushing, which breaks every collaborator's clone."
+              }
+            ],
+            [
+              {
+                "text": "No binary delta compression.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Git compresses text deltas well. For binary files it stores full copies. Two versions of a Parquet file that differ by 1% will consume 200% of the storage."
+              }
+            ],
+            [
+              {
+                "text": "Clone performance collapse.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " git clone downloads every historical version of every file. A repository that accumulated 10 GB of data history over a year requires new contributors to download all 10 GB before they can do anything."
+              }
+            ],
+            [
+              {
+                "text": "50 MB push limit on GitHub.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " GitHub rejects files over 100 MB and warns on files over 50 MB. Most ML datasets exceed these limits immediately."
+              }
+            ],
+            [
+              {
+                "text": "No streaming or lazy access.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Git has no concept of fetching only the files relevant to a task. Checkout materializes the entire working tree."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The fundamental mismatch: git's design goals were a "
+            },
+            {
+              "text": "distributed version control system for source code",
+              "marks": ["italic"]
+            },
+            {
+              "text": ". It optimizes for many small text files with human-readable diffs and a need for offline-capable distributed workflows. ML data is the opposite: large binary files, often centrally stored, where the meaningful diff is statistical rather than textual."
+            }
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "warning",
+          "runs": [
+            {
+              "text": "Do not commit data files to git. Even a single 500 MB commit will permanently degrade repository performance for every person who clones it. The only exception is tiny reference datasets under 1 MB used in tests."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Git stores every version of every file — great for small text, disastrous for large binaries. Commit a gigabyte of training data and git will store it forever, bloat every clone, and eventually refuse to accept new pushes. Git was built for code, not for datasets."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "mlo-ch03-c003",
+      "order": 3,
+      "title": "Git LFS — Large File Storage",
+      "teaser": "Git LFS replaces large files in the git repository with text pointer files, storing the actual binary content in a separate object store. It is the simplest path from naive git to data versioning — but it carries its own limitations.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Git Large File Storage (LFS) was released by GitHub in 2015 as a practical mitigation for the large-file problem. The mechanism is straightforward: instead of storing a large file in the git object database, git LFS replaces it with a small pointer file containing the file's SHA-256 hash and size. The actual file content is stored in a separate LFS server."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "A pointer file looks like this:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "version https://git-lfs.github.com/spec/v1",
+                "marks": ["code"]
+              }
+            ],
+            [
+              {
+                "text": "oid sha256:4d7a214614ab2935c943f9e0ff69d22eadea6100",
+                "marks": ["code"]
+              }
+            ],
+            [
+              {
+                "text": "size 132457",
+                "marks": ["code"]
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Setup requires three steps: install the git-lfs client, run "
+            },
+            {
+              "text": "git lfs install",
+              "marks": ["code"]
+            },
+            {
+              "text": " once per machine, then declare which file patterns go to LFS:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "git lfs track \"*.parquet\" \"*.csv\" \"*.pkl\" \"*.h5\"",
+                "marks": ["code"]
+              }
+            ],
+            [
+              {
+                "text": "git add .gitattributes && git commit -m \"Track data files via LFS\"",
+                "marks": ["code"]
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Limitations of Git LFS for serious ML workloads:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Storage is still billed per byte.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " GitHub charges for LFS storage beyond 1 GB. For terabyte-scale datasets this becomes expensive quickly."
+              }
+            ],
+            [
+              {
+                "text": "No deduplication across files.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Two datasets that share 90% of their rows each consume 100% of their storage."
+              }
+            ],
+            [
+              {
+                "text": "No pipeline integration.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Git LFS versions files but does not understand data pipelines — it cannot track which preprocessing step produced which dataset."
+              }
+            ],
+            [
+              {
+                "text": "No remote storage flexibility.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " The LFS server is tied to the git host. Moving data to S3 or GCS requires a self-hosted LFS server or a workaround."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "info",
+          "runs": [
+            {
+              "text": "Git LFS is the right answer for teams that need minimal overhead and have datasets under ~100 GB. For teams with larger data, complex pipelines, or multi-cloud storage, DVC or LakeFS is the better tool."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Git LFS puts a small text placeholder in your git repository instead of the actual large file, and stores the real file on a separate server. Your git history stays lean, but the data is still versioned and retrievable by its hash."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "mlo-ch03-c004",
+      "order": 4,
+      "title": "DVC — Data Version Control",
+      "teaser": "DVC is the most widely adopted open-source tool for data versioning. It works like git — pointer files in git, data in remote storage — but adds pipeline tracking, experiment management, and support for any storage backend.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "DVC (Data Version Control) was released in 2017 and has become the de facto standard for data versioning in ML projects. The core design philosophy: use git for code and metadata, use any object store for data, and make the two work together seamlessly."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Getting started with DVC is a five-command workflow:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "pip install dvc dvc-s3   # or dvc-gs, dvc-azure",
+                "marks": ["code"]
+              }
+            ],
+            [
+              {
+                "text": "dvc init                 # initialize DVC in existing git repo",
+                "marks": ["code"]
+              }
+            ],
+            [
+              {
+                "text": "dvc remote add -d myremote s3://my-bucket/dvc-store",
+                "marks": ["code"]
+              }
+            ],
+            [
+              {
+                "text": "dvc add data/train.parquet  # creates data/train.parquet.dvc",
+                "marks": ["code"]
+              }
+            ],
+            [
+              {
+                "text": "git add data/train.parquet.dvc .gitignore && git commit -m \"Track training data\"",
+                "marks": ["code"]
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The "
+            },
+            {
+              "text": ".dvc",
+              "marks": ["code"]
+            },
+            {
+              "text": " pointer file is a tiny YAML file stored in git that records the file's MD5 hash and path in the remote cache. To retrieve a specific dataset version, checkout the git commit and run "
+            },
+            {
+              "text": "dvc pull",
+              "marks": ["code"]
+            },
+            {
+              "text": "."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "DVC pipeline stages connect code, data, and outputs into a reproducible DAG:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "dvc run -n preprocess \\",
+                "marks": ["code"]
+              }
+            ],
+            [
+              {
+                "text": "  -d data/raw.csv -d src/preprocess.py \\",
+                "marks": ["code"]
+              }
+            ],
+            [
+              {
+                "text": "  -o data/processed.parquet \\",
+                "marks": ["code"]
+              }
+            ],
+            [
+              {
+                "text": "  python src/preprocess.py",
+                "marks": ["code"]
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Running "
+            },
+            {
+              "text": "dvc repro",
+              "marks": ["code"]
+            },
+            {
+              "text": " re-executes only stages whose dependencies have changed — similar to "
+            },
+            {
+              "text": "make",
+              "marks": ["code"]
+            },
+            {
+              "text": " but data-aware. "
+            },
+            {
+              "text": "dvc dag",
+              "marks": ["code"]
+            },
+            {
+              "text": " renders the full pipeline as an ASCII dependency graph."
+            }
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "info",
+          "runs": [
+            {
+              "text": "DVC supports S3, GCS, Azure Blob, SSH, HDFS, and local filesystems as remote storage backends. You can switch remotes without changing any DVC pipeline definitions — the content-addressable cache is portable."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "DVC stores tiny pointer files in git and pushes actual data to S3 (or any object store). Checkout a commit, run dvc pull, and you get exactly the data that commit references — plus you can define pipelines so DVC knows which data produced which model."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "mlo-ch03-c005",
+      "order": 5,
+      "title": "Pachyderm — Pipelines with Provenance",
+      "teaser": "Pachyderm takes data versioning further than DVC: it is a complete data pipeline platform where every output is automatically versioned, every pipeline run is reproducible, and provenance — what data produced what artifact — is a first-class system property.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Pachyderm (open-source, Kubernetes-native) organizes data into "
+            },
+            {
+              "text": "repositories",
+              "marks": ["bold"]
+            },
+            {
+              "text": " (analogous to git repos but for data), each containing "
+            },
+            {
+              "text": "commits",
+              "marks": ["bold"]
+            },
+            {
+              "text": " (immutable snapshots). Pipelines subscribe to input repos and automatically trigger when new commits arrive, writing outputs into their own versioned output repos."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Key Pachyderm concepts:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Datum.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " The unit of parallel processing. Pachyderm automatically partitions input data into datums and distributes them across workers. A pipeline processing 10,000 images can run on 10,000 datums in parallel."
+              }
+            ],
+            [
+              {
+                "text": "Provenance graph.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Every output commit records exactly which input commits produced it. Ask Pachyderm \"what data produced model v37?\" and it returns the full provenance chain: raw data commit, preprocessed data commit, feature engineering commit."
+              }
+            ],
+            [
+              {
+                "text": "Incremental processing.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Pachyderm only reprocesses datums that changed between input commits. Add 100 new training examples to a 1M-row dataset and only those 100 rows are reprocessed."
+              }
+            ],
+            [
+              {
+                "text": "Global ID.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " A single commit ID propagates through the entire pipeline graph. Query any pipeline's output at that ID to get the state corresponding to that version of the input data."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Pachyderm pipelines are defined as JSON/YAML specs:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "pipeline: {name: preprocess}",
+                "marks": ["code"]
+              }
+            ],
+            [
+              {
+                "text": "input: {pfs: {repo: raw-data, glob: \"/*.csv\"}}",
+                "marks": ["code"]
+              }
+            ],
+            [
+              {
+                "text": "transform: {image: myregistry/preprocess:v2, cmd: [\"python\", \"preprocess.py\"]}",
+                "marks": ["code"]
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The difference from DVC: Pachyderm is a "
+            },
+            {
+              "text": "server-side",
+              "marks": ["italic"]
+            },
+            {
+              "text": " system. Pipelines run continuously in the cluster, triggered by data changes. DVC is a "
+            },
+            {
+              "text": "developer-side",
+              "marks": ["italic"]
+            },
+            {
+              "text": " tool. You invoke DVC pipelines manually or from CI. For organizations with continuous data ingestion and automated retraining, Pachyderm's model fits better."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Pachyderm is git for data pipelines, not just for files. Every piece of data has a commit, every pipeline output is automatically versioned, and the system can always answer: which exact inputs produced this exact output."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "mlo-ch03-c006",
+      "order": 6,
+      "title": "Delta Lake — ACID Transactions on the Data Lake",
+      "teaser": "Delta Lake brings database-grade reliability to object storage: ACID transactions, schema enforcement, and time travel on tables stored as Parquet files in S3 or GCS. It turns a mutable data lake into a versioned, queryable history.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Delta Lake (open-source, originated at Databricks) is an open storage format that sits on top of Parquet files in cloud object storage. It adds a transaction log — the "
+            },
+            {
+              "text": "_delta_log",
+              "marks": ["code"]
+            },
+            {
+              "text": " directory — that records every change to the table as an ordered sequence of JSON commit entries."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Core capabilities:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "ACID transactions.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Concurrent writers do not corrupt the table. Delta Lake uses optimistic concurrency control — writers check for conflicts at commit time, not at write time."
+              }
+            ],
+            [
+              {
+                "text": "Time travel.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Query any previous version by version number or timestamp:"
+              }
+            ],
+            [
+              {
+                "text": "SELECT * FROM events VERSION AS OF 42  -- by version number",
+                "marks": ["code"]
+              }
+            ],
+            [
+              {
+                "text": "SELECT * FROM events TIMESTAMP AS OF '2025-01-01'  -- by date",
+                "marks": ["code"]
+              }
+            ],
+            [
+              {
+                "text": "Schema enforcement.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Delta Lake rejects writes that do not conform to the table's schema, preventing schema drift silently corrupting downstream models."
+              }
+            ],
+            [
+              {
+                "text": "Schema evolution.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Controlled schema changes are possible with explicit DDL, not silent overwrites."
+              }
+            ],
+            [
+              {
+                "text": "Audit history.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " DESCRIBE HISTORY gives a full log of operations, their timestamps, and the user who performed them."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "For ML workflows, time travel is the killer feature. Train a model on "
+            },
+            {
+              "text": "features VERSION AS OF 100",
+              "marks": ["code"]
+            },
+            {
+              "text": " to reproduce last month's experiment exactly — even if the features table has been updated 200 times since."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Delta Lake data retention is controlled by the VACUUM command. Running "
+            },
+            {
+              "text": "VACUUM events RETAIN 168 HOURS",
+              "marks": ["code"]
+            },
+            {
+              "text": " deletes files not referenced by the last 7 days of history, managing storage costs while retaining a useful window for reproducibility."
+            }
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "info",
+          "runs": [
+            {
+              "text": "Delta Lake is the versioning layer built into Databricks and is the default table format for Unity Catalog. In 2026, it is part of the Open Table Format ecosystem alongside Apache Iceberg and Apache Hudi."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Delta Lake wraps Parquet files in a transaction log that makes the data lake behave like a database: concurrent writes don't corrupt data, you can query any historical version, and the schema is enforced. Time travel is built in."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "mlo-ch03-c007",
+      "order": 7,
+      "title": "LakeFS — Git-Like Operations on Object Storage",
+      "teaser": "LakeFS brings git's branching model to object storage: create a branch of your S3 bucket, experiment, and merge or discard — without copying petabytes of data. The diff, branch, and commit operations you know from git, now for datasets.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "LakeFS (open-source, by Treeverse) is an open-source data lake management platform that exposes an S3-compatible API. Applications read and write to LakeFS exactly as they would to S3 — no code changes required. LakeFS adds a versioning layer underneath."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The git mental model maps directly to LakeFS:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Repository",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — a versioned object store, backed by a real S3 bucket."
+              }
+            ],
+            [
+              {
+                "text": "Branch",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — an isolated view of the data. Creating a branch is O(1) — it creates a pointer, not a copy. Branches are used for experimentation, staging ingestion, and CI isolation."
+              }
+            ],
+            [
+              {
+                "text": "Commit",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — an immutable snapshot of a branch at a point in time, identified by a content hash."
+              }
+            ],
+            [
+              {
+                "text": "Merge",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — atomically applies changes from one branch to another. Supports conflict detection when two branches modify the same object."
+              }
+            ],
+            [
+              {
+                "text": "Compare / diff",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — lists files added, modified, or deleted between two commits or branches."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "A typical LakeFS ML workflow:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "lakectl branch create lakefs://my-repo/experiment-42 --source main",
+                "marks": ["code"]
+              }
+            ],
+            [
+              {
+                "text": "# Write new features to the branch via S3 API — no data copied",
+                "marks": ["code"]
+              }
+            ],
+            [
+              {
+                "text": "lakectl diff lakefs://my-repo/main lakefs://my-repo/experiment-42",
+                "marks": ["code"]
+              }
+            ],
+            [
+              {
+                "text": "lakectl merge lakefs://my-repo/experiment-42 lakefs://my-repo/main",
+                "marks": ["code"]
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The critical efficiency: LakeFS uses copy-on-write semantics. A branch holds only the metadata about which objects it references. No data is physically duplicated until objects are actually modified in the branch. A branch of a 10 TB dataset costs kilobytes of metadata."
+            }
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "info",
+          "runs": [
+            {
+              "text": "LakeFS is particularly effective for CI/CD pipelines on data: run a CI job against a committed snapshot of the data on an isolated branch, discard the branch on failure, merge on success. Data CI with the same discipline as code CI."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "LakeFS makes your S3 bucket behave like a git repository. Creating a branch doesn't copy data — it just creates a pointer. You can experiment on the branch, diff it against main, and merge or throw it away, without ever moving terabytes around."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "mlo-ch03-c008",
+      "order": 8,
+      "title": "Immutable Data Snapshots",
+      "teaser": "The foundational pattern behind every data versioning system is the immutable snapshot: once a dataset version is written, it cannot be modified. All changes create a new version. Immutability is what makes reproducibility possible.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Immutability is the load-bearing concept in data versioning. Without it, every other versioning mechanism breaks down: you can label a dataset \"v1\" but if the underlying files are mutable, \"v1\" means something different every time you read it."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "What immutable snapshots provide:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Reproducibility guarantee.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " A training run that references snapshot ID "
+              },
+              {
+                "text": "abc123",
+                "marks": ["code"]
+              },
+              {
+                "text": " will always get the same data, whether run today or two years from now."
+              }
+            ],
+            [
+              {
+                "text": "Safe concurrent access.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Multiple training jobs can read the same snapshot simultaneously without locking. Because nothing is writing to it, there are no read-write conflicts."
+              }
+            ],
+            [
+              {
+                "text": "Auditability.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Every modification creates a new snapshot with a new identity. The history of who created which snapshot, when, and from what precursor is preserved."
+              }
+            ],
+            [
+              {
+                "text": "Safe rollback.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Rolling back a data pipeline means switching a pointer from the current snapshot to a previous one. The current snapshot is not destroyed — it still exists if the rollback was a mistake."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Implementation patterns for immutability on object storage:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Date-partitioned paths.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Write to "
+              },
+              {
+                "text": "s3://bucket/data/2025-01-15/",
+                "marks": ["code"]
+              },
+              {
+                "text": " not to "
+              },
+              {
+                "text": "s3://bucket/data/latest/",
+                "marks": ["code"]
+              },
+              {
+                "text": ". Each partition is written once and never overwritten."
+              }
+            ],
+            [
+              {
+                "text": "S3 Object Lock.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Enforce immutability at the storage layer using S3 Object Lock in compliance or governance mode. Objects cannot be deleted or overwritten for the retention period."
+              }
+            ],
+            [
+              {
+                "text": "Content-addressed storage.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Store objects by their content hash. An object's address is derived from its content — writing the same data twice goes to the same address, and the address never changes."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "warning",
+          "runs": [
+            {
+              "text": "The most common data versioning failure is a mutable \"latest\" pointer that overwrites. Naming conventions like latest.parquet or current_features.csv are silent reproducibility destroyers — every reader gets a different dataset depending on when they read."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "An immutable snapshot means: once written, it never changes. Any update creates a new snapshot. This is the rule that makes reproducibility work — if data can be silently overwritten, you can never be sure what you trained on."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "mlo-ch03-c009",
+      "order": 9,
+      "title": "Hash-Based Pinning",
+      "teaser": "Content-addressable data is data identified by what it contains, not where it lives. A cryptographic hash of the file's content is its permanent, unforgeable identity. Pin a training run to a hash and the data it trained on can never silently change.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Hash-based pinning borrows directly from git's object model. In git, every file, tree, and commit is identified by a SHA hash of its content. The same principle applied to datasets: the identifier of a dataset is the cryptographic hash of its content."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "How it works in practice:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "When a dataset is added to the version store, its MD5 or SHA-256 hash is computed.",
+                "marks": []
+              }
+            ],
+            [
+              {
+                "text": "The hash becomes the dataset's canonical identifier, stored in the pointer file (DVC) or commit log (LakeFS, Delta Lake).",
+                "marks": []
+              }
+            ],
+            [
+              {
+                "text": "A training run records the hash of every input dataset in its metadata.",
+                "marks": []
+              }
+            ],
+            [
+              {
+                "text": "To reproduce: resolve the hash to its location in the cache, pull the files, train.",
+                "marks": []
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "In DVC, the pointer file for a dataset looks like:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "outs:",
+                "marks": ["code"]
+              }
+            ],
+            [
+              {
+                "text": "- md5: a304afba35f98d8dff9e8c6c78f23a21",
+                "marks": ["code"]
+              }
+            ],
+            [
+              {
+                "text": "  size: 1073741824",
+                "marks": ["code"]
+              }
+            ],
+            [
+              {
+                "text": "  path: data/train.parquet",
+                "marks": ["code"]
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The hash provides two properties:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Integrity verification.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " When pulling data, recompute the hash and compare. If they differ, the data was corrupted or tampered with."
+              }
+            ],
+            [
+              {
+                "text": "Deduplication.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " If two experiments reference the same dataset hash, the storage system only needs one copy of the data regardless of how many pointer files reference it."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "For large datasets composed of many files, a "
+            },
+            {
+              "text": "manifest hash",
+              "marks": ["italic"]
+            },
+            {
+              "text": " — a hash-of-hashes over all constituent files — provides a single identifier for the entire dataset without requiring the entire dataset to be loaded into memory."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "A content hash is a fingerprint: the same data always produces the same hash, and different data produces a different hash. Pin your training run to a hash and you have an unambiguous, tamper-proof reference to exactly what you trained on."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "mlo-ch03-c010",
+      "order": 10,
+      "title": "Reproducibility vs Storage Tradeoff",
+      "teaser": "Full dataset snapshots give perfect reproducibility but consume storage proportional to the number of versions. Incremental or reference-based versioning saves storage but introduces complexity and potential failure modes. Every data versioning strategy lives somewhere on this spectrum.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The fundamental tension in data versioning: perfect reproducibility requires retaining every historical version of every dataset. Perfect storage efficiency requires retaining only the current version. These goals are in direct conflict, and every data versioning tool makes a specific set of tradeoffs along this spectrum."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Three archival strategies and their tradeoffs:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Full snapshot per version.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Every version is a complete copy of the dataset. Reproducibility is trivially guaranteed — just read the full snapshot. Storage cost is O(versions × dataset_size). For a 1 TB dataset updated weekly, 1 year of full snapshots costs 52 TB."
+              }
+            ],
+            [
+              {
+                "text": "Copy-on-write / structural sharing.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Used by Delta Lake, Iceberg, LakeFS. New versions share unchanged data files with previous versions. Only the changed files are stored as new objects. Storage cost is O(total_changes), not O(versions × dataset_size). Efficient for append-heavy workloads. Complex for random-update workloads."
+              }
+            ],
+            [
+              {
+                "text": "Pointer-only versioning.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Used by DVC in its baseline mode. The version is a hash pointer. The actual data in the content-addressed cache is deduplicated. If two versions share files, those files are stored once. Efficient but depends on the cache never being pruned for the version to remain reproducible."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Practical retention policies:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Keep full snapshots for versions tied to production model releases. These must be reproducible indefinitely.",
+                "marks": []
+              }
+            ],
+            [
+              {
+                "text": "Keep rolling window (e.g., 90 days) of incremental snapshots for recent experiments.",
+                "marks": []
+              }
+            ],
+            [
+              {
+                "text": "Prune experiment branches that did not yield production models after the team's review period.",
+                "marks": []
+              }
+            ]
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "warning",
+          "runs": [
+            {
+              "text": "The hidden cost of aggressive pruning: if you delete the data snapshot that a production model trained on, you lose the ability to explain or reproduce that model's behavior. For regulated use cases, immutable retention of production training data may be a compliance requirement."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Saving every version of every dataset costs storage; saving only the latest destroys reproducibility. Real systems compromise: share unchanged files across versions (copy-on-write), keep full copies for production-linked versions, and prune experimental ones after a window."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "mlo-ch03-c011",
+      "order": 11,
+      "title": "Data Lineage",
+      "teaser": "Data lineage answers the question: where did this data come from, and what has been done to it? In ML, lineage connects raw source data through every transformation step to the model that consumed it — enabling debugging, auditing, and impact analysis.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Data lineage is the directed acyclic graph (DAG) of data origins and transformations. Every node in the graph is a dataset version; every edge is a transformation that produced it. Following the graph from a production model backward reveals every dataset and every processing step that contributed to it."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Lineage serves four distinct purposes in ML systems:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Reproducibility.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Given a model artifact, traverse the lineage graph to identify the exact dataset versions used. Pull those versions and retrain."
+              }
+            ],
+            [
+              {
+                "text": "Debugging.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " A model starts misfiring. Diff the current training data lineage against the lineage from when the model was performing correctly. Find the transformation step whose output changed."
+              }
+            ],
+            [
+              {
+                "text": "Impact analysis.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " A source database schema changed. Traverse the lineage graph forward to identify every downstream dataset and model that depends on it. Alert owners before they are surprised by broken pipelines."
+              }
+            ],
+            [
+              {
+                "text": "Compliance.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " GDPR right-to-erasure: a user requests deletion of their data. Traverse the lineage graph to identify every dataset and model that was trained on data including that user. Log or remediate."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Lineage capture approaches:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Manual metadata.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Developers annotate each pipeline stage with its inputs and outputs. Accurate but high-friction and prone to drift."
+              }
+            ],
+            [
+              {
+                "text": "Pipeline-native lineage.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Pachyderm, Airflow, and Prefect automatically record lineage as pipelines execute. The DAG is the lineage."
+              }
+            ],
+            [
+              {
+                "text": "Open Lineage standard.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " OpenLineage (openlineage.io) is a vendor-neutral spec for emitting lineage events from any processing engine. Supported by Spark, dbt, Airflow, and consumed by Marquez, DataHub, OpenMetadata."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "info",
+          "runs": [
+            {
+              "text": "MLflow Tracking automatically records which dataset version (by path or hash) was used for each experiment run, providing lightweight lineage between experiments and data snapshots without a dedicated lineage system."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Data lineage is the answer to \"where did this come from?\" It's a graph where each node is a dataset and each edge is a transformation. Trace backward from any model to see every dataset and every step that produced it — which is essential for debugging, auditing, and compliance."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "mlo-ch03-c012",
+      "order": 12,
+      "title": "Schema Versioning",
+      "teaser": "Data schemas evolve — columns are added, renamed, or dropped; types change; semantics shift. Managing these changes without breaking downstream models or losing reproducibility is schema versioning, and it is a separate and harder problem than file versioning.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "A dataset can be at the correct file version — the right bytes, the right hash — and still be incompatible with the code that consumes it if the schema has changed. Schema versioning is the discipline of making schema changes explicit, controlled, and backward-compatible where possible."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Schema changes fall into two categories:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Backward-compatible (safe).",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Adding a new optional column. Widening a type (INT32 to INT64). Adding a new table to a dataset. Old consumers continue working; new consumers can use the new fields."
+              }
+            ],
+            [
+              {
+                "text": "Backward-incompatible (breaking).",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Renaming a column. Removing a column. Narrowing a type. Changing a column's semantic meaning (e.g., from UTC to local time). These changes require consumers to update before or simultaneously with the schema change."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Schema versioning tools and patterns:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Delta Lake schema enforcement.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Rejects writes that deviate from the registered schema. Schema evolution requires an explicit "
+              },
+              {
+                "text": "mergeSchema",
+                "marks": ["code"]
+              },
+              {
+                "text": " flag. Changes are recorded in the transaction log with their timestamp."
+              }
+            ],
+            [
+              {
+                "text": "Apache Avro / Protobuf / Parquet metadata.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Embed schema in the file format itself. The schema is versioned alongside the data. Avro's schema registry tracks version history and compatibility rules."
+              }
+            ],
+            [
+              {
+                "text": "Confluent Schema Registry.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " For streaming data, schemas are stored centrally. Producers and consumers agree on a schema ID at runtime. Compatibility modes (BACKWARD, FORWARD, FULL) are enforced automatically."
+              }
+            ],
+            [
+              {
+                "text": "dbt schema tests.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Define expected column presence, types, and constraints as code. CI fails if the schema deviates. Schema-as-code provides a version history of expected schema through git."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "For ML specifically, schema changes can invalidate feature pipelines silently. A renamed column still flows through the pipeline if the feature code uses "
+            },
+            {
+              "text": "df[\"old_name\"]",
+              "marks": ["code"]
+            },
+            {
+              "text": " — but produces a KeyError at runtime instead of a training failure at data ingestion time. Schema validation at ingestion is the correct control point."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Schema versioning tracks how the shape of data changes over time — which columns exist, what types they have, what they mean. A file can be the right version but the wrong schema, breaking every model that expected the old layout. Schema changes must be explicit and controlled."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "mlo-ch03-c013",
+      "order": 13,
+      "title": "Tool Comparison: DVC vs Pachyderm vs Delta Lake vs LakeFS vs Git LFS",
+      "teaser": "Five tools, five different points on the tradeoff map. Choose by answering: How large is the data? Does the data live in a database or object storage? Is the team running continuous pipelines or batch experiments? Who manages the infrastructure?",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "No single tool is universally best. The right choice depends on scale, infrastructure, team workflow, and the specific reproducibility guarantees required. Here is a direct comparison across six decision-relevant dimensions:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Git LFS",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — Best for: small teams, files under 100 GB, minimal tooling overhead. Storage backend: git host (GitHub, GitLab). Pipeline tracking: none. Server required: git LFS server (hosted by git provider). Provenance: none. Primary limitation: scales poorly beyond a few GB, no pipeline DAG."
+              }
+            ],
+            [
+              {
+                "text": "DVC",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — Best for: ML experiment workflows, any cloud storage backend, teams already using git. Storage backend: S3, GCS, Azure, SSH, HDFS. Pipeline tracking: yes (dvc.yaml stages). Server required: none (client-only). Provenance: experiment-level via DVC pipelines. Primary limitation: user must invoke dvc pull manually; not event-driven."
+              }
+            ],
+            [
+              {
+                "text": "Pachyderm",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — Best for: continuous automated retraining, organizations requiring full provenance, Kubernetes-native environments. Storage backend: S3, GCS, Azure (via Kubernetes). Pipeline tracking: yes (server-side DAG). Server required: yes (Kubernetes cluster). Provenance: automatic, every output commit. Primary limitation: operational overhead of running a Kubernetes service."
+              }
+            ],
+            [
+              {
+                "text": "Delta Lake",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — Best for: SQL-based feature stores, large tabular datasets, Spark/Databricks workflows. Storage backend: S3, GCS, Azure Data Lake. Pipeline tracking: via Spark jobs. Server required: no (open format, but needs Spark or Delta Standalone). Provenance: transaction log (operation-level). Primary limitation: optimized for tabular data; not ideal for unstructured data (images, audio)."
+              }
+            ],
+            [
+              {
+                "text": "LakeFS",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — Best for: teams wanting git-style branching on object storage, CI/CD for data pipelines, S3-compatible applications. Storage backend: S3, GCS, Azure (proxied). Pipeline tracking: via external orchestrator. Server required: yes (LakeFS server or LakeFS Cloud). Provenance: commit-level. Primary limitation: adds a network hop on every read/write."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "info",
+          "runs": [
+            {
+              "text": "In 2026, many teams use DVC for local experiment reproducibility AND Delta Lake or Iceberg for production feature stores. These tools are not mutually exclusive — they operate at different layers of the ML data stack."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Git LFS is the simplest but least capable. DVC is the workhorse for ML experiments. Pachyderm is full provenance with operational cost. Delta Lake is the database-grade option for tabular data. LakeFS is git branching on top of S3. Match the tool to the team's actual workflow, not the most impressive feature list."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "mlo-ch03-c014",
+      "order": 14,
+      "title": "Data Versioning in 2026 — The Lakehouse Approach",
+      "teaser": "The 2026 answer to data versioning is the open table format: Apache Iceberg, Delta Lake, and Apache Hudi converging on a common model — ACID transactions, time travel, and schema evolution on object storage, with multiple engines reading the same tables.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The lakehouse pattern — coined by Databricks, implemented across the industry — merges the flexibility of data lakes (any data, any schema, cheap object storage) with the reliability of data warehouses (ACID guarantees, schema enforcement, query performance). At its core are the open table formats: "
+            },
+            {
+              "text": "Apache Iceberg",
+              "marks": ["bold"]
+            },
+            {
+              "text": ", "
+            },
+            {
+              "text": "Delta Lake",
+              "marks": ["bold"]
+            },
+            {
+              "text": ", and "
+            },
+            {
+              "text": "Apache Hudi",
+              "marks": ["bold"]
+            },
+            {
+              "text": "."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "All three formats share a common architectural pattern: a metadata layer (manifest files, transaction logs, or timeline) on top of Parquet data files in object storage. The metadata layer is the versioning mechanism."
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Apache Iceberg.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Originated at Netflix. Strong on hidden partitioning, schema evolution, and multi-engine support. Snapshot-based versioning with time travel. Used by AWS Glue, Snowflake, Flink, Spark, and Trino. In 2026, the most widely deployed open table format."
+              }
+            ],
+            [
+              {
+                "text": "Delta Lake.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Originated at Databricks. Strongest Spark integration. Delta Sharing protocol enables cross-organization data sharing. Unity Catalog uses Delta Lake as its default storage format. Time travel via "
+              },
+              {
+                "text": "VERSION AS OF",
+                "marks": ["code"]
+              },
+              {
+                "text": " / "
+              },
+              {
+                "text": "TIMESTAMP AS OF",
+                "marks": ["code"]
+              },
+              {
+                "text": "."
+              }
+            ],
+            [
+              {
+                "text": "Apache Hudi.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Originated at Uber. Optimized for record-level upserts and deletes — the right choice when individual rows must be updated efficiently (e.g., GDPR erasure, CDC pipelines). Provides incremental query support for reading only changed records since a given point in time."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "For ML workflows in 2026, the lakehouse approach means:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Feature stores are Delta Lake or Iceberg tables. Training reads "
+              },
+              {
+                "text": "VERSION AS OF",
+                "marks": ["code"]
+              },
+              {
+                "text": " to pin the exact feature set used. No manual snapshot management required."
+              }
+            ],
+            [
+              {
+                "text": "Raw data ingestion via Hudi's upsert model handles late-arriving data and corrections without full rewrites.",
+                "marks": []
+              }
+            ],
+            [
+              {
+                "text": "Apache Catalog (formerly Nessie) or Unity Catalog provides cross-engine governance and access control over the table versions.",
+                "marks": []
+              }
+            ],
+            [
+              {
+                "text": "DVC and LakeFS remain relevant for unstructured data (images, audio, video) that open table formats do not handle.",
+                "marks": []
+              }
+            ]
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "info",
+          "runs": [
+            {
+              "text": "Project Nessie (now part of Apache Polaris) brings git-style branching to Iceberg catalogs — creating a branch of the catalog, running experiments, and merging. It is the LakeFS concept applied to the table-level rather than the file-level. In 2026 this is an emerging but increasingly production-ready pattern."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The modern answer to data versioning is an open table format like Iceberg or Delta Lake: your data sits in Parquet files on S3, but a metadata layer gives you ACID writes, time travel queries, and schema evolution without moving to a traditional database. Every version is queryable forever, and any engine can read it."
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

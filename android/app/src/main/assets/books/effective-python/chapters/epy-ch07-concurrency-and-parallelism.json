@@ -1,0 +1,1071 @@
+{
+  "chapterId": "epy-ch07-concurrency-and-parallelism",
+  "shardIndex": 7,
+  "cards": [
+    {
+      "id": "epy-ch07-c001",
+      "order": 1,
+      "title": "Global Interpreter Lock (GIL)",
+      "teaser": "CPython's mutex that allows only one thread to execute Python bytecode at a time — the reason threading does not speed up CPU-bound work in Python, and the motivation behind multiprocessing and asyncio.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The "
+            },
+            {
+              "text": "Global Interpreter Lock",
+              "marks": ["bold"]
+            },
+            {
+              "text": " is a mutex inside CPython that protects the interpreter's internal state — reference counts, the garbage collector, and object allocations. Only one thread holds the GIL at any moment, which means only one thread executes Python bytecode at any moment, regardless of how many CPU cores the machine has."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The GIL does not prevent concurrency — threads still switch, and switching happens often (every 5 ms by default, or on I/O calls). What it prevents is true parallelism: two threads cannot run Python code simultaneously on two different cores."
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "CPU-bound work:",
+                "marks": ["bold"]
+              },
+              {
+                "text": " more threads make no difference or slow things down due to lock contention. Use multiprocessing or a C extension that releases the GIL."
+              }
+            ],
+            [
+              {
+                "text": "I/O-bound work:",
+                "marks": ["bold"]
+              },
+              {
+                "text": " the GIL is released while waiting on I/O. Threads overlap waiting periods effectively, and asyncio does it with less overhead."
+              }
+            ],
+            [
+              {
+                "text": "C extensions:",
+                "marks": ["bold"]
+              },
+              {
+                "text": " NumPy, pandas, and many cryptography libraries release the GIL explicitly, so they do achieve parallelism inside threads."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "info",
+          "runs": [
+            {
+              "text": "Python 3.13 introduced an experimental free-threaded (no-GIL) build behind a compile flag. Production adoption is gradual — expect the GIL to remain the default through at least 2026."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The GIL is a talking stick in a meeting room with one microphone. Multiple people can be in the room (threads), but only the person holding the stick can speak (execute code). When someone is waiting for an answer from outside (I/O), they put the stick down. That wait is the only time two conversations overlap — and even then, only one person is actually talking at a time."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "epy-ch07-c002",
+      "order": 2,
+      "title": "Threading vs Multiprocessing",
+      "teaser": "Threads share memory and are cheap to create but are GIL-limited for CPU work. Processes have isolated memory and true parallelism but pay a higher startup and IPC cost — the right choice depends entirely on whether the bottleneck is I/O or CPU.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The choice between "
+            },
+            {
+              "text": "threading",
+              "marks": ["bold"]
+            },
+            {
+              "text": " and "
+            },
+            {
+              "text": "multiprocessing",
+              "marks": ["bold"]
+            },
+            {
+              "text": " hinges on one question: what is the bottleneck? If the program spends most of its time waiting on network, disk, or database calls, threads (or asyncio) are the right tool. If it spends most of its time computing, processes are necessary."
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Threads:",
+                "marks": ["bold"]
+              },
+              {
+                "text": " shared address space, cheap creation (~1 ms), simple data sharing but requires locks. Limited by GIL for CPU work. Best for I/O concurrency."
+              }
+            ],
+            [
+              {
+                "text": "Processes:",
+                "marks": ["bold"]
+              },
+              {
+                "text": " isolated memory, expensive creation (~50–100 ms), data sharing via serialization (pickle). True CPU parallelism. Best for CPU-bound tasks that can be chunked."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The serialization cost is the hidden trap in multiprocessing: every argument passed to a worker and every result returned must be pickled and unpickled. If your payloads are large or your tasks are short, pickle overhead can exceed the compute savings."
+            }
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "tip",
+          "runs": [
+            {
+              "text": "Measure before committing. A common mistake is to add processes to a CPU-bound program and see no speedup — because the actual bottleneck was I/O or pickle serialization, not the computation itself."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Threads are colleagues sharing an open-plan office — they can grab each other's files instantly, but only one can use the single shared computer at a time (GIL). Processes are offices in separate buildings — each has its own computer and can work fully in parallel, but sending a document requires a courier (pickle), which takes real time."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "epy-ch07-c003",
+      "order": 3,
+      "title": "ThreadPoolExecutor",
+      "teaser": "`concurrent.futures.ThreadPoolExecutor` manages a pool of worker threads and returns `Future` objects — the high-level, exception-safe way to run I/O-bound tasks concurrently without managing threads by hand.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The "
+            },
+            {
+              "text": "ThreadPoolExecutor",
+              "marks": ["bold", "code"]
+            },
+            {
+              "text": " in `concurrent.futures` wraps the `threading` module in a clean API. You submit callables, get `Future` objects back, and let the executor handle thread lifecycle, exceptions, and cleanup. The context manager form (`with ThreadPoolExecutor() as ex`) is preferred — it joins all threads on exit, ensuring no work is silently abandoned."
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "submit(fn, *args):",
+                "marks": ["bold", "code"]
+              },
+              {
+                "text": " schedules a single call, returns a `Future`."
+              }
+            ],
+            [
+              {
+                "text": "map(fn, iterable):",
+                "marks": ["bold", "code"]
+              },
+              {
+                "text": " submits all items and returns results in input order; exceptions are re-raised on iteration."
+              }
+            ],
+            [
+              {
+                "text": "as_completed(futures):",
+                "marks": ["bold", "code"]
+              },
+              {
+                "text": " yields futures in completion order — faster if you want results as they arrive."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Default thread count is `min(32, os.cpu_count() + 4)` in Python 3.8+. For high-latency I/O (network calls with long waits), a larger pool — 50 or 100 workers — is often justified because threads spend most of their time sleeping."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Exceptions inside worker threads are captured in the `Future` and re-raised when you call `future.result()`. This is a key advantage over bare threads, where unhandled exceptions in daemon threads silently vanish."
+            }
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "warning",
+          "runs": [
+            {
+              "text": "Remember the GIL: ThreadPoolExecutor is ideal for I/O-bound work. For CPU-bound tasks, switch to ProcessPoolExecutor — the API is nearly identical, which makes the migration trivial."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "ThreadPoolExecutor is a staffing agency that manages a team of workers for you. You hand tasks to the agency, it assigns workers, and you pick up results when they are done. You never deal with hiring, firing, or what happens when a worker throws a tantrum — the agency handles it."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "epy-ch07-c004",
+      "order": 4,
+      "title": "ProcessPoolExecutor",
+      "teaser": "`concurrent.futures.ProcessPoolExecutor` spawns separate Python interpreter processes that bypass the GIL — the right tool for CPU-bound, parallelizable work like image processing, parsing, or numerical computation.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The "
+            },
+            {
+              "text": "ProcessPoolExecutor",
+              "marks": ["bold", "code"]
+            },
+            {
+              "text": " shares the `concurrent.futures` interface with `ThreadPoolExecutor` — `submit()`, `map()`, `as_completed()` — which makes it easy to swap in when threads are GIL-limited. Each worker is a separate OS process with its own CPython interpreter, so compute runs truly in parallel."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The cost model is different from threads:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Startup cost:",
+                "marks": ["bold"]
+              },
+              {
+                "text": " ~50–150 ms per process. Use `initializer=` to run setup code once at pool creation instead of per task."
+              }
+            ],
+            [
+              {
+                "text": "IPC cost:",
+                "marks": ["bold"]
+              },
+              {
+                "text": " every argument and result is pickled. Large NumPy arrays or complex objects can make IPC the bottleneck."
+              }
+            ],
+            [
+              {
+                "text": "Pool size:",
+                "marks": ["bold"]
+              },
+              {
+                "text": " defaults to `os.cpu_count()`. More workers than cores adds overhead without benefit for CPU-bound work."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The sweet spot: tasks that are large enough to justify the pickle round-trip, pure functions with no shared state, and work that divides cleanly into independent chunks. Image resizing, text parsing, and cryptographic operations are classic examples."
+            }
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "tip",
+          "runs": [
+            {
+              "text": "Use `chunksize` with `executor.map()` to amortize IPC cost when processing many small items — it batches them into fewer pickle round-trips."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "ProcessPoolExecutor is a factory with multiple assembly lines instead of multiple workers on one line. Each line has its own machine and can run full speed simultaneously. The tradeoff: delivering raw materials and collecting finished products (IPC) takes real time, so the job must be big enough to justify the delivery cost."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "epy-ch07-c005",
+      "order": 5,
+      "title": "asyncio Event Loop",
+      "teaser": "The single-threaded scheduler at the heart of asyncio — it cycles through pending I/O events and callbacks, resuming suspended coroutines the moment their awaited operation completes, enabling thousands of concurrent connections with one thread.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The "
+            },
+            {
+              "text": "event loop",
+              "marks": ["bold"]
+            },
+            {
+              "text": " is the runtime that powers asyncio. It runs a tight cycle: collect all I/O events that are ready (using the OS's `select`, `epoll`, or `kqueue`), resume the coroutines waiting on those events, let them run until they hit the next `await`, and repeat. No thread switching, no GIL, no OS scheduler involved for the concurrency itself."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The practical mechanics:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "asyncio.run(coro)",
+                "marks": ["bold", "code"]
+              },
+              {
+                "text": " — creates a new event loop, runs the coroutine to completion, closes the loop. The standard entry point in Python 3.7+."
+              }
+            ],
+            [
+              {
+                "text": "asyncio.get_event_loop()",
+                "marks": ["bold", "code"]
+              },
+              {
+                "text": " — returns the running loop. Rarely needed directly in application code; prefer `asyncio.run()`."
+              }
+            ],
+            [
+              {
+                "text": "Loop.run_until_complete()",
+                "marks": ["bold", "code"]
+              },
+              {
+                "text": " — older API still used in libraries and frameworks that manage the loop externally."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The key insight: concurrency in asyncio is cooperative, not preemptive. A coroutine runs until it voluntarily suspends with `await`. If it never awaits, it blocks the entire event loop — no other coroutine can run. This is why calling a blocking function (like `time.sleep()` or a synchronous database driver) inside an async function is a critical mistake."
+            }
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "warning",
+          "runs": [
+            {
+              "text": "One blocking call starves the entire event loop. If you must call a synchronous function, use `loop.run_in_executor()` to run it in a thread pool so the event loop stays unblocked."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The event loop is an air traffic controller for a single runway. Planes (coroutines) take off, fly their route, and radio back when they need to land (await). The controller slots each plane into the runway the moment it is free. No plane is ever in two places at once, but the controller keeps hundreds of flights in motion with one runway because most of them are airborne between radio calls."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "epy-ch07-c006",
+      "order": 6,
+      "title": "async/await Syntax",
+      "teaser": "The two keywords that define coroutines in Python — `async def` declares a function that can be suspended, and `await` is the point where execution yields control back to the event loop until the awaited operation finishes.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The "
+            },
+            {
+              "text": "async def",
+              "marks": ["bold", "code"]
+            },
+            {
+              "text": " keyword turns a regular function into a coroutine function. Calling it does not execute the body — it returns a coroutine object. The body runs only when you `await` the coroutine or schedule it as a task. This mirrors how generator functions work with `yield`."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The "
+            },
+            {
+              "text": "await",
+              "marks": ["bold", "code"]
+            },
+            {
+              "text": " expression suspends the current coroutine and hands control back to the event loop. The loop resumes the coroutine when the awaitable (another coroutine, a `Future`, or an `asyncio.Task`) completes. `await` can only appear inside an `async def` body."
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Awaitable types:",
+                "marks": ["bold"]
+              },
+              {
+                "text": " coroutines, `asyncio.Task`, `asyncio.Future`, and any object implementing `__await__`."
+              }
+            ],
+            [
+              {
+                "text": "async for:",
+                "marks": ["bold", "code"]
+              },
+              {
+                "text": " iterates over an async iterable — each `__anext__` call is awaited."
+              }
+            ],
+            [
+              {
+                "text": "async with:",
+                "marks": ["bold", "code"]
+              },
+              {
+                "text": " context manager with async `__aenter__` and `__aexit__` — used by async database connections and HTTP sessions."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The most common beginner mistake: awaiting every coroutine sequentially, which provides zero concurrency benefit. `result1 = await a(); result2 = await b()` runs a then b, one after the other. To run them concurrently, use `asyncio.gather()` or `asyncio.create_task()`."
+            }
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "info",
+          "runs": [
+            {
+              "text": "async/await is syntax sugar over the coroutine protocol. Under the hood, `await expr` calls `expr.__await__()` and uses a `send()`-based protocol identical to generator-based coroutines — the same mechanism Tornado and Twisted used before Python 3.5."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "`async def` is a promise to the event loop: this function may pause voluntarily. `await` is the actual pause — like pressing hold on a phone call. The event loop picks up another call while you are on hold. When the other end picks up (I/O completes), the loop takes you off hold and you continue the conversation."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "epy-ch07-c007",
+      "order": 7,
+      "title": "asyncio.gather()",
+      "teaser": "Runs multiple awaitables concurrently and collects all their results into a list — the simplest way to fan out I/O-bound work and wait for all of it to finish before continuing.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The "
+            },
+            {
+              "text": "asyncio.gather()",
+              "marks": ["bold", "code"]
+            },
+            {
+              "text": " function takes any number of awaitables, schedules them all on the event loop, and returns their results in the same order as the input — regardless of completion order. It is the idiomatic replacement for sequential awaits when you have independent I/O operations."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Key behaviors:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Results are ordered:",
+                "marks": ["bold"]
+              },
+              {
+                "text": " `results = await asyncio.gather(a(), b(), c())` always returns `[a_result, b_result, c_result]` even if c finished first."
+              }
+            ],
+            [
+              {
+                "text": "return_exceptions=True:",
+                "marks": ["bold", "code"]
+              },
+              {
+                "text": " exceptions are returned as result values instead of propagating. Lets you inspect which tasks failed without cancelling the rest."
+              }
+            ],
+            [
+              {
+                "text": "Cancellation:",
+                "marks": ["bold"]
+              },
+              {
+                "text": " if one task raises and `return_exceptions=False` (default), gather cancels the remaining tasks — a best-effort cleanup."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Compared to sequential awaiting: `await a(); await b()` takes `time(a) + time(b)`. `await gather(a(), b())` takes `max(time(a), time(b))`. For ten database queries each taking 100 ms, sequential takes one second; gather takes 100 ms."
+            }
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "tip",
+          "runs": [
+            {
+              "text": "For structured concurrency with better cancellation semantics in Python 3.11+, prefer `asyncio.TaskGroup` over `gather`. Use `gather` when you need `return_exceptions=True` or when targeting Python 3.10 and below."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "`gather` is placing multiple phone orders simultaneously instead of one at a time. You call all the restaurants at once (schedule all coroutines), hang out, and gather all the deliveries when they arrive. The total wait is as long as the slowest order, not the sum of all orders."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "epy-ch07-c008",
+      "order": 8,
+      "title": "asyncio.create_task()",
+      "teaser": "Schedules a coroutine to run on the event loop immediately as a `Task`, without waiting for it — enabling fire-and-monitor patterns, and giving you a handle to cancel, inspect, or await the background work later.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The "
+            },
+            {
+              "text": "asyncio.create_task()",
+              "marks": ["bold", "code"]
+            },
+            {
+              "text": " function wraps a coroutine in a `Task` and schedules it on the running event loop. Unlike awaiting a coroutine directly, the task starts running during the next iteration of the event loop — before you await it. This means you can do other work after creating the task and await it later."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The difference from `gather`:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "create_task",
+                "marks": ["bold", "code"]
+              },
+              {
+                "text": " returns a `Task` immediately — you decide when and if to await it. The task runs concurrently regardless."
+              }
+            ],
+            [
+              {
+                "text": "gather",
+                "marks": ["bold", "code"]
+              },
+              {
+                "text": " is a convenience wrapper that creates tasks internally and awaits them all in one call."
+              }
+            ],
+            [
+              {
+                "text": "task.cancel()",
+                "marks": ["bold", "code"]
+              },
+              {
+                "text": " raises `CancelledError` inside the task at the next await point. The task can catch it for cleanup."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "A critical gotcha: if you create a task and never await it, exceptions inside it are silently swallowed (Python logs a warning at garbage collection time). Always keep a reference to tasks and await or cancel them before your program exits."
+            }
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "warning",
+          "runs": [
+            {
+              "text": "Store task references in a set or list: `tasks = set(); t = asyncio.create_task(coro()); tasks.add(t); t.add_done_callback(tasks.discard)`. This prevents tasks from being garbage-collected mid-flight."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "`create_task` is handing a job ticket to a background clerk and walking away. The clerk starts working immediately. You can come back later to pick up the result, check on progress, or cancel the job entirely — but if you throw away the ticket without doing any of those things, you will never know if the job finished or caught fire."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "epy-ch07-c009",
+      "order": 9,
+      "title": "asyncio.TaskGroup",
+      "teaser": "Python 3.11's structured concurrency primitive — a context manager that creates and tracks a group of tasks, guarantees all tasks finish (or are cancelled) when the block exits, and surfaces exceptions without silently swallowing them.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The "
+            },
+            {
+              "text": "asyncio.TaskGroup",
+              "marks": ["bold", "code"]
+            },
+            {
+              "text": " (Python 3.11+) brings structured concurrency to asyncio. The contract is simple: tasks created inside the `async with` block are guaranteed to finish — either by completing, being cancelled, or being cancelled due to an exception — before the block exits. No task outlives the group."
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Structured lifetime:",
+                "marks": ["bold"]
+              },
+              {
+                "text": " the block does not exit until all tasks are done, regardless of exceptions. No forgotten background tasks."
+              }
+            ],
+            [
+              {
+                "text": "Automatic cancellation:",
+                "marks": ["bold"]
+              },
+              {
+                "text": " if any task raises an unhandled exception, all other tasks in the group are cancelled immediately."
+              }
+            ],
+            [
+              {
+                "text": "ExceptionGroup:",
+                "marks": ["bold", "code"]
+              },
+              {
+                "text": " multiple task failures are bundled into an `ExceptionGroup`, preserving all errors. Use `except*` to handle them."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Compared to `gather`: `gather` with `return_exceptions=False` cancels remaining tasks when one fails but only surfaces the first exception. `TaskGroup` cancels all and raises an `ExceptionGroup` containing every failure, which is more informative and safer."
+            }
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "tip",
+          "runs": [
+            {
+              "text": "Prefer TaskGroup over gather for new Python 3.11+ code. The structured lifetime guarantee eliminates an entire class of bugs where tasks leak, exceptions disappear, or cleanup runs before background work finishes."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "TaskGroup is a supervised work crew. The foreman (the `async with` block) does not leave the site until every worker has either finished their task or been told to stop. If one worker has an accident, the foreman signals all others to down tools immediately. Nobody sneaks off without reporting in."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "epy-ch07-c010",
+      "order": 10,
+      "title": "run_in_executor — Blocking Calls in Async Code",
+      "teaser": "`loop.run_in_executor()` offloads a synchronous, blocking function call to a thread pool so the event loop remains unblocked — the escape hatch for integrating legacy or third-party blocking code into an async application.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Every call to a blocking function inside an async coroutine — `requests.get()`, `time.sleep()`, a synchronous ORM query — freezes the entire event loop for the duration of that call. No other coroutine runs. The fix is "
+            },
+            {
+              "text": "loop.run_in_executor()",
+              "marks": ["bold", "code"]
+            },
+            {
+              "text": ", which sends the blocking call to a thread pool and returns a `Future` you can `await`."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The `asyncio.to_thread()` helper (Python 3.9+) is the modern shorthand:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "asyncio.to_thread(fn, *args)",
+                "marks": ["bold", "code"]
+              },
+              {
+                "text": " — runs `fn(*args)` in the default `ThreadPoolExecutor` and returns an awaitable. Equivalent to `loop.run_in_executor(None, fn, *args)`."
+              }
+            ],
+            [
+              {
+                "text": "Custom executor:",
+                "marks": ["bold"]
+              },
+              {
+                "text": " pass a `ProcessPoolExecutor` to `run_in_executor` for CPU-bound blocking work that also needs to bypass the GIL."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "This is the standard pattern for wrapping synchronous libraries: create a thin async wrapper that calls `await asyncio.to_thread(sync_fn, ...)`. Callers in your async codebase use the wrapper without knowing or caring that a thread is involved."
+            }
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "warning",
+          "runs": [
+            {
+              "text": "run_in_executor is a bridge, not a cure. If your entire workload is synchronous blocking calls, you are running a thread pool disguised as asyncio. Consider whether threading or multiprocessing would be simpler and more honest."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The event loop is a chef managing dozens of pots. If one pot requires constant stirring for ten minutes, the chef cannot tend the others. `run_in_executor` hires a kitchen helper to do the stirring so the chef stays free to check every other pot. The helper works independently; the chef just awaits the signal when the stirring is done."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "epy-ch07-c011",
+      "order": 11,
+      "title": "Race Conditions and threading.Lock",
+      "teaser": "A race condition occurs when two threads read-modify-write shared data without coordination, producing unpredictable results. `threading.Lock` enforces mutual exclusion — only one thread holds the lock at a time, making the critical section atomic from the outside.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "A "
+            },
+            {
+              "text": "race condition",
+              "marks": ["bold"]
+            },
+            {
+              "text": " happens when the correctness of a program depends on the relative timing of thread execution. The classic example: `counter += 1` is three bytecode operations (LOAD, ADD, STORE). The GIL can release between any two of them. Two threads both reading the same value before either writes back produce a lost update — the counter increments once instead of twice."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The "
+            },
+            {
+              "text": "threading.Lock",
+              "marks": ["bold", "code"]
+            },
+            {
+              "text": " object solves this with mutual exclusion. Use it as a context manager to guarantee the lock is always released, even on exception:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "threading.Lock:",
+                "marks": ["bold", "code"]
+              },
+              {
+                "text": " non-reentrant. A thread that tries to acquire a lock it already holds will deadlock."
+              }
+            ],
+            [
+              {
+                "text": "threading.RLock:",
+                "marks": ["bold", "code"]
+              },
+              {
+                "text": " reentrant lock — the same thread can acquire it multiple times. Slower; use when recursion or nested calls share a lock."
+              }
+            ],
+            [
+              {
+                "text": "threading.Semaphore:",
+                "marks": ["bold", "code"]
+              },
+              {
+                "text": " allows N threads into the critical section simultaneously — useful for rate-limiting concurrent access to a resource pool."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Asyncio does not need threading.Lock for data shared within a single event loop — coroutines never run truly simultaneously. But if you mix `run_in_executor` threads with shared async state, you need a lock again."
+            }
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "warning",
+          "runs": [
+            {
+              "text": "Deadlock occurs when thread A holds lock 1 waiting for lock 2, while thread B holds lock 2 waiting for lock 1. Always acquire multiple locks in a consistent global order across all threads."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "A race condition is two people updating the same spreadsheet simultaneously in a shared file — they each read the current total, add their number, and write back. If they both read before either writes, one of the additions disappears. A lock is making one person wait at the door until the other is completely done editing."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "epy-ch07-c012",
+      "order": 12,
+      "title": "Concurrency Decision Framework",
+      "teaser": "A practical guide to choosing between threading, multiprocessing, and asyncio — based on whether the bottleneck is I/O wait, CPU computation, or library compatibility, and how they compare on complexity, overhead, and scalability.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Choosing the right concurrency model is one of the most consequential architecture decisions in Python. The wrong choice often produces slower, more complex code than the sequential version."
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Use asyncio",
+                "marks": ["bold"]
+              },
+              {
+                "text": " when: many concurrent I/O operations, library support is async-native (aiohttp, asyncpg, httpx), and you need thousands of simultaneous connections with minimal memory. Best scalability for I/O-bound workloads."
+              }
+            ],
+            [
+              {
+                "text": "Use ThreadPoolExecutor",
+                "marks": ["bold"]
+              },
+              {
+                "text": " when: I/O-bound work with synchronous libraries (requests, psycopg2), modest concurrency (10–200 threads), or you need simple integration into existing synchronous code. Lower overhead than processes, simpler than asyncio."
+              }
+            ],
+            [
+              {
+                "text": "Use ProcessPoolExecutor",
+                "marks": ["bold"]
+              },
+              {
+                "text": " when: CPU-bound computation that can be chunked (image processing, parsing, ML inference), pure functions with picklable inputs and outputs, and datasets large enough to justify IPC overhead."
+              }
+            ],
+            [
+              {
+                "text": "Use sequential code",
+                "marks": ["bold"]
+              },
+              {
+                "text": " when: the task is inherently sequential, the bottleneck is a single database query or external API call (concurrency won't help), or simplicity and debuggability outweigh performance."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The diagnostic questions: Is the bottleneck I/O or CPU? Are the tasks independent? Is the library you depend on sync or async? Can the work be pickled? Profile first — concurrency adds complexity and the gain must be measurable."
+            }
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "tip",
+          "runs": [
+            {
+              "text": "Start with sequential code. Add ThreadPoolExecutor if I/O is the bottleneck. Switch to asyncio if you need to scale beyond a few hundred threads. Reach for ProcessPoolExecutor only when CPU profiling confirms computation is the limit."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Think of your program as a kitchen. If cooks spend most of their time waiting for deliveries (I/O), hiring more cooks (threads) or setting up a sophisticated dispatch system (asyncio) helps. If cooks spend all their time chopping (CPU), you need more chopping boards in separate kitchens (processes) — extra cooks in the same kitchen fight over the one knife (GIL). And sometimes the recipe is just sequential — you cannot bake the cake until the batter is ready, no matter how many helpers you have."
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

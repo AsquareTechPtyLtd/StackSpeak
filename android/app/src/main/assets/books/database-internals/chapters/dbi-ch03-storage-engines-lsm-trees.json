@@ -1,0 +1,1252 @@
+{
+  "chapterId": "dbi-ch03-storage-engines-lsm-trees",
+  "shardIndex": 3,
+  "cards": [
+    {
+      "id": "dbi-ch03-c001",
+      "order": 1,
+      "title": "LSM-Tree Fundamentals",
+      "teaser": "The Log-Structured Merge-tree (O'Neil et al., 1996) trades random writes for sequential I/O by never overwriting data in place. Writes accumulate in memory and flow through immutable on-disk layers — a discipline that makes SSDs and HDDs alike behave like append-only tapes.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Patrick O'Neil, Edward Cheng, Dieter Gawlick, and Elizabeth O'Neil introduced the "
+            },
+            {
+              "text": "Log-Structured Merge-tree",
+              "marks": ["bold"]
+            },
+            {
+              "text": " in their 1996 paper of the same name. The core idea is disarmingly simple: disk I/O throughput is highest for sequential writes, but most database workloads issue random writes scattered across the key space. The LSM-tree escapes this trap by staging all mutations in an in-memory buffer, then draining that buffer to disk as a single sequential write — regardless of which keys were touched."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Two structural principles govern every LSM engine:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Append-only, never overwrite.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " When a key is updated, the engine writes a new record rather than modifying the existing one. The old record becomes stale and is eventually reclaimed by compaction. This immutability makes crash recovery trivial — partial writes at the tail are the only failure mode."
+              }
+            ],
+            [
+              {
+                "text": "Two-layer architecture: in-memory + immutable on-disk.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " The live write surface is an in-memory sorted structure (the memtable). Behind it sits a cascade of immutable, sorted, on-disk files (SSTables). Reads search from newest (memtable) to oldest (deepest SSTable level), returning the first match."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "code",
+          "language": "plaintext",
+          "text": "LSM-tree — conceptual shape:\n\n  Writes ──→  [ Memtable (RAM, mutable, sorted) ]\n                        │ flush when full\n                        ↓\n              [ L0 SSTables (newest, possibly overlapping) ]\n                        │ compaction\n                        ↓\n              [ L1 SSTables (non-overlapping ranges) ]\n                        │ compaction\n                        ↓\n              [ L2 SSTables (larger, non-overlapping) ]\n                        │\n                       ...\n\n  Reads search top → bottom; first hit wins."
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The original O'Neil et al. paper framed the design as a solution to the "
+            },
+            {
+              "text": "five-minute rule",
+              "marks": ["italic"]
+            },
+            {
+              "text": " trade-off between RAM and disk cost per access. Today, LSM-trees dominate write-heavy workloads in "
+            },
+            {
+              "text": "LevelDB",
+              "marks": ["bold"]
+            },
+            {
+              "text": " (Google), "
+            },
+            {
+              "text": "RocksDB",
+              "marks": ["bold"]
+            },
+            {
+              "text": " (Meta), "
+            },
+            {
+              "text": "Apache Cassandra",
+              "marks": ["bold"]
+            },
+            {
+              "text": ", "
+            },
+            {
+              "text": "Apache HBase",
+              "marks": ["bold"]
+            },
+            {
+              "text": ", and "
+            },
+            {
+              "text": "ScyllaDB",
+              "marks": ["bold"]
+            },
+            {
+              "text": "."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "An LSM-tree never touches data already written to disk — it just keeps appending new files. Periodically it merges old files to reclaim space. All writes are sequential, which is the fastest thing a disk can do."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "dbi-ch03-c002",
+      "order": 2,
+      "title": "Memtable: The In-Memory Write Buffer",
+      "teaser": "Every write in an LSM engine lands first in the memtable — a sorted, mutable in-memory data structure that absorbs writes at RAM speed and provides an instantly queryable view of recent data before anything touches disk.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The "
+            },
+            {
+              "text": "memtable",
+              "marks": ["bold"]
+            },
+            {
+              "text": " is the live write buffer of an LSM engine. Every insert, update, and delete lands here first. Because it lives entirely in RAM, it accepts writes at memory bandwidth — effectively unlimited compared to disk I/O."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The memtable must maintain "
+            },
+            {
+              "text": "sorted key order",
+              "marks": ["bold"]
+            },
+            {
+              "text": " so that when it is flushed to disk, the resulting SSTable file is already sorted (a prerequisite for efficient merging and range queries). Two data structures dominate the implementations:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Skip list.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " A probabilistic data structure with O(log N) insert, delete, and lookup. Its layered pointer structure makes concurrent access under a read-write lock practical. LevelDB, RocksDB, and Cassandra all use skip lists for the active memtable."
+              }
+            ],
+            [
+              {
+                "text": "Red-black tree.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " A balanced BST with strict O(log N) guarantees and no probabilistic component. Some implementations prefer it for its deterministic worst-case bounds."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Durability is ensured by a "
+            },
+            {
+              "text": "write-ahead log (WAL)",
+              "marks": ["bold"]
+            },
+            {
+              "text": ": before a write enters the memtable, a record is appended to an on-disk WAL file (sometimes called the commit log in Cassandra). If the process crashes before the memtable is flushed, the WAL is replayed on restart to reconstruct the memtable's contents. The WAL itself is append-only and sequential — cheap to write."
+            }
+          ]
+        },
+        {
+          "type": "code",
+          "language": "plaintext",
+          "text": "Write path (every mutation):\n\n  client write(k, v)\n       ↓\n  1. Append to WAL (sequential disk write, fsync)\n       ↓\n  2. Insert into memtable (skip list, O(log N))\n       ↓\n  3. Return ACK to client\n\n  Memtable flush (when size threshold exceeded):\n  ↓\n  Freeze active memtable → become immutable memtable\n  Start new empty active memtable\n  Background thread flushes immutable memtable → SSTable on disk\n  WAL segment for this memtable can now be deleted"
+        },
+        {
+          "type": "callout",
+          "variant": "info",
+          "runs": [
+            {
+              "text": "RocksDB supports multiple concurrent memtables (the write buffer manager) to pipeline flushes. While one memtable is being flushed to disk, new writes enter a fresh active memtable without stalling. The default memtable size in RocksDB is 64 MB; Cassandra defaults to a size determined by heap and column family count."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The memtable is the fast lane: every write hits RAM first, sorted automatically by a skip list, and backed by a WAL on disk. When it gets full it freezes and drains to disk as an SSTable while a fresh memtable absorbs new writes."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "dbi-ch03-c003",
+      "order": 3,
+      "title": "SSTable: The Immutable On-Disk Building Block",
+      "teaser": "A Sorted String Table (SSTable) is an immutable, key-sorted file on disk. Every flush and every compaction produces one. Its sorted layout enables merge-sort compaction, sparse in-memory indexing, range queries, and block-level compression — all building on a single structural guarantee.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The "
+            },
+            {
+              "text": "SSTable",
+              "marks": ["bold"]
+            },
+            {
+              "text": " (Sorted String Table) is the fundamental on-disk unit of an LSM engine. It is created by flushing a memtable or by compacting existing SSTables, and it is never modified after creation — only read or eventually deleted when superseded by a compaction output."
+            }
+          ]
+        },
+        {
+          "type": "code",
+          "language": "plaintext",
+          "text": "SSTable file layout:\n\n  ┌────────────────────────────────────────────────────┐\n  │  Data Blocks (sorted key-value pairs, compressed) │\n  │  ┌──────────────────────┐                         │\n  │  │ \"alpha\"  → value_a   │  ← block 0              │\n  │  │ \"bravo\"  → value_b   │    (e.g., 4 KB)         │\n  │  │ \"charlie\"→ value_c   │                         │\n  │  └──────────────────────┘                         │\n  │  ┌──────────────────────┐                         │\n  │  │ \"delta\"  → value_d   │  ← block 1              │\n  │  │ \"echo\"   → value_e   │                         │\n  │  └──────────────────────┘                         │\n  │                ...                                │\n  ├────────────────────────────────────────────────────┤\n  │  Index Block (first key of each data block)       │\n  │    \"alpha\"  → offset 0                            │\n  │    \"delta\"  → offset 4096                         │\n  ├────────────────────────────────────────────────────┤\n  │  Filter Block (Bloom filter per block)            │\n  ├────────────────────────────────────────────────────┤\n  │  Footer (magic number, index offset, filter offset│\n  └────────────────────────────────────────────────────┘"
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Sorted keys enable binary search.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " A sparse in-memory index (one entry per 4–16 KB block) is sufficient to locate any key: look up the nearest preceding index entry, seek to that block offset, scan forward within the block."
+              }
+            ],
+            [
+              {
+                "text": "Immutability simplifies concurrency.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Multiple readers can access an SSTable without coordination. A compaction thread can merge two SSTables while readers continue reading the originals; the originals are deleted only after all open file handles are released."
+              }
+            ],
+            [
+              {
+                "text": "Merge-sort compaction is efficient.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Merging two sorted SSTable files is a single-pass merge-sort — O(N) time, fully sequential I/O, with no random seeks."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "RocksDB and LevelDB call this structure an SSTable. Cassandra calls the equivalent files "
+            },
+            {
+              "text": "SSTables",
+              "marks": ["bold"]
+            },
+            {
+              "text": " as well (five component files: Data, Index, Filter, Summary, and Statistics). HBase calls them "
+            },
+            {
+              "text": "HFiles",
+              "marks": ["bold"]
+            },
+            {
+              "text": ", stored on HDFS. The structural guarantees — immutable, sorted, with an index — are the same across all implementations."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "An SSTable is a snapshot of sorted key-value pairs, frozen to disk and never changed. Because it is sorted, finding any key is fast (binary search the index, scan one block). Because it is immutable, multiple readers need no locks."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "dbi-ch03-c004",
+      "order": 4,
+      "title": "Flush: Memtable Drains to Disk",
+      "teaser": "When the memtable exceeds its size threshold, it is frozen and flushed to a new Level-0 SSTable. Flush is a critical boundary — it converts mutable RAM state into durable, immutable disk state, and its trigger conditions directly affect write stall risk.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The "
+            },
+            {
+              "text": "flush",
+              "marks": ["bold"]
+            },
+            {
+              "text": " operation is how memtable state crosses from RAM to disk. Once flushed, the WAL segment that protected that memtable's data can be deleted — the SSTable is the durable record now."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Flush triggers in practice:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Size threshold.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " The memtable has a configured maximum size (e.g., 64 MB in RocksDB; 1/4 of the heap in older Cassandra versions). When the active memtable reaches this limit, it is frozen and a flush is triggered. This is the normal, steady-state trigger."
+              }
+            ],
+            [
+              {
+                "text": "WAL size threshold.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " If the WAL grows too large (because flushes are lagging behind writes), the engine may force a flush to allow WAL rotation. This prevents the WAL from consuming unbounded disk space."
+              }
+            ],
+            [
+              {
+                "text": "Manual / shutdown flush.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " On clean shutdown or when explicitly requested (e.g., before a backup), the engine flushes all in-memory data to ensure the on-disk state is complete."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The flush produces a "
+            },
+            {
+              "text": "Level-0 SSTable",
+              "marks": ["bold"]
+            },
+            {
+              "text": " (L0). L0 is special: multiple L0 SSTables may have "
+            },
+            {
+              "text": "overlapping key ranges",
+              "marks": ["bold"]
+            },
+            {
+              "text": " because each flush is an independent snapshot in time. This overlap is why reads must check all L0 files, and why the number of L0 files is a key health metric. RocksDB issues a write slowdown when L0 file count hits "
+            },
+            {
+              "text": "level0_slowdown_writes_trigger",
+              "marks": ["code"]
+            },
+            {
+              "text": " (default 20) and a full write stall at "
+            },
+            {
+              "text": "level0_stop_writes_trigger",
+              "marks": ["code"]
+            },
+            {
+              "text": " (default 36)."
+            }
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "warning",
+          "runs": [
+            {
+              "text": "A buildup of unflushed memtables (because flush is slower than writes) is one of the two main paths to a write stall in RocksDB/Cassandra. Monitor the L0 file count and active memtable count in production. When either approaches the stall threshold, incoming write latency spikes dramatically."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "When the memtable gets full, it is frozen and written to disk as a new SSTable — that is a flush. The data is now durable, the WAL segment behind it can be deleted, and a fresh memtable takes over. Flushing too slowly relative to write rate causes write stalls."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "dbi-ch03-c005",
+      "order": 5,
+      "title": "Compaction: The Engine's Background Work",
+      "teaser": "Compaction is the LSM engine's perpetual housekeeping job: it merges multiple SSTables into a single new one, discards stale values and tombstones, and keeps the file count and space usage manageable. Without compaction, reads degrade and disk fills.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Every flush adds a new SSTable file to disk. Without intervention, the file count grows without bound — each one potentially holding an old version of the same key. "
+            },
+            {
+              "text": "Compaction",
+              "marks": ["bold"]
+            },
+            {
+              "text": " is the background process that solves this problem: it reads multiple SSTables, merges them using a merge-sort pass, retains only the most recent value for each key, and writes a new, consolidated SSTable to replace the inputs."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Compaction mechanics — the merge pass:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Open a merge iterator",
+                "marks": ["bold"]
+              },
+              {
+                "text": " over all input SSTable files. The iterator emits keys in sorted order by pulling the smallest key from each file's cursor at each step — a k-way merge, identical in structure to merge sort's merge step."
+              }
+            ],
+            [
+              {
+                "text": "Resolve version conflicts.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " When the same key appears in multiple input files (different versions), the compaction keeps only the newest one (determined by sequence number or timestamp). All older versions are dropped."
+              }
+            ],
+            [
+              {
+                "text": "Drop tombstones.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " A tombstone records a deletion. Once compaction has confirmed no older live version of that key exists in any level below the current compaction boundary, the tombstone can itself be dropped — reclaiming space."
+              }
+            ],
+            [
+              {
+                "text": "Write the merged output.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " The output is a new, sorted SSTable written sequentially. The input files remain on disk, referenced by active readers, until all open file handles are released, at which point the engine deletes them."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "code",
+          "language": "plaintext",
+          "text": "Compaction merge pass (two input SSTables):\n\n  SSTable A:  [\"apple\":v1,  \"cherry\":v3, \"fig\":v1  ]\n  SSTable B:  [\"banana\":v2, \"cherry\":v5, \"grape\":v1]\n               (v5 > v3, so cherry:v3 is stale)\n\n  Merge output:\n  [\"apple\":v1, \"banana\":v2, \"cherry\":v5, \"fig\":v1, \"grape\":v1]\n\n  cherry:v3 discarded (superseded by v5)\n  Input files A and B eventually deleted after handles close."
+        },
+        {
+          "type": "callout",
+          "variant": "warning",
+          "runs": [
+            {
+              "text": "Compaction consumes significant I/O bandwidth — often 90% of a storage node's write throughput in a Cassandra or RocksDB deployment. Sizing storage nodes without accounting for compaction I/O is a common capacity-planning mistake. Plan for 2–3× write headroom over application write rate."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Compaction is merge-sort applied to SSTable files: read multiple sorted files in lockstep, keep only the newest value for each key, throw away deleted entries, write one clean output file. It runs in the background, continuously, to keep the file count and disk usage under control."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "dbi-ch03-c006",
+      "order": 6,
+      "title": "Size-Tiered Compaction",
+      "teaser": "Size-tiered compaction (STCS) — Cassandra's default — groups SSTables of similar size together and merges them into a single larger file. It minimizes write amplification at the cost of higher space amplification and more expensive reads.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "In "
+            },
+            {
+              "text": "size-tiered compaction strategy (STCS)",
+              "marks": ["bold"]
+            },
+            {
+              "text": ", the engine watches for groups of N SSTables of similar size (Cassandra default: N = 4, \"similar\" within a 2× factor). When such a group is found, it compacts them into a single, larger SSTable. The result joins the tier at the next size class, where it will eventually be grouped with peers of its size and compacted again."
+            }
+          ]
+        },
+        {
+          "type": "code",
+          "language": "plaintext",
+          "text": "Size-tiered compaction — cascade over time:\n\nFlushes:  [1MB][1MB][1MB][1MB]  →  merge  →  [~4MB]\n                                              [~4MB][~4MB][~4MB][~4MB]  →  [~16MB]\n                                                                            [~16MB][~16MB][~16MB][~16MB]  →  [~64MB]\n                                                                                                             ...\n\nAt any point in time, old data may sit in the original 1MB files\nuntil enough same-size peers arrive to trigger a merge.\nMultiple tiers of files co-exist during the window between merges."
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Low write amplification.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " A given key is rewritten only when the tier it lives in is compacted. Because tiers are merged infrequently (only when enough peers of the same size accumulate), each key participates in fewer compaction rounds than in leveled compaction. Typical write amplification: 10×."
+              }
+            ],
+            [
+              {
+                "text": "High space amplification.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " While files wait for enough peers to trigger a merge, multiple versions of the same key occupy disk simultaneously. In Cassandra, STCS can temporarily require up to 2× the live data size in disk space during a compaction. Dropped tombstones linger until their tier is compacted."
+              }
+            ],
+            [
+              {
+                "text": "Read amplification rises over time.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Between compactions, reads must probe files across all size tiers. Without Bloom filters this becomes expensive for point reads on missing keys."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "STCS is well-suited to "
+            },
+            {
+              "text": "write-heavy, append-mostly workloads",
+              "marks": ["bold"]
+            },
+            {
+              "text": " where disk space is ample and reads are batched (range scans rather than point lookups). Time-series ingestion, log collection, and event streams are natural fits. ScyllaDB offers TWCS (Time-Window Compaction Strategy), a STCS variant that groups files by time bucket, enabling near-instant tombstone collection for time-based TTL workloads."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Size-tiered compaction waits until you have four files of roughly the same size, then merges them into one bigger file. It is cheap on writes but lets stale data accumulate on disk until files of matching size show up to trigger a merge."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "dbi-ch03-c007",
+      "order": 7,
+      "title": "Leveled Compaction",
+      "teaser": "Leveled compaction (LCS) — RocksDB's default — organizes SSTables into levels with non-overlapping key ranges and strict size budgets. It minimizes read and space amplification at the cost of significantly higher write amplification.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "In "
+            },
+            {
+              "text": "leveled compaction strategy (LCS)",
+              "marks": ["bold"]
+            },
+            {
+              "text": ", SSTables are organized into a sequence of levels (L0, L1, L2, ...). Each level from L1 onward enforces two invariants: (1) no two SSTables within the same level have overlapping key ranges, and (2) the total size budget of each level is 10× the level below (e.g., L1 = 256 MB, L2 = 2.5 GB, L3 = 25 GB in typical RocksDB configs)."
+            }
+          ]
+        },
+        {
+          "type": "code",
+          "language": "plaintext",
+          "text": "Leveled compaction — level structure:\n\n  L0  [A-Z][A-M][C-X][B-Y]  ← fresh flushes, may overlap\n       ↓ compaction into L1\n  L1  [A-D][E-H][I-L][M-P][Q-T][U-Z]  ← non-overlapping, ≤256MB total\n       ↓ when L1 budget exceeded\n  L2  [A-B][C][D-E]...[Y-Z]            ← non-overlapping, ≤2.5GB total\n       ↓\n  L3  ....                              ← non-overlapping, ≤25GB total\n\n  A read for key \"G\" checks: memtable → all L0 files → 1 file in L1\n                              → 1 file in L2 → 1 file in L3  (at most 1 per level)"
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Compaction trigger and mechanics:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "L0 → L1.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " When the number of L0 files exceeds a threshold (default 4 in RocksDB), the engine picks one or more L0 files and merges them with all L1 files whose key ranges overlap. Because L0 files may overlap each other, the compaction must read all of them."
+              }
+            ],
+            [
+              {
+                "text": "L1 → L2 (and deeper).",
+                "marks": ["bold"]
+              },
+              {
+                "text": " When a level exceeds its size budget, the engine picks one SSTable from that level and merges it with the overlapping SSTables in the next level. The result replaces the inputs in the lower level. The upper level's file is deleted. This cascades downward as lower levels fill."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "comparison",
+          "left": {
+            "label": "Size-Tiered (STCS)",
+            "runs": [
+              { "text": "Write amplification: ~10×\n" },
+              { "text": "Space amplification: up to 2×\n" },
+              { "text": "Read amplification: high (many files to check)\n" },
+              { "text": "Best for: write-heavy, append-mostly\n" },
+              { "text": "Default in: Cassandra, ScyllaDB" }
+            ]
+          },
+          "right": {
+            "label": "Leveled (LCS)",
+            "runs": [
+              { "text": "Write amplification: 10–30×\n" },
+              { "text": "Space amplification: ~1.1×\n" },
+              { "text": "Read amplification: low (1 file per level)\n" },
+              { "text": "Best for: read-heavy, mixed workloads\n" },
+              { "text": "Default in: RocksDB, LevelDB" }
+            ]
+          }
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Leveled compaction keeps each level's files non-overlapping. At most one file per level contains any given key, so a read touches at most one file per level. The cost is that data gets rewritten many times as it cascades through levels — write amplification goes up, but reads and disk usage go down."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "dbi-ch03-c008",
+      "order": 8,
+      "title": "Tombstone: Deletes in an Append-Only World",
+      "teaser": "Because LSM engines never overwrite data, a delete cannot erase an existing record. Instead, the engine writes a tombstone — a special marker that signals \"this key has been deleted\" and supersedes any older values during reads and compaction.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "In a B-tree database, deletion is straightforward: find the page containing the key, remove the record, mark the page dirty. In an LSM engine this is impossible — the SSTable containing the key is immutable. The solution is a "
+            },
+            {
+              "text": "tombstone",
+              "marks": ["bold"]
+            },
+            {
+              "text": ": a new record written with the same key but a special \"deleted\" marker as its value. The tombstone is appended to the memtable like any other write and eventually flushed to disk as part of an SSTable."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "How tombstones participate in the lifecycle:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "During reads.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " The read path searches from newest to oldest. If the newest entry for a key is a tombstone, the engine returns \"key not found\" — even if older versions of the key exist in deeper SSTable levels."
+              }
+            ],
+            [
+              {
+                "text": "During compaction.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " The merge pass encounters the tombstone and can discard all older versions of the key. The tombstone itself can be dropped once the compaction has passed through all levels below it — confirming there are no older live versions it needs to shadow."
+              }
+            ],
+            [
+              {
+                "text": "Tombstone accumulation.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " If compaction does not run frequently enough, tombstones accumulate. A workload that deletes data faster than compaction can purge tombstones will see growing disk usage and degraded read performance for deleted key ranges."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "code",
+          "language": "plaintext",
+          "text": "Tombstone lifecycle:\n\n  Write:    memtable ← (key=\"user:42\", value=TOMBSTONE, seq=99)\n\n  Read:     check memtable → find TOMBSTONE for \"user:42\"\n            → return \"key not found\" (skip deeper levels)\n\n  Compaction (key \"user:42\" across two SSTables):\n    SSTable A (newer): key=\"user:42\", TOMBSTONE, seq=99\n    SSTable B (older): key=\"user:42\", value=\"alice\", seq=10\n\n    Merge output: neither record emitted (tombstone supersedes;\n                  both can be dropped if no deeper levels hold this key)"
+        },
+        {
+          "type": "callout",
+          "variant": "warning",
+          "runs": [
+            {
+              "text": "In Cassandra, tombstones have a configurable gc_grace_seconds (default 10 days). A tombstone is not physically removed until this grace period expires, ensuring that a node that was down for up to 10 days can receive the deletion via anti-entropy repair before it is discarded. Deployments that delete data aggressively must tune gc_grace_seconds carefully or face tombstone storms that degrade read performance."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Because you can't erase from an SSTable, deleting a key means writing a tombstone — a marker that says \"this key is gone.\" Reads treat tombstones as authoritative. Compaction eventually cleans up both the tombstone and the old value it shadows."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "dbi-ch03-c009",
+      "order": 9,
+      "title": "Bloom Filter: Skip the Disk Read",
+      "teaser": "A Bloom filter is a compact probabilistic structure that can answer \"is this key definitely NOT in this SSTable?\" in O(1) time and a handful of bytes per key — eliminating most wasted disk I/O for point lookups on missing keys.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The LSM read path's Achilles heel is the "
+            },
+            {
+              "text": "missing-key problem",
+              "marks": ["bold"]
+            },
+            {
+              "text": ": to confirm a key does not exist, the engine must probe the memtable and every SSTable level, loading at least the index block of each file. In a leveled engine with 6 levels, that is 6 disk reads per \"not found\" — even with a warm block cache, the index blocks for many files may not be cached."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "A "
+            },
+            {
+              "text": "Bloom filter",
+              "marks": ["bold"]
+            },
+            {
+              "text": " (Burton H. Bloom, 1970) is a bit array of m bits, initially all zeros. To add a key, hash it with k independent hash functions and set bit positions h1(key), h2(key), ... hk(key) to 1. To test membership, apply the same k hash functions: if "
+            },
+            {
+              "text": "any",
+              "marks": ["italic"]
+            },
+            {
+              "text": " of the k bits is 0, the key is "
+            },
+            {
+              "text": "definitely absent",
+              "marks": ["bold"]
+            },
+            {
+              "text": ". If all k bits are 1, the key is "
+            },
+            {
+              "text": "probably present",
+              "marks": ["bold"]
+            },
+            {
+              "text": " (a false positive is possible; a false negative is not)."
+            }
+          ]
+        },
+        {
+          "type": "code",
+          "language": "plaintext",
+          "text": "Bloom filter mechanics (k=3 hash functions, m=16 bits):\n\n  Add \"alpha\":   h1→2, h2→5, h3→11  → set bits 2,5,11\n  Add \"bravo\":   h1→0, h2→5, h3→14  → set bits 0,5,14\n\n  Bit array:  1 0 1 0 0 1 0 0 0 0 0 1 0 0 1 0\n              0 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15\n\n  Query \"gamma\":  h1→3, h2→7, h3→9\n    bit[3]=0 → DEFINITELY NOT PRESENT → skip SSTable disk read ✓\n\n  Query \"alpha\":  h1→2, h2→5, h3→11\n    all bits 1 → probably present → perform disk read\n    (may be a false positive; disk read confirms either way)\n\n  False positive rate ≈ (1 - e^(-kn/m))^k\n  At 10 bits/key, k=7: FP rate ≈ 0.8%"
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "In RocksDB, every SSTable has a Bloom filter stored in its filter block. With the default 10 bits per key, roughly 1% of \"not found\" queries incur a wasted disk read. Reducing bits per key saves memory; increasing it reduces false positives. LevelDB uses 10 bits/key with k=6 or k=7. RocksDB adds "
+            },
+            {
+              "text": "partitioned index/filter blocks",
+              "marks": ["bold"]
+            },
+            {
+              "text": " so that hot filter blocks stay in the block cache while cold ones are evicted — essential when total filter size exceeds available RAM."
+            }
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "info",
+          "runs": [
+            {
+              "text": "Bloom filters eliminate disk reads only for missing keys. For existing keys the filter says \"probably present,\" the engine proceeds with the disk read, and finds the data. The optimization is asymmetric: it helps reads that return nothing, not reads that return data."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "A Bloom filter is a small bit array that can say \"definitely not here\" with certainty and \"probably here\" with a small error rate. Attached to each SSTable, it lets the engine skip the disk read entirely for most missing-key queries."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "dbi-ch03-c010",
+      "order": 10,
+      "title": "Bloom Filter: False Positive Math",
+      "teaser": "The Bloom filter's false positive rate is a tunable function of bits per key. Understanding the math lets you make principled trade-offs between memory consumed by filters and the read I/O saved by them.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The probability of a false positive for a Bloom filter with m bits, n inserted keys, and k hash functions is:"
+            }
+          ]
+        },
+        {
+          "type": "code",
+          "language": "plaintext",
+          "text": "P(false positive) ≈ (1 - e^(-k·n/m))^k\n\nOptimal k (minimizes FP rate for given m/n ratio):\n  k_opt = (m/n) · ln(2) ≈ 0.693 · (m/n)\n\nPractical table (bits per key → false positive rate at k_opt):\n  bits/key (m/n)   k_opt   FP rate\n  ─────────────────────────────────\n       5             3      9.8%\n       8             6      2.1%\n      10             7      0.8%\n      12             8      0.3%\n      16            11      0.05%\n      20            14      0.009%\n\nRule of thumb: each additional bit/key roughly halves the FP rate."
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "For a practical example: a RocksDB instance storing 10 billion keys at 10 bits/key requires "
+            },
+            {
+              "text": "~11.9 GB of filter memory",
+              "marks": ["bold"]
+            },
+            {
+              "text": ". Raising to 12 bits/key costs ~14.3 GB but reduces the false positive rate from 0.8% to 0.3% — meaning 0.5% fewer wasted disk reads. Whether that trade-off is worthwhile depends on read-miss frequency and available RAM."
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Memory vs I/O trade-off.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " More bits per key → less disk I/O per read miss, but higher RAM consumption. Optimal allocation depends on the miss rate in the workload. A workload with many \"get\" calls for non-existent keys (e.g., caching negative lookups) benefits most from a low false positive rate."
+              }
+            ],
+            [
+              {
+                "text": "Per-SSTable filters vs prefix filters.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " RocksDB supports prefix Bloom filters that hash only the key prefix. For workloads with prefix range scans (e.g., all keys starting with \"user:42:\"), a prefix filter can skip entire SSTables based on the prefix alone."
+              }
+            ],
+            [
+              {
+                "text": "Counting Bloom filters.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " A variant that increments/decrements counters rather than setting/clearing bits, supporting deletion. Not used in LSM engines (tombstones handle deletion), but relevant in other contexts."
+              }
+            ]
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Each additional bit per key roughly halves the false positive rate. At 10 bits/key you get about 1% false positives — meaning 99% of missing-key reads skip the disk entirely. The trade-off is always memory consumed by filters against disk I/O saved by them."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "dbi-ch03-c011",
+      "order": 11,
+      "title": "Read Amplification: The LSM Read Tax",
+      "teaser": "LSM engines achieve fast writes by spreading data across multiple SSTable levels. The price is read amplification: a point lookup may need to check the memtable and one or more SSTables at each level before finding (or confirming the absence of) a key.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Read amplification (RA) is defined as the number of disk I/O operations required to satisfy a single logical read. In a B-tree, RA is small and predictable: at most log(N) page reads to traverse from root to leaf, with upper levels typically in the buffer pool. In an LSM engine, RA depends on the compaction strategy and the current state of the level hierarchy."
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Worst case (no Bloom filters, size-tiered compaction).",
+                "marks": ["bold"]
+              },
+              {
+                "text": " The engine must check the memtable, then every SSTable in every size tier. With hundreds of files across tiers, a single point lookup may issue hundreds of index-block reads."
+              }
+            ],
+            [
+              {
+                "text": "With Bloom filters (leveled compaction).",
+                "marks": ["bold"]
+              },
+              {
+                "text": " For an existing key: check all L0 files (O(L0 count)), then one file per level L1 onward. In a 6-level RocksDB with 4 L0 files: at most 4 + 5 = 9 files checked. For a missing key: Bloom filters reduce this to near zero wasted disk reads."
+              }
+            ],
+            [
+              {
+                "text": "Block cache mitigates RA.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Hot SSTable index blocks and data blocks are cached in the block cache (RocksDB's LRU block cache; Cassandra's row cache and key cache). In steady state, many reads are served from the block cache with no disk I/O. Read amplification only materializes when the block cache is cold or working-set size exceeds cache capacity."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "code",
+          "language": "plaintext",
+          "text": "Read amplification under leveled compaction (with Bloom filters):\n\n  Point read for key K (exists at L2):\n    1. Memtable:    O(log N) — not found\n    2. L0 file 1:  Bloom filter → negative → skip\n    3. L0 file 2:  Bloom filter → negative → skip\n    4. L0 file 3:  Bloom filter → negative → skip\n    5. L0 file 4:  Bloom filter → negative → skip\n    6. L1 file:    Bloom filter → negative → skip\n    7. L2 file:    Bloom filter → positive → read data block → found ✓\n\n  Total disk reads: 1 (the data block in L2)\n  Bloom filter checks: 6 (in memory, no disk I/O)"
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "RocksDB documentation reports typical RA of "
+            },
+            {
+              "text": "1–4 disk reads",
+              "marks": ["bold"]
+            },
+            {
+              "text": " per key with Bloom filters enabled in leveled compaction, comparable to B-tree performance for point reads. Range scans, however, pay RA proportional to range width × number of levels, since Bloom filters do not help for range queries."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Read amplification is how many disk reads a single logical read costs. LSM-trees naturally have higher RA than B-trees because data is spread across many files. Bloom filters fix this for point reads, but range scans still pay proportionally to the number of files they must touch."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "dbi-ch03-c012",
+      "order": 12,
+      "title": "Write and Space Amplification",
+      "teaser": "Write amplification measures how many bytes the engine writes to disk for every byte the application writes. Space amplification measures how much disk space the engine uses per byte of live data. Both are structural costs of the LSM design, shaped by the compaction strategy chosen.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Write amplification (WA) and space amplification (SA) are two of the three legs of the RUM conjecture trade-off. In LSM engines, both arise directly from compaction."
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Write amplification.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " In leveled compaction, a key written to L0 may be rewritten as it is compacted into L1, then L1→L2, then L2→L3, and so on. For a 6-level RocksDB database with a 10× size ratio per level, the worst-case WA is approximately 10 × (number of levels − 1) ≈ 50×. In practice, measured WA for mixed workloads is 10–30×. Size-tiered compaction achieves lower WA (around 10×) because files are merged fewer times."
+              }
+            ],
+            [
+              {
+                "text": "Space amplification.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " During compaction, input SSTables and output SSTables coexist on disk until the compaction completes and old files are deleted. Peak space amplification during an L1→L2 compaction in leveled mode equals approximately 1.1× the total data size (old L1 + new output temporarily coexist). Size-tiered compaction can peak at 2×: all N input files of a tier plus the output exist simultaneously."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "code",
+          "language": "plaintext",
+          "text": "Write amplification in leveled compaction (simplified):\n\n  App writes 1 MB of data:\n    WAL write:         1 MB  (sequential)\n    Memtable flush:    1 MB  (L0 SSTable)\n    L0 → L1 compaction: 1 MB rewritten × overlap factor\n    L1 → L2 compaction: up to 10 MB rewritten (10× amplification)\n    L2 → L3 compaction: up to 100 MB rewritten ...\n\n  Total bytes written to disk for 1 MB of user data: 10–30 MB\n  Write amplification: 10–30×\n\nWrite amplification in size-tiered compaction:\n  4 × 1 MB → 4 MB; 4 × 4 MB → 16 MB; 4 × 16 MB → 64 MB\n  Each key is involved in ≈ log₄(total_data/memtable_size) merges\n  Typical WA: 5–10×"
+        },
+        {
+          "type": "callout",
+          "variant": "info",
+          "runs": [
+            {
+              "text": "Write amplification is a critical SSD lifetime concern. SSDs have a finite program-erase cycle count per cell (500–3000 cycles for consumer TLC NAND; 10,000+ for enterprise SLC). A RocksDB instance with 30× WA running at 100 MB/s application write rate writes 3 GB/s to the SSD — burning through NAND endurance 30× faster than the logical write rate implies. Size storage nodes with WA in the budget calculation."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Write amplification tells you how many times the same data gets rewritten — compaction is the culprit. Space amplification tells you how much extra disk space is wasted on old versions. Both are higher in leveled compaction than size-tiered, because leveled keeps cascading data through many levels."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "dbi-ch03-c013",
+      "order": 13,
+      "title": "The RUM Conjecture in LSM Context",
+      "teaser": "The RUM conjecture (Idreos et al., 2016) formalizes the trade-off space every access method inhabits: you cannot simultaneously minimize Read overhead, Update overhead, and Memory overhead. An LSM-tree is a deliberate choice — it minimizes Update overhead (write cost) and pays with Read and Memory overheads.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Stratos Idreos, Manos Athanassoulis, and colleagues at Harvard formalized the "
+            },
+            {
+              "text": "RUM conjecture",
+              "marks": ["bold"]
+            },
+            {
+              "text": " in their 2016 paper \"Designing Access Methods: The RUM Conjecture\": any access method can minimize at most two of the three overheads — Read, Update, and Memory (space). Minimizing all three simultaneously is impossible."
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Read overhead (R).",
+                "marks": ["bold"]
+              },
+              {
+                "text": " The extra work done per logical read — read amplification, including probing multiple levels and files."
+              }
+            ],
+            [
+              {
+                "text": "Update overhead (U).",
+                "marks": ["bold"]
+              },
+              {
+                "text": " The extra work done per logical write — write amplification from compaction, WAL, and flush."
+              }
+            ],
+            [
+              {
+                "text": "Memory overhead (M).",
+                "marks": ["bold"]
+              },
+              {
+                "text": " The extra space used per unit of live data — space amplification from stale versions, tombstones, and compaction in-progress copies."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "code",
+          "language": "plaintext",
+          "text": "RUM trade-off positioning of major engines:\n\n                        Memory overhead\n                         (space amp)\n                              ↑\n  Size-tiered ───────────────●───── (low U, low R, high M)\n                              │\n  Leveled     ●──────────────────── (low R+M, high U)\n                              │\n  B-tree      ────────────────●──── (low R, medium U, low M)\n\n  Pure read-optimized structure (e.g., sorted array, no updates):\n              ●── low R, infinite U (can't update), low M\n\n  \"Pick any two\" — the third is the price you pay."
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Applying RUM to LSM engine design:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "LSM-tree minimizes U (Update overhead).",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Every write is sequential; no random I/O. Write throughput can exceed that of B-trees by 5–10× on the same hardware."
+              }
+            ],
+            [
+              {
+                "text": "LSM-tree pays R (Read overhead).",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Bloom filters and block caches mitigate this, but the fundamental cost of checking multiple levels remains. Range scans are especially expensive compared to B-trees."
+              }
+            ],
+            [
+              {
+                "text": "LSM-tree pays M (Memory overhead).",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Space amplification (stale versions pending compaction) and Bloom filter memory are costs the B-tree does not pay."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The RUM conjecture is not pessimistic — it is a design compass. Understanding that LSM-trees deliberately sacrifice R and M to minimize U explains every architectural choice in RocksDB and Cassandra: Bloom filters reduce the R cost, leveled compaction reduces the M cost, and size-tiered compaction reduces the U cost — each sub-choice is a further point within the RUM triangle."
+            }
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "info",
+          "runs": [
+            {
+              "text": "The RUM conjecture also explains hybrid access methods. TiKV (used by TiDB) places a RocksDB LSM engine underneath and a raft log on top — choosing LSM for its Update efficiency on the hot write path while placing a B-tree index above it for read optimization. Understanding which leg of the triangle each layer optimizes clarifies the system's overall performance profile."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The RUM conjecture says you can make reads fast, writes fast, or storage compact — but not all three at once. An LSM-tree chose fast writes. The read tax (read amplification) and space tax (stale versions) are the prices that purchase was paid with."
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

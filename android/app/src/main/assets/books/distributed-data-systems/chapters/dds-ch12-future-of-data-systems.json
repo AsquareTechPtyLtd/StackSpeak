@@ -1,0 +1,1390 @@
+{
+  "chapterId": "dds-ch12-future-of-data-systems",
+  "shardIndex": 1,
+  "cards": [
+    {
+      "id": "dds-ch12-c001",
+      "order": 1,
+      "title": "Data Integration: The Real Problem",
+      "teaser": "Your data lives in a dozen systems — Postgres, Elasticsearch, Redis, a data warehouse, a few microservices — and they all need to agree. Getting them to agree is the unspoken hard problem in every architecture.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Every organization that has grown beyond a single database faces the same problem: the data is spread across multiple systems that were each chosen for their own reasons. An OLTP database handles writes. A search engine handles full-text queries. A cache handles hot reads. A data warehouse handles analytics. A message broker handles events. Each system is good at its job — and none of them know about the others."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The hard problem is not picking the right tools. The hard problem is "
+            },
+            {
+              "text": "keeping them in sync",
+              "marks": ["italic"]
+            },
+            {
+              "text": ". When a user updates their profile in Postgres, that change needs to propagate to the search index, invalidate the cache, update the analytics table, and appear in the audit log — correctly, durably, and in the right order. The challenge of doing that reliably across heterogeneous systems is what Kleppmann calls data integration."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The approaches teams typically reach for:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Dual writes.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Write to both systems in application code. Simple and fast to implement — and prone to race conditions, partial failures, and inconsistency when one write succeeds and the other fails."
+              }
+            ],
+            [
+              {
+                "text": "ETL pipelines.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Batch jobs that move data between systems on a schedule. Introduces latency — often hours — and creates brittle dependencies on schema stability."
+              }
+            ],
+            [
+              {
+                "text": "Change Data Capture (CDC).",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Tap into the database's replication log (Postgres WAL, MySQL binlog) and treat every write as an event. Tools like Debezium do exactly this — turning every insert, update, and delete into a stream that downstream systems can consume."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "CDC via the transaction log is the principled solution: it captures every change exactly once, in order, without modifying the producer. It is the foundation for the log-centric architectures that dominate modern data engineering."
+            }
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "warning",
+          "runs": [
+            {
+              "text": "Dual writes are dangerous: if the application crashes between the first and second write, the two systems diverge silently. There is no automatic rollback. The log-based CDC approach avoids this by making the transaction log the single source of truth for all downstream propagation."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Data integration is the problem of keeping N separate systems — database, search index, cache, warehouse — consistent with each other. It sounds like plumbing. It is actually one of the hardest unsolved problems in distributed systems architecture."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "dds-ch12-c002",
+      "order": 2,
+      "title": "Derived Data and Source-of-Truth",
+      "teaser": "Not all data is created equal. Your primary write store is the source of truth. Everything else — the search index, the cache, the materialised view, the analytics table — is derived data. Understanding the distinction is the first step to reasoning about consistency.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Kleppmann draws a clean line between two categories of data systems:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Systems of record (source of truth).",
+                "marks": ["bold"]
+              },
+              {
+                "text": " These hold the authoritative version of the data. If there is a conflict or ambiguity, the system of record wins. Data is written here first. Typically: a relational database, an event log. Each fact is represented exactly once."
+              }
+            ],
+            [
+              {
+                "text": "Derived data systems.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " These hold data that is computed by transforming or processing the source of truth. If derived data is lost, it can always be reconstructed. Examples: a search index built from a document store, a Redis cache populated from Postgres, a materialised view of an aggregate query, a recommendation model trained on user events."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "comparison",
+          "items": [
+            {
+              "label": "Source of Truth",
+              "description": "Written to directly by the application. Authoritative. Normalized. Every fact once. Examples: Postgres, Kafka topic as event log."
+            },
+            {
+              "label": "Derived Data",
+              "description": "Computed from the source of truth. Denormalized for read performance. Reconstructable. Examples: Elasticsearch index, Redis cache, Redshift table, materialised view."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The distinction matters because it dictates how you handle conflicts, failures, and schema evolution. Derived data can be stale. That is acceptable — the question is by how much. A search index that lags by seconds is fine for most use cases. A cache that serves data from five minutes ago may be a bug. An analytics table built from a nightly batch job is stale by design."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Kleppmann's example: a full-text search index is derived from the primary document store. When you search for \"Martin Fowler microservices\", you are querying a derived data structure — the inverted index — that was built by processing the original documents. If the search index were lost, you could rebuild it by reprocessing every document. You cannot do the same for the primary data without a backup."
+            }
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "info",
+          "runs": [
+            {
+              "text": "A materialised view is one of the clearest examples of derived data in a relational database: the view is defined by a query over the base tables, and the database maintains it automatically. If the base tables change, the materialised view is updated. It's a cache with a well-defined derivation rule."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The source of truth is where writes land first. Everything else — your search index, your caches, your read replicas — is derived data: a computed view over the primary data that can be rebuilt if lost."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "dds-ch12-c003",
+      "order": 3,
+      "title": "Stream-Table Duality",
+      "teaser": "Every table is a stream of changes viewed at a point in time. Every stream is a table that hasn't been materialized yet. This duality — formalized in the Kafka Streams KStream/KTable abstraction — is the conceptual key to the entire log-centric architecture.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The insight at the heart of stream processing: a database table and an event stream are two views of the same underlying information, not two different kinds of data."
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "A table is a stream that has been replayed up to now.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " The rows in the "
+              },
+              {
+                "text": "users",
+                "marks": ["code"]
+              },
+              {
+                "text": " table are the result of applying every INSERT, UPDATE, and DELETE since the table was created. If you have the full changelog — the WAL or binlog — you can reconstruct the table from scratch at any point in time."
+              }
+            ],
+            [
+              {
+                "text": "A stream is a table that has not been materialized yet.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Given a stream of events (user.created, user.email.changed, user.deleted), you can materialize a table by processing them in order. The table is a snapshot; the stream is the history."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Kafka Streams formalizes this duality with two abstractions:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "KStream",
+                "marks": ["code"]
+              },
+              {
+                "text": " — an unbounded, append-only sequence of events. Each record is an independent fact. Semantics: each event happened."
+              }
+            ],
+            [
+              {
+                "text": "KTable",
+                "marks": ["code"]
+              },
+              {
+                "text": " — a changelog stream interpreted as a table. Each record is an upsert keyed by an ID. Semantics: the latest state of each key."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Materialized views in ksqlDB take this further: you write a SQL query over a Kafka topic, and ksqlDB continuously maintains the result as new events arrive. The view is always up to date because it is derived from the stream, not from a periodic batch job."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The practical power of this duality: you can join a stream against a table in real time. A stream of order events can be enriched with customer information from a KTable that is itself derived from a Postgres CDC stream via Debezium. The join is evaluated continuously as new orders arrive, using the latest customer state."
+            }
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "info",
+          "runs": [
+            {
+              "text": "Materialize (the database) turns this duality into a product: it maintains SQL views over streaming sources (Kafka topics, PostgreSQL CDC) with millisecond latency. Queries against Materialize are queries against a continuously updated in-memory table — stream processing with a SQL interface."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "A table is a frozen stream. A stream is a living table. Kafka Streams' KStream/KTable duality makes this precise: KStream is every event; KTable is the current state per key. Converting between them is just the choice of how to interpret the log."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "dds-ch12-c004",
+      "order": 4,
+      "title": "The Unbundled Database",
+      "teaser": "A monolithic database bundles together storage, replication, indexing, query planning, and caching. The unbundled database separates these concerns into independent, composable components — each best-of-breed — assembled into a coherent system via the log.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Jay Kreps' influential 2013 essay \"The Log: What every software engineer should know about real-time data's unifying abstraction\" laid out a vision: the log is not an implementation detail of a database; it is the fundamental coordination primitive. Once you accept that, you realize that a monolithic database is just one way to bundle these separable concerns:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Durable storage",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — where bytes live on disk."
+              }
+            ],
+            [
+              {
+                "text": "Replication",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — keeping copies in sync across nodes."
+              }
+            ],
+            [
+              {
+                "text": "Indexing",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — secondary data structures that accelerate reads."
+              }
+            ],
+            [
+              {
+                "text": "Query planning and execution",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — parsing SQL, choosing access paths, joining tables."
+              }
+            ],
+            [
+              {
+                "text": "Caching",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — keeping hot data in memory."
+              }
+            ],
+            [
+              {
+                "text": "Change notification",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — telling downstream consumers when data changes."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "A worked example of the unbundled approach:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Kafka",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — durable, ordered, replicated log. The source of truth for all writes. Change notification is built-in: consumers read the log."
+              }
+            ],
+            [
+              {
+                "text": "Cassandra",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — durable, wide-column storage optimized for high-throughput key-value access. Populated from the Kafka log via a consumer."
+              }
+            ],
+            [
+              {
+                "text": "Elasticsearch",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — inverted index for full-text search. Populated from the same Kafka log, asynchronously."
+              }
+            ],
+            [
+              {
+                "text": "Spark / Flink",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — query execution engine for analytical workloads, reading from Kafka or Cassandra."
+              }
+            ],
+            [
+              {
+                "text": "Redis",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — in-memory cache for hot reads. Invalidated by consuming the same Kafka log."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Each component is chosen for what it does best. Kafka is better at durable ordered messaging than Postgres. Elasticsearch is better at full-text search than any relational database. The log is the integration point — the one thing every component reads from or writes to."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The cost of the unbundled approach is operational complexity. A monolithic database gives you one system to operate, one failure domain, one consistency model. The unbundled stack gives you N systems, N failure domains, and consistency that is only as strong as your log's ordering guarantees. The gain is flexibility and scalability at each layer. The cost is the burden of integration."
+            }
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "info",
+          "runs": [
+            {
+              "text": "Kleppmann describes this as \"unbundling the database\" — not as a prescription, but as an observation of what modern data systems have become. Whether the unbundled stack is the right choice depends on your scale and operational maturity. For most teams, a well-tuned Postgres is still the right answer."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "A monolithic database does everything — store, index, cache, replicate, notify. The unbundled database does each of those with a specialized tool and uses the log to connect them. More powerful at scale; more complex to operate."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "dds-ch12-c005",
+      "order": 5,
+      "title": "Logs as a Primary Abstraction",
+      "teaser": "The log — an append-only, ordered sequence of records — is not a storage detail inside a database. It is the fundamental coordination primitive for distributed systems. Every replication protocol, every change capture system, every durable message queue is a log in disguise.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "A log has three properties that make it uniquely suited as a coordination primitive:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Total ordering.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Every record has a sequence number. Two events at position 57 and 58 have an unambiguous before/after relationship. Ordering is the hardest problem in distributed systems — the log solves it by construction."
+              }
+            ],
+            [
+              {
+                "text": "Immutability.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Records are never modified in place. Corrections are new appends. Immutability makes the log safe to cache, replicate, and process concurrently — there is no update to miss."
+              }
+            ],
+            [
+              {
+                "text": "Replayability.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Any consumer can re-read the log from any offset. A new downstream system can be brought online and populated by replaying the full history. A failed consumer can resume from its last committed offset without losing events."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "These properties appear in disguise across distributed systems:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "The Postgres WAL",
+                "marks": ["bold"]
+              },
+              {
+                "text": " (write-ahead log) is an ordered, immutable log of every write. Streaming replication reads the WAL. CDC tools like Debezium read the WAL. Point-in-time recovery replays the WAL."
+              }
+            ],
+            [
+              {
+                "text": "Kafka topics",
+                "marks": ["bold"]
+              },
+              {
+                "text": " are logs, explicitly. A partition is an ordered, immutable, replicated sequence of messages. Consumer groups track offsets in the log."
+              }
+            ],
+            [
+              {
+                "text": "Raft and Paxos",
+                "marks": ["bold"]
+              },
+              {
+                "text": " are protocols for maintaining a replicated log across a cluster. The state machine replication model is: if every node applies the same sequence of log entries, they reach the same state."
+              }
+            ],
+            [
+              {
+                "text": "Event sourcing",
+                "marks": ["bold"]
+              },
+              {
+                "text": " stores the log of events as the primary data structure. The current state of an entity is derived by replaying its event history from the log."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Kreps' insight, which Kleppmann builds on throughout the book: if you accept the log as the primary abstraction, the architecture of distributed data systems becomes a set of decisions about what to put in the log, how to partition it, how long to retain it, and how to derive useful views from it."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The log is ordered, immutable, and replayable. These three properties solve the hardest problems in distributed systems — ordering, crash recovery, and bootstrapping new consumers. Once you see logs everywhere (WAL, Kafka, Raft), the whole field starts to cohere."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "dds-ch12-c006",
+      "order": 6,
+      "title": "CQRS (Command-Query Responsibility Segregation)",
+      "teaser": "CQRS separates the write model (commands that mutate state) from the read model (queries that return data). The write model is normalized for correctness; the read model is denormalized for performance. They are kept in sync via events.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The name comes from Bertrand Meyer's command-query separation principle (CQS): a method should either change state or return data, but not both. CQRS applies this idea at the architectural level — the system that processes writes is physically distinct from the system that serves reads."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The canonical CQRS architecture:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Commands",
+                "marks": ["bold"]
+              },
+              {
+                "text": " are write requests: PlaceOrder, UpdateShippingAddress, CancelSubscription. They are validated against the write model (an aggregate in domain-driven design), and if valid, produce events. The write model is normalized and consistent."
+              }
+            ],
+            [
+              {
+                "text": "Events",
+                "marks": ["bold"]
+              },
+              {
+                "text": " are the facts that result from commands: OrderPlaced, ShippingAddressUpdated, SubscriptionCancelled. They are persisted to the event log."
+              }
+            ],
+            [
+              {
+                "text": "Projections",
+                "marks": ["bold"]
+              },
+              {
+                "text": " (or read models) are derived from the event stream. Each projection is optimized for a specific query pattern. An OrderSummaryProjection might denormalize order, customer, and product information into a single document for fast retrieval."
+              }
+            ],
+            [
+              {
+                "text": "Queries",
+                "marks": ["bold"]
+              },
+              {
+                "text": " hit the read model directly — no joins, no aggregation at query time. Reads are fast because all the work was done at write time, as events were projected."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "CQRS pairs naturally with event sourcing: if your write model is the event log (event sourcing), the read models are projections derived from that log (CQRS). The event log is the source of truth; every read model is derived data."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The trade-offs are real. CQRS introduces eventual consistency between write and read models — a command is processed, an event is published, but the read model updates asynchronously. Queries may return stale data for milliseconds to seconds after a write. For many use cases this is acceptable; for others (banking, inventory) it requires careful design."
+            }
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "warning",
+          "runs": [
+            {
+              "text": "CQRS is not appropriate for every system. It adds significant complexity: separate models, separate stores, eventual consistency, projection rebuild logic. Apply it where the read and write workloads are genuinely different — not as a default architectural pattern."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "CQRS splits writes and reads into separate models. Writes go through a normalized command model; reads come from a denormalized projection built from the events those writes produced. Reads are fast because all the hard work happened at write time."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "dds-ch12-c007",
+      "order": 7,
+      "title": "Lambda Architecture",
+      "teaser": "Lambda Architecture runs two processing paths in parallel — a slow, accurate batch layer and a fast, approximate speed layer — reconciled at query time. It was the dominant big data pattern of the early 2010s, and it taught the industry hard lessons about operational complexity.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Proposed by Nathan Marz in 2011, Lambda Architecture tries to solve a genuine tension: batch processing is accurate but slow; stream processing is fast but approximate. Why choose? Run both."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The three layers:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Batch layer.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Processes the complete historical dataset periodically (hourly, daily). Produces accurate, corrected views. Runs on Hadoop or Spark. High latency (minutes to hours), but produces the ground truth. The batch layer rewrites its output on each run, correcting any errors from the speed layer."
+              }
+            ],
+            [
+              {
+                "text": "Speed layer.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Processes only recent data in real time. Fills the gap since the last batch run. Fast (seconds to milliseconds), but may miss late-arriving events and approximate certain aggregations. Runs on Storm or Spark Streaming."
+              }
+            ],
+            [
+              {
+                "text": "Serving layer.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Merges the batch views and speed views at query time. A query for total user signups last week hits the batch view for everything before the last batch run, plus the speed view for the most recent data."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Lambda Architecture's fatal flaw is that every piece of business logic must be written twice — once for the batch path and once for the streaming path — and kept in sync. When the aggregate definition changes (e.g., how to count unique users), both implementations must be updated simultaneously, or the merge at query time produces inconsistent results."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The operational burden proved high: two separate systems to deploy, monitor, and debug; two codebases to maintain; and the subtle correctness question of how exactly to merge the batch and speed views at query time."
+            }
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "warning",
+          "runs": [
+            {
+              "text": "The core Lambda insight — you need both low latency and historical correctness — was right. The implementation — maintaining two separate code paths — was not. Kappa Architecture emerged as the answer: rewrite history by replaying the log, not by running a separate batch system."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Lambda Architecture runs a slow-but-accurate batch job in parallel with a fast-but-approximate stream processor, and merges them at query time. The idea was right; the problem was that every business rule had to be implemented and maintained in both places."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "dds-ch12-c008",
+      "order": 8,
+      "title": "Kappa Architecture",
+      "teaser": "Kappa Architecture eliminates the batch layer entirely. Everything is streaming. Historical reprocessing is done by replaying the log from the beginning with a new version of the consumer. Simpler, more maintainable — and possible only because log retention has become cheap.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Jay Kreps proposed Kappa Architecture in 2014 as a simpler alternative to Lambda. The key insight: the reason Lambda Architecture needs a batch layer is to correct errors and reprocess history. But if your stream processor can replay the log from offset 0, it can do the same thing. You don't need a separate batch system — you need a replayable log and a stream processor."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The Kappa approach to historical reprocessing:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Deploy a new version of the consumer",
+                "marks": ["bold"]
+              },
+              {
+                "text": " with the corrected logic, pointed at a new output topic."
+              }
+            ],
+            [
+              {
+                "text": "Start the new consumer from offset 0,",
+                "marks": ["bold"]
+              },
+              {
+                "text": " replaying the full log history through the new logic."
+              }
+            ],
+            [
+              {
+                "text": "Once the new consumer catches up to real time,",
+                "marks": ["bold"]
+              },
+              {
+                "text": " swap the serving layer to read from the new output."
+              }
+            ],
+            [
+              {
+                "text": "Decommission the old consumer.",
+                "marks": ["bold"]
+              }
+            ]
+          ]
+        },
+        {
+          "type": "comparison",
+          "items": [
+            {
+              "label": "Lambda Architecture",
+              "description": "Batch layer + speed layer + serving merge. Two code paths. Accurate batch reprocessing. Complex to maintain. Operates two separate systems."
+            },
+            {
+              "label": "Kappa Architecture",
+              "description": "Stream-only. One code path. Reprocess history by replaying the log. Simpler to maintain. Requires a long-retention, replayable log (Kafka)."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Kappa Architecture's prerequisite: the log must be retained long enough to replay from the beginning. For many organizations this means retaining months or years of Kafka data — which is increasingly practical as storage costs fall and Kafka's tiered storage feature makes long-term retention cost-effective."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The limitation: some workloads genuinely require global sorts or multi-pass algorithms that are awkward in streaming. Kappa works best when the processing can be expressed as a one-pass, stateful stream transformation. Complex ML training pipelines may still need batch semantics."
+            }
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "info",
+          "runs": [
+            {
+              "text": "In practice, many organizations have converged on a hybrid: a streaming-first architecture (Kappa) with a data lakehouse for historical analytics that is populated from the same event log. The lakehouse handles multi-pass analytics; the stream processor handles latency-sensitive derived views."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Kappa Architecture says: throw away the batch layer. Keep only the stream processor. When you need to reprocess history, replay the log from the start. One code path, one system to operate, same correctness guarantee."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "dds-ch12-c009",
+      "order": 9,
+      "title": "The End-to-End Argument",
+      "teaser": "Saltzer, Reed, and Clark (1984) argued that correctness guarantees cannot be implemented at the network layer alone — they must be implemented at the application level. Forty years later, this principle still governs how we design fault-tolerant distributed data systems.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The end-to-end argument is a paper from 1984 that predicts almost everything wrong in distributed systems design. Saltzer, Reed, and Clark asked: if you want to guarantee that a file transfer is correct, can the network guarantee it for you?"
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Their answer: no. Even if the network detects and retransmits corrupted packets, the application still needs end-to-end integrity checking (a checksum on the file) because:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "The disk that read the data might have a silent error before the data enters the network.",
+                "marks": []
+              }
+            ],
+            [
+              {
+                "text": "The disk that writes the received data might corrupt it after leaving the network.",
+                "marks": []
+              }
+            ],
+            [
+              {
+                "text": "The application software itself might have a bug that corrupts the data in memory.",
+                "marks": []
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The principle: "
+            },
+            {
+              "text": "correctness guarantees at an intermediate layer are incomplete without a guarantee at the endpoints",
+              "marks": ["italic"]
+            },
+            {
+              "text": ". The network can retry; only the application can verify."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Applied to distributed data systems:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Exactly-once delivery.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Even if Kafka guarantees exactly-once delivery semantics within the broker, the consumer application must still handle duplicate processing caused by consumer failures and offset commit issues. The message broker cannot guarantee exactly-once processing at the application level."
+              }
+            ],
+            [
+              {
+                "text": "At-least-once with idempotent consumers",
+                "marks": ["bold"]
+              },
+              {
+                "text": " is the practical pattern: deliver at least once (simpler to implement correctly), make the consumer idempotent (so duplicates are harmless). The consumer provides the end-to-end correctness guarantee."
+              }
+            ],
+            [
+              {
+                "text": "Two-phase commit (2PC)",
+                "marks": ["bold"]
+              },
+              {
+                "text": " is expensive infrastructure for a guarantee the application still needs to verify. Kleppmann argues that idempotent application-level operations plus at-least-once delivery is usually the right trade-off."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "info",
+          "runs": [
+            {
+              "text": "The end-to-end argument explains why \"the database handles transactions\" is not sufficient for distributed correctness. If your workflow spans multiple services or databases, the transaction boundary does not extend across them. The application must enforce end-to-end correctness."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The end-to-end argument says: the network can retry packets, but only the application can check that the file arrived correctly. In distributed systems, correctness guarantees always have to be enforced at the application layer, not trusted to the infrastructure beneath."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "dds-ch12-c010",
+      "order": 10,
+      "title": "Idempotent Operations at the Boundary",
+      "teaser": "If every write operation in your system is idempotent — applying it twice has the same effect as applying it once — then exactly-once semantics become a solved problem. You retry freely; duplicates are harmless.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The end-to-end argument leads to a practical engineering pattern: since you cannot rely on the infrastructure to guarantee exactly-once delivery, design your operations to be safe to apply multiple times. An idempotent operation produces the same result whether applied once or a hundred times."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Examples of idempotent vs non-idempotent operations:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "SET user.email = 'foo@bar.com'",
+                "marks": ["code"]
+              },
+              {
+                "text": " — idempotent. Running it twice produces the same result."
+              }
+            ],
+            [
+              {
+                "text": "INSERT INTO events VALUES (...) ON CONFLICT DO NOTHING",
+                "marks": ["code"]
+              },
+              {
+                "text": " — idempotent if the primary key is derived from the event content (a UUID based on the event's data, not a serial)."
+              }
+            ],
+            [
+              {
+                "text": "balance += 100",
+                "marks": ["code"]
+              },
+              {
+                "text": " — NOT idempotent. Applying twice gives balance += 200."
+              }
+            ],
+            [
+              {
+                "text": "INSERT INTO payments (id, amount) VALUES ('txn-abc-123', 100)",
+                "marks": ["code"]
+              },
+              {
+                "text": " — idempotent if the payment ID is stable and the INSERT is conditional on the ID not existing."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The pattern for making non-idempotent operations safe at boundaries:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Generate a deterministic, stable operation ID",
+                "marks": ["bold"]
+              },
+              {
+                "text": " (idempotency key) at the producer side. The key is derived from the event or request content, not from a server-side sequence."
+              }
+            ],
+            [
+              {
+                "text": "At the consumer, check if the operation ID has already been processed.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " If yes, skip. If no, apply and record."
+              }
+            ],
+            [
+              {
+                "text": "The idempotency check and the operation must be atomic",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — otherwise a crash between them introduces exactly the duplicate you were trying to avoid."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Stripe's API idempotency keys are the canonical public example: the client generates a unique key for each payment request; if the request is retried, Stripe returns the original result rather than charging twice. The key is the client's responsibility; the deduplication is the server's responsibility."
+            }
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "info",
+          "runs": [
+            {
+              "text": "Kafka Streams' exactly-once semantics (EOS) provide idempotency at the broker level for Kafka-to-Kafka operations. But if the Kafka consumer writes to an external database (Postgres, Redis), the application must implement its own idempotency check — the broker's EOS guarantee does not extend past the Kafka API boundary."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "An idempotent operation is one you can safely retry without changing the outcome. Design your write operations to be idempotent and at-least-once delivery becomes equivalent to exactly-once. You stop worrying about duplicate messages and start worrying only about missing ones."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "dds-ch12-c011",
+      "order": 11,
+      "title": "Provenance and Auditing",
+      "teaser": "Provenance is the complete history of where data came from and every transformation it has undergone. Without it, you cannot debug data quality issues, satisfy compliance requirements, or reproduce a machine learning model that produced a business-critical decision.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Provenance is the answer to the question: \"where did this piece of data come from, and how did it get into this state?\" In a simple CRUD application, the answer is trivially \"someone called PUT /user/123\". In a modern data pipeline — with CDC, stream processing, ML feature pipelines, and derived views — the answer may span dozens of systems and transformations."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Why provenance matters in practice:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Debugging data quality issues.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " When an analytics table shows anomalous numbers, you need to trace the value back through every transformation to find where the error was introduced. Without provenance, this is archaeology."
+              }
+            ],
+            [
+              {
+                "text": "Compliance and audit trails.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " GDPR right-to-erasure requires knowing every place a user's data is stored or derived. SOC 2 and HIPAA require demonstrating who accessed what and when. Regulators require immutable audit logs."
+              }
+            ],
+            [
+              {
+                "text": "ML reproducibility.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " A model that made a consequential decision (a loan denial, a fraud flag) must be reproducible. Reproducing it requires knowing the exact version of the training data, the feature extraction logic, and the model weights at the time of the decision."
+              }
+            ],
+            [
+              {
+                "text": "Schema evolution.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " When a column changes meaning across versions, downstream consumers need provenance to know which version of the schema produced a given record."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The log-centric architecture provides natural provenance: every change is an event in an ordered log. As long as the log is retained, you have a complete audit trail of every write. The challenge is making that provenance queryable — tools like Apache Atlas, OpenLineage, and dbt's lineage graph address the metadata layer."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "OpenLineage is an open standard for capturing data lineage: every time a pipeline reads from or writes to a dataset, it emits a lineage event. Tools like Airflow, Spark, and dbt have OpenLineage integrations. A lineage graph lets you answer: \"every pipeline that reads from dataset X\" or \"every dataset affected by a change to schema Y.\""
+            }
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "info",
+          "runs": [
+            {
+              "text": "Immutable event logs are a natural audit log by design. Rather than building a separate audit system, treat the Kafka topic (or the event store) as the primary audit mechanism. If your log has sufficient retention and the events are sufficiently granular, the audit requirement is satisfied by the same log that powers your data integration."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Provenance is the data equivalent of git blame — a complete, traceable history of where every piece of data came from and every transformation it passed through. Without it, debugging data quality issues and satisfying compliance requirements become guesswork."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "dds-ch12-c012",
+      "order": 12,
+      "title": "Doing the Right Thing",
+      "teaser": "Correctness in data systems is not just about schema validity and consistency guarantees. It includes the ethical dimensions: privacy, fairness, transparency, and the obligations that come with processing data about people at scale.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Kleppmann closes the book with a chapter that is unusual in a technical text: an argument that systems engineers bear ethical responsibility for the systems they build. This is not a soft addendum — it is a claim that technical correctness and ethical correctness are inseparable at scale."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Three areas where data systems create ethical obligations:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Privacy.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Data about people — locations, health records, financial transactions, browsing behavior — enables surveillance and harm at a scale that was not possible before cheap storage and stream processing. The design of a data system determines whether this data can be deleted, who can access it, and whether it can be repurposed. These are engineering decisions with ethical weight."
+              }
+            ],
+            [
+              {
+                "text": "Fairness and discrimination.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Machine learning models trained on historical data inherit historical biases. A credit-scoring model trained on biased lending decisions will reproduce those biases at scale and at speed. The data pipeline that produces the training set — how features are selected, how labels are assigned — embeds the discrimination in code."
+              }
+            ],
+            [
+              {
+                "text": "Predictive harm.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Behavioral data aggregated across systems enables predictions about individuals that they did not consent to: predicting political views from purchase history, predicting health outcomes from location data, predicting creditworthiness from social graph. The fact that the prediction is technically possible does not make it ethically appropriate."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Kleppmann's argument is not that engineers must refuse to build data systems — it is that engineers should ask, as a matter of professional practice, the questions that lawyers and ethicists ask: who is harmed if this data is misused? Who benefits? Is this use consistent with the expectations of the people the data describes?"
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Concrete practices that embed ethics into data system design:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Data minimization.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Collect and retain only what you need. The least dangerous data is data you don't have."
+              }
+            ],
+            [
+              {
+                "text": "Purpose limitation.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Use data only for the purpose it was collected for. A log that captures user behavior for debugging should not automatically become a training set for a recommendation model."
+              }
+            ],
+            [
+              {
+                "text": "Erasure and the right to be forgotten.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " GDPR's right to erasure is architecturally challenging in an immutable event log. One approach: encrypt personal data at the event level; erasure means destroying the key, making the data unreadable without modifying the log."
+              }
+            ],
+            [
+              {
+                "text": "Fairness auditing of derived data.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Before deploying a derived dataset or model to production decisions, audit it for disparate impact across protected groups."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "info",
+          "runs": [
+            {
+              "text": "Kleppmann quotes Hannah Arendt's concept of the \"banality of evil\" — harm perpetrated not by malice but by ordinary people doing their jobs without reflecting on the consequences. Data engineers who build pipelines that enable surveillance or discrimination without asking whether they should are participating in the same pattern. The technical sophistication of the system does not reduce the moral responsibility of its builders."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Data systems that are technically correct can still be ethically wrong. Correctness means more than schema validity — it means the system does not harm the people whose data it processes. That is an engineering responsibility, not just a compliance checkbox."
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

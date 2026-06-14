@@ -1,0 +1,877 @@
+{
+  "stack": "distributed-data-systems-intermediate",
+  "words": [
+    {
+      "id": "dds-int-0010-0000-0000-0000-000000000001",
+      "word": "Single-Leader Replication",
+      "pronunciation": "SIN-gul-LEE-dur rep-lih-KAY-shun",
+      "partOfSpeech": "noun",
+      "shortDefinition": "All writes go to one primary node; changes are propagated to followers via replication log.",
+      "simpleDefinition": "In single-leader replication, one node — the leader — accepts every write. It records those writes to a replication log and forwards them to follower replicas in order. Followers apply the log identically, ending up with the same data. Clients can read from any replica, but the leader is the single source of truth for writes. PostgreSQL, MySQL, MongoDB, and Kafka all default to this model.",
+      "longDefinition": "Single-leader (also called leader-follower or master-slave) replication is the most widely deployed replication topology in production databases. The leader processes writes sequentially and serializes them into an ordered replication log — a WAL segment in PostgreSQL, a binlog in MySQL, or an oplog in MongoDB. Each follower connects to the leader, streams the log, and replays operations in the same order, maintaining identical state. Reads can be routed to any replica: the leader for strong consistency, or a follower for read scaling at the cost of potential lag. The critical trade-off is single-writer bottleneck for writes versus simplicity of conflict resolution (there are never any write conflicts, because only one node accepts writes). Failover — promoting a follower to leader when the current leader fails — is operationally complex and the source of many real-world incidents around split-brain and data loss.",
+      "connector": "Think of single-leader replication like a newsroom with one chief editor: all stories go through that editor before being printed. Readers can pick up a copy from any newsstand, but there is exactly one authoritative editorial desk.",
+      "techContext": "In PostgreSQL, single-leader replication is called streaming replication — the primary ships WAL segments to standbys that replay them in order, keeping replicas within seconds of the primary.",
+      "exampleSentence": "Our analytics reads are routed to follower replicas so single-leader replication offloads about 80% of read traffic from the primary without any application code changes.",
+      "codeExample": {
+        "language": "sql",
+        "code": "-- PostgreSQL: check replication lag on all followers\nSELECT\n  client_addr,\n  state,\n  sent_lsn,\n  replay_lsn,\n  (sent_lsn - replay_lsn) AS replay_lag_bytes\nFROM pg_stat_replication\nORDER BY replay_lag_bytes DESC;"
+      },
+      "etymology": "Leader from Old English lædan ('to guide'); replication from Latin replicatio ('a folding back, repetition'); the single-leader topology was formalized in database literature through the 1980s.",
+      "unlockLevel": 6,
+      "tags": [
+        "replication",
+        "distributed-data",
+        "consistency",
+        "databases"
+      ],
+      "category": "architecture",
+      "backingCard": {
+        "bookId": "distributed-data-systems",
+        "chapterId": "dds-ch05-replication",
+        "cardId": "dds-ch05-c002"
+      }
+    },
+    {
+      "id": "dds-int-0020-0000-0000-0000-000000000002",
+      "word": "Multi-Leader Replication",
+      "pronunciation": "MUL-tee-LEE-dur rep-lih-KAY-shun",
+      "partOfSpeech": "noun",
+      "shortDefinition": "Multiple nodes accept writes independently and exchange changes asynchronously, risking write conflicts.",
+      "simpleDefinition": "Multi-leader replication allows more than one node to accept writes. Each leader processes local writes and asynchronously forwards them to the other leaders and to its own followers. Because two leaders can accept conflicting writes to the same record at the same time, the system needs a conflict resolution strategy — last-write-wins, application-level merging, or CRDTs. The pattern is common in multi-datacenter deployments where you need each datacenter to accept writes locally.",
+      "longDefinition": "Multi-leader replication (also called multi-primary or active-active replication) removes the single-writer bottleneck at the cost of introducing write conflicts. In a single-datacenter setup it is rarely worth the complexity, but for multi-datacenter deployments the benefits are compelling: writes are processed at the nearest datacenter with low latency rather than paying a cross-continent round trip to reach the single leader. Each datacenter runs an internal single-leader topology and replicates asynchronously to the other datacenters. Conflict detection typically uses per-replica version counters or timestamps. Resolution strategies include: last-write-wins (LWW, lossy), application-level conflict merging, keeping all conflicting versions (siblings) for the application to reconcile, and CRDTs. MySQL's Group Replication and Galera Cluster, CouchDB, and Google Docs (offline editing) all use forms of multi-leader replication.",
+      "connector": "Think of multi-leader replication like two branch offices of the same company both accepting orders independently. Each branch processes orders locally for speed, then syncs with the other — occasionally discovering they both sold the last unit in inventory simultaneously.",
+      "techContext": "Our global SaaS platform uses multi-leader replication across three datacenters — US-East, EU-West, and AP-Southeast — so users in each region write locally with sub-50ms latency instead of paying 150ms to reach a single US leader.",
+      "exampleSentence": "The multi-leader replication setup worked perfectly until two users in different datacenters simultaneously edited the same document field, surfacing a write conflict our application had no handler for.",
+      "codeExample": {
+        "language": "python",
+        "code": "# Application-level conflict resolution for multi-leader writes\ndef resolve_conflict(version_a, version_b):\n    \"\"\"Merge two concurrent writes by taking field-level last-write-wins.\"\"\"\n    resolved = {}\n    all_keys = set(version_a['data'].keys()) | set(version_b['data'].keys())\n    for key in all_keys:\n        a = version_a['data'].get(key)\n        b = version_b['data'].get(key)\n        # Pick the version with the higher timestamp for each field\n        if a is None:\n            resolved[key] = b\n        elif b is None:\n            resolved[key] = a\n        elif version_a['timestamp'] >= version_b['timestamp']:\n            resolved[key] = a\n        else:\n            resolved[key] = b\n    return resolved"
+      },
+      "etymology": "Multi from Latin multus ('many') + leader + replication; the multi-leader topology was described in academic literature in the 1990s and became practically relevant with the rise of globally distributed web services.",
+      "unlockLevel": 6,
+      "tags": [
+        "replication",
+        "distributed-data",
+        "consistency",
+        "conflict-resolution"
+      ],
+      "category": "architecture",
+      "backingCard": {
+        "bookId": "distributed-data-systems",
+        "chapterId": "dds-ch05-replication",
+        "cardId": "dds-ch05-c009"
+      }
+    },
+    {
+      "id": "dds-int-0030-0000-0000-0000-000000000003",
+      "word": "Leaderless Replication",
+      "pronunciation": "LEE-dur-les rep-lih-KAY-shun",
+      "partOfSpeech": "noun",
+      "shortDefinition": "Writes go directly to several replicas with no designated primary; consistency is enforced via quorums.",
+      "simpleDefinition": "In leaderless replication there is no single node that owns writes. Instead, the client (or a coordinator node) sends every write to W out of N replicas simultaneously and waits for W acknowledgements. Reads are sent to R replicas simultaneously and the client takes the most up-to-date value. As long as W + R > N, the read and write sets are guaranteed to overlap by at least one up-to-date node. DynamoDB and Cassandra use this model.",
+      "longDefinition": "Leaderless replication — popularized by Amazon's Dynamo paper (2007) and used in DynamoDB, Cassandra, and Riak — eliminates the leader as a bottleneck and single point of failure. Every replica is a peer; any of them can accept a write. The client sends the write to all N replicas concurrently and considers it successful after W acknowledgements arrive. Reads are similarly sent to R replicas; if the responses differ, the client (or coordinator) picks the most recent value using version numbers or vector clocks and may trigger a read repair to update the stale replica. The quorum condition W + R > N ensures overlap: with N=3, W=2, R=2, any read will see at least one node that received the latest write. However, quorums do not guarantee strong consistency in the face of clock skew, network partitions, and sloppy quorums — leaderless systems sacrifice linearizability for availability and partition tolerance.",
+      "connector": "Think of leaderless replication like a flat team where everyone can make decisions. As long as a majority of teammates agree on something, it is considered decided — no one person's approval is required, but you do need enough heads to nod.",
+      "techContext": "Cassandra uses leaderless replication with tunable consistency — setting QUORUM for both reads and writes (W=R=⌈N/2⌉+1) gives you the strongest guarantee while still tolerating minority-node failures.",
+      "exampleSentence": "We switched to leaderless replication so that a failed node in one availability zone would not block writes — the quorum requirement was met by the two healthy nodes in the other zones.",
+      "codeExample": {
+        "language": "python",
+        "code": "# Cassandra: tunable consistency on read and write\nfrom cassandra.cluster import Cluster\nfrom cassandra.policies import ConsistencyLevel\nfrom cassandra import ConsistencyLevel as CL\n\ncluster = Cluster(['node1', 'node2', 'node3'])\nsession = cluster.connect('myapp')\n\n# Write with QUORUM (requires acknowledgement from majority)\nstmt = session.prepare('INSERT INTO events (id, data) VALUES (?, ?)')\nstmt.consistency_level = CL.QUORUM\nsession.execute(stmt, (event_id, payload))\n\n# Read with QUORUM (guaranteed to see the latest QUORUM write)\nread_stmt = session.prepare('SELECT * FROM events WHERE id = ?')\nread_stmt.consistency_level = CL.QUORUM\nresult = session.execute(read_stmt, (event_id,))"
+      },
+      "etymology": "Leaderless is a negation compound — leader (Old English lædan) + -less (Old English -leas, 'without'); the architectural term emerged from the Dynamo paper (DeCandia et al., Amazon, 2007).",
+      "unlockLevel": 6,
+      "tags": [
+        "replication",
+        "distributed-data",
+        "consistency",
+        "quorum"
+      ],
+      "category": "architecture",
+      "backingCard": {
+        "bookId": "distributed-data-systems",
+        "chapterId": "dds-ch05-replication",
+        "cardId": "dds-ch05-c011"
+      }
+    },
+    {
+      "id": "dds-int-0040-0000-0000-0000-000000000004",
+      "word": "Semi-Synchronous Replication",
+      "pronunciation": "SEM-ee-sin-KRON-ik rep-lih-KAY-shun",
+      "partOfSpeech": "noun",
+      "shortDefinition": "A replication mode where at least one follower must confirm each write before the leader acknowledges it.",
+      "simpleDefinition": "Semi-synchronous replication is a middle ground between fully synchronous replication (wait for all followers) and fully asynchronous replication (acknowledge immediately). The leader waits for at least one designated follower to confirm the write before returning success to the client. This guarantees the data exists on at least two machines (the leader plus one follower), providing durability without the high latency penalty of waiting for every replica.",
+      "longDefinition": "In fully synchronous replication, a write cannot be acknowledged until every follower has confirmed it — one slow or failed follower blocks the entire cluster. In fully asynchronous replication, the leader acknowledges immediately without waiting for any follower, risking data loss if the leader crashes before followers receive the write. Semi-synchronous replication threads the needle: exactly one follower (the designated synchronous standby) must confirm the write; all others are asynchronous. If the synchronous standby fails, one asynchronous follower is automatically promoted to synchronous, maintaining the guarantee. This is the default in PostgreSQL when `synchronous_standby_names` is set, and an option in MySQL Group Replication. The durability guarantee is: data survives any single-node failure. The latency cost is one additional network round trip to the synchronous follower — usually within the same datacenter, so the overhead is tens of milliseconds rather than hundreds.",
+      "connector": "Think of semi-synchronous replication like signing a contract that requires two signatures — yours and one witness. You cannot hand over the document until the witness has signed, but you do not need to wait for all five possible witnesses in the room.",
+      "techContext": "We configure PostgreSQL semi-synchronous replication with `synchronous_standby_names = 'FIRST 1 (replica1, replica2)'`, which guarantees the write reaches at least one standby before the primary acknowledges — preventing data loss on primary failure.",
+      "exampleSentence": "After the fully-asynchronous replica lost several seconds of commits during last month's leader crash, we switched to semi-synchronous replication to guarantee at least one confirmed copy of every write.",
+      "codeExample": {
+        "language": "sql",
+        "code": "-- PostgreSQL: enable semi-synchronous replication\n-- In postgresql.conf on the primary:\n-- synchronous_standby_names = 'FIRST 1 (standby1, standby2)'\n\n-- Verify current synchronous standbys\nSELECT\n  application_name,\n  sync_state,\n  write_lsn,\n  flush_lsn,\n  replay_lsn\nFROM pg_stat_replication\nWHERE sync_state IN ('sync', 'quorum');"
+      },
+      "etymology": "Semi from Latin semi- ('half'); synchronous from Greek syn- ('together') + chronos ('time'); the term describes a partial synchrony constraint distinct from fully synchronous or fully asynchronous operation.",
+      "unlockLevel": 6,
+      "tags": [
+        "replication",
+        "distributed-data",
+        "consistency",
+        "durability"
+      ],
+      "category": "architecture",
+      "backingCard": {
+        "bookId": "distributed-data-systems",
+        "chapterId": "dds-ch05-replication"
+      }
+    },
+    {
+      "id": "dds-int-0050-0000-0000-0000-000000000005",
+      "word": "Read-Your-Writes Consistency",
+      "pronunciation": "RED-yor-RYTS kun-SIS-ten-see",
+      "partOfSpeech": "noun",
+      "shortDefinition": "A session guarantee that a user always sees their own writes immediately, even on a lagging replica.",
+      "simpleDefinition": "Read-your-writes consistency is a per-user session guarantee: after you successfully write something, any subsequent read by you will return at least that value — even if the system routes your reads to a replica that is asynchronously catching up. Other users might still see stale data; the guarantee applies specifically to the user who performed the write.",
+      "longDefinition": "Read-your-writes (RYW) is one of four session guarantees described by Terry et al. in their 1994 paper on Bayou. It is weaker than linearizability but stronger than eventual consistency — it scopes the freshness guarantee to a single user session. Implementation strategies include: always routing reads to the leader for a user who has recently written; tracking the write's replication position (LSN in PostgreSQL, sequence number in MySQL) and routing reads only to replicas that have caught up to that position; or using sticky sessions to bind a user to the same replica. Amazon DynamoDB implements RYW within a session using read-after-write consistency on the same shard. The guarantee is essential for any UI where a user creates or edits a record and is immediately redirected to a page that reads it back — without RYW, the redirect page may show the old, pre-edit state drawn from a lagging replica.",
+      "connector": "Think of read-your-writes consistency like a whiteboard in a meeting — you can always see what you personally wrote on it, even if people joining remotely via video are a few seconds behind seeing your latest marker strokes.",
+      "techContext": "To implement read-your-writes in our service, we track the replication sequence number returned by each write in the user's session cookie and pass it as a minimum-LSN hint when routing reads, ensuring they only hit replicas that have applied the write.",
+      "exampleSentence": "Without read-your-writes consistency, users updating their profile photo saw the old avatar on the confirmation page because the redirect hit a follower that hadn't yet replicated the write.",
+      "codeExample": {
+        "language": "python",
+        "code": "# Track write LSN in session; route reads to replica that has caught up\nimport psycopg2\n\ndef update_user_profile(session, user_id, new_data):\n    with leader_conn() as conn:\n        cur = conn.cursor()\n        cur.execute(\n            'UPDATE users SET data = %s WHERE id = %s',\n            (new_data, user_id)\n        )\n        conn.commit()\n        cur.execute('SELECT pg_current_wal_lsn()')\n        write_lsn = cur.fetchone()[0]\n    # Store LSN in session so reads wait for this point\n    session['min_lsn'] = str(write_lsn)\n\ndef read_user_profile(session, user_id):\n    min_lsn = session.get('min_lsn')\n    # Route to replica only if it has replayed past min_lsn\n    conn = get_replica_at_lsn(min_lsn)\n    cur = conn.cursor()\n    cur.execute('SELECT data FROM users WHERE id = %s', (user_id,))\n    return cur.fetchone()"
+      },
+      "etymology": "A descriptive compound coined in the 1994 Bayou paper by Terry et al.; the term precisely captures the scope — your reads reflect your writes, not necessarily everyone's writes.",
+      "unlockLevel": 6,
+      "tags": [
+        "consistency",
+        "replication",
+        "distributed-data",
+        "session-guarantees"
+      ],
+      "category": "concepts",
+      "backingCard": {
+        "bookId": "distributed-data-systems",
+        "chapterId": "dds-ch05-replication",
+        "cardId": "dds-ch05-c006"
+      }
+    },
+    {
+      "id": "dds-int-0060-0000-0000-0000-000000000006",
+      "word": "Monotonic Reads",
+      "pronunciation": "mon-uh-TON-ik REDZ",
+      "partOfSpeech": "noun",
+      "shortDefinition": "A consistency guarantee ensuring subsequent reads never return older data than a previous read.",
+      "simpleDefinition": "Monotonic reads is a session guarantee that prevents time from appearing to run backwards. If you read a value at time T1 and then read the same key again at T2 > T1, the second read will never return data older than what you saw at T1. Without this guarantee, a load balancer might route your first read to an up-to-date replica and your second read to a lagging one, making it look like the data regressed.",
+      "longDefinition": "Monotonic reads is one of the four session guarantees from the Bayou paper. In a system where reads are load-balanced across asynchronous replicas, successive reads from the same client can hit replicas at different replication offsets, producing the anomaly where a client observes a value disappearing — a user sees a new comment on a page, refreshes, and the comment is gone because the second request hit a more lagging replica. Monotonic reads prevents this: if a client read from replica R that was at LSN X, all future reads by that client must go to replicas at LSN ≥ X. Implementation options include: sticky sessions (bind a user to a single replica for the duration of a session); passing the observed sequence number in requests and having routers enforce the minimum; or always reading from the leader. The guarantee is weaker than linearizability — two different users may still see different values simultaneously — but it eliminates the disorienting per-user regression.",
+      "connector": "Think of monotonic reads like a calendar that only moves forward — you can see today and tomorrow, but you can never flip back to yesterday. Each new look at the data is at least as current as the previous one.",
+      "techContext": "We implemented monotonic reads by issuing each client a replica token containing the last-seen replication offset, and our read router rejects any replica whose replay_lsn is behind that token's offset.",
+      "exampleSentence": "After enabling monotonic reads, support tickets about disappearing records dropped to zero — users had been routed to progressively more lagging replicas and watching their data appear to vanish.",
+      "etymology": "Monotonic from Greek monos ('single') + tonos ('tone, tension') — unchanging in direction; in mathematics, a monotonically increasing function never decreases; coined as a session guarantee in the 1994 Bayou paper.",
+      "unlockLevel": 6,
+      "tags": [
+        "consistency",
+        "replication",
+        "distributed-data",
+        "session-guarantees"
+      ],
+      "category": "concepts",
+      "backingCard": {
+        "bookId": "distributed-data-systems",
+        "chapterId": "dds-ch05-replication",
+        "cardId": "dds-ch05-c007"
+      }
+    },
+    {
+      "id": "dds-int-0070-0000-0000-0000-000000000007",
+      "word": "Consistent Prefix Reads",
+      "pronunciation": "kun-SIS-tent PREE-fiks REDZ",
+      "partOfSpeech": "noun",
+      "shortDefinition": "A guarantee that if a sequence of writes happens in order, any observer sees them in that same order.",
+      "simpleDefinition": "Consistent prefix reads ensures that if write A causally precedes write B, then any replica that shows B also shows A. Without this guarantee, a partitioned system might deliver a reply before the question — a database showing a user's response to a message before showing the original message. The guarantee is particularly important in multi-leader and leaderless replication where writes may be applied in different orders on different replicas.",
+      "longDefinition": "Consistent prefix reads is the weakest of the four standard replication consistency guarantees but essential for maintaining causal order in the user interface. In a sharded database, different partitions advance their replication offsets independently. A query that spans partitions might observe partition 2 far ahead of partition 1, returning events in a scrambled temporal order. A classic illustration from Kleppmann's book: a conversation database where Mrs. Cake says 'I can see the future' and Mr. Poons asks 'How far in advance can you see?'. A replica lagging on the 'question' shard while being current on the 'answer' shard shows the answer before the question — a causality violation. Consistent prefix reads is enforced by maintaining causality metadata (usually a logical timestamp or sequence number) on each write, and routing queries to a snapshot at a consistent logical time rather than independently across shards.",
+      "connector": "Think of consistent prefix reads like watching a dubbed film where the audio and video must stay in sync — you should always hear the spoken line after seeing the mouth start to move, never before.",
+      "techContext": "DynamoDB global tables use version numbers on each item and a cross-region replication log to ensure consistent prefix reads — a read that returns version N guarantees you will also see all versions below N on the same key.",
+      "exampleSentence": "Consistent prefix reads saved our chat UI from displaying reply messages before the original post, which was happening when the reply partition replicated faster than the post partition.",
+      "etymology": "Prefix in the mathematical sense — a sequence of elements that forms the beginning of a longer sequence; coined as a session guarantee in Kleppmann's 'Designing Data-Intensive Applications' (2017), building on prior consistency literature.",
+      "unlockLevel": 6,
+      "tags": [
+        "consistency",
+        "replication",
+        "distributed-data",
+        "session-guarantees"
+      ],
+      "category": "concepts",
+      "backingCard": {
+        "bookId": "distributed-data-systems",
+        "chapterId": "dds-ch05-replication",
+        "cardId": "dds-ch05-c008"
+      }
+    },
+    {
+      "id": "dds-int-0080-0000-0000-0000-000000000008",
+      "word": "Hash Partitioning",
+      "pronunciation": "HASH par-tih-SHUN-ing",
+      "partOfSpeech": "noun",
+      "shortDefinition": "Assigning records to partitions by hashing the key, distributing load evenly at the cost of range queries.",
+      "simpleDefinition": "Hash partitioning applies a hash function to a record's key and maps the result to one of N partitions — for example, `partition = hash(key) % N`. Because hash functions produce roughly uniform output, keys are spread evenly across partitions regardless of their original ordering, preventing hot spots caused by popular key prefixes. The trade-off is that range queries become inefficient: adjacent keys in the original ordering are scattered across all partitions.",
+      "longDefinition": "Hash partitioning solves the key skew problem that plagues key-range partitioning: if keys are timestamps or user IDs that are created monotonically, new records would all pile into the last partition. By hashing the key first, even a highly skewed key distribution (celebrity users, trending topics) produces a roughly even spread across partitions. Cassandra, MongoDB's hash sharding mode, and early DynamoDB all use hash partitioning. The standard approach is consistent hashing, which places both keys and nodes on a hash ring to minimize key movement when nodes join or leave. The cost is losing locality: a query for all records where user_id BETWEEN 1000 AND 2000 must scatter across all partitions and gather results at the coordinator, because numerically adjacent keys hash to different partitions. Cassandra addresses this with a compound partition key — the first component is hashed (for even distribution) and the clustering columns within a partition are stored in sorted order (for range queries within a user's data).",
+      "connector": "Think of hash partitioning like distributing playing cards by shuffling and dealing — the shuffle randomizes the order so no single player gets all the aces, but you can no longer deal cards in sequence from a sorted deck.",
+      "techContext": "Cassandra's token-based partitioning uses a 64-bit Murmur3 hash of the partition key, placing each row at a specific point on the token ring and assigning contiguous token ranges to each node.",
+      "exampleSentence": "We switched from key-range to hash partitioning after one partition became a hot spot because all new user signups were generating sequentially increasing IDs that routed to the same node.",
+      "codeExample": {
+        "language": "python",
+        "code": "import hashlib\n\nNUM_PARTITIONS = 8\n\ndef get_partition(key: str) -> int:\n    \"\"\"Assign a key to a partition using consistent MD5 hashing.\"\"\"\n    h = int(hashlib.md5(key.encode()).hexdigest(), 16)\n    return h % NUM_PARTITIONS\n\n# Keys that look sequential land on different partitions\nfor user_id in [1000, 1001, 1002, 1003]:\n    p = get_partition(str(user_id))\n    print(f'user_id={user_id} -> partition {p}')\n# user_id=1000 -> partition 5\n# user_id=1001 -> partition 2\n# user_id=1002 -> partition 7\n# user_id=1003 -> partition 0"
+      },
+      "etymology": "Hash from German Hachee ('chopped meat') via the computing sense of a function that maps data to a fixed-size value; partitioning from Latin partitio ('division'); the combination describes distributing data by hashed key.",
+      "unlockLevel": 6,
+      "tags": [
+        "partitioning",
+        "distributed-data",
+        "scaling",
+        "databases"
+      ],
+      "category": "concepts",
+      "backingCard": {
+        "bookId": "distributed-data-systems",
+        "chapterId": "dds-ch06-partitioning",
+        "cardId": "dds-ch06-c003"
+      }
+    },
+    {
+      "id": "dds-int-0090-0000-0000-0000-000000000009",
+      "word": "Key-Range Partitioning",
+      "pronunciation": "KEE-RAYNJ par-tih-SHUN-ing",
+      "partOfSpeech": "noun",
+      "shortDefinition": "Splitting data by sorted key ranges so adjacent keys live on the same partition, enabling efficient scans.",
+      "simpleDefinition": "Key-range partitioning divides the full key space into contiguous ranges and assigns each range to a partition — partition 1 holds keys A–F, partition 2 holds G–M, and so on. Because adjacent keys are stored together, range scans are efficient: a query for all records between two key values only touches the partitions that cover that range. The risk is hot spots when all writes cluster at one end of the range.",
+      "longDefinition": "Key-range partitioning (also called range sharding) is the strategy used by HBase, Bigtable, and MongoDB when sharding on a range key. The partition boundaries — called split points — are often chosen manually or adjusted by the system dynamically as data accumulates. Within each partition, data is stored in sorted order (usually via a B-tree or LSM-tree index), enabling efficient range queries and prefix scans. The critical operational challenge is hot-spot avoidance: if the primary write pattern is monotonically increasing keys (like timestamps or auto-increment IDs), all writes land on the last partition, saturating it while other partitions sit idle. Common mitigations include prefixing keys with a non-monotonic component, or using compound keys where the partition key is something uniformly distributed (e.g., sensor ID) and the sort key is the timestamp. HBase and BigTable manage split points automatically — when a partition grows too large, the system splits it at the midpoint and rebalances.",
+      "connector": "Think of key-range partitioning like a phone book divided alphabetically into volumes — all the As and Bs are in volume one, so you can scan an alphabetical range quickly. But if everyone's surname starts with S, volume four carries most of the weight.",
+      "techContext": "HBase uses key-range partitioning across region servers — each region owns a contiguous byte-range of the row key space and the RegionServer auto-splits regions that exceed a configurable size threshold.",
+      "exampleSentence": "The IoT pipeline's key-range partitioning by device ID and timestamp lets us scan all readings from a single sensor in one sequential partition read instead of scattering across every shard.",
+      "codeExample": {
+        "language": "python",
+        "code": "# HBase-style range partition assignment\nPARTITION_BOUNDARIES = [\n    b'device_0000',\n    b'device_0500',\n    b'device_1000',\n    b'device_1500',\n]\n\ndef get_partition(row_key: bytes) -> int:\n    \"\"\"Return the partition index for a given row key.\"\"\"\n    for i, boundary in enumerate(PARTITION_BOUNDARIES):\n        if row_key < boundary:\n            return i\n    return len(PARTITION_BOUNDARIES)  # last partition\n\n# Efficient range query: only touches partitions overlapping the range\ndef range_query(start_key: bytes, end_key: bytes):\n    start_part = get_partition(start_key)\n    end_part = get_partition(end_key)\n    return range(start_part, end_part + 1)  # partitions to contact"
+      },
+      "etymology": "Range from Old French range ('row, line'); key-range combines the database sense of a primary key with the mathematical sense of an interval — a contiguous portion of an ordered set.",
+      "unlockLevel": 6,
+      "tags": [
+        "partitioning",
+        "distributed-data",
+        "scaling",
+        "databases"
+      ],
+      "category": "concepts",
+      "backingCard": {
+        "bookId": "distributed-data-systems",
+        "chapterId": "dds-ch06-partitioning",
+        "cardId": "dds-ch06-c002"
+      }
+    },
+    {
+      "id": "dds-int-0100-0000-0000-0000-000000000010",
+      "word": "Hot Spot",
+      "pronunciation": "HOT SPOT",
+      "partOfSpeech": "noun",
+      "shortDefinition": "A partition or node receiving disproportionately more load than others, becoming a performance bottleneck.",
+      "simpleDefinition": "A hot spot is a single partition or node that receives a disproportionate share of reads or writes compared to the rest of the cluster. It limits the system's effective throughput to that one node's capacity, negating the scaling benefit of partitioning. Hot spots usually arise from a popular key (a celebrity's profile), a monotonically increasing key that routes all new writes to one partition, or uneven data distribution.",
+      "longDefinition": "Hot spots are the operational enemy of partitioned systems. Partitioning is intended to distribute both data storage and request load evenly across nodes, but in practice workloads are rarely uniform. Two common causes: First, a single key that attracts outsized traffic — in a social network, a celebrity user's write (a new post) may fan out to millions of follower timelines or cause millions of reads, all hitting the same partition. Second, a monotonically increasing partition key (Unix timestamp, auto-increment ID) that routes all new records to the tail partition while others sit idle. Mitigation strategies include key salting (appending a random suffix to hot keys to spread them), virtual partitions (adding indirection so one logical key maps to multiple physical partitions), and application-level fan-out that reads from multiple physical shards and merges results. Cassandra and DynamoDB expose per-partition throughput metrics that make hot spots visible before they cause outages.",
+      "connector": "Think of a hot spot like a popular restaurant that's part of a food court — if all customers crowd into one stall while the others are empty, the overall court can't scale and the busy stall becomes the bottleneck regardless of how many other stalls exist.",
+      "techContext": "Our DynamoDB table's hot-spot alarm triggers when any partition's consumed write capacity exceeds 25% of the total provisioned — the first warning that key salting or access-pattern redesign is needed.",
+      "exampleSentence": "The Super Bowl tweet went viral and created a hot spot on partition 7, maxing it out while the other 63 partitions sat at under 5% utilization.",
+      "codeExample": {
+        "language": "python",
+        "code": "import random\n\n# Key salting: spread a hot key across 10 logical shards\nNUM_SALTS = 10\n\ndef write_hot_key(user_id: str, data: dict):\n    \"\"\"Write to a salted shard to distribute a hot write key.\"\"\"\n    salt = random.randint(0, NUM_SALTS - 1)\n    salted_key = f'{user_id}_{salt}'\n    db.put(salted_key, data)  # spread across NUM_SALTS partitions\n\ndef read_hot_key(user_id: str):\n    \"\"\"Gather from all shards and merge results.\"\"\"\n    results = []\n    for salt in range(NUM_SALTS):\n        salted_key = f'{user_id}_{salt}'\n        result = db.get(salted_key)\n        if result:\n            results.append(result)\n    return merge(results)"
+      },
+      "etymology": "Hot spot from thermodynamics — a region of abnormally high temperature; adopted in networking and distributed systems to describe nodes or partitions bearing disproportionate load.",
+      "unlockLevel": 6,
+      "tags": [
+        "partitioning",
+        "distributed-data",
+        "scaling",
+        "performance"
+      ],
+      "category": "concepts",
+      "backingCard": {
+        "bookId": "distributed-data-systems",
+        "chapterId": "dds-ch06-partitioning"
+      }
+    },
+    {
+      "id": "dds-int-0110-0000-0000-0000-000000000011",
+      "word": "Key Salting",
+      "pronunciation": "KEE SAL-ting",
+      "partOfSpeech": "noun",
+      "shortDefinition": "Appending a random prefix to a hot key to spread its writes across multiple partitions.",
+      "simpleDefinition": "Key salting mitigates hot spots by appending or prepending a small random value — the salt — to a heavily trafficked key before writing. A single logical key becomes N physical keys, each mapping to a different partition, so the write load is spread evenly. Reads must query all N salted keys and merge the results, adding some overhead, but the write bottleneck is eliminated.",
+      "longDefinition": "Key salting is a simple but effective technique for handling write hot spots in hash-partitioned systems. When a key — say, a celebrity user ID — attracts millions of writes per second, all those writes route to the same partition because the hash of the key is always the same. Salting transforms the single hot key into N cooler keys by appending a random suffix (e.g., user123_0 through user123_9). The hash function now distributes these across up to N different partitions. The write path is straightforward: choose a random salt and write to the corresponding key. The read path is more complex: to read all data for user123 you must query all N salted variants and merge the results in the application layer. This adds read fan-out, so the technique is used selectively for known-hot keys rather than universally. DynamoDB best-practices documentation explicitly recommends this approach for high-velocity partition keys. A more sophisticated variant uses a deterministic salt based on the write's timestamp or a secondary dimension, enabling reads to target the specific salt rather than fan-out.",
+      "connector": "Think of key salting like distributing one famous person's fan mail to ten different P.O. boxes instead of one — the total volume of letters is the same but each mailbox handles a manageable tenth of the load.",
+      "techContext": "We salt the partition key for our trending-topic stream by appending a suffix from 0–19, reducing per-partition write throughput from 25,000 writes/sec to ~1,250 writes/sec and eliminating throttling.",
+      "exampleSentence": "After adding a 1-in-100 random salt to the viral post's partition key, the DynamoDB throttling errors on that table dropped to zero and write latency returned to the baseline 2ms.",
+      "codeExample": {
+        "language": "python",
+        "code": "import random\nimport boto3\n\ndynamodb = boto3.resource('dynamodb')\ntable = dynamodb.Table('Events')\n\nNUM_SALTS = 20\n\ndef write_event(user_id: str, event: dict):\n    salt = random.randint(0, NUM_SALTS - 1)\n    table.put_item(Item={\n        'pk': f'{user_id}#{salt}',  # salted partition key\n        'sk': event['timestamp'],\n        **event\n    })\n\ndef read_all_events(user_id: str):\n    all_items = []\n    for salt in range(NUM_SALTS):\n        resp = table.query(\n            KeyConditionExpression='pk = :pk',\n            ExpressionAttributeValues={':pk': f'{user_id}#{salt}'}\n        )\n        all_items.extend(resp['Items'])\n    return sorted(all_items, key=lambda x: x['sk'])"
+      },
+      "etymology": "Salt borrowed from cryptography — random data added to an input before hashing to prevent precomputation attacks; applied in distributed systems to mean random data appended to a key to distribute hashed outputs across partitions.",
+      "unlockLevel": 6,
+      "tags": [
+        "partitioning",
+        "distributed-data",
+        "scaling",
+        "performance"
+      ],
+      "category": "concepts",
+      "backingCard": {
+        "bookId": "distributed-data-systems",
+        "chapterId": "dds-ch06-partitioning"
+      }
+    },
+    {
+      "id": "dds-int-0120-0000-0000-0000-000000000012",
+      "word": "Two-Phase Commit",
+      "pronunciation": "TOO-FAYZ KOM-it",
+      "partOfSpeech": "noun",
+      "shortDefinition": "A distributed commit protocol with a prepare phase and a commit phase coordinated by a transaction manager.",
+      "simpleDefinition": "Two-phase commit (2PC) is the standard protocol for committing a transaction across multiple databases or services atomically. In phase one, the coordinator asks each participant 'can you commit?' and waits for a yes/no vote. In phase two, if all voted yes, the coordinator sends a commit; if any voted no, it sends abort. The protocol guarantees all-or-nothing atomicity across nodes, but it is blocking: if the coordinator crashes between phases, participants are stuck holding locks indefinitely.",
+      "longDefinition": "Two-phase commit was developed in the late 1970s and has been the standard protocol for distributed atomic commits ever since. The coordinator (often a transaction manager or the application itself) sends a Prepare message to all N resource managers (database shards, services). Each participant writes the prepared transaction to durable storage (so it can survive a crash) and votes YES or NO. If all votes are YES, the coordinator writes a commit record to its own durable log and broadcasts Commit. If any participant votes NO, the coordinator broadcasts Abort. The fatal flaw is the blocking window: after a participant sends YES, it has promised to commit or abort based on the coordinator's decision — it cannot unilaterally decide. If the coordinator fails before sending Commit, the participant holds its row locks indefinitely, unable to release them without risking a wrong outcome. This is the 'in-doubt' state, and it can last until the coordinator recovers or the DBA manually intervenes. 2PC provides correctness (all-or-nothing) at the cost of availability (blocking on coordinator failure). Protocols like Paxos Commit and Raft-based atomic commits improve availability but are more complex.",
+      "connector": "Think of 2PC like a marriage ceremony: the officiant first asks each person privately 'Are you ready to commit?', waits for both affirmative answers, and only then declares the union complete. If the officiant disappears between the two questions, nobody knows whether to proceed.",
+      "techContext": "PostgreSQL uses 2PC for cross-database transactions via `PREPARE TRANSACTION` and `COMMIT PREPARED` — the XA protocol exposes this to external transaction coordinators like Java's JTA.",
+      "exampleSentence": "The bank transfer between two database shards used two-phase commit to guarantee atomicity: when the coordinator crashed mid-protocol, both shards remained in the prepared state for 40 minutes until the coordinator recovered.",
+      "codeExample": {
+        "language": "sql",
+        "code": "-- PostgreSQL two-phase commit (XA-style)\n-- Phase 1: Prepare on both shards\nBEGIN;\nUPDATE accounts SET balance = balance - 100 WHERE id = 'alice';\nPREPARE TRANSACTION 'txn-transfer-001';  -- durable prepare\n\n-- (Coordinator also prepares on shard B for Bob's account)\n\n-- Phase 2: Commit if both prepared successfully\nCOMMIT PREPARED 'txn-transfer-001';\n-- OR rollback if any participant failed:\n-- ROLLBACK PREPARED 'txn-transfer-001';\n\n-- Check in-doubt transactions (stuck prepares)\nSELECT gid, prepared, owner FROM pg_prepared_xacts;"
+      },
+      "etymology": "Two-phase from the two distinct protocol stages; commit from Latin committere ('to entrust, join together'); formalized by Jim Gray in his transaction processing work in the late 1970s.",
+      "unlockLevel": 6,
+      "tags": [
+        "transactions",
+        "distributed-data",
+        "consistency",
+        "consensus"
+      ],
+      "category": "protocols",
+      "backingCard": {
+        "bookId": "distributed-data-systems",
+        "chapterId": "dds-ch09-consistency-and-consensus",
+        "cardId": "dds-ch09-c011"
+      }
+    },
+    {
+      "id": "dds-int-0130-0000-0000-0000-000000000013",
+      "word": "Change Data Capture",
+      "pronunciation": "CHAYNJ DAY-tuh KAP-chur",
+      "partOfSpeech": "noun",
+      "shortDefinition": "Observing and capturing every write to a database log and streaming those changes to downstream consumers.",
+      "simpleDefinition": "Change Data Capture (CDC) taps into a database's internal write-ahead log to extract every insert, update, and delete as it happens, and delivers those changes as an ordered event stream to other systems — search indexes, caches, data warehouses, or event buses. Rather than polling the database for changes, CDC reads the log the database already maintains for its own durability, adding no extra write overhead.",
+      "longDefinition": "CDC is a powerful pattern for data integration. Instead of tightly coupling services to each other's APIs or polling a source database with expensive queries, CDC turns the database log into a shared, ordered changelog that any consumer can subscribe to. Debezium is the most widely used open-source CDC connector; it uses PostgreSQL's logical replication protocol, MySQL's binlog, or MongoDB's oplog to extract changes and publish them to Kafka. Downstream consumers process the Kafka topic at their own pace: updating Elasticsearch full-text indexes within seconds of a DB write, materializing a denormalized read model, synchronizing a cache, or feeding a data warehouse. CDC effectively implements the outbox pattern at the infrastructure level — the database transaction log is the outbox. The ordering guarantee is critical: CDC delivers changes in the exact order they were committed, enabling consumers to maintain consistent derived views. Kleppmann's framing in Chapter 11 positions CDC as the bridge between the 'database as mutable state' worldview and the 'event log as immutable truth' worldview.",
+      "connector": "Think of CDC like tapping into a river's flow rather than periodically sampling a bucket. You get a continuous, ordered record of every drop that passed rather than a snapshot of what's in the bucket right now.",
+      "techContext": "Our Debezium connector reads PostgreSQL's logical replication slot and publishes every row-level change to a Kafka topic, feeding three downstream consumers: Elasticsearch for search, Redis for caching, and Snowflake for analytics — all within 500ms of the original commit.",
+      "exampleSentence": "After replacing our nightly ETL batch with CDC, the data warehouse went from being 24 hours stale to receiving every production transaction within 30 seconds.",
+      "codeExample": {
+        "language": "json",
+        "code": "// Debezium CDC connector config (PostgreSQL source)\n{\n  \"name\": \"orders-cdc\",\n  \"config\": {\n    \"connector.class\": \"io.debezium.connector.postgresql.PostgresConnector\",\n    \"database.hostname\": \"db.internal\",\n    \"database.port\": \"5432\",\n    \"database.dbname\": \"orders\",\n    \"database.server.name\": \"orders-db\",\n    \"plugin.name\": \"pgoutput\",\n    \"slot.name\": \"debezium_slot\",\n    \"table.include.list\": \"public.orders,public.order_items\",\n    \"topic.prefix\": \"cdc\"\n  }\n}\n// Produces Kafka events:\n// cdc.public.orders  → {op: 'c', after: {...}, before: null}\n// cdc.public.orders  → {op: 'u', after: {...}, before: {...}}"
+      },
+      "etymology": "Change Data Capture is a descriptive compound — capturing changes to data; the term emerged in data warehousing literature in the 1990s and gained new life with the event-streaming era.",
+      "unlockLevel": 6,
+      "tags": [
+        "streaming",
+        "replication",
+        "distributed-data",
+        "data-integration"
+      ],
+      "category": "patterns",
+      "backingCard": {
+        "bookId": "distributed-data-systems",
+        "chapterId": "dds-ch11-stream-processing",
+        "cardId": "dds-ch11-c006"
+      }
+    },
+    {
+      "id": "dds-int-0140-0000-0000-0000-000000000014",
+      "word": "Snapshot Isolation",
+      "pronunciation": "SNAP-shot eye-so-LAY-shun",
+      "partOfSpeech": "noun",
+      "shortDefinition": "A transaction isolation level where each transaction sees a consistent snapshot of the database from its start time.",
+      "simpleDefinition": "Snapshot isolation gives each transaction its own private, point-in-time view of the database. When a transaction starts, it is assigned a transaction ID (or timestamp), and it reads only data whose write transaction committed before that ID. Concurrent writes by other transactions are invisible. This allows long-running reads to run without blocking writers, and vice versa — a key advantage over locking-based isolation.",
+      "longDefinition": "Snapshot isolation was introduced in SQL Server 7.0 and PostgreSQL 7.1, and is now the default isolation level in PostgreSQL (called 'Repeatable Read' in PG, though it provides stronger guarantees than the SQL standard's Repeatable Read). It is implemented using Multi-Version Concurrency Control (MVCC): the storage engine keeps multiple versions of each row, and each transaction's read pointer is fixed at its start-time transaction ID. A transaction reading a row sees the latest version whose write_txn_id <= read_txn_id. Writers create new versions rather than overwriting in place. This means reads never block writes and writes never block reads — a major throughput advantage over strict two-phase locking. The anomaly that snapshot isolation does NOT prevent is write skew: two transactions can each read an overlapping set of rows, make decisions based on that read, and write without conflict, yet produce an outcome that could not occur in any serial execution. Full serializability requires detecting and preventing write skew.",
+      "connector": "Think of snapshot isolation like working on a printout of a document — when you started reading, the document was printed. Other people editing the original file don't affect your copy, and your edits are applied back to the live document when you're done.",
+      "techContext": "PostgreSQL's MVCC implementation assigns each transaction an XID; a row is visible to a transaction if its xmin (creating transaction) is committed and its xmax (deleting transaction) is either absent or not yet committed at the transaction's snapshot.",
+      "exampleSentence": "The 30-minute analytics report ran under snapshot isolation and read consistent data throughout, even though hundreds of OLTP transactions were committing writes to the same tables during the report's execution.",
+      "codeExample": {
+        "language": "sql",
+        "code": "-- PostgreSQL: explicit snapshot isolation transaction\nBEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ;\n\n-- This SELECT sees the database as it existed at BEGIN time\nSELECT sum(balance) FROM accounts;   -- 100,000\n\n-- Another session commits: INSERT INTO accounts VALUES (999, 5000)\n-- Our snapshot does NOT see that new account\nSELECT sum(balance) FROM accounts;   -- still 100,000 (same snapshot)\n\nCOMMIT;"
+      },
+      "etymology": "Snapshot from the photographic sense — a frozen moment in time; isolation from Latin isolatus ('detached'); coined in the seminal 1995 SIGMOD paper by Berenson et al. that formalized isolation levels.",
+      "unlockLevel": 6,
+      "tags": [
+        "transactions",
+        "consistency",
+        "concurrency",
+        "databases"
+      ],
+      "category": "concepts",
+      "backingCard": {
+        "bookId": "distributed-data-systems",
+        "chapterId": "dds-ch07-transactions",
+        "cardId": "dds-ch07-c007"
+      }
+    },
+    {
+      "id": "dds-int-0150-0000-0000-0000-000000000015",
+      "word": "Read Committed",
+      "pronunciation": "RED kuh-MIT-id",
+      "partOfSpeech": "noun",
+      "shortDefinition": "An isolation level that prevents dirty reads and dirty writes but allows non-repeatable reads.",
+      "simpleDefinition": "Read Committed is the default isolation level in PostgreSQL and Oracle. It guarantees two things: you will never read a value written by a transaction that has not yet committed (no dirty reads), and you will never overwrite a value written by another uncommitted transaction (no dirty writes). It does not guarantee stability — if you read the same row twice in one transaction, the second read may return a different value if another transaction committed between the two reads.",
+      "longDefinition": "Read Committed is the most widely used isolation level in production because it provides a reasonable baseline of correctness while maintaining high concurrency. No dirty reads means clients only see data that is durably committed, protecting them from seeing intermediate states of transactions that may roll back. No dirty writes means two concurrent transactions cannot interleave their writes to the same row — the second writer waits for the first to commit or abort before applying its own update. Implementation is via short-duration write locks (held only for the duration of the individual write, not the entire transaction) and no read locks at all (reads see the last committed value at the moment the read executes). The concurrency anomalies allowed under Read Committed include: non-repeatable reads (reading the same row twice yields different values), and read skew (reading two related rows gives a snapshot that never existed atomically). These anomalies are acceptable for many workloads but problematic for backups, integrity checks, and multi-step read-modify-write patterns.",
+      "connector": "Think of Read Committed like reading yesterday's newspaper — you only ever read final, published articles (committed data), not drafts in progress. But if you read the paper at breakfast and again at lunch, the sports scores may have changed between readings.",
+      "techContext": "PostgreSQL defaults to Read Committed, which means a long-running transaction will see different data on each statement execution as other transactions commit — applications that need stable multi-statement reads must explicitly request REPEATABLE READ.",
+      "exampleSentence": "The billing report ran under Read Committed and returned inconsistent totals because concurrent payment transactions committed between the two SELECT statements, making the sub-totals add up to more than the grand total.",
+      "codeExample": {
+        "language": "sql",
+        "code": "-- Demonstrating non-repeatable read under Read Committed\nBEGIN; -- isolation level READ COMMITTED (PG default)\n\nSELECT balance FROM accounts WHERE id = 42;\n-- Returns: 1000\n\n-- Another session commits: UPDATE accounts SET balance = 800 WHERE id = 42\n\nSELECT balance FROM accounts WHERE id = 42;\n-- Returns: 800  ← different value! non-repeatable read\n\nROLLBACK;\n\n-- Fix: upgrade to REPEATABLE READ\nBEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ;\nSELECT balance FROM accounts WHERE id = 42;  -- 1000\n-- (concurrent update commits)\nSELECT balance FROM accounts WHERE id = 42;  -- still 1000"
+      },
+      "etymology": "Read Committed is a descriptive compound: reads are restricted to data that has been committed; the isolation level was formalized in the SQL standard (SQL-92) and the Berenson et al. SIGMOD 1995 taxonomy.",
+      "unlockLevel": 6,
+      "tags": [
+        "transactions",
+        "consistency",
+        "concurrency",
+        "databases"
+      ],
+      "category": "concepts",
+      "backingCard": {
+        "bookId": "distributed-data-systems",
+        "chapterId": "dds-ch07-transactions",
+        "cardId": "dds-ch07-c006"
+      }
+    },
+    {
+      "id": "dds-int-0160-0000-0000-0000-000000000016",
+      "word": "MVCC",
+      "pronunciation": "EM-VEE-SEE-SEE",
+      "partOfSpeech": "noun",
+      "shortDefinition": "Multi-Version Concurrency Control — storing multiple versions of a row so readers never block writers.",
+      "simpleDefinition": "MVCC keeps multiple versions of each row in the database — one for each transaction that has written it. When you read a row, the database shows you the version that was current at your transaction's start time, not the latest uncommitted version. This means reads and writes can proceed concurrently without locking each other out, dramatically improving throughput under mixed read-write workloads.",
+      "longDefinition": "MVCC is the concurrency control mechanism underlying snapshot isolation and PostgreSQL's Repeatable Read. Each row in PostgreSQL has two system columns: xmin (the transaction ID that created this version) and xmax (the transaction ID that deleted/replaced it, or zero if still current). A SELECT in transaction T sees only rows whose xmin is a committed transaction with ID ≤ T's snapshot and whose xmax is either zero or a transaction with ID > T's snapshot (not yet committed at snapshot time). Writers create new row versions rather than overwriting in place; the old versions become invisible to newer transactions but remain visible to older ones. Garbage collection (VACUUM in PostgreSQL) periodically removes versions no longer needed by any open transaction. The cost of MVCC is storage bloat (old versions accumulate until vacuumed) and the need for careful VACUUM tuning on high-churn tables. Other databases using MVCC include Oracle (undo segments), MySQL InnoDB (undo log), CockroachDB, and Spanner.",
+      "connector": "Think of MVCC like a library that keeps every edition of a book rather than discarding old ones when a new edition arrives. Each reader gets the edition current when they walked in — new editions don't disrupt ongoing reading.",
+      "techContext": "PostgreSQL's MVCC implementation means that a long-running VACUUM must chase all open transaction snapshots; a single long-running query can prevent VACUUM from cleaning old row versions, causing table bloat.",
+      "exampleSentence": "MVCC allowed our 20-minute analytics query to read a consistent snapshot of the orders table while hundreds of inserts per second continued without any locking conflict.",
+      "codeExample": {
+        "language": "sql",
+        "code": "-- Inspect PostgreSQL MVCC version chains\n-- See xmin/xmax for row versions\nSELECT\n  id,\n  xmin,       -- transaction that created this version\n  xmax,       -- transaction that deleted/replaced it (0 = current)\n  balance\nFROM accounts\nWHERE id = 42;\n\n-- Check for table bloat from unvacuumed dead tuples\nSELECT\n  relname,\n  n_dead_tup,\n  last_autovacuum\nFROM pg_stat_user_tables\nWHERE n_dead_tup > 10000\nORDER BY n_dead_tup DESC;"
+      },
+      "etymology": "Multi-Version from the storage of multiple row versions; Concurrency Control from the database theory sense of managing simultaneous access; pioneered by David P. Reed at MIT in the late 1970s and independently by Oracle in Version 2.",
+      "unlockLevel": 6,
+      "tags": [
+        "transactions",
+        "concurrency",
+        "databases",
+        "consistency"
+      ],
+      "category": "concepts",
+      "backingCard": {
+        "bookId": "distributed-data-systems",
+        "chapterId": "dds-ch07-transactions",
+        "cardId": "dds-ch07-c008"
+      }
+    },
+    {
+      "id": "dds-int-0170-0000-0000-0000-000000000017",
+      "word": "Lost Update",
+      "pronunciation": "LOST UP-dayt",
+      "partOfSpeech": "noun",
+      "shortDefinition": "A concurrency anomaly where two transactions read-modify-write the same value and one silently overwrites the other.",
+      "simpleDefinition": "A lost update occurs when two transactions both read a value, compute a new value based on what they read, and write their result back — but each transaction's read occurred before the other's write. Transaction A reads 100, transaction B reads 100, A writes 110, B writes 115. A's update is lost because B's write was based on the old value of 100, not the updated 110. The final balance is 115 instead of the correct 125.",
+      "longDefinition": "Lost updates are one of the most common concurrency bugs in database applications and arise from the read-modify-write pattern: read a value, compute a new value, write the result. Under Read Committed isolation (the PostgreSQL default), this pattern is not protected: two concurrent transactions can both read the original value and independently apply their delta, causing one increment to be silently discarded. Solutions include: atomic operations (`UPDATE accounts SET balance = balance + 10 WHERE id = 42`) which are safe because the database applies the arithmetic inside its own lock; explicit pessimistic locking (`SELECT ... FOR UPDATE`) to block concurrent reads of the same row until the transaction commits; or optimistic locking (compare-and-set) which detects the conflict at write time and retries. MVCC snapshot isolation prevents some lost updates (it detects the conflict if both transactions write to the same row within the same snapshot), but not all forms — particularly when using application-level logic that reads one row and writes another. Snapshot isolation + SSI (Serializable Snapshot Isolation) prevents all write anomalies including lost updates.",
+      "connector": "Think of a lost update like two people simultaneously editing the same spreadsheet cell offline — each sees the original value, makes a change, and syncs. The second sync overwrites the first person's work completely, as if it never happened.",
+      "techContext": "We fixed a lost update bug in our inventory decrement by replacing `UPDATE inventory SET quantity = quantity - 1` preceded by a `SELECT` check with a single atomic `UPDATE inventory SET quantity = quantity - 1 WHERE quantity > 0`, removing the window for the anomaly.",
+      "exampleSentence": "The lost update in the ticket booking system oversold the last three seats because two concurrent transactions both read 3 available seats, decremented independently, and each wrote back 2 — missing the other's decrement.",
+      "codeExample": {
+        "language": "sql",
+        "code": "-- UNSAFE: read-modify-write creates lost update window\nBEGIN;\nSELECT balance FROM accounts WHERE id = 42;  -- reads 100\n-- concurrent transaction ALSO reads 100\nUPDATE accounts SET balance = 110 WHERE id = 42;  -- writes 110\nCOMMIT;\n-- Other transaction writes 115, overwriting 110 → lost update\n\n-- SAFE option 1: atomic in-place increment\nUPDATE accounts SET balance = balance + 10 WHERE id = 42;\n\n-- SAFE option 2: pessimistic SELECT FOR UPDATE\nBEGIN;\nSELECT balance FROM accounts WHERE id = 42 FOR UPDATE;  -- blocks other writers\nUPDATE accounts SET balance = balance + 10 WHERE id = 42;\nCOMMIT;"
+      },
+      "etymology": "Lost in the sense of discarded or overlooked; update from the database sense of modifying a record's value; described as a distinct concurrency anomaly in the Gray and Reuter 'Transaction Processing' textbook (1992).",
+      "unlockLevel": 6,
+      "tags": [
+        "transactions",
+        "concurrency",
+        "consistency",
+        "databases"
+      ],
+      "category": "concepts",
+      "backingCard": {
+        "bookId": "distributed-data-systems",
+        "chapterId": "dds-ch07-transactions"
+      }
+    },
+    {
+      "id": "dds-int-0180-0000-0000-0000-000000000018",
+      "word": "Write Skew",
+      "pronunciation": "RYT SKYOO",
+      "partOfSpeech": "noun",
+      "shortDefinition": "A serialization anomaly where two concurrent transactions read overlapping data and make conflicting updates.",
+      "simpleDefinition": "Write skew is a subtle anomaly that occurs when two transactions each read a shared state, each conclude a condition is met, and each write to different rows — so neither triggers a conflict detection mechanism, yet the combined outcome violates an application invariant. Snapshot isolation does not prevent write skew because the two writes touch different rows. Only serializable isolation prevents it.",
+      "longDefinition": "Write skew is a generalization of the lost update anomaly that is harder to detect. The classic example from Kleppmann: an on-call system requires at least one doctor on call at all times. Two doctors, Alice and Bob, are both on call. Both simultaneously read the on-call table, see two doctors, conclude they can go off-call, and each writes a row marking themselves as off-call. Neither write conflicts with the other (they write to different rows), so both commits succeed. The result: zero doctors on call — an invariant violation. Snapshot isolation does not catch this because neither transaction modifies a row the other transaction read; the conflict exists only at the logical level. Preventing write skew requires serializable isolation (2PL with predicate locks, or SSI that tracks read-write conflicts) or application-level serialization (a single-row lock that represents the entire guard condition, called a materializing conflicts). Write skew can occur in booking systems, financial operations, uniqueness checks, and any multi-row constraint that cannot be expressed as a single row's atomic update.",
+      "connector": "Think of write skew like two friends simultaneously agreeing to each buy half of a shared gift — each checks the running total, each sees room for their contribution, and they both add half, resulting in the gift being purchased twice.",
+      "techContext": "PostgreSQL's Serializable isolation (SSI) detects write skew by tracking read sets and detecting rw-dependency cycles at commit time, aborting one of the conflicting transactions with a serialization failure that the application should retry.",
+      "exampleSentence": "The meeting room booking system suffered write skew: two users simultaneously confirmed booking the last available slot in the same time window, both reading 'available' and writing 'booked' to different calendar entries, resulting in a double booking.",
+      "codeExample": {
+        "language": "sql",
+        "code": "-- Write skew example: on-call invariant\n-- Transaction A: Alice checks at least 2 on-call, decides to go off\nBEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ;\nSELECT count(*) FROM on_call WHERE status = 'active';  -- returns 2\nUPDATE on_call SET status = 'off' WHERE doctor = 'alice';\nCOMMIT;\n\n-- Concurrent Transaction B: Bob does the same\nBEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ;\nSELECT count(*) FROM on_call WHERE status = 'active';  -- also returns 2\nUPDATE on_call SET status = 'off' WHERE doctor = 'bob';\nCOMMIT;  -- succeeds! now 0 doctors on call\n\n-- Fix: use SERIALIZABLE isolation\nBEGIN TRANSACTION ISOLATION LEVEL SERIALIZABLE;\n-- SSI will detect the rw-conflict and abort one transaction"
+      },
+      "etymology": "Write from Old English writan ('to incise, record'); skew from Middle English skewen ('to move obliquely') — the combined outcome deviates obliquely from what any serial execution would produce; formalized in the Berenson et al. SIGMOD 1995 paper.",
+      "unlockLevel": 6,
+      "tags": [
+        "transactions",
+        "concurrency",
+        "consistency",
+        "databases"
+      ],
+      "category": "concepts",
+      "backingCard": {
+        "bookId": "distributed-data-systems",
+        "chapterId": "dds-ch07-transactions",
+        "cardId": "dds-ch07-c011"
+      }
+    },
+    {
+      "id": "dds-int-0190-0000-0000-0000-000000000019",
+      "word": "Phantom Read",
+      "pronunciation": "FAN-tum REED",
+      "partOfSpeech": "noun",
+      "shortDefinition": "An anomaly where a re-executed range query returns a different set of rows because another transaction inserted or deleted rows.",
+      "simpleDefinition": "A phantom read occurs when a transaction executes the same range query twice and gets a different set of rows the second time, because another committed transaction inserted or deleted rows that match the query predicate between the two reads. The 'phantom' rows appear or disappear. Snapshot isolation prevents phantoms for exact-key reads but not always for range queries; serializable isolation prevents all phantoms.",
+      "longDefinition": "Phantom reads are a specific type of read anomaly that differs from non-repeatable reads in an important way: a non-repeatable read is about an existing row changing, while a phantom read is about the set of matching rows changing due to insertions or deletions. The SQL standard's Serializable level is defined to prevent phantoms. Range predicate locks or index-range locks are the traditional prevention mechanism in 2PL systems: if a transaction holds a lock on the range 'all accounts with balance > 1000', no other transaction can insert a new account that satisfies that predicate until the first transaction releases the lock. In MVCC systems like PostgreSQL, phantom reads are prevented under Repeatable Read for range scans because the snapshot includes only rows committed before the transaction's start, so subsequent inserts by other transactions are not visible. However, true serializability (SSI) is still required to prevent the broader write skew anomaly class of which phantoms are a subset. PostgreSQL's Serializable isolation uses SSI to detect and prevent phantoms without holding predicate locks.",
+      "connector": "Think of phantom reads like conducting a headcount in a room twice during a fire drill. Between your first count and your second count, people entered or left, so the numbers don't match — the 'extra' people are phantoms to your first query.",
+      "techContext": "Under PostgreSQL REPEATABLE READ, phantom reads are prevented for most workloads because the MVCC snapshot fixes the visible row set at transaction start — but SSI (SERIALIZABLE) is required to prevent the broader write-skew class that subsumes phantoms.",
+      "exampleSentence": "The inventory audit produced phantom reads: it queried items in the 'pending' state twice in the same transaction, and the second query returned three extra rows inserted by a concurrent import job that committed between the two reads.",
+      "codeExample": {
+        "language": "sql",
+        "code": "-- Phantom read scenario under READ COMMITTED\nBEGIN; -- isolation: READ COMMITTED\n\nSELECT count(*) FROM orders WHERE status = 'pending';\n-- Returns: 42\n\n-- Concurrent transaction inserts 3 new 'pending' orders and commits\n\nSELECT count(*) FROM orders WHERE status = 'pending';\n-- Returns: 45  ← phantom rows appeared!\n\nROLLBACK;\n\n-- Prevented under REPEATABLE READ (MVCC snapshot):\nBEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ;\nSELECT count(*) FROM orders WHERE status = 'pending';\n-- Returns: 42\n-- (concurrent inserts commit)\nSELECT count(*) FROM orders WHERE status = 'pending';\n-- Returns: 42  ← snapshot prevents phantoms"
+      },
+      "etymology": "Phantom from Greek phantasma ('apparition') — rows that appear or disappear between reads as if by magic; the term was introduced in the SQL standard and the Gray/Reuter transaction processing taxonomy.",
+      "unlockLevel": 6,
+      "tags": [
+        "transactions",
+        "concurrency",
+        "consistency",
+        "databases"
+      ],
+      "category": "concepts",
+      "backingCard": {
+        "bookId": "distributed-data-systems",
+        "chapterId": "dds-ch07-transactions"
+      }
+    },
+    {
+      "id": "dds-int-0200-0000-0000-0000-000000000020",
+      "word": "Fencing Token",
+      "pronunciation": "FEN-sing TOH-kun",
+      "partOfSpeech": "noun",
+      "shortDefinition": "A monotonically increasing token issued by a lock service to detect and reject stale lock holders.",
+      "simpleDefinition": "A fencing token is a number issued by a lock server that increments with each lock grant. When a client acquires a lock, it receives the current token (say, 34). It must include that token in every write request. The storage server remembers the highest token it has seen and rejects any write with a lower token — so if a stale client holding token 33 tries to write after the lock expired and was re-granted to another client at token 34, the stale write is rejected.",
+      "longDefinition": "Fencing tokens solve the fundamental problem with distributed locks: a client can believe it holds a lock but actually be in a GC pause, process stall, or network partition during which the lock expired and was granted to another client. When the stale client resumes and sends its write, it must be rejected, otherwise two clients both believe they hold the lock and both write — a safety violation. The fencing approach, described by Martin Kleppmann, adds a monotonic counter to the lock lease. Every time the lock changes hands, the counter increments. Clients append the counter to their storage requests. The storage layer (database, object store, ZooKeeper) enforces the fence by rejecting writes whose token is lower than the highest-seen token for that resource. This converts an inherently leaky lease into a safe fencing protocol. Redis Redlock and similar distributed lock implementations are problematic precisely because they do not provide fencing tokens — a node can hold a Redis lock while paused and resume writing after the lock has moved. True fencing requires a storage system that actively participates in enforcing the monotonic token constraint.",
+      "connector": "Think of a fencing token like a numbered wristband at a concert — the venue only lets you backstage if your wristband number is current. If you got wristband 33 but they've reissued 34 to someone else, yours is rejected at the door no matter how legitimate it once was.",
+      "techContext": "ZooKeeper's ephemeral nodes and monotonic zxid provide a natural fencing mechanism — we embed the zxid from lock acquisition into each write to our data store, which rejects writes with stale zxids.",
+      "exampleSentence": "After a 90-second GC pause, the node believed it still held the distributed lock, but the fencing token check caught that a newer client had acquired token 35 while this node was paused at token 34, and rejected the stale write.",
+      "codeExample": {
+        "language": "python",
+        "code": "# Fencing token enforcement in a storage server\nclass FencedStorage:\n    def __init__(self):\n        self._data = {}\n        self._max_token = {}  # highest seen token per key\n\n    def write(self, key: str, value, fencing_token: int) -> bool:\n        current_max = self._max_token.get(key, 0)\n        if fencing_token < current_max:\n            # Stale lock holder — reject\n            raise StaleTokenError(\n                f'Token {fencing_token} rejected; current max is {current_max}'\n            )\n        self._max_token[key] = fencing_token\n        self._data[key] = value\n        return True\n\n    def read(self, key: str):\n        return self._data.get(key)"
+      },
+      "etymology": "Fencing from the sense of enclosing or protecting (Old French fense, 'defence'); token from Latin signum ('mark, sign') — a fencing token is a proof-of-right mark that 'fences off' stale claimants.",
+      "unlockLevel": 6,
+      "tags": [
+        "distributed-data",
+        "consistency",
+        "concurrency",
+        "safety"
+      ],
+      "category": "concepts",
+      "backingCard": {
+        "bookId": "distributed-data-systems",
+        "chapterId": "dds-ch08-trouble-with-distributed-systems"
+      }
+    },
+    {
+      "id": "dds-int-0210-0000-0000-0000-000000000021",
+      "word": "Split Brain",
+      "pronunciation": "SPLIT BRAYN",
+      "partOfSpeech": "noun",
+      "shortDefinition": "A scenario where two nodes each believe they are the leader, potentially causing conflicting writes.",
+      "simpleDefinition": "Split brain occurs when a network partition makes two nodes unable to communicate with each other, and both conclude the other has failed. Each promotes itself to leader and begins accepting writes independently. When the partition heals, the system discovers it has two divergent write histories that must be reconciled — or discarded. This is one of the most dangerous failure modes in distributed systems.",
+      "longDefinition": "Split brain is a consequence of the inherent trade-off in leader election under network partitions. A naive failover system sees the network go down and immediately elects a new leader to maintain availability. But the original leader is still running — it just cannot see the rest of the cluster. Now two nodes each believe they are the authoritative primary and accept conflicting writes. When connectivity restores, the system has two divergent write histories. The consequences range from corrupted data to lost transactions. Prevention strategies include: requiring a quorum (majority) vote to elect a new leader — a minority partition cannot elect itself; using a STONITH (Shoot The Other Node In The Head) mechanism to forcibly shut down the suspected failed leader before promoting a new one; or using consensus protocols (Raft, Paxos) where a node can only act as leader during a single authoritative epoch at a time. PostgreSQL's replication manager Patroni and Kubernetes etcd both use Raft consensus to prevent split brain. A crucial operational point from Kleppmann: the choice is between split brain (both nodes active) or split-mind (neither node active — no availability). Most production systems prefer the availability of split brain plus reconciliation over complete unavailability.",
+      "connector": "Think of split brain like a network outage between two branches of a company: both branches think the other has shut down and each starts issuing its own invoices with overlapping numbers. When communications are restored, the invoice numbering chaos must be untangled.",
+      "techContext": "Patroni prevents split brain by requiring a leader to hold the distributed lock in etcd on every write; if the etcd lease expires because the node is partitioned from etcd, the node immediately steps down rather than continuing as a split-brain primary.",
+      "exampleSentence": "The misconfigured failover triggered split brain when the datacenter network hiccupped: both nodes believed the other had died, both accepted writes for 45 seconds, and reconciling the divergent transaction logs took the team three hours.",
+      "etymology": "Split brain is a medical metaphor borrowed from the neurological condition in which the corpus callosum is severed, causing the two brain hemispheres to act independently and sometimes contradictorily; applied to distributed systems by system administrators in the 1990s.",
+      "unlockLevel": 6,
+      "tags": [
+        "distributed-data",
+        "replication",
+        "fault-tolerance",
+        "consistency"
+      ],
+      "category": "concepts",
+      "backingCard": {
+        "bookId": "distributed-data-systems",
+        "chapterId": "dds-ch08-trouble-with-distributed-systems",
+        "cardId": "dds-ch08-c012"
+      }
+    },
+    {
+      "id": "dds-int-0220-0000-0000-0000-000000000022",
+      "word": "Hinted Handoff",
+      "pronunciation": "HIN-tid HAN-off",
+      "partOfSpeech": "noun",
+      "shortDefinition": "Temporarily storing a write destined for an unavailable node on a healthy node to be forwarded when it recovers.",
+      "simpleDefinition": "Hinted handoff is a write availability technique: when a write arrives for a node that is temporarily unavailable (crashed or unreachable), a different healthy node accepts the write on its behalf and stores it locally with a 'hint' indicating who the intended recipient is. When the unavailable node comes back, the healthy node forwards the buffered writes — the handoff. This keeps write availability high during short outages without sacrificing data.",
+      "longDefinition": "Hinted handoff is part of the Dynamo paper's (Amazon, 2007) availability toolkit and is implemented in Cassandra and DynamoDB. In a leaderless N/W/R quorum system, if one of the W target replicas is down, the coordinator may accept a sloppy quorum write by routing to a substitute node. That substitute node holds the write as a hint — a temporary local record tagged with the original target — and periodically attempts to deliver it to the recovered node. Hinted handoff serves availability for the window of node recovery (typically seconds to minutes), but it is not a substitute for durable replication. If the hinting node itself crashes before delivering the hint, the data can be lost. For this reason, hinted handoff is paired with anti-entropy repair (Merkle-tree-based reconciliation) as a longer-term background consistency mechanism. Cassandra's `hints_directory` stores pending hints on disk and its `nodetool tpstats` exposes hint delivery metrics. Hinted handoff is only meaningful for temporary failures — if a node is permanently removed, hints for it accumulate indefinitely until garbage-collected.",
+      "connector": "Think of hinted handoff like taking a message for a colleague who's temporarily out of the office. You accept the message on their behalf, write 'For Alice when she returns' on a sticky note, and deliver it the moment Alice walks back in.",
+      "techContext": "Cassandra's hinted handoff is configured via `max_hint_window` (default 3 hours) — writes intended for a node that has been down longer than this window are not hinted, because the node's data will be so stale that a full repair is needed instead.",
+      "exampleSentence": "The node went down for a 15-minute network maintenance window, and hinted handoff ensured all 42,000 writes intended for it were delivered within 30 seconds of its return, requiring no manual repair.",
+      "codeExample": {
+        "language": "bash",
+        "code": "# Cassandra: check hinted handoff delivery status\nnodetool tpstats | grep -A2 'HintedHandoff'\n# HintedHandoff\n#   Active: 0\n#   Pending: 1247      ← hints waiting to be delivered\n#   Completed: 89432\n\n# Check hints stored on disk for a specific endpoint\nnodetool hints  # lists pending hints per destination node\n\n# Manually flush hints to a recovered node\nnodetool flush"
+      },
+      "etymology": "Hint from Old English hentan ('to seize, pursue') — a stored clue about the write's intended destination; handoff from American English sports — the passing of the ball to another player; combined in the Dynamo paper (2007).",
+      "unlockLevel": 6,
+      "tags": [
+        "replication",
+        "distributed-data",
+        "availability",
+        "fault-tolerance"
+      ],
+      "category": "patterns",
+      "backingCard": {
+        "bookId": "distributed-data-systems",
+        "chapterId": "dds-ch05-replication",
+        "cardId": "dds-ch05-c012"
+      }
+    },
+    {
+      "id": "dds-int-0230-0000-0000-0000-000000000023",
+      "word": "Sloppy Quorum",
+      "pronunciation": "SLOP-ee KWOR-um",
+      "partOfSpeech": "noun",
+      "shortDefinition": "Accepting writes on substitute nodes outside the normal quorum set during a partition to maintain availability.",
+      "simpleDefinition": "A sloppy quorum relaxes the strict quorum requirement during a network partition. Instead of requiring that W writes land on the N designated nodes for a key, the coordinator accepts writes on any W reachable nodes — even if they are not in the normal replica set for that key. This keeps writes available during partition events at the cost of temporarily violating the strong quorum overlap guarantee.",
+      "longDefinition": "In a strict quorum system with N replicas and write quorum W, a write requires exactly W acknowledgements from the N designated home nodes. If a network partition makes some of those home nodes unreachable, the write fails even if other healthy nodes could absorb it. Sloppy quorums (from Dynamo, 2007) address this: during a partition, the coordinator may route writes to substitute nodes outside the normal home set to fulfill the W count. The substitute nodes store those writes alongside hinted handoff metadata indicating which home node should eventually receive them. This maintains write availability but breaks the W + R > N overlap guarantee — a read quorum from the original home nodes may not include the substitute nodes and thus may miss recent writes. Sloppy quorums are a deliberate trade-off in favor of availability: Dynamo, Cassandra, and Riak allow them by default. Systems where strict consistency is required should disable sloppy quorums and accept the availability reduction.",
+      "connector": "Think of sloppy quorums like a vote where, if three of the usual five committee members can't attend, you accept votes from substitute members from an adjacent committee to hit quorum — the decision is made, but you'll need to brief the regulars when they return.",
+      "techContext": "DynamoDB's default eventual consistency mode uses sloppy quorums — a write returns success after any W nodes respond, including substitutes, which is why a subsequent consistent read may still not see the write immediately.",
+      "exampleSentence": "The AZ-2 outage triggered sloppy quorums: our Cassandra cluster routed writes intended for AZ-2 replicas to AZ-3 nodes, keeping write availability at 100% during the 20-minute outage, with full reconciliation completing within 2 minutes of recovery.",
+      "etymology": "Sloppy as an informal adjective meaning 'imprecise, loosely defined'; quorum from Latin quorum ('of whom') — the minimum number needed for a valid vote; the compound describes a relaxed quorum that accepts votes from non-designated members.",
+      "unlockLevel": 6,
+      "tags": [
+        "replication",
+        "distributed-data",
+        "availability",
+        "quorum"
+      ],
+      "category": "concepts",
+      "backingCard": {
+        "bookId": "distributed-data-systems",
+        "chapterId": "dds-ch05-replication",
+        "cardId": "dds-ch05-c012"
+      }
+    },
+    {
+      "id": "dds-int-0240-0000-0000-0000-000000000024",
+      "word": "Read Repair",
+      "pronunciation": "REED reh-PAIR",
+      "partOfSpeech": "noun",
+      "shortDefinition": "A technique where a coordinator detects stale replicas during a read and updates them in the background.",
+      "simpleDefinition": "Read repair is a lazy consistency mechanism: when a client issues a read that contacts multiple replicas (as in a quorum read), the coordinator compares their responses. If any replica returns an older version than the others, the coordinator sends it an updated write in the background — repairing the inconsistency as a side effect of the read, without waiting for the repair to complete before returning to the client.",
+      "longDefinition": "Read repair is one of the two primary background convergence mechanisms in leaderless replication systems, alongside anti-entropy. It operates opportunistically: a read request naturally contacts R replicas and receives their responses; if they disagree, the coordinator silently issues compensating writes to the lagging replicas before (or after, if asynchronous) returning to the client. Cassandra uses read repair in two modes: synchronous read repair (blocking — the repair write must complete before the client gets its response, used at QUORUM and higher consistency levels) and background read repair (asynchronous — the repair write is issued without blocking the response, used for read paths that don't require consistency). The limitation of read repair is coverage: it only repairs data that is actually being read. Cold data that is rarely accessed can remain inconsistent indefinitely. Anti-entropy repair (using Merkle trees to compare full partition ranges between replicas) covers data that is never read and should be run periodically as a maintenance operation.",
+      "connector": "Think of read repair like a self-healing encyclopedia: whenever you open a page, the system quietly checks whether other copies have a more recent version of that article and updates yours in the background. Articles you never open might remain outdated until someone reads them.",
+      "techContext": "Cassandra's `dc_local_read_repair_chance` setting controls the probability of triggering asynchronous read repair on a given read; in write-heavy, read-light workloads, read repair may not keep replicas sufficiently consistent and periodic full anti-entropy repair becomes necessary.",
+      "exampleSentence": "Read repair kept our Cassandra cluster consistent for hot data automatically, but we still scheduled nightly `nodetool repair` jobs to synchronize cold partitions that were never accessed through the normal read path.",
+      "codeExample": {
+        "language": "bash",
+        "code": "# Cassandra: trigger a full anti-entropy repair on a keyspace\n# (read repair handles hot data; full repair handles cold data)\nnodetool repair --full myapp_keyspace\n\n# Check repair progress\nnodetool compactionstats\n\n# Monitor read repair activity via JMX metrics\nnodetool tpstats | grep ReadRepair\n# ReadRepairStage\n#   Active: 3\n#   Pending: 0\n#   Completed: 14892"
+      },
+      "etymology": "Read from Old English rædan ('to interpret, advise'); repair from Latin reparare ('to prepare again, restore'); the compound describes restoring consistency as a side-effect of a read operation; introduced in the Dynamo paper (2007).",
+      "unlockLevel": 6,
+      "tags": [
+        "replication",
+        "distributed-data",
+        "consistency",
+        "availability"
+      ],
+      "category": "patterns",
+      "backingCard": {
+        "bookId": "distributed-data-systems",
+        "chapterId": "dds-ch05-replication",
+        "cardId": "dds-ch05-c013"
+      }
+    },
+    {
+      "id": "dds-int-0250-0000-0000-0000-000000000025",
+      "word": "Anti-Entropy",
+      "pronunciation": "AN-tee-EN-truh-pee",
+      "partOfSpeech": "noun",
+      "shortDefinition": "A background process that compares replica data and synchronises divergent copies without requiring client reads.",
+      "simpleDefinition": "Anti-entropy is a background repair process that proactively compares the data on two replicas and reconciles any differences — no client request needed. It uses a Merkle tree (a hierarchical hash of the data) to efficiently identify which segments of data differ between replicas, and then transfers only the divergent parts. This keeps replicas consistent even for data that is never accessed through normal reads.",
+      "longDefinition": "Anti-entropy repair is the second pillar of consistency maintenance in leaderless systems alongside read repair. The term comes from information theory — entropy is disorder; anti-entropy is a process that reduces disorder. Because read repair only fixes data that is actively read, long-lived replicas can accumulate divergence on cold partitions. Anti-entropy addresses this by periodically comparing entire partition ranges between replica pairs. The efficient implementation uses Merkle trees: each leaf node of the tree is a hash of a small data range; parent nodes hash their children. Two replicas can compare their tree roots — if the roots match, the entire partition range is identical and no data transfer is needed. If they differ, the tree is traversed to identify only the divergent leaf segments, minimizing data transfer. Cassandra's `nodetool repair` and Riak's active anti-entropy (AAE) implement Merkle-tree-based reconciliation. Anti-entropy is a maintenance operation with significant I/O overhead; scheduling it during off-peak hours and limiting parallelism prevents it from impacting foreground traffic.",
+      "connector": "Think of anti-entropy like a bank's end-of-day reconciliation: regardless of what transactions were processed during the day (the read-repair equivalent), the bank systematically compares every account's balance across all ledgers and corrects any discrepancy — proactively, not waiting for a customer to notice.",
+      "techContext": "Cassandra's incremental anti-entropy repair tracks which data ranges have already been repaired and only re-repairs ranges that have been written to since the last repair, reducing the I/O cost of repair by up to 90% compared to full repairs.",
+      "exampleSentence": "After a disk failure on one replica was replaced with a new node, anti-entropy repair synchronized the 800 GB partition range from the healthy replicas within 4 hours, bringing the new node to full consistency without any application involvement.",
+      "codeExample": {
+        "language": "bash",
+        "code": "# Cassandra incremental repair (only modified ranges since last repair)\nnodetool repair --incremental myapp_keyspace\n\n# Verify replica consistency using Merkle tree validation\nnodetool verify myapp_keyspace events_table\n# Output:\n#   Verifying myapp_keyspace.events_table\n#   Digest mismatch for [range_start, range_end] on replica 10.0.1.5\n#   Inconsistencies detected: 1\n\n# Full repair to fix inconsistencies\nnodetool repair --full myapp_keyspace events_table"
+      },
+      "etymology": "Anti from Greek anti- ('against, opposite'); entropy from Greek en- ('in') + trope ('transformation') — in thermodynamics, entropy measures disorder; in information theory, it measures uncertainty; anti-entropy actively reduces disorder in replica state.",
+      "unlockLevel": 6,
+      "tags": [
+        "replication",
+        "distributed-data",
+        "consistency",
+        "maintenance"
+      ],
+      "category": "patterns",
+      "backingCard": {
+        "bookId": "distributed-data-systems",
+        "chapterId": "dds-ch05-replication",
+        "cardId": "dds-ch05-c013"
+      }
+    },
+    {
+      "id": "dds-int-0260-0000-0000-0000-000000000026",
+      "word": "Clock Skew",
+      "pronunciation": "KLOK SKYOO",
+      "partOfSpeech": "noun",
+      "shortDefinition": "The difference in time readings between two clocks in a distributed system, making timestamps unreliable for ordering.",
+      "simpleDefinition": "Clock skew is the inevitable divergence between the clocks on different machines in a distributed system. Even with NTP synchronization, clocks can drift by tens or hundreds of milliseconds. This makes timestamps unreliable for determining the order of events across nodes — a write on node A with timestamp T might actually happen after a write on node B with timestamp T+50ms if node B's clock is 100ms ahead.",
+      "longDefinition": "Clock skew is a core challenge identified in Chapter 8 of Kleppmann's book and in Leslie Lamport's foundational 1978 paper. Physical clocks on computers use crystal oscillators that drift at different rates, and even NTP-synchronized clocks can be off by tens of milliseconds under normal conditions and by seconds after network partitions or NTP server failures. This makes physical timestamps dangerous for distributed coordination: Last-Write-Wins (LWW) conflict resolution based on timestamps can silently discard the causally later write if it came from a node with a slightly behind clock. Spanner's TrueTime API addresses clock skew by exposing the uncertainty interval — instead of a point timestamp it returns [earliest, latest] bounds. Operations must wait for the uncertainty window to pass before committing, turning clock skew from a silent correctness hazard into an explicit latency cost. For systems that cannot use TrueTime, logical clocks (Lamport timestamps, vector clocks) provide causally-correct ordering without relying on physical time. Kleppmann's recommendation: do not use physical timestamps for distributed ordering; use logical clocks or monotonic sequence numbers assigned by a single authoritative source.",
+      "connector": "Think of clock skew like comparing the arrival times of trains at different stations using each station master's personal watch — each watch was set correctly at some point, but they've all drifted differently since, so you can't reliably use them to determine which train arrived 'first'.",
+      "techContext": "DynamoDB's Last-Write-Wins conflict resolution uses the write timestamp, making it vulnerable to clock skew — a write from a client with a 200ms slow clock can be silently discarded in favor of an earlier write from a client with an accurate clock.",
+      "exampleSentence": "Clock skew caused the distributed trace to show events in the wrong order — the database write appeared to happen 150ms before the HTTP request that triggered it because the DB server's clock was running ahead.",
+      "etymology": "Clock from Middle English clokke; skew from Middle English skewen ('to move obliquely, escape') — a clock skew is a clock that has escaped from the correct time; the term is used in both electronics (propagation skew) and distributed systems.",
+      "unlockLevel": 6,
+      "tags": [
+        "distributed-data",
+        "clocks",
+        "consistency",
+        "ordering"
+      ],
+      "category": "concepts",
+      "backingCard": {
+        "bookId": "distributed-data-systems",
+        "chapterId": "dds-ch08-trouble-with-distributed-systems",
+        "cardId": "dds-ch08-c008"
+      }
+    },
+    {
+      "id": "dds-int-0270-0000-0000-0000-000000000027",
+      "word": "Consistent Hashing",
+      "pronunciation": "kun-SIS-tent HASH-ing",
+      "partOfSpeech": "noun",
+      "shortDefinition": "A partitioning scheme that maps keys and nodes onto a ring, minimising key movement when nodes join or leave.",
+      "simpleDefinition": "Consistent hashing places both data keys and server nodes on a circular hash ring — a ring of all possible hash values from 0 to 2^N. A key is assigned to the first node encountered by walking clockwise around the ring from the key's hash position. When a node is added or removed, only the keys between the new/removed node and its immediate predecessor on the ring need to be moved — on average 1/N of the total keys instead of all of them.",
+      "longDefinition": "Consistent hashing was introduced by Karger et al. in 1997 to solve a key problem with modular hashing: if you have N nodes and use `partition = hash(key) % N`, adding or removing even one node requires remapping roughly all keys to new nodes — an expensive operation in a live cluster. Consistent hashing maps both keys and nodes to a shared hash space and organizes it as a ring. Each key is assigned to the nearest node clockwise on the ring. Adding a node splits responsibility with its clockwise neighbor, moving only that neighbor's portion of keys. Removing a node transfers its keys to its clockwise neighbor. On average, only K/N keys (where K is the total key count) need to move for any single-node change. Virtual nodes (vnodes) are a refinement that assigns each physical node multiple positions on the ring, improving load balance and reducing the variance in key distribution caused by non-uniform node placement. Cassandra, DynamoDB, and Riak all use consistent hashing with virtual nodes. Amazon's Dynamo paper (2007) is the canonical industrial description of consistent hashing in practice.",
+      "connector": "Think of consistent hashing like allocating sections of a circular racetrack to pit crews — adding a new pit crew only takes over a section adjacent to their starting point, not the entire track. Removing one crew only passes their section to their immediate neighbor.",
+      "techContext": "Cassandra's token ring uses a 64-bit Murmur3 hash space and assigns each node a set of token ranges; the `nodetool ring` command visualizes the ring topology and each node's share of the token range.",
+      "exampleSentence": "After adding two nodes to our Cassandra cluster, only 22% of the data moved — consistent hashing ensured we didn't need to re-shuffle the entire dataset as we would have with modular partitioning.",
+      "codeExample": {
+        "language": "python",
+        "code": "import hashlib\nimport bisect\n\nclass ConsistentHashRing:\n    def __init__(self, nodes, virtual_nodes=150):\n        self.ring = {}\n        self.sorted_keys = []\n        for node in nodes:\n            for i in range(virtual_nodes):\n                key = int(hashlib.md5(f'{node}#{i}'.encode()).hexdigest(), 16)\n                self.ring[key] = node\n                bisect.insort(self.sorted_keys, key)\n\n    def get_node(self, key: str) -> str:\n        h = int(hashlib.md5(key.encode()).hexdigest(), 16)\n        idx = bisect.bisect(self.sorted_keys, h) % len(self.sorted_keys)\n        return self.ring[self.sorted_keys[idx]]\n\nring = ConsistentHashRing(['node-1', 'node-2', 'node-3'])\nprint(ring.get_node('user:42'))  # consistently maps to the same node"
+      },
+      "etymology": "Consistent in the mathematical sense of reliably mapping the same key to the same node regardless of the total number of nodes; hashing from the computing sense of mapping input data to a fixed-size value; introduced by Karger et al. at MIT in 1997.",
+      "unlockLevel": 6,
+      "tags": [
+        "partitioning",
+        "distributed-data",
+        "scaling",
+        "databases"
+      ],
+      "category": "concepts",
+      "backingCard": {
+        "bookId": "distributed-data-systems",
+        "chapterId": "dds-ch06-partitioning",
+        "cardId": "dds-ch06-c011"
+      }
+    },
+    {
+      "id": "dds-int-0280-0000-0000-0000-000000000028",
+      "word": "Virtual Nodes",
+      "pronunciation": "VUR-choo-ul NOHDZ",
+      "partOfSpeech": "noun",
+      "shortDefinition": "Multiple hash-ring tokens assigned to each physical node to improve load balance in consistent hashing.",
+      "simpleDefinition": "Virtual nodes (vnodes) assign each physical server multiple positions — tokens — on the consistent hash ring, rather than just one. A cluster of three servers might have 150 vnodes spread around the ring. This ensures each server handles many small, scattered key ranges rather than one large contiguous range, producing a more even data distribution and making adding/removing nodes smoother since many small ranges are redistributed rather than one large one.",
+      "longDefinition": "In basic consistent hashing, each physical node gets one position on the ring. If node positions are not perfectly spaced, some nodes hold far more of the key space than others — load imbalance. Worse, when adding a node, only its clockwise neighbor donates its slice, so the new node gets exactly that one slice and the rest of the cluster remains unchanged. Virtual nodes solve both problems. By giving each physical node V tokens spread around the ring, a new node's V tokens are each adjacent to a different existing node, and each donates a small piece of its range. The new node ends up with data from V different donors, resulting in a smooth redistribution. The load balance is also better: with V=256 virtual nodes per physical node, the coefficient of variation in key count per node approaches the expected 1/√(N*V). Cassandra defaults to 256 vnodes per server. A downside is that anti-entropy repair and streaming operations become more complex because a node's data is spread across many non-contiguous token ranges, requiring range-aware operation parallelism.",
+      "connector": "Think of virtual nodes like a lottery where each player holds 150 tickets scattered across the number range rather than one large block. Your chance of winning (holding a given key) is spread evenly, and adding a new player redistributes a few tickets from many existing players rather than a big chunk from one.",
+      "techContext": "Cassandra's `num_tokens` config (default 256) controls vnode count; high-memory nodes in a mixed cluster should be given proportionally more tokens to reflect their larger capacity share.",
+      "exampleSentence": "After upgrading from single-token to 256-vnode consistent hashing, adding a new Cassandra node resulted in balanced data distribution across all existing nodes instead of transferring one contiguous range from a single neighbor.",
+      "codeExample": {
+        "language": "yaml",
+        "code": "# cassandra.yaml — virtual node configuration\nnum_tokens: 256           # vnodes per physical node (default)\n\n# Alternatively, assign tokens based on node capacity:\n# A node with 2x RAM gets 512 tokens vs 256 for normal nodes\n\n# Verify token distribution after adding a node\n# nodetool ring  shows all tokens and owning nodes\n# nodetool status shows data ownership percentage per node\n\n# Expected: ~33% per node in a 3-node cluster\n# With vnodes, variance is low: e.g. 32.8%, 33.4%, 33.8%"
+      },
+      "etymology": "Virtual from Latin virtualis ('potential, in essence') — virtual nodes are logical constructs that represent portions of a physical node; coined in the context of consistent hashing by Amazon's Dynamo paper (2007) and widely adopted by Cassandra.",
+      "unlockLevel": 6,
+      "tags": [
+        "partitioning",
+        "distributed-data",
+        "scaling",
+        "consistent-hashing"
+      ],
+      "category": "concepts",
+      "backingCard": {
+        "bookId": "distributed-data-systems",
+        "chapterId": "dds-ch06-partitioning"
+      }
+    },
+    {
+      "id": "dds-int-0290-0000-0000-0000-000000000029",
+      "word": "Scatter-Gather",
+      "pronunciation": "SKAT-ur GAT-hur",
+      "partOfSpeech": "noun",
+      "shortDefinition": "A query pattern that fans out to multiple partitions in parallel and merges results at the coordinator.",
+      "simpleDefinition": "Scatter-gather is the execution pattern for queries that cannot be served by a single partition. The coordinator scatters the query to every relevant partition in parallel, each partition processes its local slice independently, and the coordinator gathers the partial results and merges them into a final answer. It enables parallel execution at the cost of requiring a merge step and producing latency proportional to the slowest partition.",
+      "longDefinition": "Scatter-gather is the default execution model for range queries, full-table scans, and aggregations in a partitioned system when the query predicate does not align with the partition key. Instead of routing to a single partition, the coordinator must consult all N partitions simultaneously. This is fundamentally different from a single-partition lookup: latency is determined by the slowest partition (tail latency amplification — in a 100-partition system, one slow partition delays every query); result sets must be merged, sorted, or aggregated across partial responses; and the coordinator becomes a bottleneck for large fan-outs. Elasticsearch uses scatter-gather for every full-text search query (fanned out to all shards, merged at the coordinator). MongoDB uses it for queries on non-shard-key fields. Systems that need to minimize scatter-gather overhead design their partition keys to align with common query patterns — if most queries filter by `user_id`, partitioning by `user_id` routes most queries to a single partition. When scatter-gather is unavoidable, optimizations include: query pruning (skipping partitions that cannot contain matching data via partition statistics or bloom filters), early termination (stop as soon as enough results are gathered for a LIMIT query), and speculative execution (re-issue slow partitions' requests to healthy replicas to eliminate stragglers).",
+      "connector": "Think of scatter-gather like asking every librarian in a large building simultaneously to find all books on a topic, then collecting and organizing all the returned titles at the front desk. It's fast because they work in parallel, but the front desk waits for the slowest librarian.",
+      "techContext": "Elasticsearch scatter-gathers every search query across all primary shards by default; shard-level query filtering using `routing` parameters can restrict the fan-out to only the relevant shards, dramatically improving tail latency.",
+      "exampleSentence": "The full-catalog search scatter-gathered across all 12 index shards and the final result waited on shard 7 — which happened to be on a degraded node — adding 800ms to the query's tail latency.",
+      "codeExample": {
+        "language": "python",
+        "code": "import concurrent.futures\n\ndef scatter_gather_query(query, partitions):\n    \"\"\"Fan out a query to all partitions and merge results.\"\"\"\n    def query_partition(partition):\n        return partition.search(query)\n\n    # Scatter: fan out in parallel\n    with concurrent.futures.ThreadPoolExecutor() as executor:\n        futures = {\n            executor.submit(query_partition, p): p\n            for p in partitions\n        }\n\n    # Gather: collect and merge results\n    all_results = []\n    for future in concurrent.futures.as_completed(futures):\n        all_results.extend(future.result())\n\n    # Merge: sort by relevance score, return top-K\n    return sorted(all_results, key=lambda r: r.score, reverse=True)[:10]"
+      },
+      "etymology": "Scatter from Old English scateran ('to disperse'); gather from Old English gaderian ('to collect'); the compound is a distributed systems idiom for the fan-out/fan-in pattern; widely used in search engine and MapReduce literature.",
+      "unlockLevel": 6,
+      "tags": [
+        "partitioning",
+        "distributed-data",
+        "query-patterns",
+        "scaling"
+      ],
+      "category": "patterns",
+      "backingCard": {
+        "bookId": "distributed-data-systems",
+        "chapterId": "dds-ch06-partitioning"
+      }
+    },
+    {
+      "id": "dds-int-0300-0000-0000-0000-000000000030",
+      "word": "Rebalancing",
+      "pronunciation": "ree-BAL-un-sing",
+      "partOfSpeech": "noun",
+      "shortDefinition": "Moving data between nodes to equalize load after cluster membership changes.",
+      "simpleDefinition": "Rebalancing is the process of redistributing partitions across nodes when the cluster topology changes — a node is added (to take its share of the data), a node fails (its partitions must be re-assigned to surviving nodes), or a node is decommissioned. The goal is to restore an even distribution of data and traffic across all healthy nodes while minimizing the total data movement needed.",
+      "longDefinition": "Rebalancing is an operational necessity in any long-lived partitioned cluster. The fundamental challenge is correctness during the transition: the system must continue serving reads and writes on every key while simultaneously streaming data from one node to another. Three main strategies exist: Fixed number of partitions (Riak, Elasticsearch) — create far more partitions than nodes at the start (e.g., 1000 partitions for 10 nodes = 100 per node); when adding a node, move whole partitions rather than splitting them. This avoids re-hashing but requires knowing the maximum cluster size in advance. Dynamic partitioning (HBase, MongoDB) — partitions split when they grow too large and merge when they shrink, with new partitions re-assigned to less-loaded nodes. This adapts naturally to data growth but requires a metadata service to track partition boundaries. Proportional partitioning with virtual nodes (Cassandra) — each node owns a number of tokens proportional to its capacity; adding a node steals tokens from all existing nodes proportionally. Key operational concerns: rate limiting rebalancing to avoid flooding the network; routing correctness during transition (requests must go to the node currently responsible for a partition, which is changing); and operator oversight (fully automatic rebalancing can amplify failures — adding a degraded node that triggers a rebalance and causes a cascade).",
+      "connector": "Think of rebalancing like redistributing boxes among delivery drivers when one driver calls in sick — their routes must be divided among the remaining drivers, who now each carry a bit more load, while making sure every delivery still gets assigned to someone.",
+      "techContext": "Cassandra rebalancing (called bootstrap for new nodes) streams data from multiple vnodes' current owners simultaneously; the `nodetool status` command shows data-transfer progress and the `concurrent_reads` / `concurrent_writes` settings limit rebalance impact on live traffic.",
+      "exampleSentence": "Adding the fourth Elasticsearch node triggered automatic rebalancing that moved 180 GB of shards over 25 minutes — we rate-limited the cluster.routing.allocation.node_concurrent_recoveries to 2 to prevent the transfers from saturating the network and impacting search latency.",
+      "codeExample": {
+        "language": "bash",
+        "code": "# Elasticsearch: monitor and throttle rebalancing\n# Check current shard rebalancing status\ncurl -s 'http://localhost:9200/_cluster/health?pretty' \\\n  | grep -E 'status|relocating_shards|initializing_shards'\n\n# Throttle rebalance I/O to protect live traffic\ncurl -X PUT 'http://localhost:9200/_cluster/settings' \\\n  -H 'Content-Type: application/json' \\\n  -d '{\n    \"persistent\": {\n      \"indices.recovery.max_bytes_per_sec\": \"50mb\",\n      \"cluster.routing.allocation.node_concurrent_recoveries\": 2\n    }\n  }'"
+      },
+      "etymology": "Re from Latin re- ('again'); balance from Old French balance ('scales, weighing device') via Late Latin bilanx ('having two scale-pans'); rebalancing is restoring equal weight distribution across nodes after a change in cluster membership.",
+      "unlockLevel": 6,
+      "tags": [
+        "partitioning",
+        "distributed-data",
+        "scaling",
+        "operations"
+      ],
+      "category": "operations",
+      "backingCard": {
+        "bookId": "distributed-data-systems",
+        "chapterId": "dds-ch06-partitioning",
+        "cardId": "dds-ch06-c008"
+      }
+    }
+  ]
+}

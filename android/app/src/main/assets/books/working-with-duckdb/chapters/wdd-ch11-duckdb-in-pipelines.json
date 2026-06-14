@@ -1,0 +1,1780 @@
+{
+  "chapterId": "wdd-ch11-duckdb-in-pipelines",
+  "shardIndex": 1,
+  "cards": [
+    {
+      "id": "wdd-ch11-c001",
+      "order": 1,
+      "title": "DuckDB as a Transform Layer",
+      "teaser": "For medium-scale batch transforms, DuckDB on a single machine beats a Spark cluster on cost, latency, and operational complexity — up to a point.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Most pipelines reach for Spark because the data \"might be big.\" In practice, a large fraction of production batch jobs process datasets that fit comfortably on one machine. DuckDB runs those jobs faster and with less operational overhead."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The scale threshold where DuckDB wins:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Under ~500GB uncompressed",
+                "marks": [
+                  "bold"
+                ]
+              },
+              {
+                "text": " (often 1-2TB of Parquet) on a well-provisioned single node"
+              }
+            ],
+            [
+              {
+                "text": "Transforms that are embarrassingly local — no shuffle required, no cross-node join"
+              }
+            ],
+            [
+              {
+                "text": "Teams that want zero cluster management and no JVM tuning"
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "A realistic comparison for a 50GB daily aggregation job:"
+            }
+          ]
+        },
+        {
+          "type": "code",
+          "language": "python",
+          "code": "import duckdb\n\ncon = duckdb.connect()\ncon.execute(\"\"\"\n    COPY (\n        SELECT\n            user_id,\n            DATE_TRUNC('day', event_time) AS day,\n            COUNT(*) AS events,\n            SUM(revenue_cents) AS revenue_cents\n        FROM read_parquet('s3://data-lake/events/dt=*/part-*.parquet')\n        GROUP BY 1, 2\n    )\n    TO 's3://data-lake/aggregates/daily/' (FORMAT PARQUET, PARTITION_BY (day))\n\"\"\")"
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "That runs on a single EC2 instance ("
+            },
+            {
+              "text": "r7g.4xlarge",
+              "marks": [
+                "code"
+              ]
+            },
+            {
+              "text": ", ~$1/hr) in minutes. The equivalent EMR Spark job costs more and takes longer to provision than to run."
+            }
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "tip",
+          "runs": [
+            {
+              "text": "A well-provisioned single node (64 vCPU, 256GB RAM) can process 500GB–1TB of Parquet in a single DuckDB job. Profile first before assuming you need a cluster."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Like realizing you don't need a forklift to move furniture — a strong truck handles most jobs faster and at a tenth of the cost; the forklift is for the warehouse."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "wdd-ch11-c002",
+      "order": 2,
+      "title": "dbt + DuckDB for Local Development",
+      "teaser": "The `dbt-duckdb` adapter lets you run your full dbt project against local Parquet files — no warehouse credentials, no cloud costs, sub-second model runs.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "dbt is the de facto SQL transformation framework for analytics teams. Its typical development loop requires a live warehouse connection (Snowflake, BigQuery, Redshift), which means cloud costs, latency on every "
+            },
+            {
+              "text": "dbt run",
+              "marks": [
+                "code"
+              ]
+            },
+            {
+              "text": ", and credentials in every developer's local environment."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "dbt-duckdb",
+              "marks": [
+                "code"
+              ]
+            },
+            {
+              "text": " swaps the warehouse for a local DuckDB instance:"
+            }
+          ]
+        },
+        {
+          "type": "code",
+          "language": "bash",
+          "code": "pip install dbt-duckdb"
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "A minimal "
+            },
+            {
+              "text": "profiles.yml",
+              "marks": [
+                "code"
+              ]
+            },
+            {
+              "text": " for local development:"
+            }
+          ]
+        },
+        {
+          "type": "code",
+          "language": "yaml",
+          "code": "my_project:\n  target: dev\n  outputs:\n    dev:\n      type: duckdb\n      path: /tmp/dev.duckdb\n      threads: 4\n    prod:\n      type: snowflake\n      # ... warehouse credentials"
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Point your sources at local Parquet files:"
+            }
+          ]
+        },
+        {
+          "type": "code",
+          "language": "yaml",
+          "code": "# sources.yml\nsources:\n  - name: raw\n    meta:\n      external_location: \"read_parquet('data/raw/{{ source.name }}/*.parquet')\""
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "With this setup:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "dbt run",
+                "marks": [
+                  "code"
+                ]
+              },
+              {
+                "text": " executes against local files in seconds"
+              }
+            ],
+            [
+              {
+                "text": "No warehouse charges during development"
+              }
+            ],
+            [
+              {
+                "text": "No shared dev environment conflicts"
+              }
+            ],
+            [
+              {
+                "text": "CI can run "
+              },
+              {
+                "text": "dbt test",
+                "marks": [
+                  "code"
+                ]
+              },
+              {
+                "text": " against fixture data without credentials"
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The same models run unchanged against the production warehouse when the target switches to "
+            },
+            {
+              "text": "prod",
+              "marks": [
+                "code"
+              ]
+            },
+            {
+              "text": "."
+            }
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "info",
+          "runs": [
+            {
+              "text": "dbt-duckdb",
+              "marks": [
+                "code"
+              ]
+            },
+            {
+              "text": " is the officially supported community adapter maintained by the dbt-labs community. As of 2026 it tracks dbt-core closely and supports materializations, snapshots, seeds, and most dbt features."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Like using "
+            },
+            {
+              "text": "sqlite3",
+              "marks": [
+                "code"
+              ]
+            },
+            {
+              "text": " for local Django development before deploying to PostgreSQL — the adapter pattern lets you iterate fast locally without changing any application code."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "wdd-ch11-c003",
+      "order": 3,
+      "title": "CI/CD Testing Against Real Data",
+      "teaser": "Replace test databases and mocked fixtures with DuckDB plus real Parquet snapshots — CI runs full integration tests against production-representative data in seconds, with no credentials.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The standard CI testing problem for data pipelines: you need representative data to test against, but production data requires credentials, has privacy implications, and is slow to query. Common workarounds — mocked fixtures, tiny synthetic datasets — miss real-world edge cases."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "DuckDB solves this with committed Parquet snapshots:"
+            }
+          ]
+        },
+        {
+          "type": "code",
+          "language": "",
+          "code": "tests/\n  fixtures/\n    events_sample.parquet       # 10k rows from production, PII stripped\n    users_sample.parquet\n  test_daily_aggregation.py"
+        },
+        {
+          "type": "code",
+          "language": "python",
+          "code": "import duckdb\nimport pytest\n\n@pytest.fixture\ndef con():\n    return duckdb.connect(':memory:')\n\ndef test_daily_aggregation_excludes_cancelled(con):\n    result = con.execute(\"\"\"\n        SELECT COUNT(*) AS ct\n        FROM read_parquet('tests/fixtures/events_sample.parquet')\n        WHERE status != 'cancelled'\n        GROUP BY DATE_TRUNC('day', event_time)\n    \"\"\").fetchone()\n    assert result[0] > 0\n\ndef test_no_negative_revenue(con):\n    result = con.execute(\"\"\"\n        SELECT COUNT(*) FROM read_parquet('tests/fixtures/events_sample.parquet')\n        WHERE revenue_cents < 0\n    \"\"\").fetchone()\n    assert result[0] == 0"
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "This CI job:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Requires no environment variables or secrets"
+              }
+            ],
+            [
+              {
+                "text": "Runs in the same CI container as any Python test"
+              }
+            ],
+            [
+              {
+                "text": "Executes in seconds, not minutes"
+              }
+            ],
+            [
+              {
+                "text": "Can be run locally with a single "
+              },
+              {
+                "text": "pytest",
+                "marks": [
+                  "code"
+                ]
+              },
+              {
+                "text": " invocation"
+              }
+            ]
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "warning",
+          "runs": [
+            {
+              "text": "Keep fixture files small (under 50MB compressed) and strip PII before committing. For larger fixtures, store on S3 and download as a CI step — don't commit multi-GB Parquet to git."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Like using SQLite in-memory databases for Django unit tests — the test suite runs the real query logic against a real engine, just against a controlled dataset instead of production."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "wdd-ch11-c004",
+      "order": 4,
+      "title": "Local-First Analytics in CLI Tools",
+      "teaser": "Embed DuckDB in a CLI tool and ship full analytical SQL capability to anyone who can run a binary — no server, no setup, no network required.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "CLI tools that need to query structured data typically reach for SQLite or in-memory Pandas operations. DuckDB is a better fit when the queries are analytical: aggregations, window functions, multi-file joins."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "A minimal analytics CLI using DuckDB and Typer:"
+            }
+          ]
+        },
+        {
+          "type": "code",
+          "language": "python",
+          "code": "import typer\nimport duckdb\nfrom pathlib import Path\n\napp = typer.Typer()\n\n@app.command()\ndef summary(data_dir: Path, group_by: str = \"region\"):\n    con = duckdb.connect(':memory:')\n    result = con.execute(f\"\"\"\n        SELECT\n            {group_by},\n            COUNT(*) AS events,\n            SUM(revenue_cents) / 100.0 AS revenue\n        FROM read_parquet('{data_dir}/**/*.parquet')\n        GROUP BY 1\n        ORDER BY revenue DESC\n    \"\"\").df()\n    typer.echo(result.to_string(index=False))\n\nif __name__ == \"__main__\":\n    app()"
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Practical patterns for CLI analytics tools:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Accept a directory of Parquet files or a glob pattern as input — let DuckDB's multi-file reader handle it"
+              }
+            ],
+            [
+              {
+                "text": "Use "
+              },
+              {
+                "text": ":memory:",
+                "marks": [
+                  "code"
+                ]
+              },
+              {
+                "text": " connections for one-shot queries; persist to a "
+              },
+              {
+                "text": ".duckdb",
+                "marks": [
+                  "code"
+                ]
+              },
+              {
+                "text": " file if the user needs to re-query"
+              }
+            ],
+            [
+              {
+                "text": "Stream results with "
+              },
+              {
+                "text": "fetchmany()",
+                "marks": [
+                  "code"
+                ]
+              },
+              {
+                "text": " for large outputs rather than loading everything into a DataFrame"
+              }
+            ],
+            [
+              {
+                "text": "Ship the tool as a single binary using PyInstaller — DuckDB's zero-dependency core bundles cleanly"
+              }
+            ]
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "tip",
+          "runs": [
+            {
+              "text": "The DuckDB CLI binary ("
+            },
+            {
+              "text": "duckdb",
+              "marks": [
+                "code"
+              ]
+            },
+            {
+              "text": ") itself is a complete SQL REPL for Parquet and CSV files with zero installation beyond downloading the binary. It is the fastest way to let non-developers run analytical queries on local data."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Like shipping "
+            },
+            {
+              "text": "ripgrep",
+              "marks": [
+                "code"
+              ]
+            },
+            {
+              "text": " instead of a grep wrapper script — the compiled-in engine is what makes it fast and portable, not the query layer you build around it."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "wdd-ch11-c005",
+      "order": 5,
+      "title": "Edge Analytics and IoT Deployments",
+      "teaser": "DuckDB's small binary footprint and zero-dependency build make it practical for edge nodes and IoT devices — run analytical SQL on collected sensor data without a network hop.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Edge analytics requirements are in direct tension with most database tooling: you need analytical capability (aggregations, downsampling, anomaly detection), but you have constrained RAM, no reliable network, and no operations team to manage a database server."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "DuckDB fits these constraints because:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "The DuckDB binary is ~30MB. The shared library is smaller."
+              }
+            ],
+            [
+              {
+                "text": "It runs on ARM64 (Raspberry Pi, Apple Silicon, AWS Graviton) without modification"
+              }
+            ],
+            [
+              {
+                "text": "In-memory mode leaves no state on the filesystem — useful for stateless edge nodes"
+              }
+            ],
+            [
+              {
+                "text": "It processes Parquet natively, which is the right format for edge telemetry (compressed, columnar)"
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "A Raspberry Pi telemetry aggregation pattern:"
+            }
+          ]
+        },
+        {
+          "type": "code",
+          "language": "python",
+          "code": "import duckdb\nimport schedule\nimport time\n\ndef aggregate_and_forward():\n    con = duckdb.connect(':memory:')\n    summary = con.execute(\"\"\"\n        SELECT\n            sensor_id,\n            DATE_TRUNC('minute', ts) AS minute,\n            AVG(temperature) AS avg_temp,\n            MAX(temperature) AS max_temp,\n            MIN(temperature) AS min_temp\n        FROM read_parquet('/var/data/sensors/today/*.parquet')\n        WHERE ts >= NOW() - INTERVAL '5 minutes'\n        GROUP BY 1, 2\n    \"\"\").fetchall()\n    # forward summary to central store\n    upload_to_central(summary)\n\nschedule.every(5).minutes.do(aggregate_and_forward)"
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The edge node writes raw sensor readings to rolling Parquet files. DuckDB aggregates them every 5 minutes and forwards only the summary — reducing bandwidth by 100x."
+            }
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "info",
+          "runs": [
+            {
+              "text": "DuckDB-Wasm extends edge analytics to web browsers and serverless runtimes. A Cloudflare Worker or Deno Deploy function can run DuckDB-Wasm against a downloaded Parquet file without any server infrastructure."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Like running "
+            },
+            {
+              "text": "ffmpeg",
+              "marks": [
+                "code"
+              ]
+            },
+            {
+              "text": " on a Raspberry Pi to transcode video before uploading — the heavy computation happens at the edge in the capable binary, not in a cloud service."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "wdd-ch11-c006",
+      "order": 6,
+      "title": "DuckDB-Wasm for Browser Analytics",
+      "teaser": "DuckDB-Wasm runs the full DuckDB engine in a browser tab — users can query Parquet files locally with no server, no upload, and no privacy risk.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "DuckDB-Wasm compiles the DuckDB engine to WebAssembly. It runs entirely in the browser, executing analytical SQL against data the user provides — no data ever leaves the client machine."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Setup:"
+            }
+          ]
+        },
+        {
+          "type": "code",
+          "language": "javascript",
+          "code": "import * as duckdb from '@duckdb/duckdb-wasm';\n\nconst JSDELIVR_BUNDLES = duckdb.getJsDelivrBundles();\nconst bundle = await duckdb.selectBundle(JSDELIVR_BUNDLES);\n\nconst worker = new Worker(bundle.mainWorker);\nconst logger = new duckdb.ConsoleLogger();\nconst db = new duckdb.AsyncDuckDB(logger, worker);\nawait db.instantiate(bundle.mainModule, bundle.pthreadWorker);\n\nconst conn = await db.connect();"
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Query a user-uploaded CSV or Parquet file:"
+            }
+          ]
+        },
+        {
+          "type": "code",
+          "language": "javascript",
+          "code": "await db.registerFileHandle(\n    'upload.parquet',\n    file,                    // File from <input type=\"file\">\n    duckdb.DuckDBDataProtocol.BROWSER_FILEREADER,\n    true\n);\n\nconst result = await conn.query(`\n    SELECT region, SUM(revenue) AS total\n    FROM 'upload.parquet'\n    GROUP BY region\n    ORDER BY total DESC\n`);"
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Use cases where DuckDB-Wasm is the right call:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Analytics tools for sensitive data (financial, medical) where server-upload is unacceptable"
+              }
+            ],
+            [
+              {
+                "text": "Offline-capable web apps that query a bundled dataset"
+              }
+            ],
+            [
+              {
+                "text": "Developer tools that need SQL over user-provided files"
+              }
+            ],
+            [
+              {
+                "text": "\"Query your own data\" product features without a backend"
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The ~7MB Wasm bundle is the only download. No server required after the initial page load."
+            }
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "warning",
+          "runs": [
+            {
+              "text": "DuckDB-Wasm is single-threaded in Safari due to "
+            },
+            {
+              "text": "SharedArrayBuffer",
+              "marks": [
+                "code"
+              ]
+            },
+            {
+              "text": " restrictions. Multi-threaded performance (available in Chrome and Firefox with appropriate COOP/COEP headers) is substantially better for large scans."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Like running a Python script in Pyodide — the entire language runtime is in the browser, and the user's data never leaves their machine."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "wdd-ch11-c007",
+      "order": 7,
+      "title": "Embedded Analytics in Applications",
+      "teaser": "Serve analytics queries from within your application process using DuckDB — no separate analytics database, no extra infrastructure, no network hop between app and data.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The traditional embedded analytics architecture for application developers: ship to a warehouse (Snowflake, BigQuery), query from the app via an API, cache aggressively to hide latency. DuckDB offers a simpler model when data fits within a single node."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Patterns for embedded application analytics:"
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Read-only analytics alongside a primary database:",
+              "marks": [
+                "bold"
+              ]
+            }
+          ]
+        },
+        {
+          "type": "code",
+          "language": "python",
+          "code": "# Primary writes go to PostgreSQL; a periodic job exports\n# aggregates to Parquet. The app queries those with DuckDB.\nanalytics = duckdb.connect('analytics.duckdb', read_only=True)\n\n@app.get('/reports/revenue')\nasync def revenue_report(start: date, end: date):\n    result = analytics.execute(\"\"\"\n        SELECT\n            DATE_TRUNC('week', day) AS week,\n            SUM(revenue_cents) / 100.0 AS revenue\n        FROM daily_revenue\n        WHERE day BETWEEN ? AND ?\n        GROUP BY 1\n        ORDER BY 1\n    \"\"\", [start, end]).df()\n    return result.to_dict(orient='records')"
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Materialized analytics table from an export job:",
+              "marks": [
+                "bold"
+              ]
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Run a nightly or hourly job that exports from PostgreSQL to Parquet"
+              }
+            ],
+            [
+              {
+                "text": "DuckDB queries the Parquet directly — no import step needed"
+              }
+            ],
+            [
+              {
+                "text": "Reads are instant; the export job is the only I/O boundary"
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Serving dashboards from a DuckDB file:",
+              "marks": [
+                "bold"
+              ]
+            },
+            {
+              "text": " Tools like Evidence and Rill embed DuckDB as the query engine and build the entire BI layer around it. The "
+            },
+            {
+              "text": ".duckdb",
+              "marks": [
+                "code"
+              ]
+            },
+            {
+              "text": " file is the database; the dashboard tool is the presentation layer."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Where this approach fits:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Internal tools and dashboards with datasets under a few hundred GB"
+              }
+            ],
+            [
+              {
+                "text": "Teams that want analytics without a second database to manage"
+              }
+            ],
+            [
+              {
+                "text": "Applications where read latency is more important than write concurrency"
+              }
+            ]
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "tip",
+          "runs": [
+            {
+              "text": "Multiple application processes can open a DuckDB file in "
+            },
+            {
+              "text": "read_only=True",
+              "marks": [
+                "code"
+              ]
+            },
+            {
+              "text": " mode simultaneously. Reserve write access for a single background job that updates the analytics file. This pattern supports concurrent dashboard readers without violating the single-writer constraint."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Like bundling SQLite for application config instead of running a separate MySQL instance — the embedded model eliminates a whole tier of your architecture."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "wdd-ch11-c008",
+      "order": 8,
+      "title": "ML Feature Engineering with DuckDB",
+      "teaser": "DuckDB's vectorized SQL engine computes ML features over local event data faster than Pandas for most aggregation-heavy patterns — and hands off to training frameworks via Arrow with zero copy.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Feature engineering is often the bottleneck in ML training pipelines. The typical Python pattern — load data into Pandas, compute aggregations, write to a feature store — is slow and memory-intensive on large datasets. DuckDB handles the compute step faster and with less memory pressure."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "A concrete feature computation example:"
+            }
+          ]
+        },
+        {
+          "type": "code",
+          "language": "python",
+          "code": "import duckdb\nimport pyarrow as pa\n\ncon = duckdb.connect()\n\n# Compute user-level features from an event log\nfeatures = con.execute(\"\"\"\n    WITH user_stats AS (\n        SELECT\n            user_id,\n            COUNT(*) AS event_count_30d,\n            COUNT(DISTINCT DATE_TRUNC('day', event_time)) AS active_days_30d,\n            SUM(CASE WHEN event_type = 'purchase' THEN 1 ELSE 0 END) AS purchase_count_30d,\n            MAX(event_time) AS last_event_time,\n            AVG(session_duration_s) AS avg_session_duration\n        FROM read_parquet('data/events/dt=*/part-*.parquet')\n        WHERE event_time >= NOW() - INTERVAL '30 days'\n        GROUP BY user_id\n    )\n    SELECT\n        u.user_id,\n        u.event_count_30d,\n        u.active_days_30d,\n        u.purchase_count_30d,\n        DATEDIFF('day', u.last_event_time, NOW()) AS days_since_last_event,\n        u.avg_session_duration,\n        p.lifetime_value   -- join with entity table\n    FROM user_stats u\n    LEFT JOIN read_parquet('data/profiles/profiles.parquet') p USING (user_id)\n\"\"\").arrow()  # Returns a PyArrow Table, zero-copy to training frameworks\n\n# Hand off to PyTorch / XGBoost / scikit-learn\nimport pandas as pd\ndf = features.to_pandas()  # Or use Arrow directly with torch.utils.data"
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Advantages over Pandas for this pattern:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "DuckDB scans only the needed columns from each Parquet file"
+              }
+            ],
+            [
+              {
+                "text": "Multi-file glob patterns avoid manual file concatenation"
+              }
+            ],
+            [
+              {
+                "text": "The optimizer rewrites the join order automatically"
+              }
+            ],
+            [
+              {
+                "text": "arrow()",
+                "marks": [
+                  "code"
+                ]
+              },
+              {
+                "text": " output is zero-copy to Arrow-native frameworks"
+              }
+            ]
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "info",
+          "runs": [
+            {
+              "text": "For feature stores (Feast, Hopsworks), DuckDB can serve as the offline store engine — computing point-in-time correct feature joins locally before registering features. The "
+            },
+            {
+              "text": "duckdb-feast",
+              "marks": [
+                "code"
+              ]
+            },
+            {
+              "text": " integration is maintained by the Feast community."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Like using a database's GROUP BY instead of a Python for-loop for aggregations — the vectorized engine processes columns in bulk, not one row at a time, and the speedup is the same reason."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "wdd-ch11-c009",
+      "order": 9,
+      "title": "Pipeline Orchestration with Airflow and Prefect",
+      "teaser": "DuckDB integrates with Airflow and Prefect as a lightweight operator — run SQL transforms as pipeline tasks without a warehouse connection or cluster to provision.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "DuckDB works naturally within orchestration frameworks because it is a library, not a service. You do not need an Airflow connection object pointing to a running server — you instantiate DuckDB inside the task function."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Airflow PythonOperator pattern:",
+              "marks": [
+                "bold"
+              ]
+            }
+          ]
+        },
+        {
+          "type": "code",
+          "language": "python",
+          "code": "from airflow import DAG\nfrom airflow.operators.python import PythonOperator\nfrom datetime import datetime\nimport duckdb\n\ndef transform_daily_events(**context):\n    ds = context['ds']  # execution date, e.g. '2026-04-15'\n    con = duckdb.connect('/data/pipeline.duckdb')\n    con.execute(f\"\"\"\n        INSERT INTO daily_summary\n        SELECT\n            user_id,\n            '{ds}'::DATE AS day,\n            COUNT(*) AS events,\n            SUM(revenue_cents) AS revenue_cents\n        FROM read_parquet('/data/raw/dt={ds}/*.parquet')\n        GROUP BY user_id\n    \"\"\")\n    con.close()\n\nwith DAG('daily_transform', start_date=datetime(2026, 1, 1), schedule='@daily') as dag:\n    transform = PythonOperator(\n        task_id='transform_daily_events',\n        python_callable=transform_daily_events,\n    )"
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Prefect task pattern:",
+              "marks": [
+                "bold"
+              ]
+            }
+          ]
+        },
+        {
+          "type": "code",
+          "language": "python",
+          "code": "from prefect import task, flow\nimport duckdb\n\n@task\ndef compute_features(partition_date: str) -> int:\n    with duckdb.connect(':memory:') as con:\n        result = con.execute(\"\"\"\n            SELECT COUNT(DISTINCT user_id)\n            FROM read_parquet(?)\n        \"\"\", [f's3://bucket/events/dt={partition_date}/*.parquet']).fetchone()\n        return result[0]\n\n@flow\ndef feature_pipeline(partition_date: str):\n    n_users = compute_features(partition_date)\n    print(f\"Processed {n_users} users for {partition_date}\")"
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Key integration points:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Use "
+              },
+              {
+                "text": ":memory:",
+                "marks": [
+                  "code"
+                ]
+              },
+              {
+                "text": " connections for stateless tasks; persist to a file for incremental builds"
+              }
+            ],
+            [
+              {
+                "text": "DuckDB's S3 support (via "
+              },
+              {
+                "text": "httpfs",
+                "marks": [
+                  "code"
+                ]
+              },
+              {
+                "text": " extension) works in any environment with S3 credentials"
+              }
+            ],
+            [
+              {
+                "text": "Each task gets its own DuckDB connection — no shared state to manage between workers"
+              }
+            ]
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "warning",
+          "runs": [
+            {
+              "text": "When running DuckDB tasks in parallel on the same Airflow worker, point each task at a different DuckDB file or use "
+            },
+            {
+              "text": ":memory:",
+              "marks": [
+                "code"
+              ]
+            },
+            {
+              "text": ". Two tasks writing to the same "
+            },
+            {
+              "text": ".duckdb",
+              "marks": [
+                "code"
+              ]
+            },
+            {
+              "text": " file simultaneously will contend on the write lock."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Like using a subprocess call to "
+            },
+            {
+              "text": "jq",
+              "marks": [
+                "code"
+              ]
+            },
+            {
+              "text": " in a bash pipeline stage — the tool runs inside the task, not as a service the task connects to."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "wdd-ch11-c010",
+      "order": 10,
+      "title": "Incremental Transforms with DuckDB",
+      "teaser": "DuckDB's INSERT SELECT and COPY patterns support efficient incremental pipeline runs — process only new partitions, append to existing tables, without reprocessing history.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Production pipelines need incremental processing: on each run, process only the new data since the last run. DuckDB supports this through standard SQL patterns combined with its Parquet partition-pruning."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Append-only incremental pattern:",
+              "marks": [
+                "bold"
+              ]
+            }
+          ]
+        },
+        {
+          "type": "code",
+          "language": "python",
+          "code": "import duckdb\nfrom datetime import date, timedelta\n\ndef run_incremental(con: duckdb.DuckDBPyConnection, partition_date: date):\n    # Skip if partition already processed\n    existing = con.execute(\"\"\"\n        SELECT COUNT(*) FROM daily_summary WHERE day = ?\n    \"\"\", [partition_date]).fetchone()[0]\n\n    if existing > 0:\n        print(f\"Partition {partition_date} already processed, skipping\")\n        return\n\n    con.execute(\"\"\"\n        INSERT INTO daily_summary\n        SELECT\n            user_id,\n            ?::DATE AS day,\n            COUNT(*) AS events,\n            SUM(revenue_cents) AS revenue_cents\n        FROM read_parquet(?)\n        GROUP BY user_id\n    \"\"\", [partition_date, f\"s3://bucket/raw/dt={partition_date}/*.parquet\"])"
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Overwrite a date partition (idempotent):",
+              "marks": [
+                "bold"
+              ]
+            }
+          ]
+        },
+        {
+          "type": "code",
+          "language": "sql",
+          "code": "DELETE FROM daily_summary WHERE day = ?;\n\nINSERT INTO daily_summary\nSELECT ...\nFROM read_parquet(?)\nGROUP BY user_id;"
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Export incremental output as partitioned Parquet:",
+              "marks": [
+                "bold"
+              ]
+            }
+          ]
+        },
+        {
+          "type": "code",
+          "language": "sql",
+          "code": "COPY (\n    SELECT *, ?::DATE AS dt FROM staging_table\n)\nTO 's3://bucket/output/' (\n    FORMAT PARQUET,\n    PARTITION_BY (dt),\n    OVERWRITE_OR_IGNORE true\n);"
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The "
+            },
+            {
+              "text": "PARTITION_BY",
+              "marks": [
+                "code"
+              ]
+            },
+            {
+              "text": " clause writes Hive-partitioned Parquet ("
+            },
+            {
+              "text": "dt=2026-04-15/part-0.parquet",
+              "marks": [
+                "code"
+              ]
+            },
+            {
+              "text": "), compatible with downstream Iceberg, Delta, or Hive Metastore catalogs."
+            }
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "tip",
+          "runs": [
+            {
+              "text": "DuckDB's Parquet reader prunes partitions at the file-discovery level. A query filtering on "
+            },
+            {
+              "text": "dt = '2026-04-15'",
+              "marks": [
+                "code"
+              ]
+            },
+            {
+              "text": " reads only the files in that partition directory — the equivalent of Spark partition elimination, but automatic."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Like Git's incremental index — only tracking what changed rather than re-scanning every file on every commit."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "wdd-ch11-c011",
+      "order": 11,
+      "title": "DuckDB with MotherDuck for Hybrid Pipelines",
+      "teaser": "MotherDuck lets you push DuckDB queries to a shared cloud instance — the same SQL runs locally in development and against cloud-hosted data in production with a connection string change.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "MotherDuck is the managed cloud service built on DuckDB. It adds multi-user access, persistent shared databases, and a web query UI while preserving the DuckDB SQL dialect exactly."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The connection model:"
+            }
+          ]
+        },
+        {
+          "type": "code",
+          "language": "python",
+          "code": "import duckdb\n\n# Local development\ncon = duckdb.connect('/tmp/dev.duckdb')\n\n# Production — switch by changing the connection string\ncon = duckdb.connect('md:my_database?motherduck_token=...')"
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The same SQL runs unchanged. MotherDuck's query planner decides whether to execute locally, in the cloud, or split across both (hybrid execution)."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Hybrid execution — the key differentiator:"
+            }
+          ]
+        },
+        {
+          "type": "code",
+          "language": "sql",
+          "code": "-- This query joins a local file (processed on the laptop)\n-- with a cloud table (processed in MotherDuck)\n-- MotherDuck's planner pushes what it can to the cloud\n-- and streams the join result back locally\nSELECT local.user_id, cloud.lifetime_value\nFROM read_parquet('local_events.parquet') local\nJOIN my_database.user_profiles cloud USING (user_id);"
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "When MotherDuck makes sense over plain DuckDB:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Shared data access: multiple analysts query the same dataset concurrently (reads are concurrent; writes still serialize)"
+              }
+            ],
+            [
+              {
+                "text": "Cloud-scale storage: datasets that don't fit on a single developer machine"
+              }
+            ],
+            [
+              {
+                "text": "Audit and access control: MotherDuck adds user-level access policies on top of DuckDB files"
+              }
+            ],
+            [
+              {
+                "text": "Web UI: non-engineers need a browser-based query interface"
+              }
+            ]
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "info",
+          "runs": [
+            {
+              "text": "MotherDuck's pricing model as of 2026 is compute-time based, similar to serverless warehouses. For bursty analytical workloads it can be cheaper than an always-on Snowflake warehouse at the same scale."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Like SQLite plus Turso for edge-replicated database access — the local-first model extends to a cloud tier without changing the programming model."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "wdd-ch11-c012",
+      "order": 12,
+      "title": "Testing Data Quality in Pipelines",
+      "teaser": "DuckDB makes it practical to assert data quality expectations in-pipeline — run SQL assertions against Parquet outputs as a pipeline step, not a post-hoc audit.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Data quality testing in pipelines typically happens too late: a downstream consumer notices bad data and traces it back to a pipeline bug from three days ago. Inline assertions — SQL checks that run immediately after each transform — catch issues at the source."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "A lightweight assertion framework using DuckDB:"
+            }
+          ]
+        },
+        {
+          "type": "code",
+          "language": "python",
+          "code": "import duckdb\nfrom dataclasses import dataclass\nfrom typing import Optional\n\n@dataclass\nclass QualityCheck:\n    name: str\n    query: str\n    expected: int = 0\n    description: str = \"\"\n\ndef run_checks(con: duckdb.DuckDBPyConnection, checks: list[QualityCheck]):\n    failures = []\n    for check in checks:\n        result = con.execute(check.query).fetchone()[0]\n        if result != check.expected:\n            failures.append(f\"{check.name}: expected {check.expected}, got {result}\")\n    if failures:\n        raise ValueError(\"Data quality checks failed:\\n\" + \"\\n\".join(failures))\n\nchecks = [\n    QualityCheck(\n        name=\"no_null_user_ids\",\n        query=\"SELECT COUNT(*) FROM daily_summary WHERE user_id IS NULL\",\n        description=\"user_id must never be null\"\n    ),\n    QualityCheck(\n        name=\"no_negative_revenue\",\n        query=\"SELECT COUNT(*) FROM daily_summary WHERE revenue_cents < 0\",\n        description=\"revenue cannot be negative\"\n    ),\n    QualityCheck(\n        name=\"row_count_sanity\",\n        query=\"SELECT COUNT(*) < 1000 FROM daily_summary\",  # returns 0 if >= 1000 rows\n        description=\"expect at least 1000 rows after transform\"\n    ),\n]\n\ncon = duckdb.connect('pipeline.duckdb')\nrun_checks(con, checks)"
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "This pattern integrates naturally with dbt tests, Great Expectations, or custom pipeline validation. The DuckDB query engine handles millions of rows per assertion in milliseconds."
+            }
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "tip",
+          "runs": [
+            {
+              "text": "Run quality checks against the output Parquet directly — not the DuckDB table. This validates the actual artifact the downstream consumer will read, not just the intermediate state."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Like adding assertions to a function immediately after its critical computation — catching the error at the source rather than debugging a wrong answer three callsites later."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "wdd-ch11-c013",
+      "order": 13,
+      "title": "When DuckDB Is Not Enough",
+      "teaser": "DuckDB has clear upper bounds — knowing the concurrency, scale, and write-frequency thresholds where you need Spark or a warehouse prevents architectural debt.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "DuckDB is the right tool for a specific range. Being honest about the upper bound prevents building on DuckDB and then re-architecting under load."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The scale ceiling:",
+              "marks": [
+                "bold"
+              ]
+            },
+            {
+              "text": " DuckDB processes data on a single node. A well-provisioned instance handles 500GB–1TB of Parquet well. Above ~2TB of active data per job, or when the data does not fit on one machine's disk, a distributed system is necessary. Spark, Trino, or a cloud warehouse replaces DuckDB at this tier."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The concurrency ceiling:",
+              "marks": [
+                "bold"
+              ]
+            },
+            {
+              "text": " DuckDB has one writer. If your pipeline writes from multiple concurrent workers, you need either:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "A message queue to serialize writes through a single DuckDB writer"
+              }
+            ],
+            [
+              {
+                "text": "A warehouse (Snowflake, BigQuery) with native write concurrency support"
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "For multi-user write workloads, DuckDB is not the right tool regardless of data size."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Write frequency:",
+              "marks": [
+                "bold"
+              ]
+            },
+            {
+              "text": " High-frequency single-row inserts — thousands per second from concurrent clients — are not what DuckDB was built for. A stream-processing system (Kafka + Flink, or a streaming warehouse like Apache Paimon) handles this pattern."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Operational requirements:",
+              "marks": [
+                "bold"
+              ]
+            },
+            {
+              "text": " If you need:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Point-in-time recovery beyond a single backup"
+              }
+            ],
+            [
+              {
+                "text": "Multi-region replication"
+              }
+            ],
+            [
+              {
+                "text": "Role-based access control at the row level"
+              }
+            ],
+            [
+              {
+                "text": "Live query monitoring with query kill capabilities"
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "...you need a managed warehouse or a server-based database. DuckDB does not provide these operationally."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Summary of when to graduate from DuckDB:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Data per job consistently exceeds 2TB"
+              }
+            ],
+            [
+              {
+                "text": "Multiple concurrent writers from separate processes"
+              }
+            ],
+            [
+              {
+                "text": "High-frequency row-level inserts (>1000/sec)"
+              }
+            ],
+            [
+              {
+                "text": "Multi-user analytics with row-level access control"
+              }
+            ],
+            [
+              {
+                "text": "HA / replication requirements for the analytics tier"
+              }
+            ]
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "warning",
+          "runs": [
+            {
+              "text": "The temptation to \"just add another DuckDB node\" does not work. DuckDB is not a distributed system. There is no horizontal scaling story. When you need scale-out, the migration to Spark or a warehouse is a real re-architecture, not a configuration change."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Like a single-threaded Node.js server — incredibly efficient for its intended workload, but the moment you need true parallelism across requests, you need a different model, not a bigger machine."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "wdd-ch11-c014",
+      "order": 14,
+      "title": "Choosing DuckDB vs Spark vs Warehouse",
+      "teaser": "The decision framework comes down to three axes — data size, write concurrency, and operational requirements — and DuckDB wins cleanly in the zone where all three are modest.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "A practical decision framework:"
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Choose DuckDB when:",
+              "marks": [
+                "bold"
+              ]
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Batch jobs process under ~500GB of data per run"
+              }
+            ],
+            [
+              {
+                "text": "One writer at a time is acceptable (scheduled jobs, not concurrent clients)"
+              }
+            ],
+            [
+              {
+                "text": "No external service can be installed (CI, edge, browser, CLI tools)"
+              }
+            ],
+            [
+              {
+                "text": "Fast local iteration matters more than horizontal scalability"
+              }
+            ],
+            [
+              {
+                "text": "Dataset fits on a single node with room to spare"
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Choose Spark/Trino/Flink when:",
+              "marks": [
+                "bold"
+              ]
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Data per job exceeds 1–2TB"
+              }
+            ],
+            [
+              {
+                "text": "The transform requires a distributed shuffle (large joins on non-colocated keys)"
+              }
+            ],
+            [
+              {
+                "text": "You already have a cluster and the operational cost is sunk"
+              }
+            ],
+            [
+              {
+                "text": "Real-time or near-real-time stream processing is required"
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Choose a managed warehouse (Snowflake, BigQuery, Redshift) when:",
+              "marks": [
+                "bold"
+              ]
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Multiple concurrent users query and write to shared data"
+              }
+            ],
+            [
+              {
+                "text": "You need row-level access control and audit logs"
+              }
+            ],
+            [
+              {
+                "text": "Data governance, data catalog integration, or compliance features are required"
+              }
+            ],
+            [
+              {
+                "text": "The operations team is not equipped to manage the infrastructure"
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The hybrid that works well in practice:",
+              "marks": [
+                "bold"
+              ]
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "DuckDB for local development, CI testing, and medium-scale batch jobs"
+              }
+            ],
+            [
+              {
+                "text": "A managed warehouse for the production shared tier"
+              }
+            ],
+            [
+              {
+                "text": "dbt-duckdb",
+                "marks": [
+                  "code"
+                ]
+              },
+              {
+                "text": " in local dev, "
+              },
+              {
+                "text": "dbt-snowflake",
+                "marks": [
+                  "code"
+                ]
+              },
+              {
+                "text": " (or equivalent) in production"
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "This is not a compromise — it is the correct tool at each layer. dbt makes switching between the two invisible to the SQL author."
+            }
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "info",
+          "runs": [
+            {
+              "text": "For teams currently running Spark for jobs under 500GB: a DuckDB migration typically reduces job runtime by 5-10x and eliminates cluster provisioning latency entirely. The migration is usually a SQL-for-SQL substitution — the queries change minimally, the infrastructure cost drops substantially."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Like choosing between a laptop, a workstation, and a compute cluster — the right answer depends on the job size, not a general preference for one over the others."
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

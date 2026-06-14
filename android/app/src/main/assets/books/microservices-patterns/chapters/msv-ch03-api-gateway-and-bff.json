@@ -1,0 +1,1502 @@
+{
+  "chapterId": "msv-ch03-api-gateway-and-bff",
+  "shardIndex": 3,
+  "cards": [
+    {
+      "id": "msv-ch03-c001",
+      "order": 1,
+      "title": "Why Direct Client-to-Service is Bad at Scale",
+      "teaser": "In a microservices system with dozens of services, letting clients talk directly to each one creates a coupling nightmare — each client must know every service's address, speak its protocol, and handle its failure modes. The edge layer exists to fix this.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "In a monolith, a mobile app makes one HTTP call and gets everything it needs. In a microservices system, that same screen might require data from User Service, Order Service, Inventory Service, and Pricing Service. Without an edge layer, the client must:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Know the addresses of all four services"
+              }
+            ],
+            [
+              {
+                "text": "Handle four independent failure modes — if Pricing is down, does the page break entirely?"
+              }
+            ],
+            [
+              {
+                "text": "Serialize and deserialize potentially incompatible response formats"
+              }
+            ],
+            [
+              {
+                "text": "Make four round-trips over a mobile network, each adding latency"
+              }
+            ],
+            [
+              {
+                "text": "Re-authenticate against each service separately"
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "This is the "
+            },
+            {
+              "text": "chatty client problem",
+              "marks": ["bold"]
+            },
+            {
+              "text": ". It surfaces two deeper issues. First, "
+            },
+            {
+              "text": "client-to-service coupling",
+              "marks": ["italic"]
+            },
+            {
+              "text": ": every internal refactor — splitting Order Service into Order and Fulfillment — must be co-ordinated with every client. Second, "
+            },
+            {
+              "text": "protocol mismatch",
+              "marks": ["italic"]
+            },
+            {
+              "text": ": internal services may communicate over gRPC or message queues, but mobile clients need HTTP/JSON."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Netflix encountered this problem at scale in the early 2010s when they decomposed their monolith. Before introducing an edge layer, their iOS app was making 20+ individual service calls per screen render. Latency was poor and reliability was fragile. The API Gateway pattern was their direct response."
+            }
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "info",
+          "runs": [
+            {
+              "text": "The rule of thumb: if a client needs data from more than two services to render a single view, an edge layer is warranted. Below that threshold, direct client-to-service calls may be acceptable during early development."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Without an edge layer, clients must know about every internal service — and every time you reorganize the backend, every client breaks. The gateway puts a stable facade in front of unstable internals."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "msv-ch03-c002",
+      "order": 2,
+      "title": "API Gateway Responsibilities",
+      "teaser": "An API Gateway is not just a reverse proxy. It is the edge layer that handles routing, authentication, rate limiting, response aggregation, protocol translation, and observability — all the cross-cutting concerns that every service would otherwise have to implement independently.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The API Gateway sits between clients and the internal service mesh. It has a well-defined set of responsibilities:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Routing",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — map incoming request paths and methods to the correct upstream service. "
+              },
+              {
+                "text": "POST /orders",
+                "marks": ["code"]
+              },
+              {
+                "text": " routes to Order Service; "
+              },
+              {
+                "text": "GET /products/{id}",
+                "marks": ["code"]
+              },
+              {
+                "text": " routes to Catalog Service."
+              }
+            ],
+            [
+              {
+                "text": "Authentication and authorization",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — validate JWT tokens, enforce OAuth scopes, reject unauthenticated requests before they touch internal services."
+              }
+            ],
+            [
+              {
+                "text": "Rate limiting",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — enforce per-client or per-endpoint call quotas to prevent abuse and protect downstream capacity."
+              }
+            ],
+            [
+              {
+                "text": "Response aggregation",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — fan out to multiple services, collect responses, and compose a single response for the client."
+              }
+            ],
+            [
+              {
+                "text": "Protocol translation",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — accept HTTP/REST from clients; call internal gRPC or Thrift services. Shield clients from internal protocol choices."
+              }
+            ],
+            [
+              {
+                "text": "Observability",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — emit request logs, metrics (latency, error rate, throughput), and distributed traces. A centralized gateway is the ideal place to capture the full inbound request picture."
+              }
+            ],
+            [
+              {
+                "text": "TLS termination",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — decrypt inbound TLS at the edge so internal services communicate over the lower-overhead internal network."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The value of centralizing these concerns: each internal service no longer needs its own auth middleware, rate limiting logic, or request logging setup. The gateway enforces policy uniformly across all services — a security policy change applies everywhere at once."
+            }
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "warning",
+          "runs": [
+            {
+              "text": "The gateway should handle cross-cutting infrastructure concerns only. Business logic — pricing calculations, validation rules, orchestration — belongs in services, not in the gateway. Violating this line is the \"smart gateway\" anti-pattern covered later in this chapter."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The API Gateway is the single door into your system — it checks credentials, enforces limits, routes the request to the right room, and can answer questions on behalf of multiple rooms at once."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "msv-ch03-c003",
+      "order": 3,
+      "title": "Backend-for-Frontend (BFF) — One Gateway Per Client Type",
+      "teaser": "A single API Gateway built to serve every client type ends up serving none of them well. The Backend-for-Frontend pattern replaces it with purpose-built gateways — one for the web app, one for mobile, one for partner APIs — each optimized for its client's exact needs.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "A general-purpose gateway is a compromise machine. The web app wants large JSON payloads with full entity data. The mobile app wants compact responses with only the fields it renders. The partner API wants stable, versioned contracts with predictable field names. A single gateway serving all three must either over-deliver to everyone (wasting bandwidth on mobile) or under-deliver to everyone (forcing clients to make follow-up calls)."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The "
+            },
+            {
+              "text": "Backend-for-Frontend (BFF)",
+              "marks": ["bold"]
+            },
+            {
+              "text": " pattern solves this by introducing a separate backend layer per client type:"
+            }
+          ]
+        },
+        {
+          "type": "code",
+          "language": "text",
+          "content": "               +------------------+\n Web Browser   |   Web BFF        |---+\n               +------------------+   |\n                                      |   +------------------+\n iOS / Android +------------------+   +-->| Internal Services |\n App           |   Mobile BFF     |---+   | (Orders, Users,   |\n               +------------------+   |   |  Catalog, etc.)   |\n                                      |   +------------------+\n Partner API   +------------------+   |\n Client        |   Partner BFF    |---+\n               +------------------+"
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Each BFF owns its own aggregation logic, response shaping, and caching policy. The Web BFF fetches full product details because the desktop page has room for them. The Mobile BFF requests only the thumbnail URL, price, and name. The Partner BFF adds field aliasing to maintain backward compatibility with the external API contract."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The boundary rule for BFF ownership: "
+            },
+            {
+              "text": "each BFF is owned by the team that owns its client",
+              "marks": ["italic"]
+            },
+            {
+              "text": ". The mobile team owns the Mobile BFF. This alignment eliminates the coordination overhead of a shared gateway team acting as a bottleneck for every client change."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Instead of one gateway awkwardly serving every client, give each client type its own dedicated gateway that speaks exactly that client's language — the mobile team owns the mobile gateway, the web team owns the web gateway."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "msv-ch03-c004",
+      "order": 4,
+      "title": "Sam Newman's BFF Pattern — Origin and Motivation",
+      "teaser": "Sam Newman named and documented the BFF pattern based on real pain observed at SoundCloud and other organizations that had tried to maintain a single general-purpose API gateway. The pattern is not about technology — it is about team ownership boundaries.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Sam Newman documented the BFF pattern in his 2015 article \"Pattern: Backends For Frontends\" (samnewman.io/patterns/architectural/bff/) and expanded on it in "
+            },
+            {
+              "text": "Building Microservices",
+              "marks": ["italic"]
+            },
+            {
+              "text": " (O'Reilly, 2015 and 2021). The pattern emerged from observing a specific failure mode: organizations building shared API layers that became organizational bottlenecks."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The motivating problem Newman described: SoundCloud and similar organizations found that a shared API team became a dependency for both the web team and the mobile team. Every time the iOS app needed a new endpoint or a different response shape, it had to submit a request to the shared API team, wait in the queue, and hope the implementation matched its needs. The mobile product moved at API-team speed, not mobile-team speed."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Newman's insight was organizational as much as architectural: "
+            },
+            {
+              "text": "the team consuming an API is best positioned to understand what that API needs to return",
+              "marks": ["italic"]
+            },
+            {
+              "text": ". Giving each consumer team ownership of their own BFF eliminates the bottleneck and allows frontend and backend to co-evolve at the same pace."
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "When to create a separate BFF:",
+                "marks": ["bold"]
+              },
+              {
+                "text": " when two clients have meaningfully different data needs, interaction patterns, or team ownership."
+              }
+            ],
+            [
+              {
+                "text": "When not to create a separate BFF:",
+                "marks": ["bold"]
+              },
+              {
+                "text": " when the differences are minor and the overhead of another service outweighs the benefit. Two nearly-identical clients can share one BFF."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "info",
+          "runs": [
+            {
+              "text": "Newman's rule of thumb: \"Have one BFF per user experience, not one per client app.\" If your iOS and Android apps have identical interaction patterns and the same team, one Mobile BFF is correct. Two apps, one BFF. If they diverge significantly (one is a thin native shell, one is a rich app), split them."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Newman's BFF pattern is really about removing a shared bottleneck: let the team building the client also build the thin gateway layer that serves it, so they don't have to wait in line at a shared API team."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "msv-ch03-c005",
+      "order": 5,
+      "title": "GraphQL Gateway and Apollo Federation",
+      "teaser": "GraphQL offers a schema-first alternative to REST-based API gateways. Apollo Federation extends this to microservices by letting each service own part of the graph, then composing them into a unified supergraph — eliminating the aggregation problem without a monolithic gateway codebase.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "A GraphQL gateway exposes a single endpoint ("
+            },
+            {
+              "text": "POST /graphql",
+              "marks": ["code"]
+            },
+            {
+              "text": ") and allows clients to specify exactly the fields they need in a typed query. This eliminates two classic REST gateway problems: over-fetching (getting more data than needed) and under-fetching (needing multiple requests to assemble a view)."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The naive GraphQL gateway approach puts all resolvers in one service — which recreates the monolithic gateway problem at the code level. "
+            },
+            {
+              "text": "Apollo Federation",
+              "marks": ["bold"]
+            },
+            {
+              "text": " solves this by distributing the graph across services:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Each microservice defines its own GraphQL subgraph schema",
+                "marks": ["bold"]
+              },
+              {
+                "text": ", owning the types and fields that belong to its domain. Order Service defines "
+              },
+              {
+                "text": "Order",
+                "marks": ["code"]
+              },
+              {
+                "text": " and "
+              },
+              {
+                "text": "LineItem",
+                "marks": ["code"]
+              },
+              {
+                "text": "; User Service defines "
+              },
+              {
+                "text": "User",
+                "marks": ["code"]
+              },
+              {
+                "text": "."
+              }
+            ],
+            [
+              {
+                "text": "A Router (the Apollo Router or a custom gateway)",
+                "marks": ["bold"]
+              },
+              {
+                "text": " composes all subgraph schemas into a unified supergraph at startup and plans query execution across services."
+              }
+            ],
+            [
+              {
+                "text": "Query planning",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — the router analyzes an incoming query and determines which subgraphs to call, in which order, and how to join their results."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Schema stitching was an earlier approach that merged schemas at the gateway level without federation directives. It required more manual coordination and is now largely superseded by Federation v2 for new systems."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "GraphQL Federation is not universally appropriate. It adds complexity to service development (every service must expose a GraphQL endpoint), query planning is non-trivial to debug, and N+1 query problems require explicit DataLoader patterns. For APIs with simple, stable response shapes, REST with a BFF is often simpler."
+            }
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "info",
+          "runs": [
+            {
+              "text": "GitHub, Twitter, and Shopify moved public APIs to GraphQL. Netflix uses GraphQL Federation internally with DGS (Domain Graph Service) framework. The pattern is mature, but the operational overhead of schema governance and query cost analysis should be planned for from day one."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "GraphQL lets clients ask for exactly the data they need. Federation goes further by letting each microservice own its slice of the data model — the gateway then stitches their answers together automatically when a query spans multiple services."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "msv-ch03-c006",
+      "order": 6,
+      "title": "Rate Limiting at the Gateway",
+      "teaser": "Rate limiting at the edge prevents any single client from exhausting downstream service capacity. Three algorithms — token bucket, leaky bucket, and sliding window — each make different tradeoffs between burst tolerance, precision, and implementation cost.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Rate limiting is applied at the gateway rather than at individual services because the gateway sees all traffic and can enforce quotas consistently across every client. Three algorithms are in common use:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Token Bucket",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — a bucket holds up to N tokens. Each request consumes one token. Tokens are refilled at a fixed rate (e.g., 100 tokens/second). If the bucket is empty, the request is rejected. Allows bursting up to bucket capacity. Most common algorithm in production gateways."
+              }
+            ],
+            [
+              {
+                "text": "Leaky Bucket",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — requests enter a queue and are processed at a fixed outflow rate regardless of input rate. Smooths traffic but caps burst tolerance. Useful for protecting downstream services with strict throughput limits, not user-facing APIs."
+              }
+            ],
+            [
+              {
+                "text": "Sliding Window",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — counts requests in a rolling time window (e.g., the last 60 seconds). More accurate than fixed-window counters (which allow 2x burst at window boundaries) but requires storing per-client request timestamps."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Rate limits are typically keyed by:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "API key or client ID",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — the most common; per-consumer quota"
+              }
+            ],
+            [
+              {
+                "text": "IP address",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — coarser; used as a defense against unauthenticated abuse"
+              }
+            ],
+            [
+              {
+                "text": "User identity",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — fine-grained; applied after auth"
+              }
+            ],
+            [
+              {
+                "text": "Route",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — per-endpoint limits (e.g., expensive search endpoints get stricter limits)"
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The gateway should return "
+            },
+            {
+              "text": "HTTP 429 Too Many Requests",
+              "marks": ["code"]
+            },
+            {
+              "text": " with a "
+            },
+            {
+              "text": "Retry-After",
+              "marks": ["code"]
+            },
+            {
+              "text": " header when limits are exceeded. Clients that handle 429 correctly implement exponential backoff — clients that do not will hammer the gateway and waste quota re-tries."
+            }
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "info",
+          "runs": [
+            {
+              "text": "Kong Gateway, AWS API Gateway, and Nginx Plus all implement token bucket rate limiting natively. Redis is the standard backing store for distributed rate limit state — it supports atomic increment-and-check operations with TTL in a single command."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Rate limiting is a bouncer at the door: token bucket gives you a clip of bullets that refills over time; leaky bucket drains at a fixed speed regardless of how fast you fill it; sliding window counts how many times you've knocked in the last minute."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "msv-ch03-c007",
+      "order": 7,
+      "title": "Auth at the Gateway — JWT Validation, OAuth, and Capability Tokens",
+      "teaser": "The gateway is the natural place to centralize authentication — every request passes through it, making it the one place where token validation, OAuth flow handling, and capability enforcement can be applied consistently without burdening individual services.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Authentication at the gateway follows a two-stage model: verify the caller's identity, then determine what they are allowed to do."
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "JWT validation",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — the gateway verifies the JWT signature against a public key (RS256) or shared secret (HS256), checks expiry ("
+              },
+              {
+                "text": "exp",
+                "marks": ["code"]
+              },
+              {
+                "text": " claim), and validates the issuer ("
+              },
+              {
+                "text": "iss",
+                "marks": ["code"]
+              },
+              {
+                "text": "). If validation passes, the gateway extracts claims and forwards them to services in trusted headers (e.g., "
+              },
+              {
+                "text": "X-User-Id",
+                "marks": ["code"]
+              },
+              {
+                "text": ", "
+              },
+              {
+                "text": "X-Scopes",
+                "marks": ["code"]
+              },
+              {
+                "text": "). Services trust the gateway's headers without re-validating tokens."
+              }
+            ],
+            [
+              {
+                "text": "OAuth 2.0 flows",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — the gateway may act as the OAuth resource server (validating access tokens from an external Authorization Server) or it may handle token exchange (accepting a user session cookie and exchanging it for an internal service token)."
+              }
+            ],
+            [
+              {
+                "text": "Capability tokens",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — short-lived, narrowly-scoped tokens granted for a specific operation (e.g., \"download this file once\"). The gateway issues them on request and validates them on redemption. Useful for pre-signed URL patterns."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The security model: "
+            },
+            {
+              "text": "the gateway is the trust boundary",
+              "marks": ["italic"]
+            },
+            {
+              "text": ". Requests that have passed the gateway are trusted by internal services. This means the internal network must be protected — if a caller can reach services directly, bypassing the gateway, auth enforcement breaks down. Service mesh mTLS enforces the boundary at the network layer."
+            }
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "warning",
+          "runs": [
+            {
+              "text": "Do not rely on the gateway alone for authorization. The gateway handles authentication (who is this caller?) and coarse-grained authorization (does this caller have any access?). Fine-grained authorization (can this user access this specific resource?) belongs in the service that owns the resource, using the identity claims forwarded by the gateway."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The gateway checks your ID at the door and stamps your hand with your permissions. Inside, individual services check the stamp when you ask to do something sensitive — the gateway handled \"are you who you say you are,\" but services still decide \"are you allowed to do this specific thing.\""
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "msv-ch03-c008",
+      "order": 8,
+      "title": "Response Aggregation — Fan-Out and Composition",
+      "teaser": "Response aggregation is the gateway pattern where a single client request triggers calls to multiple upstream services, and the gateway assembles their responses into one coherent payload. Done well, it cuts client latency and simplifies client code. Done poorly, it creates a chatty internal network.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Consider a product detail page: it needs product data (Catalog Service), inventory availability (Inventory Service), pricing (Pricing Service), and user's review (Review Service). Without aggregation, the client makes four calls. With aggregation, the gateway makes four calls and the client makes one."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Aggregation strategies:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Parallel fan-out",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — the gateway calls all upstream services simultaneously and waits for all responses. Total latency is the latency of the slowest service. Preferred when service calls are independent."
+              }
+            ],
+            [
+              {
+                "text": "Sequential fan-out",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — call one service, use its response to parameterize the next call. Required when Service B needs Service A's response (e.g., look up user ID, then fetch user's orders using that ID). Total latency is the sum of all calls."
+              }
+            ],
+            [
+              {
+                "text": "Partial response",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — if one upstream service fails, the gateway returns a degraded response with the available data rather than a complete failure. This requires defining which fields are required vs optional."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The gateway should set aggressive timeouts on upstream calls. If Pricing Service takes 3 seconds and the other services take 100ms, total latency is 3 seconds. A 500ms timeout with a fallback (\"price temporarily unavailable\") produces a much better user experience."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Netflix's Hystrix (now maintained as Resilience4j) popularized the "
+            },
+            {
+              "text": "circuit breaker",
+              "marks": ["bold"]
+            },
+            {
+              "text": " pattern for gateway aggregation: after N consecutive failures to a service, the gateway short-circuits calls to it and returns a cached or default value, protecting both the client and the struggling service from cascading load."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Aggregation means the gateway calls five services on your behalf and hands you back one tidy response. It's like asking a concierge to book your flights, hotel, and car in parallel — you make one request and they handle the coordination."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "msv-ch03-c009",
+      "order": 9,
+      "title": "Gateway as a Single Point of Failure — Mitigation",
+      "teaser": "The API Gateway is the entry point to your entire system. If it goes down, everything behind it becomes unreachable to external clients. This is the unavoidable consequence of centralizing the edge layer — the answer is not to avoid the gateway but to make it highly available.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "A single gateway instance is a critical availability risk. Every mitigation strategy targets either "
+            },
+            {
+              "text": "redundancy",
+              "marks": ["italic"]
+            },
+            {
+              "text": " (multiple instances) or "
+            },
+            {
+              "text": "isolation",
+              "marks": ["italic"]
+            },
+            {
+              "text": " (reducing blast radius when something fails)."
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Horizontal scaling with load balancing",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — run multiple gateway instances behind a load balancer. A single instance failure is transparent to clients. Gateways should be stateless so any instance can handle any request."
+              }
+            ],
+            [
+              {
+                "text": "Multi-zone and multi-region deployment",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — deploy gateway instances across availability zones. Use Anycast DNS or a global load balancer (AWS Global Accelerator, Cloudflare) to route to the nearest healthy region."
+              }
+            ],
+            [
+              {
+                "text": "Health checks and automated failover",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — load balancers should continuously health-check gateway instances and remove unhealthy ones from rotation within seconds."
+              }
+            ],
+            [
+              {
+                "text": "Canary deployments for gateway changes",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — gateway configuration changes (new routes, new auth policies) are high-risk. Deploy to 5% of instances first; validate before rolling out fully."
+              }
+            ],
+            [
+              {
+                "text": "Stateless gateway design",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — rate limit state and session state must be stored externally (Redis, a distributed cache) not in gateway process memory. Stateful gateways cannot be scaled horizontally."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The BFF pattern partially mitigates single-point-of-failure risk: if the Web BFF is down, mobile traffic continues on the Mobile BFF. Total failure requires all BFF instances to be down simultaneously."
+            }
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "info",
+          "runs": [
+            {
+              "text": "Netflix's edge stack (Zuul, and later Zuul 2 with non-blocking I/O) was designed with the assumption that individual gateway nodes would fail regularly. Their architecture assumes no single gateway node is critical — the fleet as a whole is the unit of reliability."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The gateway is a single point of failure by design — it's supposed to be the one door. The answer is not one door; it's a revolving door with twenty panels, any of which can break without closing the entrance."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "msv-ch03-c010",
+      "order": 10,
+      "title": "Gateway Anti-Patterns — The Smart Gateway and Business Logic at the Edge",
+      "teaser": "The two most damaging API Gateway anti-patterns both arise from the same temptation: because the gateway touches every request, it feels like a convenient place to add logic. It is not. A gateway that knows business rules is a distributed monolith wearing a microservices costume.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The "
+            },
+            {
+              "text": "smart gateway anti-pattern",
+              "marks": ["bold"]
+            },
+            {
+              "text": " occurs when the gateway becomes the orchestrator of business logic — computing prices, applying discount rules, validating order eligibility, or managing multi-step workflows. Symptoms:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Gateway team becomes a bottleneck for product changes"
+              }
+            ],
+            [
+              {
+                "text": "Business logic is duplicated: once in the gateway, once in the service"
+              }
+            ],
+            [
+              {
+                "text": "Services cannot be tested without the gateway present"
+              }
+            ],
+            [
+              {
+                "text": "Deploying a discount rule requires a gateway deployment"
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The second anti-pattern is "
+            },
+            {
+              "text": "monolithic gateway by accumulation",
+              "marks": ["bold"]
+            },
+            {
+              "text": ": what starts as a clean routing layer gradually accumulates custom plugins, Lua scripts, and transformation logic until the gateway becomes a novel codebase that must be carefully managed. Any outage in this gateway takes down the entire system."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The correct responsibility boundary:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Gateway SHOULD handle",
+                "marks": ["bold"]
+              },
+              {
+                "text": ": routing, auth, rate limiting, TLS termination, request/response logging, circuit breaking, header transformation."
+              }
+            ],
+            [
+              {
+                "text": "Gateway SHOULD NOT handle",
+                "marks": ["bold"]
+              },
+              {
+                "text": ": pricing logic, validation rules, discount calculation, workflow orchestration, content personalization, A/B test assignment."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "warning",
+          "runs": [
+            {
+              "text": "If the gateway must be changed to add a new business feature, the boundary has already been violated. Business features belong in services. If a gateway change is required to route to a new service, that is correct — routing is infrastructure."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The gateway anti-pattern is treating it like a Swiss army knife — routing, auth, AND business logic. That turns it into a re-centralized monolith disguised as microservices infrastructure. Keep the gateway dumb and fast; put the smart stuff in the services."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "msv-ch03-c011",
+      "order": 11,
+      "title": "Edge Caching — CDN and Gateway Interaction",
+      "teaser": "Edge caching sits in front of the API Gateway to absorb reads that do not need to reach the application tier at all. CDNs and gateways serve complementary roles: CDNs cache geographic copies; gateways cache aggregated or expensive responses closer to services.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "A layered caching topology looks like this:"
+            }
+          ]
+        },
+        {
+          "type": "code",
+          "language": "text",
+          "content": "Client\n  |\n  v\n[CDN Edge Node]      <-- Layer 1: geographic cache, static + cacheable dynamic content\n  |\n  v\n[API Gateway]        <-- Layer 2: gateway-level cache, aggregated response cache\n  |\n  v\n[Services + Redis]   <-- Layer 3: service-level cache, hot data"
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "CDN caching is governed by "
+            },
+            {
+              "text": "Cache-Control",
+              "marks": ["code"]
+            },
+            {
+              "text": " headers the gateway sets. A product listing response with "
+            },
+            {
+              "text": "Cache-Control: public, max-age=60",
+              "marks": ["code"]
+            },
+            {
+              "text": " is cached at CDN edge nodes globally for 60 seconds. Requests from any user for that listing are served from the CDN without touching the gateway or services."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Gateway-level caching (sometimes called \"response caching\" in Kong or AWS API Gateway) caches aggregated responses. If the gateway has already fanned out to five services to build a dashboard response, that composed response can be cached in Redis for 30 seconds, avoiding the fan-out cost on repeat requests."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Cache invalidation strategies at the edge:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "TTL-based expiry",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — simple, built into every CDN. Accepts stale data within the TTL window."
+              }
+            ],
+            [
+              {
+                "text": "Surrogate keys / cache tags",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — Fastly and Cloudflare support tagging cached responses and purging all responses with a given tag. Allows \"purge all product pages for product ID 42\" without knowing exact URLs."
+              }
+            ],
+            [
+              {
+                "text": "Event-driven purge",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — a service publishes a \"product updated\" event; a purge worker calls the CDN purge API. Keeps cache fresh without polling."
+              }
+            ]
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Edge caching means most reads never reach your services at all — the CDN answers from a copy near the user. The gateway handles what the CDN can't: authenticated requests, personalized content, and complex aggregations that are expensive to compute but can still be cached briefly."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "msv-ch03-c012",
+      "order": 12,
+      "title": "Modern Gateway Products — Kong, Envoy, AWS API Gateway, Cloudflare Workers",
+      "teaser": "The gateway product landscape has split into two categories: control-plane-managed proxies (Kong, Envoy-based solutions) that run in your infrastructure, and cloud-native edge platforms (AWS API Gateway, Cloudflare Workers) that trade customization for operational simplicity.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Choosing a gateway product is an infrastructure and organizational decision. The major categories:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Kong Gateway",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — open-source gateway built on Nginx/OpenResty. Extensive plugin ecosystem (rate limiting, auth, logging, transformations). Configured via declarative YAML or REST Admin API. Kong Konnect adds a cloud control plane. Popular for teams that want on-prem control with a rich plugin library."
+              }
+            ],
+            [
+              {
+                "text": "Envoy Proxy / Envoy-based solutions",
+                "marks": ["bold"]
+              },
+              {
+                "text": " (Istio Ingress, Contour, Emissary-Ingress) — Envoy is a high-performance proxy designed for service mesh and edge use. xDS API allows dynamic configuration. Excellent observability out of the box (metrics, tracing integration). Configuration complexity is higher than Kong; rewarded with performance and flexibility."
+              }
+            ],
+            [
+              {
+                "text": "AWS API Gateway",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — fully managed; integrates natively with Lambda, ECS, and Cognito. No servers to operate. Two variants: REST API (more features, more configuration) and HTTP API (simpler, cheaper, lower latency). Rate limiting and auth (JWT authorizers, Lambda authorizers) are first-class. Drawback: tighter coupling to AWS and less flexibility for custom behavior."
+              }
+            ],
+            [
+              {
+                "text": "Cloudflare Workers / Workers for Platforms",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — run JavaScript/WebAssembly at Cloudflare edge nodes globally with sub-millisecond cold starts. Used for gateway logic (auth, routing, request manipulation) without a gateway server in your own infrastructure. Increasingly used as BFF layers for static frontends served from Cloudflare Pages."
+              }
+            ],
+            [
+              {
+                "text": "AWS CloudFront + Lambda@Edge",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — older AWS pattern for edge compute at CDN nodes. Slower cold starts than Cloudflare Workers; tighter integration with CloudFront distributions."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "info",
+          "runs": [
+            {
+              "text": "Netflix open-sourced Zuul (their original gateway) and later Zuul 2 (non-blocking). They also built Conductor for orchestration at the edge. Both are influential reference architectures even if you use a different product. AWS built API Gateway as a managed alternative for teams without Netflix's operational capacity."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Kong and Envoy run in your infrastructure and give you full control; AWS API Gateway and Cloudflare Workers are fully managed and give you speed of setup. Pick based on how much you want to operate versus how much you want to configure."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "msv-ch03-c013",
+      "order": 13,
+      "title": "BFF Topology Diagram — Per-Client Architecture",
+      "teaser": "The BFF topology is best understood visually: each client type has its own dedicated backend layer that calls internal services, shapes responses, and evolves independently of the other BFFs.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The following ASCII diagram shows a fully realized BFF topology. Each BFF is deployed independently, owned by the team closest to its client, and calls whatever subset of internal services it needs:"
+            }
+          ]
+        },
+        {
+          "type": "code",
+          "language": "text",
+          "content": "CLIENTS                  BFF LAYER                    INTERNAL SERVICES\n\n+-------------+          +------------------+\n| Web Browser |--------->|    Web BFF       |----+\n+-------------+          | (web team owns)  |    |\n                         +------------------+    |     +-----------------+\n                                                 +---->|   User Service  |\n+-------------+          +------------------+    |     +-----------------+\n| iOS App     |--------->|   Mobile BFF     |----+\n| Android App |          | (mobile team)    |    |     +-----------------+\n+-------------+          +------------------+    +---->|  Order Service  |\n                                                 |     +-----------------+\n+-------------+          +------------------+    |\n| Partner API |--------->|   Partner BFF    |----+     +-----------------+\n| Consumer    |          | (platform team)  |    +---->| Catalog Service |\n+-------------+          +------------------+    |     +-----------------+\n                                                 |\n                                                 |     +-----------------+\n                                                 +---->| Pricing Service |\n                                                       +-----------------+\n\nEach BFF:\n  - Owns its own auth/rate-limit configuration\n  - Shapes response for its client (field selection, pagination style)\n  - Deploys independently\n  - Is operated by the team that owns the client"
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Contrast this with a single shared gateway:"
+            }
+          ]
+        },
+        {
+          "type": "code",
+          "language": "text",
+          "content": "CLIENTS                  SHARED GATEWAY               INTERNAL SERVICES\n\n+-------------+\n| Web Browser |--+\n+-------------+  |        +------------------+         +-----------------+\n                 +------->|                  |-------->|   User Service  |\n+-------------+  |        |   Shared API     |         +-----------------+\n| iOS App     |--+        |   Gateway        |\n| Android App |  |        | (gateway team    |         +-----------------+\n+-------------+  +------->|  owns -- becomes |-------->|  Order Service  |\n                 |        |  bottleneck)     |         +-----------------+\n+-------------+  |\n| Partner API |--+        +------------------+\n| Consumer    |\n+-------------+\n\nAll clients share one gateway. Gateway team becomes the bottleneck\nfor changes requested by web, mobile, and partner teams."
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The organizational topology (Conway's Law) drives the architectural choice: a single gateway team creates a single gateway; autonomous client teams create BFF autonomy."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "BFF topology means each team controls their own on-ramp to the microservices highway. No one waits in another team's queue to add their exit sign."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "msv-ch03-c014",
+      "order": 14,
+      "title": "Gateway Observability — Logging, Metrics, and Distributed Tracing",
+      "teaser": "Because all external traffic flows through the gateway, it is the highest-value observability insertion point in the system. Logs, metrics, and trace context injected at the gateway give operators a complete picture of client-facing behavior without instrumenting every service.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The gateway should emit three types of telemetry on every request:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Access logs",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — structured JSON logs capturing: timestamp, method, path, response status, latency, client IP, user ID (from JWT claims), upstream service, request size, response size. These are the raw data for traffic analysis and incident investigation."
+              }
+            ],
+            [
+              {
+                "text": "Metrics",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — at minimum: request rate (requests/second per route), error rate (4xx and 5xx separately), and latency percentiles (p50, p95, p99) per route and per upstream service. These drive SLO alerting."
+              }
+            ],
+            [
+              {
+                "text": "Distributed trace context",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — the gateway generates a trace ID ("
+              },
+              {
+                "text": "X-Request-Id",
+                "marks": ["code"]
+              },
+              {
+                "text": " or "
+              },
+              {
+                "text": "traceparent",
+                "marks": ["code"]
+              },
+              {
+                "text": " in W3C Trace Context format) and injects it into all upstream requests. Every service logs this trace ID, enabling end-to-end request tracing across the entire call graph."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The trace propagation pattern: gateway creates root span, adds "
+            },
+            {
+              "text": "traceparent",
+              "marks": ["code"]
+            },
+            {
+              "text": " header to all upstream calls. Each service creates a child span and propagates the header to any services it calls. The full trace is assembled in Jaeger, Zipkin, or Grafana Tempo by correlating spans with the same trace ID."
+            }
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "info",
+          "runs": [
+            {
+              "text": "Sampling strategy matters at high throughput: tracing every request at 10,000 RPS produces enormous data volume. Head-based sampling (sample 1% of all requests) is simple; tail-based sampling (always sample requests with errors or high latency, sample others at 1%) is more valuable but requires a trace collector that buffers spans before deciding."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Gateway observability is like fitting a flow meter at the water main rather than at each faucet — you see everything passing through and can trace any drop from entry to exit."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "msv-ch03-c015",
+      "order": 15,
+      "title": "Gateway Deployment Patterns — Sidecar, Shared, and Service Mesh Integration",
+      "teaser": "The API Gateway is not always a standalone cluster. Modern deployments blend edge gateways with service mesh sidecars, creating a layered architecture where the gateway handles north-south traffic (external clients) and the mesh handles east-west traffic (service-to-service).",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Three deployment patterns define where the gateway logic lives:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Centralized gateway (classic)",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — a dedicated cluster of gateway nodes sits between the external load balancer and all internal services. All external traffic flows through the gateway cluster. Simple to reason about; gateway team manages all routing configuration."
+              }
+            ],
+            [
+              {
+                "text": "Gateway + service mesh (layered)",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — the edge gateway handles north-south traffic (external clients to the internal network). A service mesh (Istio, Linkerd) handles east-west traffic (service-to-service) with mTLS, circuit breaking, and load balancing. The gateway and mesh are complementary, not competing."
+              }
+            ],
+            [
+              {
+                "text": "Gateway-less with mesh ingress",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — in some Kubernetes-native architectures, Istio Ingress Gateway or Contour serves both edge and mesh roles. Auth and rate limiting are implemented via Istio policies and Envoy filters. No separate gateway process."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The layered pattern (gateway + mesh) is now the de facto standard for large systems:"
+            }
+          ]
+        },
+        {
+          "type": "code",
+          "language": "text",
+          "content": "External Client\n      |\n      v\n[Load Balancer]  (AWS ALB, GCP Load Balancer)\n      |\n      v\n[API Gateway]    (Kong, AWS API Gateway, Envoy)\n  - Auth, rate limiting, routing\n  - North-south traffic\n      |\n      v\n[Service Mesh]   (Istio, Linkerd sidecar proxies)\n  - mTLS, east-west traffic\n  - Service discovery, load balancing\n      |\n      v\n[Services]"
+        },
+        {
+          "type": "callout",
+          "variant": "info",
+          "runs": [
+            {
+              "text": "The distinction between north-south and east-west traffic is a useful mental model: the gateway governs what comes in from the outside; the mesh governs how services talk to each other once inside the perimeter. Mixing these concerns in a single layer creates configuration complexity without clear ownership."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The gateway is the border crossing — it checks what enters the country. The service mesh is the internal road network — it controls how traffic moves between cities once inside. You need both layers for a complete system."
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

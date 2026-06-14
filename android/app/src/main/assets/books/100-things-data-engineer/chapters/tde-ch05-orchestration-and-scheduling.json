@@ -1,0 +1,1432 @@
+{
+  "chapterId": "tde-ch05-orchestration-and-scheduling",
+  "shardIndex": 1,
+  "cards": [
+    {
+      "id": "tde-ch05-c001",
+      "order": 1,
+      "title": "What Orchestrators Actually Do",
+      "teaser": "An orchestrator does not run your code — it coordinates when and in what order your code runs, and tells you what happened afterward.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Cron schedules a command. An orchestrator manages a graph of commands. That distinction sounds small until a pipeline has 40 tasks, 12 upstream dependencies, a retry requirement on network errors, and a Slack alert when something fails. Cron cannot do any of that."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "What an orchestrator actually provides:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Dependency management",
+                "marks": [
+                  "bold"
+                ]
+              },
+              {
+                "text": " — task B does not start until task A succeeds. The ordering is explicit in code, not assumed from wall-clock timing."
+              }
+            ],
+            [
+              {
+                "text": "Retry logic",
+                "marks": [
+                  "bold"
+                ]
+              },
+              {
+                "text": " — transient failures (network blips, throttled APIs) get retried automatically without waking a human up."
+              }
+            ],
+            [
+              {
+                "text": "Scheduling",
+                "marks": [
+                  "bold"
+                ]
+              },
+              {
+                "text": " — runs at 6am UTC every day, or every hour, or triggered by an external event."
+              }
+            ],
+            [
+              {
+                "text": "Status and observability",
+                "marks": [
+                  "bold"
+                ]
+              },
+              {
+                "text": " — a UI or API surface that shows which runs succeeded, which failed, how long each task took, and why a specific run went wrong."
+              }
+            ],
+            [
+              {
+                "text": "Backfill",
+                "marks": [
+                  "bold"
+                ]
+              },
+              {
+                "text": " — the ability to re-run historical periods without rewriting code."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The orchestrator as analogy: it is the air traffic controller of the data stack. It does not fly the planes (your transform scripts, SQL models, API calls). It sequences them, prevents collisions, and raises an alarm when one goes off course."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The cost of not having one: pipelines that silently fail because a downstream task started before an upstream one finished, nobody noticing until an analyst asks why a dashboard is stale."
+            }
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "info",
+          "runs": [
+            {
+              "text": "If your \"orchestration\" is a set of cron jobs that run sequentially and hope the previous one finished, you have scheduling but not orchestration. The distinction matters when something goes wrong."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "A cron job is an alarm clock that wakes your code up; an orchestrator is a project manager who checks whether the previous team finished before handing off work to the next one."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "tde-ch05-c002",
+      "order": 2,
+      "title": "Airflow Fundamentals",
+      "teaser": "Airflow is the most widely deployed orchestrator in data engineering — understanding its architecture explains both why it works and where it will hurt you.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Apache Airflow models pipelines as DAGs (Directed Acyclic Graphs): a Python file that defines tasks and the dependencies between them. \"Acyclic\" means no task can depend on itself, directly or transitively — which prevents infinite loops and makes execution order deterministic."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The Airflow architecture has four components:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Scheduler",
+                "marks": [
+                  "bold"
+                ]
+              },
+              {
+                "text": " — parses DAG files on disk, determines which task instances are ready to run based on schedule and dependency state, and submits them to the executor."
+              }
+            ],
+            [
+              {
+                "text": "Executor",
+                "marks": [
+                  "bold"
+                ]
+              },
+              {
+                "text": " — takes submitted tasks and runs them. LocalExecutor runs tasks in subprocesses on the same machine (fine for development, limited for production). CeleryExecutor distributes tasks to a pool of worker nodes via a message queue (Redis or RabbitMQ). KubernetesExecutor spawns a fresh pod per task — strong isolation, good for heterogeneous resource requirements."
+              }
+            ],
+            [
+              {
+                "text": "Workers",
+                "marks": [
+                  "bold"
+                ]
+              },
+              {
+                "text": " — the processes or pods that actually execute task code."
+              }
+            ],
+            [
+              {
+                "text": "Metadata database",
+                "marks": [
+                  "bold"
+                ]
+              },
+              {
+                "text": " — a Postgres (or MySQL) instance that stores DAG runs, task states, and Airflow configuration. This is the single source of truth for run history and status."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "DAGs are defined in Python, which means you can generate them programmatically — a DAG factory pattern can produce 50 similarly-structured DAGs from a config file. This is powerful and also a footgun; dynamic DAGs that are slow to parse will stall the scheduler."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "XCom (cross-communication) lets tasks push and pull small values from the metadata database. Task A pushes a record count; task B pulls it to decide whether to proceed. Use XCom for metadata, not data — it is stored in the database, not object storage, so it cannot handle a DataFrame."
+            }
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "warning",
+          "runs": [
+            {
+              "text": "XCom is for small values (strings, counts, identifiers). Pushing a pandas DataFrame through XCom serializes it into the metadata database and will cause performance and reliability problems at any meaningful scale."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Airflow is like a factory floor manager who reads the shift schedule (DAG file), checks which stations are ready (scheduler), sends jobs to workers (executor), and logs everything in a ledger (metadata database) — but the manager cannot do the actual manufacturing."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "tde-ch05-c003",
+      "order": 3,
+      "title": "Prefect and Dagster as Modern Alternatives",
+      "teaser": "Prefect and Dagster fix real Airflow pain points but make different bets about the right mental model — one is task-centric, the other is asset-centric.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Airflow was built in 2014 and its architecture shows it. DAG files must be importable by the scheduler (which means import-time side effects crash it), the local development experience is painful to set up, and the UI is functional but dated. Prefect and Dagster emerged to address these problems, but they are not the same alternative."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Prefect",
+              "marks": [
+                "bold"
+              ]
+            },
+            {
+              "text": " stays in the task-execution model but makes it more Python-native. You decorate functions with "
+            },
+            {
+              "text": "@flow",
+              "marks": [
+                "code"
+              ]
+            },
+            {
+              "text": " and "
+            },
+            {
+              "text": "@task",
+              "marks": [
+                "code"
+              ]
+            },
+            {
+              "text": "; the orchestration graph is inferred from how functions call each other. Prefect's hybrid execution model separates the control plane (Prefect Cloud or a self-hosted server that tracks state) from the execution plane (your own infrastructure that runs the code). This means you get observability without giving a third party network access to your data. Observable by default means every run emits structured events without configuration."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Dagster",
+              "marks": [
+                "bold"
+              ]
+            },
+            {
+              "text": " makes a different bet: it models pipelines as the data assets they produce, not the tasks they run. A software-defined asset (SDA) is a Python function that describes a table, a file, or an ML model — and Dagster builds the dependency graph from those asset definitions. Type-checked I/O managers enforce that the data flowing between assets matches what the downstream asset expects. Lineage is a first-class concept, not an afterthought."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "When to prefer each:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Airflow",
+                "marks": [
+                  "bold"
+                ]
+              },
+              {
+                "text": " — large existing investment, complex multi-team deployments, mature plugin ecosystem needed."
+              }
+            ],
+            [
+              {
+                "text": "Prefect",
+                "marks": [
+                  "bold"
+                ]
+              },
+              {
+                "text": " — new team, wants Python-native workflows, needs easy local dev, uses managed cloud."
+              }
+            ],
+            [
+              {
+                "text": "Dagster",
+                "marks": [
+                  "bold"
+                ]
+              },
+              {
+                "text": " — asset-oriented thinking, wants built-in lineage, teams that care about data catalog integration and type safety."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "tip",
+          "runs": [
+            {
+              "text": "The best reason to choose Dagster over Airflow for a greenfield project is not features — it is that defining assets forces you to think about what the pipeline produces, which leads to better-designed pipelines."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Airflow is a task runner that can be orchestrated into pipelines; Dagster is a data asset manager that happens to also execute the code that produces those assets — they answer different questions first."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "tde-ch05-c004",
+      "order": 4,
+      "title": "The Software-Defined Asset Paradigm",
+      "teaser": "Defining pipelines in terms of the data they produce — not the code that runs — changes how you reason about dependencies, lineage, and what \"done\" means.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Traditional orchestration asks: \"what tasks need to run, and in what order?\" The software-defined asset (SDA) paradigm asks: \"what data assets need to exist, and what do they depend on?\" The shift looks subtle but changes the design of pipelines in practice."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "In Dagster's SDA model, you define assets like this: "
+            },
+            {
+              "text": "orders_by_region",
+              "marks": [
+                "code"
+              ]
+            },
+            {
+              "text": " is a Snowflake table. It depends on "
+            },
+            {
+              "text": "raw_orders",
+              "marks": [
+                "code"
+              ]
+            },
+            {
+              "text": " (another asset). When "
+            },
+            {
+              "text": "raw_orders",
+              "marks": [
+                "code"
+              ]
+            },
+            {
+              "text": " is updated, Dagster knows "
+            },
+            {
+              "text": "orders_by_region",
+              "marks": [
+                "code"
+              ]
+            },
+            {
+              "text": " may be stale and can offer to re-materialize it. The code that computes "
+            },
+            {
+              "text": "orders_by_region",
+              "marks": [
+                "code"
+              ]
+            },
+            {
+              "text": " is attached to the asset definition, not to a task in a DAG."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The practical consequences:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Lineage by construction.",
+                "marks": [
+                  "bold"
+                ]
+              },
+              {
+                "text": " The asset graph is the lineage graph. You do not need a separate metadata catalog to trace where a table came from — it is encoded in the asset definitions."
+              }
+            ],
+            [
+              {
+                "text": "Asset materialization vs. task execution.",
+                "marks": [
+                  "bold"
+                ]
+              },
+              {
+                "text": " A task succeeds or fails. An asset is materialized or stale. The latter framing aligns with how analysts actually think about data: \"is this table fresh?\" not \"did the task run?\""
+              }
+            ],
+            [
+              {
+                "text": "Incremental computation.",
+                "marks": [
+                  "bold"
+                ]
+              },
+              {
+                "text": " Dagster can partition assets by date and only re-materialize the partitions that are stale, rather than rerunning the entire pipeline."
+              }
+            ],
+            [
+              {
+                "text": "Type-checked I/O.",
+                "marks": [
+                  "bold"
+                ]
+              },
+              {
+                "text": " I/O managers validate that the data flowing between assets matches the declared schema. A type mismatch fails at the boundary, not silently downstream."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The model aligns data engineering with software engineering thinking: assets are like functions with defined inputs and outputs, composable, testable, and refactorable with confidence."
+            }
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "info",
+          "runs": [
+            {
+              "text": "The asset-centric model does not replace task orchestration — it is a higher-level abstraction on top of it. Under the hood, materializing an asset still executes code. The difference is in what you optimize for and what the system tracks."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "It is the difference between writing a function that runs some code and writing a function that returns a value — the SDA paradigm keeps focus on the output, which makes it easier to reason about whether you have what you need."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "tde-ch05-c005",
+      "order": 5,
+      "title": "DAG Design Principles",
+      "teaser": "A badly designed DAG is a maintenance debt that compounds — small idempotent tasks with clear names pay dividends every time you debug, retry, or extend the pipeline.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The most common DAG design mistake is the monolithic task: one Python function that pulls data, transforms it, validates it, and loads it — 400 lines of code, all-or-nothing retry behavior, no visibility into which step failed. When it fails at 5am, you have no idea where."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The guiding principle is small idempotent tasks. Idempotent means running the task twice produces the same result as running it once. A task that appends rows to a table without deduplicating is not idempotent — retrying it doubles the data. A task that does a "
+            },
+            {
+              "text": "MERGE",
+              "marks": [
+                "code"
+              ]
+            },
+            {
+              "text": " or writes to a partition with "
+            },
+            {
+              "text": "OVERWRITE",
+              "marks": [
+                "code"
+              ]
+            },
+            {
+              "text": " is idempotent — retrying it is safe."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Design rules that hold up in production:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "One logical unit of work per task.",
+                "marks": [
+                  "bold"
+                ]
+              },
+              {
+                "text": " Extract is a task. Transform is a task. Load is a task. Validation is a task. Each can succeed, fail, and be retried independently."
+              }
+            ],
+            [
+              {
+                "text": "Task names reflect the output, not the code.",
+                "marks": [
+                  "bold"
+                ]
+              },
+              {
+                "text": " "
+              },
+              {
+                "text": "load_orders_to_staging",
+                "marks": [
+                  "code"
+                ]
+              },
+              {
+                "text": " is better than "
+              },
+              {
+                "text": "run_etl_script",
+                "marks": [
+                  "code"
+                ]
+              },
+              {
+                "text": ". A failing task name should tell you what data is missing, not what function broke."
+              }
+            ],
+            [
+              {
+                "text": "Do not pass large data through XCom.",
+                "marks": [
+                  "bold"
+                ]
+              },
+              {
+                "text": " If task B needs the data from task A, write it to S3 (or GCS, or your warehouse staging area) and pass the path via XCom. XCom is for coordinates, not cargo."
+              }
+            ],
+            [
+              {
+                "text": "Keep DAGs short.",
+                "marks": [
+                  "bold"
+                ]
+              },
+              {
+                "text": " A DAG with 200 tasks is hard to read, slow to parse, and difficult to own. If a DAG has grown past ~30 tasks, question whether it should be split."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "warning",
+          "runs": [
+            {
+              "text": "Putting all transformation logic in a single task because \"it is easier to write\" is technical debt you pay during every incident. The retry granularity of your task design determines how long failures take to recover from."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Each task should be like a pure function — take an input, produce an output, have no side effects that make retrying it dangerous — and the DAG is just the composition of those functions."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "tde-ch05-c006",
+      "order": 6,
+      "title": "Sensors and Triggers",
+      "teaser": "Sensors let your pipeline wait for an external condition rather than assuming data will arrive on time — which is almost never a safe assumption in production.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The naive approach to data dependencies across systems: schedule pipeline B to run 30 minutes after pipeline A is supposed to finish. This works until pipeline A runs late, and then pipeline B either fails or processes stale data silently. The correct approach: pipeline B uses a sensor to wait for pipeline A's output to actually exist before starting."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "A sensor is a task that polls for a condition. Examples:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "S3KeySensor",
+                "marks": [
+                  "code"
+                ]
+              },
+              {
+                "text": " in Airflow — waits for a specific file to appear in an S3 bucket. The pipeline starts when the file arrives, not at a fixed time."
+              }
+            ],
+            [
+              {
+                "text": "ExternalTaskSensor",
+                "marks": [
+                  "code"
+                ]
+              },
+              {
+                "text": " — waits for a task or DAG in another Airflow DAG to reach a success state."
+              }
+            ],
+            [
+              {
+                "text": "SqlSensor",
+                "marks": [
+                  "code"
+                ]
+              },
+              {
+                "text": " — polls a SQL query until it returns a truthy result (e.g., a row count above zero in a source table)."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The distinction between \"sensor in the orchestrator\" and \"sleep loop in task code\" matters. A "
+            },
+            {
+              "text": "time.sleep(300)",
+              "marks": [
+                "code"
+              ]
+            },
+            {
+              "text": " in a Python task occupies a worker slot for the entire wait period, consumes resources, and is invisible in the orchestrator UI. A sensor runs in the orchestrator, consumes minimal resources between polls, and shows its state in the UI."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Key sensor configuration parameters:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "`poke_interval`",
+                "marks": [
+                  "bold"
+                ]
+              },
+              {
+                "text": " — how often the sensor checks the condition (default 60 seconds in Airflow; set higher for slow-changing conditions to reduce load)."
+              }
+            ],
+            [
+              {
+                "text": "`timeout`",
+                "marks": [
+                  "bold"
+                ]
+              },
+              {
+                "text": " — how long the sensor will wait before failing. Set this; an uncapped sensor that waits forever blocks downstream tasks indefinitely."
+              }
+            ],
+            [
+              {
+                "text": "`mode`",
+                "marks": [
+                  "bold"
+                ]
+              },
+              {
+                "text": " — "
+              },
+              {
+                "text": "poke",
+                "marks": [
+                  "code"
+                ]
+              },
+              {
+                "text": " (holds a worker slot) vs. "
+              },
+              {
+                "text": "reschedule",
+                "marks": [
+                  "code"
+                ]
+              },
+              {
+                "text": " (releases the slot between polls). For sensors that wait hours, use "
+              },
+              {
+                "text": "reschedule",
+                "marks": [
+                  "code"
+                ]
+              },
+              {
+                "text": "."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "tip",
+          "runs": [
+            {
+              "text": "Set a "
+            },
+            {
+              "text": "timeout",
+              "marks": [
+                "code"
+              ]
+            },
+            {
+              "text": " on every sensor. A sensor waiting forever is a silent pipeline hang — nothing fails, nothing alerts, data just stops flowing."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "A sensor is a patient colleague who checks the inbox every few minutes and only calls you when the thing you are waiting for has actually arrived — instead of you blocking your entire afternoon waiting for an email that might be late."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "tde-ch05-c007",
+      "order": 7,
+      "title": "Retries and Failure Handling",
+      "teaser": "Retries recover from transient failures automatically — but retrying a data failure is not recovery, it is just delaying the alert while the problem compounds.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Automatic retries are one of the clearest wins of proper orchestration over ad-hoc scripts. A script that fails at 3am stays failed until someone notices. An orchestrated task with retries configured will recover from a network timeout or a momentarily throttled API without waking anyone up."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The configuration that matters:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "`retries`",
+                "marks": [
+                  "bold"
+                ]
+              },
+              {
+                "text": " — number of retry attempts. 2–3 is typical. More than 5 is usually masking a problem."
+              }
+            ],
+            [
+              {
+                "text": "`retry_delay`",
+                "marks": [
+                  "bold"
+                ]
+              },
+              {
+                "text": " — time between retries. Exponential backoff (start at 5 minutes, double each attempt) is better than a fixed delay for hitting rate-limited external APIs."
+              }
+            ],
+            [
+              {
+                "text": "`retry_exponential_backoff`",
+                "marks": [
+                  "bold"
+                ]
+              },
+              {
+                "text": " — available in Airflow; enables exponential delay automatically."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The harder problem is distinguishing failure types:"
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Transient failures",
+              "marks": [
+                "bold"
+              ]
+            },
+            {
+              "text": " — network blips, temporary API unavailability, a warehouse cluster that was mid-autoscale. These resolve on their own; retrying succeeds. Appropriate response: retry with backoff, alert if retries exhaust."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Data failures",
+              "marks": [
+                "bold"
+              ]
+            },
+            {
+              "text": " — malformed source data, a schema change upstream, a referential integrity violation. These will fail on every retry, in the same way. Retrying 3 times burns 45 minutes before alerting. Appropriate response: fail fast, alert immediately, route to a data quality queue rather than an infrastructure queue."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The "
+            },
+            {
+              "text": "on_failure_callback",
+              "marks": [
+                "code"
+              ]
+            },
+            {
+              "text": " (Airflow) or equivalent in other orchestrators lets you send a Slack message, page on-call, or write to an incidents table when a task fails after exhausting retries. Every production pipeline should have this configured — silent failures are how stale dashboards stay stale for a week before anyone notices."
+            }
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "warning",
+          "runs": [
+            {
+              "text": "If a task is failing on every retry, do not increase "
+            },
+            {
+              "text": "retries",
+              "marks": [
+                "code"
+              ]
+            },
+            {
+              "text": ". You are not fixing the problem; you are adding latency before the alert. Investigate the failure type first."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Retries are like hitting \"resend\" on a failed API request — useful when the problem was a hiccup in the network, useless when the payload itself is malformed."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "tde-ch05-c008",
+      "order": 8,
+      "title": "Backfill and Catchup",
+      "teaser": "Backfill lets you re-run a pipeline for historical periods — but Airflow's automatic catchup behavior has ended more than a few on-call shifts badly.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Pipelines are parameterized by time. A daily pipeline that loads orders for \"yesterday\" needs to be able to run for any past day if you need to reprocess historical data — because a source schema changed, a bug was fixed, or a new downstream consumer needs data that predates the pipeline's deployment."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "This is backfill: running pipeline executions for past time periods."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Airflow's `catchup` behavior:",
+              "marks": [
+                "bold"
+              ]
+            },
+            {
+              "text": " By default, Airflow sets "
+            },
+            {
+              "text": "catchup=True",
+              "marks": [
+                "code"
+              ]
+            },
+            {
+              "text": ". This means when you deploy a DAG with a "
+            },
+            {
+              "text": "start_date",
+              "marks": [
+                "code"
+              ]
+            },
+            {
+              "text": " of 90 days ago, Airflow will immediately try to run 90 daily instances to \"catch up.\" On a shared production Airflow instance, this can saturate the executor queue, starve other pipelines, and trigger downstream effects (alerts, quotas) for every one of those 90 runs. This is called a backfill storm."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The safe default for new DAGs: "
+            },
+            {
+              "text": "catchup=False",
+              "marks": [
+                "code"
+              ]
+            },
+            {
+              "text": ". This tells Airflow to only run for the current (or next scheduled) interval, not for every past interval since "
+            },
+            {
+              "text": "start_date",
+              "marks": [
+                "code"
+              ]
+            },
+            {
+              "text": "."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "When you actually need a backfill:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "numbered",
+          "items": [
+            [
+              {
+                "text": "Set "
+              },
+              {
+                "text": "catchup=False",
+                "marks": [
+                  "code"
+                ]
+              },
+              {
+                "text": " on the DAG."
+              }
+            ],
+            [
+              {
+                "text": "Use the Airflow CLI: "
+              },
+              {
+                "text": "airflow dags backfill --start-date 2024-01-01 --end-date 2024-01-31 my_dag_id",
+                "marks": [
+                  "code"
+                ]
+              }
+            ],
+            [
+              {
+                "text": "Add "
+              },
+              {
+                "text": "--delay-on-limit",
+                "marks": [
+                  "code"
+                ]
+              },
+              {
+                "text": " or run in batches to avoid overwhelming downstream systems."
+              }
+            ],
+            [
+              {
+                "text": "Monitor the run queue — backfills can take hours for large ranges."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Parameterizing pipelines correctly is a prerequisite: the task code must accept an execution date (or date range) as input and process only that window, not \"all data up to now.\" Idempotent, partitioned writes make it safe to re-run."
+            }
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "warning",
+          "runs": [
+            {
+              "text": "Deploying a new DAG with "
+            },
+            {
+              "text": "catchup=True",
+              "marks": [
+                "code"
+              ]
+            },
+            {
+              "text": " and "
+            },
+            {
+              "text": "start_date",
+              "marks": [
+                "code"
+              ]
+            },
+            {
+              "text": " 6 months ago on a shared Airflow instance is a production incident waiting to happen. Set "
+            },
+            {
+              "text": "catchup=False",
+              "marks": [
+                "code"
+              ]
+            },
+            {
+              "text": " and backfill deliberately."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Catchup is like asking a new employee to retroactively do all the work from their start date to today on their first morning — technically correct by the rules, operationally catastrophic."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "tde-ch05-c009",
+      "order": 9,
+      "title": "Dependency Management in Complex Pipelines",
+      "teaser": "Dependencies that are implicit in timing assumptions fail silently; dependencies that are explicit in code fail loudly, which is strictly better.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Within a single DAG, dependencies between tasks are explicit: "
+            },
+            {
+              "text": "task_b.set_upstream(task_a)",
+              "marks": [
+                "code"
+              ]
+            },
+            {
+              "text": " or the "
+            },
+            {
+              "text": ">>",
+              "marks": [
+                "code"
+              ]
+            },
+            {
+              "text": " operator in Airflow. The scheduler enforces them. This is the easy case."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The hard cases:"
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Cross-DAG dependencies",
+              "marks": [
+                "bold"
+              ]
+            },
+            {
+              "text": " are where most production problems live. A reporting DAG needs the results of a transformation DAG that runs in parallel. The naive solution: schedule the reporting DAG 30 minutes after the transformation DAG. The problem: the transformation DAG runs late on Mondays when the source data is larger. The reporting DAG starts on time, reads incomplete data, produces wrong numbers, and nobody knows until Tuesday."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The correct solution in Airflow: "
+            },
+            {
+              "text": "ExternalTaskSensor",
+              "marks": [
+                "code"
+              ]
+            },
+            {
+              "text": " — a sensor that polls for a specific task in another DAG to reach a success state before proceeding. In Dagster: asset dependencies are cross-job by default; an asset can depend on an asset materialized by a different job. The dependency is structural, not timing-based."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Implicit ordering assumptions",
+              "marks": [
+                "bold"
+              ]
+            },
+            {
+              "text": " are the hardest to detect because they work most of the time. A pipeline that assumes raw data is always loaded by 5am will fail silently on the day it is not — not with an error, but with empty output or stale data that passes downstream validation."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Rules for making dependencies explicit:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Use sensors rather than schedule offsets for cross-system dependencies."
+              }
+            ],
+            [
+              {
+                "text": "Document every assumption about upstream data arrival in the DAG definition, not in a wiki."
+              }
+            ],
+            [
+              {
+                "text": "Fail loudly when assumptions are violated (a validation task that checks row counts before transformation starts)."
+              }
+            ],
+            [
+              {
+                "text": "In Dagster or Prefect, use asset/flow dependencies rather than trigger-based scheduling where possible."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "info",
+          "runs": [
+            {
+              "text": "A dependency encoded in a schedule offset is invisible to the orchestrator. A dependency encoded as a sensor or asset reference is enforced by the orchestrator. Prefer the latter."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Implicit timing dependencies are like verbal agreements — they work when everything goes to plan, but when something slips, there is no contract to enforce and no alarm to raise."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "tde-ch05-c010",
+      "order": 10,
+      "title": "Orchestrator Operational Concerns",
+      "teaser": "The orchestrator is infrastructure, and like all infrastructure it needs monitoring, capacity planning, and a runbook for when it breaks — because everything downstream depends on it.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The orchestrator is the nervous system of your data stack. When it is healthy, it is invisible. When it is unhealthy, every pipeline is potentially affected, and the failure surface is broad enough that diagnosing the problem takes time you do not have."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Key operational metrics to monitor in Airflow (analogues exist in Prefect and Dagster):"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Scheduler heartbeat",
+                "marks": [
+                  "bold"
+                ]
+              },
+              {
+                "text": " — the scheduler emits a heartbeat every few seconds. If the heartbeat goes stale, the scheduler has died and no tasks will be submitted. This should alert within 5 minutes."
+              }
+            ],
+            [
+              {
+                "text": "DAG parse time",
+                "marks": [
+                  "bold"
+                ]
+              },
+              {
+                "text": " — the scheduler re-parses all DAG files on a cycle. Parse times above 30 seconds delay task submission. A single slow DAG file (one that makes network calls at import time, or generates thousands of task instances dynamically) can stall the entire scheduler."
+              }
+            ],
+            [
+              {
+                "text": "Task queue depth",
+                "marks": [
+                  "bold"
+                ]
+              },
+              {
+                "text": " — the number of tasks waiting to be picked up by workers. A growing queue means the executor is under-resourced relative to the workload. This is the signal to add workers before pipelines start missing SLAs."
+              }
+            ],
+            [
+              {
+                "text": "Metadata database size and query latency",
+                "marks": [
+                  "bold"
+                ]
+              },
+              {
+                "text": " — the metadata DB stores every task state transition. It grows without pruning. Airflow's "
+              },
+              {
+                "text": "db clean",
+                "marks": [
+                  "code"
+                ]
+              },
+              {
+                "text": " command removes old records; run it on a schedule. Slow metadata DB queries will slow the scheduler."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Keeping DAG parse times short requires discipline: no database queries at DAG file import time, no HTTP calls at import time, no expensive Python object construction at the module level. The scheduler imports your DAG file every 30 seconds. Every millisecond of import cost accumulates."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The orchestrator outage runbook should cover: how to determine whether the scheduler or executor is the problem, how to drain and restart workers safely without losing in-progress tasks, and what the recovery order is for a full metadata DB restore."
+            }
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "warning",
+          "runs": [
+            {
+              "text": "If the metadata database goes down, the orchestrator loses its state. Running tasks may complete but their status will not be recorded, creating reconciliation problems. Treat the metadata DB with the same operational care as a production database."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Monitoring your orchestrator is like monitoring the monitoring system — easy to skip because it usually works, catastrophic to skip when it does not, because everything else is flying blind."
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,1479 @@
+{
+  "chapterId": "dbi-ch08-query-optimizer",
+  "shardIndex": 1,
+  "cards": [
+    {
+      "id": "dbi-ch08-c001",
+      "order": 1,
+      "title": "Logical vs Physical Plan — Algebra First, Operators Second",
+      "teaser": "The optimizer works in two distinct worlds. The logical plan is a declarative algebra tree — what data is needed. The physical plan is a concrete operator tree — how the engine will actually fetch, join, and sort it. The gap between them is where optimization happens.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "When you write SQL, you describe "
+            },
+            {
+              "text": "what",
+              "marks": ["italic"]
+            },
+            {
+              "text": " you want — not how to get it. The optimizer's first job is to translate your SQL into a "
+            },
+            {
+              "text": "logical plan",
+              "marks": ["bold"]
+            },
+            {
+              "text": ": a tree of relational algebra operators (Scan, Select σ, Project π, Join ⋈, Group-by γ). The logical plan carries no decisions about which index to use, which join algorithm to apply, or in what order to produce tuples."
+            }
+          ]
+        },
+        {
+          "type": "code",
+          "language": "plaintext",
+          "text": "SQL:\n  SELECT o.id, c.name\n  FROM orders o JOIN customers c ON o.cust_id = c.id\n  WHERE o.amount > 1000\n\nLogical Plan (relational algebra tree):\n         π(o.id, c.name)\n               │\n          ⋈ (o.cust_id = c.id)\n         ╱                    ╲\n   σ(amount > 1000)          Scan(customers)\n         │\n    Scan(orders)\n\nPhysical Plan (concrete operator tree):\n         Projection\n               │\n        Hash Join\n       ╱              ╲\n  Filter              SeqScan\n  (amount > 1000)     (customers)\n       │\n  IndexScan\n  (orders_amount_idx)"
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The "
+            },
+            {
+              "text": "physical plan",
+              "marks": ["bold"]
+            },
+            {
+              "text": " maps each logical operator to a concrete implementation: which "
+            },
+            {
+              "text": "access path",
+              "marks": ["italic"]
+            },
+            {
+              "text": " fetches base rows (SeqScan vs IndexScan vs IndexOnlyScan), which "
+            },
+            {
+              "text": "join algorithm",
+              "marks": ["italic"]
+            },
+            {
+              "text": " combines relations (Nested Loop vs Hash Join vs Merge Join), and what "
+            },
+            {
+              "text": "sort strategy",
+              "marks": ["italic"]
+            },
+            {
+              "text": " satisfies an ORDER BY. A single logical plan can map to exponentially many physical plans — the optimizer's job is to find the cheapest one."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Postgres models this separation cleanly: the "
+            },
+            {
+              "text": "rewriter",
+              "marks": ["bold"]
+            },
+            {
+              "text": " transforms the parse tree (handling views and rules), the "
+            },
+            {
+              "text": "planner",
+              "marks": ["bold"]
+            },
+            {
+              "text": " builds the logical plan and drives cost-based optimization, and the "
+            },
+            {
+              "text": "executor",
+              "marks": ["bold"]
+            },
+            {
+              "text": " runs the physical plan. Cascades-based optimizers — SQL Server's Query Optimizer, CockroachDB's optimizer — are more rigorous: they apply transformation rules to a memo structure that simultaneously represents both logical and physical alternatives."
+            }
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "info",
+          "runs": [
+            {
+              "text": "The distinction matters practically: EXPLAIN in Postgres shows the physical plan, not the logical one. When you see 'Hash Join' or 'Index Scan', you are reading the optimizer's physical choices — not the SQL you wrote."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "A logical plan says what you want (join orders with customers, filter by amount). A physical plan says how to do it (use an index on amount, then hash-join the result with a seq-scan of customers). The optimizer's entire job is to pick the best physical plan for a given logical plan."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "dbi-ch08-c002",
+      "order": 2,
+      "title": "Rule-Based Optimization — Deterministic Rewrites Before the Cost Model",
+      "teaser": "Before cost-based optimization dominated, engines applied a fixed set of algebraic transformation rules in a predetermined order. Some of those rules — predicate pushdown, constant folding, subquery flattening — survive into every modern optimizer as mandatory pre-processing passes.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Rule-based optimization (RBO) produces a plan through deterministic, schema-independent transformations. There is no cost model, no statistics, and no estimation: the optimizer applies rules in a fixed priority order and emits whatever plan results. IBM's System R era, Oracle pre-7, and early versions of DB2 were purely rule-based."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Classic RBO transformations include:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Predicate pushdown",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — push WHERE clauses as close to their base table scans as possible."
+              }
+            ],
+            [
+              {
+                "text": "Constant folding",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — evaluate expressions involving only constants at planning time (WHERE 1+1 > 1 → WHERE TRUE)."
+              }
+            ],
+            [
+              {
+                "text": "Join commutativity / associativity",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — reorder joins using algebraic identities."
+              }
+            ],
+            [
+              {
+                "text": "Projection elimination",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — remove intermediate projections that do not narrow the column set."
+              }
+            ],
+            [
+              {
+                "text": "Subquery unnesting",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — rewrite correlated subqueries into joins where safe."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The failure mode of pure RBO is notorious: an optimizer that always prefers an index scan over a sequential scan will make catastrophic choices when the index scan has a low selectivity and the table is small. Without cardinality knowledge, rules misfire. Oracle deprecated its RBO entirely in Oracle 10g (2003), replacing it with CBO."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Modern optimizers are "
+            },
+            {
+              "text": "not",
+              "marks": ["italic"]
+            },
+            {
+              "text": " purely CBO. They apply a hybrid approach: a mandatory rule-based "
+            },
+            {
+              "text": "normalization phase",
+              "marks": ["bold"]
+            },
+            {
+              "text": " first (predicate pushdown, subquery flattening, view inlining, constant folding), then cost-based enumeration of the normalized plan space. Rules handle transformations that are "
+            },
+            {
+              "text": "always",
+              "marks": ["italic"]
+            },
+            {
+              "text": " beneficial; costs handle choices that depend on data distribution."
+            }
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "tip",
+          "runs": [
+            {
+              "text": "Postgres documents its rule-based rewriting phase separately from the planner. The pg_rewrite system catalog stores the rewrite rules. The planner proper (src/backend/optimizer/) begins after rewriting produces a clean query tree."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Rule-based optimization applies the same algebraic rewrites every time, regardless of data size. It was the dominant approach before statistics-driven cost models existed. Modern engines keep its safe, always-correct rewrites (like pushdown) but use cost estimation for anything that depends on how much data actually lives in the table."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "dbi-ch08-c003",
+      "order": 3,
+      "title": "Cost-Based Optimization — Estimating Your Way to a Better Plan",
+      "teaser": "Cost-based optimization assigns a numeric cost to every candidate plan and picks the cheapest. The cost model abstracts real work — page I/Os, CPU cycles, memory pressure — into a formula the optimizer can evaluate millions of times per second without actually running anything.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Cost-based optimization (CBO) has three components that must work together:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "numbered",
+          "items": [
+            [
+              {
+                "text": "A cost model",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — a formula that maps plan operators to a scalar cost. Postgres weights I/O pages (seq_page_cost = 1.0) and CPU tuples (cpu_tuple_cost = 0.01) separately, because random I/O is expensive and CPUs are fast."
+              }
+            ],
+            [
+              {
+                "text": "Statistics",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — information about base tables (row counts, column distributions) and indexes. Without statistics, cost formulas produce nonsense."
+              }
+            ],
+            [
+              {
+                "text": "An enumeration algorithm",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — a search strategy over the space of all candidate plans. Dynamic programming (Selinger et al. 1979) is the classic algorithm for join ordering; heuristic and genetic algorithms handle very large join counts."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Postgres exposes its cost model through GUC parameters. The default tuning assumes that random I/O is 4× more expensive than sequential I/O (random_page_cost = 4.0 vs seq_page_cost = 1.0). On NVMe SSDs, DBA teams commonly set random_page_cost = 1.1, making index scans more attractive relative to sequential scans."
+            }
+          ]
+        },
+        {
+          "type": "code",
+          "language": "sql",
+          "text": "-- Postgres cost model knobs\nSHOW seq_page_cost;       -- 1.0\nSHOW random_page_cost;    -- 4.0 (lower on SSDs: 1.1)\nSHOW cpu_tuple_cost;      -- 0.01\nSHOW cpu_operator_cost;   -- 0.0025\nSHOW parallel_tuple_cost; -- 0.1\n\n-- Total cost of a seq scan of N pages returning R rows:\n-- cost = seq_page_cost * N + cpu_tuple_cost * R"
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "SQL Server's Query Optimizer and Oracle's CBO follow the same principle but use proprietary cost functions. Cascades-based optimizers (SQL Server, CockroachDB, Orca for Greenplum) go further: they model cost as a property to be minimized during a systematic top-down search through a "
+            },
+            {
+              "text": "memo",
+              "marks": ["bold"]
+            },
+            {
+              "text": " of equivalent expressions, allowing cost-guided pruning without enumerating every plan explicitly."
+            }
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "warning",
+          "runs": [
+            {
+              "text": "CBO is only as good as its statistics and cost model. A perfectly correct cost formula applied to stale or missing statistics will choose a worse plan than a rough formula applied to fresh, accurate statistics. Staleness kills more query plans than model imprecision."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Cost-based optimization is comparison shopping: estimate the cost of every reasonable plan using a formula that weights I/O and CPU work, then pick the cheapest. The formula is cheap to evaluate; the hard part is keeping the statistics accurate enough that the estimates are meaningful."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "dbi-ch08-c004",
+      "order": 4,
+      "title": "Statistics — The Evidence the Optimizer Reasons From",
+      "teaser": "Statistics are the optimizer's empirical foundation — without them, cost estimation is pure guesswork. Postgres stores per-column statistics in pg_statistic covering row counts, number of distinct values (NDV), null fractions, and most-common values (MCV).",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "ANALYZE (Postgres) / DBMS_STATS (Oracle) / UPDATE STATISTICS (SQL Server) collects statistics by sampling the table and building summary structures. The main statistics types:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Row count (reltuples)",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — total number of live rows in the relation. Stored in pg_class.reltuples. Drives the base cardinality of every scan."
+              }
+            ],
+            [
+              {
+                "text": "NDV — Number of Distinct Values",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — how many unique values exist in a column. A column with NDV = 1 has zero selectivity for equality predicates. Postgres stores n_distinct in pg_statistic."
+              }
+            ],
+            [
+              {
+                "text": "Null fraction",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — fraction of rows where the column is NULL. IS NULL and IS NOT NULL predicates are estimated using this fraction directly."
+              }
+            ],
+            [
+              {
+                "text": "MCV — Most Common Values",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — a list of the most frequent values and their frequencies (most_common_vals / most_common_freqs in pg_statistic). Equality predicates on high-frequency values (e.g., status = 'active' in a mostly-active table) are estimated directly from MCV rather than assuming uniform distribution."
+              }
+            ],
+            [
+              {
+                "text": "Histogram",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — a bucketed frequency distribution for range predicates on columns whose values don't fit cleanly in the MCV list. See the next card."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "code",
+          "language": "sql",
+          "text": "-- Inspect per-column statistics in Postgres\nSELECT\n  attname,\n  n_distinct,\n  null_frac,\n  most_common_vals,\n  most_common_freqs\nFROM pg_stats\nWHERE tablename = 'orders'\n  AND attname = 'status';\n\n-- Result example:\n-- n_distinct:        4\n-- null_frac:         0.0\n-- most_common_vals: {active,completed,pending,cancelled}\n-- most_common_freqs:{0.72,0.18,0.06,0.04}"
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The "
+            },
+            {
+              "text": "default_statistics_target",
+              "marks": ["code"]
+            },
+            {
+              "text": " parameter (default 100 in Postgres) controls how many histogram buckets and MCV entries are stored per column. Raising it to 500 on high-cardinality, skewed columns dramatically improves plan quality — at the cost of longer ANALYZE time and larger pg_statistic rows."
+            }
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "info",
+          "runs": [
+            {
+              "text": "Postgres 14+ added extended statistics (CREATE STATISTICS) that capture multi-column correlations (ndistinct, dependencies, MCV over column pairs). A single-column statistics model cannot know that city and zip_code are correlated; extended statistics can, preventing massive selectivity underestimates on compound predicates."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Statistics are the database's notes about what's actually in its tables: how many rows, how many distinct values per column, what the most common values are. Without those notes, the optimizer is guessing. With stale ones, it's guessing from outdated evidence."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "dbi-ch08-c005",
+      "order": 5,
+      "title": "Histograms — Capturing Data Distribution for Range Predicates",
+      "teaser": "Most-common values cover high-frequency points; histograms cover everything else. A histogram slices a column's value range into buckets and records the fraction of rows in each bucket, giving the optimizer a data-distribution map for range and inequality predicates.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Three histogram variants matter in practice:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Equi-width histogram",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — the value range is divided into equal-width buckets (e.g., 0–99, 100–199, …). Simple to build; inaccurate for skewed data because a single hot bucket contains far more rows than the bucket width implies."
+              }
+            ],
+            [
+              {
+                "text": "Equi-depth (equi-height) histogram",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — buckets are chosen so that each bucket contains approximately the same number of rows. The bucket boundaries are the interesting information (the 'most_common_histogram_bounds' in Postgres). Range queries that span N buckets divide N by total buckets to estimate selectivity."
+              }
+            ],
+            [
+              {
+                "text": "Hybrid (MCV + equi-depth)",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — Postgres and most commercial engines use this. Frequent values are captured in the MCV list and removed before the histogram is built, so the histogram represents only the non-frequent tail. This is strictly more accurate than either approach alone."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "code",
+          "language": "plaintext",
+          "text": "Equi-depth histogram for orders.amount (100 buckets, 1M rows):\n\nBucket boundaries (histogram_bounds):\n  {0, 12, 28, 45, 67, 102, 183, 341, 812, 1200, 99999}\n                                               ^\n                            Each bucket ≈ 10,000 rows\n\nQuery: WHERE amount BETWEEN 100 AND 200\n  → spans roughly bucket 5→6 (boundaries 67..183)\n  → fraction ≈ 1/10 buckets = 0.10 (linear interpolation within bucket)\n  → estimated rows = 1,000,000 * 0.10 = 100,000"
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Postgres stores equi-depth histograms in "
+            },
+            {
+              "text": "pg_statistic.stavalues",
+              "marks": ["code"]
+            },
+            {
+              "text": " (kind = 2, STATISTIC_KIND_HISTOGRAM). The histogram uses "
+            },
+            {
+              "text": "linear interpolation",
+              "marks": ["bold"]
+            },
+            {
+              "text": " within a bucket to estimate selectivity for a predicate that falls in the middle of a bucket. This is a reasonable approximation for uniform distributions but breaks down when data is clustered within a bucket."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "For multi-dimensional data (e.g., X and Y coordinates in a spatial column), traditional one-dimensional histograms fail to capture joint distributions. This is where extended statistics, sampling-based cardinality estimation, and ML-based methods (as proposed in recent research) attempt to improve."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "A histogram is a bucket map of a column's values. Equi-depth buckets each hold the same number of rows, so counting buckets spanned by a range query gives a rough row estimate. Postgres combines histograms with a most-common-values list to handle both skewed (popular values) and distributed (the rest) data."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "dbi-ch08-c006",
+      "order": 6,
+      "title": "Selectivity Estimation — What Fraction of Rows Pass a Predicate?",
+      "teaser": "Selectivity is the fraction of a table's rows that satisfy a predicate — a number between 0.0 and 1.0. It is the basic building block of cardinality estimation. Get selectivity wrong, and every downstream cardinality estimate is wrong too.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Selectivity formulas differ by predicate type:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Equality (col = const)",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — if the constant appears in the MCV list, use its recorded frequency directly. Otherwise assume uniform distribution: selectivity = 1 / NDV."
+              }
+            ],
+            [
+              {
+                "text": "Range (col > const or col BETWEEN a AND b)",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — estimate the fraction of histogram buckets covered by the range, with linear interpolation within partially covered buckets."
+              }
+            ],
+            [
+              {
+                "text": "IS NULL",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — use null_frac directly."
+              }
+            ],
+            [
+              {
+                "text": "LIKE 'prefix%'",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — a prefix-anchored LIKE can use the histogram if the data is alphabetically sortable. General mid-string LIKEs fall back to a magic constant (typically 0.02 in Postgres)."
+              }
+            ],
+            [
+              {
+                "text": "AND (conjunction)",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — multiply individual selectivities: sel(A AND B) = sel(A) * sel(B). This assumes column independence — a dangerous assumption when columns are correlated."
+              }
+            ],
+            [
+              {
+                "text": "OR (disjunction)",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — inclusion-exclusion: sel(A OR B) = sel(A) + sel(B) − sel(A) * sel(B)."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The "
+            },
+            {
+              "text": "independence assumption",
+              "marks": ["bold"]
+            },
+            {
+              "text": " is the most common source of selectivity error. If a table has columns "
+            },
+            {
+              "text": "city",
+              "marks": ["code"]
+            },
+            {
+              "text": " and "
+            },
+            {
+              "text": "country",
+              "marks": ["code"]
+            },
+            {
+              "text": ", the predicate WHERE city = 'Paris' AND country = 'France' has actual selectivity driven entirely by city = 'Paris' (Paris is always in France). But a naive conjunction estimate multiplies both selectivities, dramatically underestimating the row count."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Postgres 10+ multi-column statistics (CREATE STATISTICS … WITH (dependencies)) detect these functional dependencies and correct the conjunction estimate. Oracle's extended statistics serve the same purpose."
+            }
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "warning",
+          "runs": [
+            {
+              "text": "Lohman (2014) calls this the cardinality estimation problem the central unsolved problem of query optimization. Even with perfect statistics, the independence assumption causes compound selectivity errors that compound multiplicatively across join chains."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Selectivity is the fraction of rows that pass a predicate. Equality uses the recorded frequency or 1/NDV; ranges use the histogram. Multiple AND predicates multiply their selectivities — which assumes independence and often underestimates how many rows actually match when columns are correlated."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "dbi-ch08-c007",
+      "order": 7,
+      "title": "Cardinality Estimation — How Many Rows Come Out of Each Operator?",
+      "teaser": "Cardinality is the row count that an operator produces. It is derived from selectivity and propagated up the plan tree. Every upstream operator — especially the join algorithm choice — depends on the cardinality estimates flowing into it. Misestimate here and the entire plan degrades.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Cardinality estimation begins at the leaves (base table scans) and propagates upward through each operator:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Base scan",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — card = reltuples * selectivity(predicates)."
+              }
+            ],
+            [
+              {
+                "text": "Join",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — card = card(outer) * card(inner) / max(NDV_outer, NDV_inner). This is the classic join selectivity formula. If the join is on a primary key – foreign key, the result cardinality cannot exceed the FK-side table size."
+              }
+            ],
+            [
+              {
+                "text": "Group-by / Distinct",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — card = NDV of the grouping columns. Often a coarse estimate because NDV itself is sampled."
+              }
+            ],
+            [
+              {
+                "text": "LIMIT N",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — card = min(N, input_cardinality). Matters for stop-early plan shapes."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "code",
+          "language": "plaintext",
+          "text": "Example propagation:\n\n  Table: orders        1,000,000 rows\n  Table: customers       100,000 rows\n  Predicate: amount > 1000  →  selectivity = 0.02\n\n  Scan(orders, amount > 1000):\n    cardinality = 1,000,000 * 0.02 = 20,000\n\n  Join on orders.cust_id = customers.id\n  (NDV of cust_id ≈ 100,000 = NDV of customers.id)\n    cardinality = 20,000 * 100,000 / max(100,000, 100,000)\n               = 20,000 * 1.0 = 20,000\n\n  This means the join is safe for a Nested Loop:\n  20,000 outer rows × index lookup on customers = fast."
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Cardinality errors "
+            },
+            {
+              "text": "compound",
+              "marks": ["bold"]
+            },
+            {
+              "text": ": an underestimate at a scan node feeds into a join node, causing the join's output to be underestimated, which then feeds into a sort or aggregation. By the time a five-table query propagates its estimates to the root, small per-node errors can combine into an estimate that is orders of magnitude off."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "This error amplification is the reason Lohman (2014) — \"Is Query Optimization a Solved Problem?\" — concludes: no. The optimizer's architecture is mature; the statistics and estimation machinery underneath it is not. Research directions include learned cardinality estimators (neural networks trained on query execution feedback) and adaptive query execution (Apache Spark's AQE, Orca's runtime re-optimization)."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Cardinality is the row count flowing out of each plan node. It starts with table size times predicate selectivity at the leaves, then propagates up through joins and aggregations. Errors multiply as they travel up the tree — a small underestimate at a table scan becomes a large underestimate at a four-table join."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "dbi-ch08-c008",
+      "order": 8,
+      "title": "Join Ordering — The Combinatorial Heart of Query Optimization",
+      "teaser": "For N tables in a query, there are N! ways to order the joins and multiple algorithm choices per join. Even for modest N this is a combinatorial explosion. Join ordering is the single most impactful optimization decision, and finding the optimal order is NP-hard.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Consider a query joining tables A, B, C, and D. The optimizer must decide both the "
+            },
+            {
+              "text": "order",
+              "marks": ["bold"]
+            },
+            {
+              "text": " (A⋈B first, or B⋈C first, or …) and the "
+            },
+            {
+              "text": "algorithm",
+              "marks": ["bold"]
+            },
+            {
+              "text": " (Nested Loop, Hash Join, Merge Join) for each join. The number of distinct join trees grows explosively:"
+            }
+          ]
+        },
+        {
+          "type": "code",
+          "language": "plaintext",
+          "text": "Tables │ Left-deep trees │ Bushy trees (Catalan number)\n───────┼─────────────────┼────────────────────────────\n  2   │      1          │      1\n  3   │      3          │      5\n  4   │     12          │     42\n  5   │     60          │    429\n  8   │  40,320         │  6,435,520\n 10   │  3,628,800      │  34,459,425\n\nWith 3 algorithm choices per join, multiply by 3^(N-1)."
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The key intuition: joining the smallest result sets first produces smaller intermediate results, which reduces the cost of downstream joins. A bad join order — joining two large tables early when a selective predicate on a third table would have pruned most of the rows — can turn a 100 ms query into a 100 second query."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "At N ≥ 8–12, exhaustive enumeration becomes impractical. Postgres switches to a "
+            },
+            {
+              "text": "genetic query optimizer (GEQO)",
+              "marks": ["bold"]
+            },
+            {
+              "text": " for queries with more than "
+            },
+            {
+              "text": "geqo_threshold",
+              "marks": ["code"]
+            },
+            {
+              "text": " tables (default: 12). GEQO uses a genetic algorithm to heuristically explore the join-tree space — trading plan optimality for planning time. The same tradeoff appears in Oracle's hint-based cutoffs and SQL Server's adaptive join enumeration."
+            }
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "info",
+          "runs": [
+            {
+              "text": "The theoretical hardness: finding the optimal join order is equivalent to finding the minimum-cost binary tree, which is NP-hard in the general case. Practical optimizers solve it approximately using dynamic programming (small N), genetic algorithms (medium N), or greedy heuristics (large N)."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Join ordering asks: in what sequence should we combine N tables? The number of orderings grows faster than exponentially. For small N (under 12), dynamic programming finds the optimal order. For larger N, databases switch to approximate search — genetic algorithms or greedy heuristics — accepting a good-enough plan to avoid spending more time planning than executing."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "dbi-ch08-c009",
+      "order": 9,
+      "title": "Bushy vs Left-Deep Join Trees — Search Space Shape and Parallelism",
+      "teaser": "A left-deep join tree chains joins so each join's inner input is always a base table. A bushy tree allows any subresult to be an inner input. Left-deep trees reduce the search space dramatically — and are the default. Bushy trees enable parallelism but demand more optimizer work to evaluate.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Visualizing the two tree shapes for a four-table join A, B, C, D:"
+            }
+          ]
+        },
+        {
+          "type": "code",
+          "language": "plaintext",
+          "text": "LEFT-DEEP TREE                BUSHY TREE\n\n      ⋈                           ⋈\n     ╱ ╲                         ╱   ╲\n    ⋈   D                       ⋈     ⋈\n   ╱ ╲                         ╱ ╲   ╱ ╲\n  ⋈   C                       A   B C   D\n ╱ ╲\nA   B\n\nPattern: inner side is always       Pattern: any subresult can be\na base table scan.                  inner or outer side."
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Left-deep trees have an important practical property: they enable "
+            },
+            {
+              "text": "pipeline execution",
+              "marks": ["bold"]
+            },
+            {
+              "text": ". The right (inner) side of each join is a base table — it can be probed row-by-row as the outer side produces tuples. Hash join and nested-loop join both benefit from this: they never need to materialize a large intermediate subresult."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Bushy trees allow the optimizer to assign "
+            },
+            {
+              "text": "independent subtrees to parallel workers",
+              "marks": ["bold"]
+            },
+            {
+              "text": ". If A⋈B and C⋈D can run in parallel, the final join over their results completes faster on multi-core hardware. This is the key motivation behind bushy-tree exploration in MPP databases (Greenplum, Redshift, BigQuery). Postgres's standard planner restricts itself to left-deep trees; its parallel query support handles limited forms of bushy execution."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "System R (Selinger et al. 1979) chose left-deep trees deliberately to bound the search space to O(N!) instead of the Catalan number growth of bushy trees. This was the right tradeoff in 1979; modern MPP systems challenge it."
+            }
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "tip",
+          "runs": [
+            {
+              "text": "Postgres's join_collapse_limit (default 8) controls how aggressively the planner reorders FROM-list joins. Setting it to 1 disables join reordering entirely — the planner uses the order you wrote. Useful for forcing a known-good order when the optimizer misbehaves."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "A left-deep tree always joins a running result against a fresh base table — predictable, pipelinable, and manageable for the optimizer. A bushy tree joins any two intermediate results — flexible for parallelism but exponentially harder to enumerate. Most single-node optimizers use left-deep; MPP systems explore bushy trees for parallel execution."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "dbi-ch08-c010",
+      "order": 10,
+      "title": "Dynamic Programming for Join Ordering — Selinger et al. 1979",
+      "teaser": "The Selinger paper — 'Access Path Selection in a Relational Database Management System' — introduced dynamic programming for join ordering. It remains, 45 years later, the foundation of join enumeration in virtually every relational optimizer.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The insight of Selinger et al. (1979): the optimal join of N tables contains within it the optimal join of every subset of those N tables. This is the "
+            },
+            {
+              "text": "optimal substructure",
+              "marks": ["bold"]
+            },
+            {
+              "text": " property that makes dynamic programming applicable. The algorithm builds up join plans from single tables to the full join set, memoizing the cheapest plan for every subset."
+            }
+          ]
+        },
+        {
+          "type": "code",
+          "language": "plaintext",
+          "text": "DP table for 3 tables {A, B, C}:\n\nSubset │ Cheapest plan                  │ Est. cost\n───────┼────────────────────────────────┼──────────\n{A}    │ SeqScan(A)                      │   100\n{B}    │ SeqScan(B)                      │   200\n{C}    │ IndexScan(C, idx_c_id)          │    20\n{A,B}  │ HashJoin(SeqScan(A), SeqScan(B))│  1200\n{A,C}  │ NL(IndexScan(C), SeqScan(A))    │   250\n{B,C}  │ HashJoin(SeqScan(B), IndexScan(C))│ 900\n{A,B,C}│ HashJoin({A,C}, SeqScan(B))     │  1800  ← optimal\n        best subplan: join A with C first (cost 250),\n        then hash-join the result with B.\n\nWithout DP: must evaluate all 12 left-deep trees.\nWith DP:    build up from subsets — O(3^N) with memoization."
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The DP algorithm runs in O(3"
+            },
+            {
+              "text": "^N",
+              "marks": ["superscript"]
+            },
+            {
+              "text": ") time (iterating over subsets and their complements), which is exponential but far more manageable than N! for small N. For N = 12, 3"
+            },
+            {
+              "text": "^12",
+              "marks": ["superscript"]
+            },
+            {
+              "text": " ≈ 530,000 subset evaluations — fast on modern hardware."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Selinger's paper also introduced the concept of "
+            },
+            {
+              "text": "interesting orders",
+              "marks": ["bold"]
+            },
+            {
+              "text": ": a plan that produces rows sorted by a useful key (e.g., a join column or ORDER BY column) may be worth choosing even if it has a higher raw cost, because it avoids a downstream sort. Postgres preserves interesting-order paths in its planner state to exploit this."
+            }
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "info",
+          "runs": [
+            {
+              "text": "Selinger, M. et al. 'Access Path Selection in a Relational Database Management System.' SIGMOD 1979. This is one of the most cited papers in database systems. Cascades (Graefe 1995) and Volcano (Graefe 1993) later generalized the DP approach into top-down, rule-driven frameworks used by SQL Server, CockroachDB, and Orca."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Selinger's algorithm builds join plans bottom-up: find the cheapest plan for every pair of tables, then every triple using those pairs, and so on until you've covered all N tables. Because you only keep the best plan for each subset, you avoid re-evaluating the same subproblems. The result is the optimal left-deep join tree without checking all N! orderings."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "dbi-ch08-c011",
+      "order": 11,
+      "title": "Subquery Flattening — Turning Subqueries Into Joins",
+      "teaser": "A correlated subquery re-executes for every outer row — potentially millions of times. Subquery flattening rewrites it into an equivalent join that executes once. It is one of the highest-value transformations an optimizer can perform.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Consider a correlated subquery:"
+            }
+          ]
+        },
+        {
+          "type": "code",
+          "language": "sql",
+          "text": "-- Correlated subquery (O(N²) naively)\nSELECT o.id, o.amount\nFROM orders o\nWHERE o.amount > (\n  SELECT AVG(o2.amount)\n  FROM orders o2\n  WHERE o2.cust_id = o.cust_id   -- correlated: references outer o\n);\n\n-- After subquery flattening → semi-join or lateral join:\nSELECT o.id, o.amount\nFROM orders o\nJOIN (\n  SELECT cust_id, AVG(amount) AS avg_amt\n  FROM orders\n  GROUP BY cust_id\n) avg_by_cust ON avg_by_cust.cust_id = o.cust_id\nWHERE o.amount > avg_by_cust.avg_amt;"
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The rewritten version runs the aggregation subquery "
+            },
+            {
+              "text": "once",
+              "marks": ["italic"]
+            },
+            {
+              "text": " and joins the result — reducing O(N²) work to O(N). This is called "
+            },
+            {
+              "text": "subquery unnesting",
+              "marks": ["bold"]
+            },
+            {
+              "text": " or "
+            },
+            {
+              "text": "decorrelation",
+              "marks": ["bold"]
+            },
+            {
+              "text": "."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Subquery types and their flattening strategies:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Uncorrelated scalar subquery",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — evaluated once, result substituted as a constant. Postgres does this transparently."
+              }
+            ],
+            [
+              {
+                "text": "IN / EXISTS (uncorrelated)",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — rewritten to a semi-join or anti-join. Postgres and SQL Server both perform this automatically."
+              }
+            ],
+            [
+              {
+                "text": "Correlated IN / EXISTS",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — decorrelated into a lateral join or grouped aggregation join where safe (no outer references in aggregates, deterministic functions, etc.)."
+              }
+            ],
+            [
+              {
+                "text": "Correlated aggregate subquery",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — lifted into a derived table grouped by the correlation column (as shown above). This is one of the most impactful rewrites in practice."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Flattening is not always possible. If the subquery references volatile functions, uses LIMIT, or has outer references in positions that prevent lifting, the optimizer must execute the correlated subquery row-by-row (an 'InitPlan' or 'SubPlan' node in Postgres EXPLAIN output). This is a major performance warning sign."
+            }
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "warning",
+          "runs": [
+            {
+              "text": "If you see 'SubPlan' in Postgres EXPLAIN output, the correlated subquery was NOT flattened. This means it re-executes once per outer row. For large tables this is catastrophic — a common source of production query regressions."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "A correlated subquery runs once per outer row — O(N²) work. Subquery flattening rewrites it into a join that runs the inner query once and joins results — O(N) work. If the optimizer can't flatten it (you'll see SubPlan in EXPLAIN), you're executing the inner query millions of times."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "dbi-ch08-c012",
+      "order": 12,
+      "title": "Predicate Pushdown — Filtering Early to Shrink Intermediate Results",
+      "teaser": "Predicate pushdown moves WHERE clause filters as close to their base table scans as possible. It is one of the most universally beneficial transformations: smaller intermediate results mean less I/O, less memory, and cheaper joins for every operator above the filter.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Without pushdown, a filter that applies to orders must be evaluated "
+            },
+            {
+              "text": "after",
+              "marks": ["italic"]
+            },
+            {
+              "text": " the join — which means the join runs on the full unfiltered table:"
+            }
+          ]
+        },
+        {
+          "type": "code",
+          "language": "plaintext",
+          "text": "WITHOUT pushdown:\n  Filter (amount > 1000)\n       │\n  Hash Join (orders.cust_id = customers.id)\n  ╱                ╲\nSeqScan(orders)  SeqScan(customers)\n  1,000,000 rows   100,000 rows\n  → join produces 1,000,000 rows before filtering\n\nWITH pushdown:\n  Hash Join (orders.cust_id = customers.id)\n  ╱                         ╲\nFilter(amount > 1000)     SeqScan(customers)\n  │                         100,000 rows\nSeqScan(orders)\n  → Filter passes only 20,000 rows into the join\n  → join works on 20,000 × 100,000 instead of 1M × 100K"
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Predicate pushdown is a rule-based transformation — it is "
+            },
+            {
+              "text": "always",
+              "marks": ["italic"]
+            },
+            {
+              "text": " correct to push a predicate closer to its base table (assuming the predicate does not reference columns produced by the operator being pushed past). Modern optimizers apply it as a mandatory normalization step before cost-based enumeration begins."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Related transformations:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Join predicate pushdown",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — move join conditions into index lookups or build sides of hash joins."
+              }
+            ],
+            [
+              {
+                "text": "Partition pruning",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — when predicates align with partition keys, entire partitions are excluded at planning time. Postgres calls this 'constraint exclusion' and 'partition pruning'."
+              }
+            ],
+            [
+              {
+                "text": "View predicate pushdown",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — predicates on views are pushed through the view definition into the underlying tables. This is often called 'view merging' and is critical for applications that heavily use views."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "info",
+          "runs": [
+            {
+              "text": "Pushdown through window functions and DISTINCT is restricted. Postgres cannot push predicates on window function output columns into the inner query because window functions are computed post-join. This is a common gotcha when wrapping queries in CTEs that contain window functions."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Predicate pushdown moves filters as close to the data source as possible, so you only carry the rows you actually need through every subsequent join or aggregation. It's always correct (as long as the filter doesn't depend on something computed later), so every optimizer does it unconditionally as a first pass."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "dbi-ch08-c013",
+      "order": 13,
+      "title": "EXPLAIN / EXPLAIN ANALYZE — Reading the Optimizer's Work",
+      "teaser": "EXPLAIN shows the plan the optimizer chose. EXPLAIN ANALYZE runs the query and overlays actual row counts and timing on the estimated plan. The gap between estimated and actual rows is the primary diagnostic for optimizer problems.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "EXPLAIN output in Postgres reads bottom-up: the innermost (most indented) node runs first. Each node shows the operator, the estimated startup cost (cost=X.XX..Y.YY), the estimated total cost, the estimated row count (rows=N), and the estimated average row width."
+            }
+          ]
+        },
+        {
+          "type": "code",
+          "language": "plaintext",
+          "text": "EXPLAIN ANALYZE\nSELECT o.id, c.name\nFROM orders o\nJOIN customers c ON o.cust_id = c.id\nWHERE o.amount > 1000;\n\n-- Output:\nHash Join  (cost=3421.00..8932.50 rows=19800 width=44)\n           (actual time=42.3..187.6 rows=21342 loops=1)\n  Hash Cond: (o.cust_id = c.id)\n  ->  Seq Scan on orders o\n        (cost=0.00..4819.00 rows=19800 width=16)\n        (actual time=0.03..38.2  rows=21342 loops=1)\n        Filter: (amount > '1000'::numeric)\n        Rows Removed by Filter: 978658\n  ->  Hash  (cost=2145.00..2145.00 rows=100000 width=36)\n            (actual time=29.1..29.1 rows=100000 loops=1)\n        ->  Seq Scan on customers c\n              (cost=0.00..2145.00 rows=100000 width=36)\n              (actual time=0.02..18.4 rows=100000 loops=1)\nPlanning time: 2.3 ms\nExecution time: 192.1 ms"
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Reading the key fields:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "cost=X..Y",
+                "marks": ["bold", "code"]
+              },
+              {
+                "text": " — X is startup cost (cost before first row), Y is total cost. Planner-estimated, in abstract units."
+              }
+            ],
+            [
+              {
+                "text": "rows=N",
+                "marks": ["bold", "code"]
+              },
+              {
+                "text": " — estimated output rows. Compare against actual rows= to find estimation errors."
+              }
+            ],
+            [
+              {
+                "text": "actual rows=M",
+                "marks": ["bold", "code"]
+              },
+              {
+                "text": " — actual rows produced. A large gap (e.g., estimated 100, actual 100,000) signals stale statistics or a missing extended-statistics declaration."
+              }
+            ],
+            [
+              {
+                "text": "loops=K",
+                "marks": ["bold", "code"]
+              },
+              {
+                "text": " — how many times this node was executed (> 1 inside a nested loop). Actual time and rows are per-loop; multiply by loops for totals."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "EXPLAIN (ANALYZE, BUFFERS) adds buffer hit/miss statistics — the number of shared_buffers hits vs disk reads. High block reads on a node that the planner estimated as cheap is a sign the planner's cost model underweighted I/O for that path."
+            }
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "tip",
+          "runs": [
+            {
+              "text": "Use EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON) and paste the result into explain.depesz.com or pgBadger for visual plan analysis. The JSON format exposes every planner field including per-node JIT statistics and parallel worker details."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "EXPLAIN shows the plan; EXPLAIN ANALYZE runs it and adds real numbers. The critical comparison is estimated rows vs actual rows at each node. Where those two diverge badly, you've found the root of the estimation error — usually stale statistics or correlated columns the planner didn't know about."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "dbi-ch08-c014",
+      "order": 14,
+      "title": "The Optimizer Cost Gap — Why Estimated and Actual Costs Diverge",
+      "teaser": "The optimizer estimates costs without running the query. The estimate and the reality can differ by orders of magnitude. Understanding why this gap exists — and when it's dangerous — is essential for working effectively with any SQL database.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Guy Lohman's 2014 paper \"Is Query Optimization a Solved Problem?\" (Carnegie Mellon Database Group) catalogs the sources of optimizer error. The major categories:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Stale statistics",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — ANALYZE was not run after bulk inserts or deletes. Postgres autovacuum runs ANALYZE automatically, but it fires based on row-change thresholds that can lag behind fast-moving tables."
+              }
+            ],
+            [
+              {
+                "text": "Independence assumption",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — conjunction selectivities are multiplied assuming columns are independent. Correlated columns (city + state, product_type + product_subtype) cause underestimates that compound across joins."
+              }
+            ],
+            [
+              {
+                "text": "Out-of-range values",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — histograms are computed at ANALYZE time. A predicate on a timestamp or order ID with values newer than the histogram's max boundary falls off the end of the histogram, receiving a low default selectivity. Queries on recent data in append-only tables suffer from this."
+              }
+            ],
+            [
+              {
+                "text": "Function opacity",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — WHERE f(col) = const, where f is a user-defined function, cannot be estimated from column statistics. Postgres defaults to a flat 0.005 selectivity for opaque expressions."
+              }
+            ],
+            [
+              {
+                "text": "Cost model calibration",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — the page cost weights assume specific hardware characteristics. On containerized workloads with network-attached storage, the random_page_cost / seq_page_cost ratio may be wrong by 10×."
+              }
+            ],
+            [
+              {
+                "text": "Parameter sniffing / plan cache",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — a cached plan optimized for parameter value X may perform poorly for parameter value Y with different selectivity. SQL Server's parameter sniffing problems and Postgres's generic vs custom plan decision (plan_cache_mode) are manifestations of this."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The consequence: the optimizer chooses a nested-loop join expecting 50 inner rows; the query returns 50,000 inner rows and spills to disk. Or it chooses a seq-scan expecting 80% selectivity; the table has grown 10× since the last ANALYZE and 8 million rows flow into a sort."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Mitigations include: frequent ANALYZE on fast-moving tables, "
+            },
+            {
+              "text": "CREATE STATISTICS",
+              "marks": ["code"]
+            },
+            {
+              "text": " for correlated columns, tuning "
+            },
+            {
+              "text": "default_statistics_target",
+              "marks": ["code"]
+            },
+            {
+              "text": " upward on skewed columns, and — when all else fails — optimizer hints (pg_hint_plan extension for Postgres, native hints in Oracle and SQL Server)."
+            }
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "warning",
+          "runs": [
+            {
+              "text": "Lohman 2014 conclusion: query optimization is NOT a solved problem. The architecture — parse, normalize, enumerate, cost, execute — has been stable since System R. The statistics and estimation machinery underneath it has improved but remains the dominant source of query regression in production systems."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The optimizer guesses costs without running the query. It guesses using statistics that may be stale, and formulas that assume column independence. When the guess is wrong, the plan is wrong — often catastrophically. The gap between estimated and actual cost is the central unsolved problem in query optimization."
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

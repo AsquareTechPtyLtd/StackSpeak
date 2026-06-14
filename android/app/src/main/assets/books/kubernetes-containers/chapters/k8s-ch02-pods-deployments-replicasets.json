@@ -1,0 +1,1129 @@
+{
+  "chapterId": "k8s-ch02-pods-deployments-replicasets",
+  "shardIndex": 2,
+  "cards": [
+    {
+      "id": "k8s-ch02-c001",
+      "order": 1,
+      "title": "Pod — The Atomic Unit of Kubernetes",
+      "teaser": "A pod is not a container — it is a co-scheduled, co-located group of one or more containers that share a network namespace, a set of storage volumes, and a lifecycle. It is the smallest deployable object in Kubernetes.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Docker gives you containers. Kubernetes gives you "
+            },
+            {
+              "text": "pods",
+              "marks": ["bold"]
+            },
+            {
+              "text": ". The difference matters: all containers in a pod share the same IP address and port space (they communicate over localhost), the same UTS namespace (hostname), and the same IPC namespace. Volumes attached to the pod are mounted into each container that requests them."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "A minimal single-container pod manifest (the kind you almost never create directly):"
+            }
+          ]
+        },
+        {
+          "type": "code",
+          "language": "yaml",
+          "text": "apiVersion: v1\nkind: Pod\nmetadata:\n  name: api-server\n  labels:\n    app: api\nspec:\n  containers:\n    - name: api\n      image: my-registry/api:1.2.3\n      ports:\n        - containerPort: 8080\n      resources:\n        requests:\n          cpu: 250m\n          memory: 128Mi\n        limits:\n          cpu: 500m\n          memory: 256Mi"
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Why group containers instead of running one-container-per-VM? Because some workloads are genuinely tightly coupled — an application container and a log-shipping sidecar, for example. They need to share a filesystem and a network without going through the kernel networking stack. A pod makes that cheap."
+            }
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "info",
+          "runs": [
+            {
+              "text": "In practice you almost never create pods directly. You create a Deployment, which manages a ReplicaSet, which manages pods. Bare pods are not rescheduled if a node dies."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "A pod is a group of containers that Kubernetes treats as one unit — they live on the same node, share one IP address, and start and stop together. Think of it as a logical host that runs inside the cluster."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "k8s-ch02-c002",
+      "order": 2,
+      "title": "Pod Lifecycle — Phases and Conditions",
+      "teaser": "A pod moves through well-defined phases (Pending → Running → Succeeded or Failed) and exposes granular conditions that tell you exactly where in that journey it is stuck.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Kubernetes tracks two orthogonal pieces of pod state: the "
+            },
+            {
+              "text": "phase",
+              "marks": ["bold"]
+            },
+            {
+              "text": " (a coarse summary) and "
+            },
+            {
+              "text": "conditions",
+              "marks": ["bold"]
+            },
+            {
+              "text": " (fine-grained boolean gates)."
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Pending",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — the pod has been accepted by the API server but is not yet running. The scheduler is looking for a node, or images are being pulled, or init containers are running."
+              }
+            ],
+            [
+              {
+                "text": "Running",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — the pod has been bound to a node, all containers have been created, and at least one container is still running (or starting / restarting)."
+              }
+            ],
+            [
+              {
+                "text": "Succeeded",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — all containers in the pod have terminated successfully (exit code 0) and will not be restarted. Typical for Jobs."
+              }
+            ],
+            [
+              {
+                "text": "Failed",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — at least one container terminated with a non-zero exit code or was killed by the system."
+              }
+            ],
+            [
+              {
+                "text": "Unknown",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — the node hosting the pod lost contact with the control plane; the pod's state cannot be determined."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Conditions are listed under "
+            },
+            {
+              "text": "status.conditions",
+              "marks": ["code"]
+            },
+            {
+              "text": " and carry a "
+            },
+            {
+              "text": "type",
+              "marks": ["code"]
+            },
+            {
+              "text": " (e.g., "
+            },
+            {
+              "text": "PodScheduled",
+              "marks": ["code"]
+            },
+            {
+              "text": ", "
+            },
+            {
+              "text": "ContainersReady",
+              "marks": ["code"]
+            },
+            {
+              "text": ", "
+            },
+            {
+              "text": "Initialized",
+              "marks": ["code"]
+            },
+            {
+              "text": ", "
+            },
+            {
+              "text": "Ready",
+              "marks": ["code"]
+            },
+            {
+              "text": "), a boolean "
+            },
+            {
+              "text": "status",
+              "marks": ["code"]
+            },
+            {
+              "text": ", and a "
+            },
+            {
+              "text": "reason",
+              "marks": ["code"]
+            },
+            {
+              "text": " string explaining why the condition is false. When debugging a stuck pod, conditions are far more useful than the phase alone."
+            }
+          ]
+        },
+        {
+          "type": "code",
+          "language": "bash",
+          "text": "# Inspect conditions in one command\nkubectl get pod api-server -o jsonpath='{.status.conditions}' | jq .\n\n# Quick phase check\nkubectl get pod api-server -o jsonpath='{.status.phase}'"
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The phase tells you where the pod is overall — starting, running, done, or broken. Conditions tell you which specific gate it is stuck behind. When a pod refuses to go Ready, check conditions before you check logs."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "k8s-ch02-c003",
+      "order": 3,
+      "title": "The Pause Container — The Pod's Network Foundation",
+      "teaser": "Before any of your containers start, Kubernetes launches an invisible infrastructure container called 'pause'. It holds the network namespace that all other containers in the pod share — and it never does anything else.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Every pod contains at least one container you did not ask for: the "
+            },
+            {
+              "text": "pause container",
+              "marks": ["bold"]
+            },
+            {
+              "text": " (also called the infra container or sandbox). It is launched first, acquires the pod's IP address from the CNI plugin, and then parks in a loop doing nothing — its entire job is to hold the network namespace alive."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Why not just use the first application container's namespace? Because containers can crash and restart. If the network namespace were owned by "
+            },
+            {
+              "text": "container-A",
+              "marks": ["code"]
+            },
+            {
+              "text": " and container-A restarted, its namespace would be destroyed — taking container-B's network connectivity with it. The pause container is intentionally trivial and never restarts unexpectedly, making it a stable anchor."
+            }
+          ]
+        },
+        {
+          "type": "code",
+          "language": "bash",
+          "text": "# See the pause container on a node (containerd)\nsudo crictl ps | grep pause\n\n# Output:\n# CONTAINER  IMAGE         STATE    NAME   POD-ID\n# b3e1...    pause:3.9     Running  pause  a1f2..."
+        },
+        {
+          "type": "callout",
+          "variant": "info",
+          "runs": [
+            {
+              "text": "The pause container image is tiny (a few hundred KB). Its source is a C program that calls pause() in an infinite loop — sleeping and consuming almost no CPU. The image is pulled from the kubelet's configured infra-container-registry, not from your application registry."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The pause container is the pod's skeleton. It grabs an IP address from the network plugin and holds it open. Your containers plug into that skeleton — and when any of them restarts, the IP address survives because the skeleton never restarts."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "k8s-ch02-c004",
+      "order": 4,
+      "title": "Init Containers — Sequential Setup Before Main Runs",
+      "teaser": "Init containers run one at a time, in order, before the main containers start. They are the right place for database migrations, secret fetching, network readiness checks, and any one-time setup that must complete before your app can serve traffic.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Init containers appear in "
+            },
+            {
+              "text": "spec.initContainers",
+              "marks": ["code"]
+            },
+            {
+              "text": ". Each one must exit 0 before the next starts. If any init container fails, the pod restarts according to the pod's "
+            },
+            {
+              "text": "restartPolicy",
+              "marks": ["code"]
+            },
+            {
+              "text": " — the main containers never start until every init container has succeeded."
+            }
+          ]
+        },
+        {
+          "type": "code",
+          "language": "yaml",
+          "text": "spec:\n  initContainers:\n    - name: wait-for-db\n      image: busybox:1.36\n      command: ['sh', '-c',\n        'until nc -z postgres-svc 5432; do echo waiting; sleep 2; done']\n    - name: run-migrations\n      image: my-registry/migrator:1.2.3\n      env:\n        - name: DATABASE_URL\n          valueFrom:\n            secretKeyRef:\n              name: db-secret\n              key: url\n  containers:\n    - name: api\n      image: my-registry/api:1.2.3"
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Init containers have access to the same volumes, secrets, and ConfigMaps as main containers but "
+            },
+            {
+              "text": "do not share the lifecycle",
+              "marks": ["italic"]
+            },
+            {
+              "text": " — they run to completion and exit. They are not restarted once the pod reaches Running phase (unless the whole pod restarts). Common patterns:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [{ "text": "Wait for a dependency (database, another service) to be reachable." }],
+            [{ "text": "Copy configuration files or binaries into a shared emptyDir volume." }],
+            [{ "text": "Run database schema migrations exactly once per pod startup." }],
+            [{ "text": "Fetch secrets from a vault and write them to an in-memory volume." }]
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "info",
+          "runs": [
+            {
+              "text": "Init containers can request different (often higher) CPU/memory than the main containers — the scheduler considers the maximum of init container requests and the sum of main container requests when placing the pod."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Init containers are the pod's pre-flight checklist. They run in sequence, each must pass before the next begins, and all must pass before your app starts. Use them whenever you need something to be true before your main code runs."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "k8s-ch02-c005",
+      "order": 5,
+      "title": "Sidecar Containers — The Co-Located Helper Pattern",
+      "teaser": "A sidecar is a second container in the pod that augments the main application without being part of it — handling cross-cutting concerns like logging, metrics scraping, mTLS proxying, and configuration reloading so the application container stays focused on business logic.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The sidecar pattern is the most widely used multi-container pattern in Kubernetes. The sidecar shares the pod's network and volumes with the main container, which means it can read local log files, talk to localhost services, or intercept traffic — all without any change to the application container image."
+            }
+          ]
+        },
+        {
+          "type": "code",
+          "language": "yaml",
+          "text": "spec:\n  containers:\n    - name: api\n      image: my-registry/api:1.2.3\n      volumeMounts:\n        - name: logs\n          mountPath: /var/log/app\n    - name: log-shipper           # sidecar\n      image: fluent/fluent-bit:3.0\n      volumeMounts:\n        - name: logs\n          mountPath: /var/log/app\n          readOnly: true\n  volumes:\n    - name: logs\n      emptyDir: {}"
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Common sidecar roles:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              { "text": "Service mesh proxy ", "marks": [] },
+              { "text": "(Envoy/Linkerd)", "marks": ["italic"] },
+              { "text": " — intercepts all inbound/outbound traffic for mTLS, retries, and telemetry." }
+            ],
+            [{ "text": "Log shipper — tails a shared log volume and forwards entries to a central store." }],
+            [{ "text": "Metrics exporter — reads application-specific metrics and exposes them in Prometheus format." }],
+            [{ "text": "Config reloader — watches a ConfigMap-backed volume and sends SIGHUP to the main process on change." }]
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "tip",
+          "runs": [
+            {
+              "text": "Native sidecar containers (Kubernetes 1.29+ stable): you can now declare a sidecar inside initContainers with restartPolicy: Always. This makes the sidecar start before main containers and stop after them — solving the classic race condition where the log shipper exited before the app finished writing. Add it as: initContainers: [{name: log-shipper, ..., restartPolicy: Always}]."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "A sidecar is a container that rides along with your application container inside the same pod, sharing its network and files. It handles the plumbing — logging, proxying, metrics — so the main container only has to handle the actual work."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "k8s-ch02-c006",
+      "order": 6,
+      "title": "Ephemeral Containers — Live Debugging Without Rebuilding",
+      "teaser": "Ephemeral containers let you attach a debugging container to a running pod without restarting it — perfect for diagnosing production issues in minimal images that lack shells, curl, or network tools.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Introduced in Kubernetes 1.23 (beta) and stable in 1.25, ephemeral containers are temporary containers added to an already-running pod via the API. They share the pod's namespaces but "
+            },
+            {
+              "text": "cannot",
+              "marks": ["bold"]
+            },
+            {
+              "text": " have ports, liveness probes, or resource limits changed after creation. They exist only for the duration of the debug session."
+            }
+          ]
+        },
+        {
+          "type": "code",
+          "language": "bash",
+          "text": "# Attach a debug container sharing the target container's process namespace\nkubectl debug -it api-server \\\n  --image=nicolaka/netshoot \\\n  --target=api \\\n  -- bash\n\n# The netshoot image has tcpdump, curl, dig, ss, etc.\n# --target shares the process namespace so you can see the app's /proc"
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Why not just exec into the container? "
+            },
+            {
+              "text": "kubectl exec",
+              "marks": ["code"]
+            },
+            {
+              "text": " works only if the required tool is already in the container image. Distroless images and scratch-based images have no shell at all. Ephemeral containers inject the tools without touching the production image."
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              { "text": "Ephemeral containers are never restarted." }
+            ],
+            [
+              { "text": "They are removed automatically when you ", "marks": [] },
+              { "text": "kubectl delete pod", "marks": ["code"] },
+              { "text": " — but the pod must be re-created to fully clean them up." }
+            ],
+            [
+              { "text": "They can use process namespace sharing (", "marks": [] },
+              { "text": "shareProcessNamespace: true", "marks": ["code"] },
+              { "text": ") to read the target container's filesystem via ", "marks": [] },
+              { "text": "/proc/<pid>/root", "marks": ["code"] },
+              { "text": "." }
+            ]
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "info",
+          "runs": [
+            {
+              "text": "kubectl debug --copy-to creates a copy of the pod with the ephemeral container baked in as a regular container — useful when the target pod's security policy blocks ephemeral containers."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Ephemeral containers let you parachute a debug toolkit into a running pod that has none. You do not restart the pod, you do not rebuild the image — you just attach a temporary helper and look around."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "k8s-ch02-c007",
+      "order": 7,
+      "title": "ReplicaSet — Declarative Pod Count",
+      "teaser": "A ReplicaSet ensures that a specified number of identical pod replicas are running at any given time. It is the reconciliation loop that makes Kubernetes self-healing: if a pod dies, the ReplicaSet creates a replacement.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "A ReplicaSet (RS) has three key fields: a "
+            },
+            {
+              "text": "selector",
+              "marks": ["bold"]
+            },
+            {
+              "text": " that identifies which pods it owns, a "
+            },
+            {
+              "text": "replicas",
+              "marks": ["bold"]
+            },
+            {
+              "text": " count, and a "
+            },
+            {
+              "text": "template",
+              "marks": ["bold"]
+            },
+            {
+              "text": " that describes the pod it will create. The controller manager runs a continuous reconciliation loop: actual replica count != desired → create or delete pods."
+            }
+          ]
+        },
+        {
+          "type": "code",
+          "language": "yaml",
+          "text": "apiVersion: apps/v1\nkind: ReplicaSet\nmetadata:\n  name: api-rs\nspec:\n  replicas: 3\n  selector:\n    matchLabels:\n      app: api\n      version: \"1.2.3\"\n  template:\n    metadata:\n      labels:\n        app: api\n        version: \"1.2.3\"\n    spec:\n      containers:\n        - name: api\n          image: my-registry/api:1.2.3"
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The selector "
+            },
+            {
+              "text": "must match",
+              "marks": ["italic"]
+            },
+            {
+              "text": " the labels in the pod template. Kubernetes validates this at creation time. If a pod with matching labels already exists (and is not owned by another controller), the RS will adopt it — this is how RS adoption works and also a source of subtle bugs if labels are reused across experiments."
+            }
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "warning",
+          "runs": [
+            {
+              "text": "In production you should never create a ReplicaSet directly. Always use a Deployment. The Deployment creates and manages ReplicaSets for you and adds rollout, rollback, and history tracking on top."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "A ReplicaSet is a thermostat for pods. You tell it how many you want; it continuously checks the actual count and creates or deletes pods to reach that number. If a node goes down and takes pods with it, the RS replaces them on healthy nodes."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "k8s-ch02-c008",
+      "order": 8,
+      "title": "Labels and Selectors — The Glue Between Objects",
+      "teaser": "Labels are arbitrary key-value metadata on any Kubernetes object. Selectors are label-based queries. Together they form the loose coupling mechanism that links Deployments to ReplicaSets to pods — and Services to pods.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Kubernetes objects do not reference each other by name. A Deployment does not say \"manage pods named X\". Instead, the Deployment's "
+            },
+            {
+              "text": "spec.selector",
+              "marks": ["code"]
+            },
+            {
+              "text": " says \"manage pods with labels matching these key-value pairs\". This indirection is what makes Kubernetes composition flexible."
+            }
+          ]
+        },
+        {
+          "type": "code",
+          "language": "yaml",
+          "text": "# Labels on a pod\nmetadata:\n  labels:\n    app: api          # which application\n    tier: backend     # architectural tier\n    env: production   # environment\n    version: \"1.2.3\" # current version\n\n---\n# Equality-based selector (used by Deployments, Services)\nselector:\n  matchLabels:\n    app: api\n    env: production\n\n---\n# Set-based selector (used by Jobs, batch tools)\nselector:\n  matchExpressions:\n    - key: tier\n      operator: In\n      values: [backend, worker]\n    - key: version\n      operator: NotIn\n      values: [\"0.9\"]"
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "A critical rule: "
+            },
+            {
+              "text": "the selector on a Deployment is immutable after creation",
+              "marks": ["bold"]
+            },
+            {
+              "text": ". If you need to change the selector, you must delete and recreate the Deployment. Changing the pod template labels without changing the selector causes orphaned pods."
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              { "text": "kubectl get pods -l app=api,env=production", "marks": ["code"] },
+              { "text": " — filter by label." }
+            ],
+            [
+              { "text": "kubectl label pod api-server debug=true", "marks": ["code"] },
+              { "text": " — add a label at runtime." }
+            ],
+            [
+              { "text": "kubectl label pod api-server app-", "marks": ["code"] },
+              { "text": " — remove the ", "marks": [] },
+              { "text": "app", "marks": ["code"] },
+              { "text": " label (the trailing dash is the removal syntax)." }
+            ]
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Labels are sticky notes on Kubernetes objects. Selectors are queries that find all objects with specific sticky notes. Deployments do not track individual pods by name — they track them by labels, which is why you can scale, reschedule, and replace pods without updating any references."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "k8s-ch02-c009",
+      "order": 9,
+      "title": "Deployment — The Standard Workload Object",
+      "teaser": "A Deployment wraps a ReplicaSet with a versioning layer: you declare a desired pod template and the Deployment manages ReplicaSet creation, updates, rollouts, and rollbacks on your behalf.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The Deployment is the object you create for stateless applications. When you update the pod template (e.g., change the image tag), the Deployment controller creates a new ReplicaSet for the new version and scales the old one down — the mechanism it uses is governed by the update strategy."
+            }
+          ]
+        },
+        {
+          "type": "code",
+          "language": "yaml",
+          "text": "apiVersion: apps/v1\nkind: Deployment\nmetadata:\n  name: api\n  namespace: production\nspec:\n  replicas: 4\n  revisionHistoryLimit: 5        # keep 5 old ReplicaSets for rollback\n  selector:\n    matchLabels:\n      app: api\n  strategy:\n    type: RollingUpdate\n    rollingUpdate:\n      maxSurge: 1\n      maxUnavailable: 0\n  minReadySeconds: 15\n  template:\n    metadata:\n      labels:\n        app: api\n    spec:\n      containers:\n        - name: api\n          image: my-registry/api:1.3.0\n          readinessProbe:\n            httpGet:\n              path: /healthz\n              port: 8080\n            initialDelaySeconds: 5\n            periodSeconds: 10"
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Key Deployment-specific fields:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              { "text": "revisionHistoryLimit", "marks": ["code"] },
+              { "text": " — number of old ReplicaSets to retain for rollback. Default is 10. Set to 0 to disable rollback (saves etcd space)." }
+            ],
+            [
+              { "text": "minReadySeconds", "marks": ["code"] },
+              { "text": " — seconds a new pod must be continuously Ready before it is counted as available. Slows the rollout but catches containers that crash shortly after startup." }
+            ],
+            [
+              { "text": "progressDeadlineSeconds", "marks": ["code"] },
+              { "text": " — if the rollout makes no progress within this window, the Deployment is marked as Failed. Default: 600 seconds." }
+            ]
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "A Deployment is a ReplicaSet manager with memory. It remembers every pod template you have ever deployed, and when you push a new version it creates a new ReplicaSet and scales down the old one. That history is what enables rollbacks."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "k8s-ch02-c010",
+      "order": 10,
+      "title": "Rolling Update — Gradual Replacement with maxSurge and maxUnavailable",
+      "teaser": "The RollingUpdate strategy replaces pods incrementally so the application never fully goes offline. Two parameters — maxSurge and maxUnavailable — give you precise control over the speed-vs-availability trade-off.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "With "
+            },
+            {
+              "text": "replicas: 4",
+              "marks": ["code"]
+            },
+            {
+              "text": ", here is how the same rollout looks under three different parameter configurations:"
+            }
+          ]
+        },
+        {
+          "type": "code",
+          "language": "text",
+          "text": "SCENARIO A: maxSurge=1, maxUnavailable=0  (zero-downtime, conservative)\n  Desired: 4   Max pods ever running: 5   Min pods ever ready: 4\n\n  Step 0:  [v1][v1][v1][v1]          = 4 pods\n  Step 1:  [v1][v1][v1][v1][v2]      = 5 pods  (surge +1)\n  Step 2:  [v1][v1][v1][v2]          = 4 pods  (old removed when new Ready)\n  Step 3:  [v1][v1][v1][v2][v2]      = 5 pods\n  Step 4:  [v1][v1][v2][v2]          = 4 pods\n  ...repeat until all v2\n\nSCENARIO B: maxSurge=0, maxUnavailable=1  (no extra capacity, faster)\n  Step 0:  [v1][v1][v1][v1]          = 4 pods\n  Step 1:  [  ][v1][v1][v1]          = 3 pods  (kill one v1 first)\n  Step 2:  [v2][v1][v1][v1]          = 4 pods\n  Step 3:  [v2][  ][v1][v1]          = 3 pods\n  ...repeat\n\nSCENARIO C: maxSurge=25%, maxUnavailable=25%  (% of desired count)\n  Both values can be integers or percentages — percentages round up for\n  maxSurge and down for maxUnavailable."
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The safest production configuration for most workloads is Scenario A: "
+            },
+            {
+              "text": "maxSurge: 1",
+              "marks": ["code"]
+            },
+            {
+              "text": ", "
+            },
+            {
+              "text": "maxUnavailable: 0",
+              "marks": ["code"]
+            },
+            {
+              "text": ". This ensures you are never below your desired replica count, at the cost of briefly running one extra pod. Pair it with "
+            },
+            {
+              "text": "minReadySeconds",
+              "marks": ["code"]
+            },
+            {
+              "text": " to slow the rollout and give readiness probes time to catch a flapping container."
+            }
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "warning",
+          "runs": [
+            {
+              "text": "A rolling update is only zero-downtime if your readiness probe is correctly configured. Without a readiness probe Kubernetes routes traffic to pods that have started but are not yet serving requests. A missing readiness probe masquerades as a bad deploy."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "maxSurge controls how many extra pods you are willing to run during the rollout — your temporary over-capacity budget. maxUnavailable controls how many pods you are willing to take offline — your temporary under-capacity budget. Setting maxUnavailable to 0 means \"never go below desired count\", which gives you zero downtime at the cost of extra compute."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "k8s-ch02-c011",
+      "order": 11,
+      "title": "Recreate Strategy — Full Restart for Incompatible Versions",
+      "teaser": "The Recreate strategy terminates all existing pods before starting new ones. There is always a downtime window — but it guarantees that old and new versions never run simultaneously, which is required for workloads that cannot tolerate version skew.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Set "
+            },
+            {
+              "text": "spec.strategy.type: Recreate",
+              "marks": ["code"]
+            },
+            {
+              "text": " and Kubernetes will scale the old ReplicaSet to 0 before creating any pods in the new ReplicaSet. The "
+            },
+            {
+              "text": "maxSurge",
+              "marks": ["code"]
+            },
+            {
+              "text": " and "
+            },
+            {
+              "text": "maxUnavailable",
+              "marks": ["code"]
+            },
+            {
+              "text": " parameters do not apply — there is no gradual replacement."
+            }
+          ]
+        },
+        {
+          "type": "code",
+          "language": "yaml",
+          "text": "spec:\n  strategy:\n    type: Recreate\n  # No rollingUpdate block — it is not valid for Recreate"
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "When to use Recreate:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              { "text": "The new version has a breaking database schema change and the old code will fail against the new schema." }
+            ],
+            [
+              { "text": "The workload holds a distributed lock or exclusive resource (e.g., a leader-only queue consumer) that cannot be held by two versions at once." }
+            ],
+            [
+              { "text": "Non-production environments where downtime is acceptable and you want faster, simpler deploys." }
+            ],
+            [
+              { "text": "GPU workloads where the hardware resource cannot be shared between old and new pods." }
+            ]
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "tip",
+          "runs": [
+            {
+              "text": "If your app cannot handle version skew but you also cannot accept downtime, the right tool is blue/green deployment — not Recreate. Recreate is the simplest tool; blue/green (implemented via two Deployments and a Service selector swap) gives you zero-downtime atomic cutover."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Recreate is the sledgehammer: terminate everything, then start the new version. You get a downtime window but you get a guarantee — at no point do old and new code coexist. Use it when co-existence would break things."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "k8s-ch02-c012",
+      "order": 12,
+      "title": "Rollout History and Rollback — Undoing a Bad Deploy",
+      "teaser": "Kubernetes retains a configurable history of Deployment revisions. When a rollout goes wrong, kubectl rollout undo reverts to the previous revision in seconds — no re-deploy required.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Each time a Deployment's pod template changes, Kubernetes creates a new ReplicaSet and records a new "
+            },
+            {
+              "text": "revision",
+              "marks": ["bold"]
+            },
+            {
+              "text": ". Old ReplicaSets are scaled to 0 but retained (up to "
+            },
+            {
+              "text": "revisionHistoryLimit",
+              "marks": ["code"]
+            },
+            {
+              "text": "). Rolling back scales the old RS back up and the current RS back down."
+            }
+          ]
+        },
+        {
+          "type": "code",
+          "language": "bash",
+          "text": "# See rollout status\nkubectl rollout status deployment/api\n\n# View revision history\nkubectl rollout history deployment/api\n# REVISION  CHANGE-CAUSE\n# 1         kubectl apply --filename=api.yaml --record\n# 2         kubectl set image deployment/api api=my-registry/api:1.3.0\n# 3         kubectl set image deployment/api api=my-registry/api:1.4.0-bad\n\n# Inspect a specific revision's pod template\nkubectl rollout history deployment/api --revision=2\n\n# Roll back to previous revision\nkubectl rollout undo deployment/api\n\n# Roll back to a specific revision\nkubectl rollout undo deployment/api --to-revision=1\n\n# Pause a rollout mid-flight (canary-style)\nkubectl rollout pause deployment/api\nkubectl rollout resume deployment/api"
+        },
+        {
+          "type": "callout",
+          "variant": "tip",
+          "runs": [
+            {
+              "text": "The CHANGE-CAUSE column is populated from the kubernetes.io/change-cause annotation. Set it explicitly in your CI pipeline (kubectl annotate deployment/api kubernetes.io/change-cause=\"deploy v1.3.0 — fix auth timeout\") so your history is readable. Without it every entry reads <none>."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "A rollback is just another rollout — it goes through the same RollingUpdate (or Recreate) strategy, respects "
+            },
+            {
+              "text": "maxSurge",
+              "marks": ["code"]
+            },
+            {
+              "text": " / "
+            },
+            {
+              "text": "maxUnavailable",
+              "marks": ["code"]
+            },
+            {
+              "text": ", and is visible in "
+            },
+            {
+              "text": "kubectl rollout status",
+              "marks": ["code"]
+            },
+            {
+              "text": ". It does not create a new revision number — it reuses the prior revision, but the Deployment's "
+            },
+            {
+              "text": "status.observedGeneration",
+              "marks": ["code"]
+            },
+            {
+              "text": " still advances."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Every deploy you make is kept as a numbered revision. kubectl rollout undo says: scale up the previous revision's ReplicaSet and scale down the current one. It is the same mechanism as a forward deploy, just in reverse."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "k8s-ch02-c013",
+      "order": 13,
+      "title": "Pod Disruption Budget — Protecting Availability During Voluntary Disruptions",
+      "teaser": "A PodDisruptionBudget (PDB) tells Kubernetes how many pods of a deployment may be simultaneously unavailable during voluntary disruptions — node drains, cluster upgrades, or autoscaler scale-downs.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "A "
+            },
+            {
+              "text": "PodDisruptionBudget",
+              "marks": ["bold"]
+            },
+            {
+              "text": " is a policy object. It does not prevent involuntary disruptions (node crashes, OOM kills) — it constrains "
+            },
+            {
+              "text": "voluntary",
+              "marks": ["italic"]
+            },
+            {
+              "text": " disruptions: operations that go through the Kubernetes eviction API (kubectl drain, cluster-autoscaler scale-down, Deployment rollouts in some configurations)."
+            }
+          ]
+        },
+        {
+          "type": "code",
+          "language": "yaml",
+          "text": "apiVersion: policy/v1\nkind: PodDisruptionBudget\nmetadata:\n  name: api-pdb\nspec:\n  minAvailable: 3           # at least 3 pods must remain available\n  selector:\n    matchLabels:\n      app: api\n\n---\n# Alternatively, express as a percentage:\nspec:\n  minAvailable: \"75%\"       # at least 75% of replicas must remain\n\n---\n# Or express as maximum disruptions allowed:\nspec:\n  maxUnavailable: 1         # at most 1 pod may be unavailable at once"
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "When "
+            },
+            {
+              "text": "kubectl drain",
+              "marks": ["code"]
+            },
+            {
+              "text": " attempts to evict a pod and doing so would violate the PDB, the drain blocks and retries until the budget allows it — either because another pod recovered or because the drain operator uses "
+            },
+            {
+              "text": "--disable-eviction",
+              "marks": ["code"]
+            },
+            {
+              "text": " (which bypasses the PDB, forcibly). This is how you prevent a node drain from taking down a quorum."
+            }
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "warning",
+          "runs": [
+            {
+              "text": "A PDB with minAvailable equal to your full replica count will block all node drains indefinitely. Always set minAvailable strictly less than replicas. A common production setting is minAvailable: replicas - 1 or maxUnavailable: 1."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "A PDB is a signed note you attach to your workload that says: \"I need at least N healthy pods at all times — do not evict any pod if doing so would go below that floor.\" Kubernetes honours this note during planned maintenance; it does not help with node crashes."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "k8s-ch02-c014",
+      "order": 14,
+      "title": "Graceful Shutdown — SIGTERM, preStop Hooks, and terminationGracePeriodSeconds",
+      "teaser": "Kubernetes gives your containers a chance to shut down cleanly: it sends SIGTERM, waits for a configurable grace period, then sends SIGKILL. The preStop hook lets you insert shutdown logic before SIGTERM is delivered.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "When Kubernetes decides to terminate a pod — during a rolling update, a node drain, or a manual delete — it follows a defined sequence:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "numbered",
+          "items": [
+            [
+              { "text": "Pod is marked Terminating. It is removed from the Endpoints (and EndpointSlices) of all Services — new traffic stops routing to it." }
+            ],
+            [
+              { "text": "The preStop hook executes (if defined). The hook runs inside the container and can be an exec command or an HTTP GET. The grace period clock starts when the hook is invoked." }
+            ],
+            [
+              { "text": "SIGTERM is sent to PID 1 in each container." }
+            ],
+            [
+              { "text": "Kubernetes waits up to terminationGracePeriodSeconds (default: 30s) for all containers to exit." }
+            ],
+            [
+              { "text": "If any container is still running after the grace period, SIGKILL is sent — immediate, non-catchable termination." }
+            ]
+          ]
+        },
+        {
+          "type": "code",
+          "language": "yaml",
+          "text": "spec:\n  terminationGracePeriodSeconds: 60    # give app 60s to drain\n  containers:\n    - name: api\n      image: my-registry/api:1.3.0\n      lifecycle:\n        preStop:\n          exec:\n            # Delay shutdown to allow load balancer to deregister\n            command: [\"/bin/sh\", \"-c\", \"sleep 5\"]\n      # Your app should also handle SIGTERM:\n      # - Stop accepting new connections\n      # - Finish in-flight requests\n      # - Flush buffers / close DB connections\n      # - Exit with code 0"
+        },
+        {
+          "type": "callout",
+          "variant": "tip",
+          "runs": [
+            {
+              "text": "There is a race condition between Kubernetes removing the pod from Endpoints and the load balancer propagating that change. Without a preStop sleep of a few seconds, the pod may receive requests after SIGTERM has been sent. The preStop sleep buys time for the network dataplane to converge before the app starts refusing connections."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Checklist for production graceful shutdown:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [{ "text": "Handle SIGTERM in application code — do not rely on the container runtime catching it for you." }],
+            [{ "text": "Add a preStop sleep (5–15s) to absorb the endpoint propagation lag." }],
+            [{ "text": "Set terminationGracePeriodSeconds to comfortably cover your longest request + the preStop sleep." }],
+            [{ "text": "Verify the PID 1 of your container IS your app — if it is a shell script, SIGTERM goes to the shell, not the app. Use exec form of CMD/ENTRYPOINT." }]
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Graceful shutdown is a polite conversation: Kubernetes says \"please stop\", waits up to N seconds, then says \"stop now\" with force. The preStop hook is your chance to do cleanup before the \"please stop\" message is even sent. Configure the wait time to be longer than your slowest possible shutdown sequence."
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

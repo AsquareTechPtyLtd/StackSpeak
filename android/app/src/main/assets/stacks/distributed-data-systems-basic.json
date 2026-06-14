@@ -1,0 +1,831 @@
+{
+  "stack": "distributed-data-systems-basic",
+  "words": [
+    {
+      "id": "dds-bas-0010-0000-0000-0000-000000000001",
+      "word": "Replica",
+      "pronunciation": "REP-lih-kuh",
+      "partOfSpeech": "noun",
+      "shortDefinition": "A copy of data stored on a separate node to provide redundancy and read scaling.",
+      "simpleDefinition": "A replica is an identical copy of your data living on a different machine. If the original node dies, a replica keeps the data available. With multiple replicas you can also spread read traffic across all of them, which multiplies your read capacity without touching the write path.",
+      "longDefinition": "In Kleppmann's framing, replication serves three distinct purposes: fault tolerance (surviving hardware failure), read scaling (distributing reads across replicas), and geographic locality (serving users from a nearby copy). A replica participates in one of three replication topologies — single-leader, multi-leader, or leaderless — each with a different trade-off between write availability, conflict risk, and consistency guarantees. Every replica starts by consuming a consistent snapshot of the leader's state, then applies the replication log in order to stay current. The delta between the leader's latest applied position and a follower's current position is the replication lag. In a cluster of n nodes with replication factor r, each piece of data exists on exactly r nodes; the system tolerates up to r-1 node failures before any data becomes unavailable.",
+      "connector": "Think of a replica like a live Google Doc that has been shared with multiple people — every edit on the original propagates to every copy almost instantly, so the document survives even if the original creator's machine goes offline.",
+      "techContext": "Our PostgreSQL cluster runs three replicas — one synchronous standby in the same availability zone for durability, and two asynchronous read replicas in other regions to serve geographically distributed read traffic.",
+      "exampleSentence": "We promoted a replica to primary in under thirty seconds after the leader node's disk failed, and users experienced only a brief spike in read latency.",
+      "codeExample": {
+        "language": "sql",
+        "code": "-- Check replication status on a PostgreSQL primary\nSELECT\n  application_name,\n  state,\n  sent_lsn,\n  replay_lsn,\n  (sent_lsn - replay_lsn) AS replay_lag_bytes\nFROM pg_stat_replication;"
+      },
+      "etymology": "From Latin replicare (to fold back, to repeat), via Old French repliquer. In computing the term was popularised in the context of distributed databases in the 1980s.",
+      "unlockLevel": 1,
+      "tags": [
+        "distributed-systems",
+        "replication",
+        "fault-tolerance",
+        "databases"
+      ],
+      "category": "replication",
+      "backingCard": {
+        "bookId": "distributed-data-systems",
+        "chapterId": "dds-ch05-replication"
+      }
+    },
+    {
+      "id": "dds-bas-0020-0000-0000-0000-000000000002",
+      "word": "Partition",
+      "pronunciation": "par-TISH-un",
+      "partOfSpeech": "noun",
+      "shortDefinition": "A subset of a dataset assigned exclusively to one node; the unit of distribution in a partitioned system.",
+      "simpleDefinition": "When a single database grows too large for one machine, you split the data into partitions — sometimes called shards — and assign each partition to a different node. Each node owns its partitions exclusively, handling all reads and writes for them. The entire dataset is the union of all partitions across all nodes.",
+      "longDefinition": "Kleppmann defines a partition as a subset of the data that is the unit of distribution: every record belongs to exactly one partition, and each partition lives on exactly one node at a time (though it may be replicated to multiple nodes for fault tolerance). The partitioning scheme determines which records go to which partition — the two dominant approaches are key-range partitioning (records with adjacent keys live on the same partition, enabling efficient scans) and hash partitioning (keys are hashed to distribute records evenly, eliminating hot spots but preventing range queries). Partitioning is orthogonal to replication: a system typically uses both together, so a node holds the leader copy of some partitions and follower copies of others. The challenge in partitioning is keeping the load balanced — skewed partitions, where one node receives far more reads or writes than others, negate the benefit of distributing the data in the first place.",
+      "connector": "Think of partitioning like dividing a large library by section — Fiction in room A, History in room B, Science in room C. Each librarian is responsible only for their room, so multiple librarians can serve readers simultaneously without getting in each other's way.",
+      "techContext": "Cassandra automatically assigns each partition key to a set of token ranges on the ring; adding nodes triggers a rebalance that moves only a fraction of partitions to the new node.",
+      "exampleSentence": "After adding two new nodes, we rebalanced the cluster so that each partition leader moved to the least-loaded node, cutting average query latency by 40%.",
+      "codeExample": {
+        "language": "sql",
+        "code": "-- PostgreSQL declarative table partitioning by range\nCREATE TABLE orders (\n  id          BIGSERIAL,\n  created_at  DATE NOT NULL,\n  amount      NUMERIC\n) PARTITION BY RANGE (created_at);\n\nCREATE TABLE orders_2024\n  PARTITION OF orders\n  FOR VALUES FROM ('2024-01-01') TO ('2025-01-01');\n\nCREATE TABLE orders_2025\n  PARTITION OF orders\n  FOR VALUES FROM ('2025-01-01') TO ('2026-01-01');"
+      },
+      "etymology": "From Latin partitio (a dividing, sharing), from partire (to divide), from pars (part). The database meaning crystallised in the 1990s with the rise of large-scale OLTP systems.",
+      "unlockLevel": 1,
+      "tags": [
+        "distributed-systems",
+        "partitioning",
+        "sharding",
+        "databases"
+      ],
+      "category": "partitioning",
+      "backingCard": {
+        "bookId": "distributed-data-systems",
+        "chapterId": "dds-ch06-partitioning",
+        "cardId": "dds-ch06-c001"
+      }
+    },
+    {
+      "id": "dds-bas-0030-0000-0000-0000-000000000003",
+      "word": "Sharding",
+      "pronunciation": "SHAR-ding",
+      "partOfSpeech": "noun",
+      "shortDefinition": "Horizontal partitioning of a database so each shard holds a disjoint slice of the data.",
+      "simpleDefinition": "Sharding means splitting a database table horizontally — rows go to different nodes instead of all living on one machine. Each shard is an independent database that holds a non-overlapping slice of the full dataset. A shard key (the column used to decide which shard a row belongs to) determines the routing logic for every read and write.",
+      "longDefinition": "Sharding is the practical term — widely used in MongoDB, Elasticsearch, and application-level data access layers — for what Kleppmann calls partitioning. A sharded database distributes rows across multiple nodes using a shard key. The selection of the shard key is an architectural decision with lasting consequences: a key with low cardinality creates hot shards; a key with a non-uniform access distribution creates skew; a key that groups related records together enables efficient scatter-gather queries but may create hot spots on popular groups. Common shard key strategies include hashing (even distribution, no range scans), key ranges (range scans, risk of sequential write hot spots), and directory-based sharding (lookup table routes each key to a shard, flexible but adds a single-point-of-failure lookup service). Resharding — moving data when the cluster grows — is expensive because it requires migrating live data between nodes without interrupting traffic, which is why choosing the right key upfront matters enormously.",
+      "connector": "Think of sharding like assigning customers to different bank tellers by last name — A–M goes to Teller 1, N–Z to Teller 2. Every transaction goes to exactly one teller, and no single teller handles everything.",
+      "techContext": "When our user table exceeded 500 GB we introduced application-level sharding by user_id % 4, routing each request to one of four PostgreSQL instances behind a query router.",
+      "exampleSentence": "We chose a composite shard key of (tenant_id, created_at) so that each tenant's data remained co-located on a single shard, keeping cross-shard joins off the critical path.",
+      "codeExample": {
+        "language": "javascript",
+        "code": "// Simple application-level shard routing by user ID\nconst SHARD_COUNT = 4;\n\nfunction getShardConnection(userId) {\n  const shardIndex = userId % SHARD_COUNT;\n  return shardConnections[shardIndex]; // pool of DB connections\n}\n\nasync function getUserById(userId) {\n  const db = getShardConnection(userId);\n  return db.query('SELECT * FROM users WHERE id = $1', [userId]);\n}"
+      },
+      "etymology": "Derived from shard (a fragment or broken piece, from Old English sceard). The computing metaphor treats a large dataset as a ceramic vessel broken into smaller, manageable shards.",
+      "unlockLevel": 1,
+      "tags": [
+        "distributed-systems",
+        "partitioning",
+        "databases",
+        "scalability"
+      ],
+      "category": "partitioning",
+      "backingCard": {
+        "bookId": "distributed-data-systems",
+        "chapterId": "dds-ch06-partitioning"
+      }
+    },
+    {
+      "id": "dds-bas-0040-0000-0000-0000-000000000004",
+      "word": "Latency",
+      "pronunciation": "LAY-ten-see",
+      "partOfSpeech": "noun",
+      "shortDefinition": "The delay between issuing a request and receiving the first byte of the response.",
+      "simpleDefinition": "Latency is how long a request waits before the system starts responding. A 5 ms database query has 5 ms latency. Latency matters because users experience it directly — a slow response feels broken even when the data eventually arrives. In distributed systems, every network hop adds latency and the total is the sum of all hops on the critical path.",
+      "longDefinition": "Kleppmann distinguishes latency (the duration a request spends waiting to be handled) from response time (the full end-to-end measurement a client observes, including processing and network). In practice the industry uses 'latency' loosely for both, but precision matters when diagnosing problems: if response time is high, is it because the server is slow (processing time), the network is congested (transmission time), or requests are queuing behind a slow preceding request (head-of-line blocking)? Latency is not a single number but a distribution. The median (p50) tells you what a typical request experiences; the 99th percentile (p99) tells you what the slowest 1% of users experience. Because a user request in a microservices architecture fans out across many downstream calls, the end-to-end latency is often dominated by the tail of the slowest dependency — a p99 of 100 ms across five sequential services compounds to roughly 500 ms at the end-to-end level. Latency is bounded below by the speed of light; no software optimization can make two machines communicate faster than photons can travel between their data centers.",
+      "connector": "Think of latency like the pause after you ask a question before someone starts answering — even if the answer itself is short, a long pause is frustrating and signals something is wrong.",
+      "techContext": "After we added a read replica in the EU region, p99 latency for European users dropped from 180 ms to 22 ms because requests no longer had to cross the Atlantic.",
+      "exampleSentence": "Our SLA guarantees p99 latency below 200 ms, so the team monitors the 99th percentile response time on every API endpoint in production.",
+      "codeExample": {
+        "language": "python",
+        "code": "import time\nimport statistics\n\ndef benchmark_latency(fn, iterations=1000):\n    \"\"\"Measure p50, p95, and p99 latency of a function call.\"\"\"\n    samples = []\n    for _ in range(iterations):\n        start = time.perf_counter()\n        fn()\n        samples.append((time.perf_counter() - start) * 1000)  # ms\n    samples.sort()\n    return {\n        'p50': samples[int(0.50 * len(samples))],\n        'p95': samples[int(0.95 * len(samples))],\n        'p99': samples[int(0.99 * len(samples))],\n    }"
+      },
+      "etymology": "From Latin latens (lying hidden, concealed), present participle of latere (to lie hidden). In electronics, latency referred to the delay before a stored charge was accessible; the networking meaning emerged in the 1970s.",
+      "unlockLevel": 1,
+      "tags": [
+        "distributed-systems",
+        "performance",
+        "observability",
+        "networking"
+      ],
+      "category": "performance",
+      "backingCard": {
+        "bookId": "distributed-data-systems",
+        "chapterId": "dds-ch01-reliable-scalable-maintainable",
+        "cardId": "dds-ch01-c008"
+      }
+    },
+    {
+      "id": "dds-bas-0050-0000-0000-0000-000000000005",
+      "word": "Throughput",
+      "pronunciation": "THROO-powt",
+      "partOfSpeech": "noun",
+      "shortDefinition": "The number of operations or bytes a system can process per unit of time.",
+      "simpleDefinition": "Throughput measures how much work a system can do per second. A database that handles 10,000 writes per second has higher write throughput than one that handles 1,000. Throughput describes capacity — how much the system can sustain — while latency describes experience — how long one request waits. Optimizing for throughput often trades off against latency and vice versa.",
+      "longDefinition": "Kleppmann positions throughput as the primary metric for batch processing systems (how many records can the pipeline process per second?) and a secondary metric for online services (where latency is more important to users). The two metrics interact through Little's Law: L = λW, where L is the average number of requests in flight, λ is the arrival rate, and W is the average time spent in the system. If latency (W) rises — say because of garbage collection pauses or disk contention — and the arrival rate (λ) stays constant, in-flight requests (L) pile up, eventually causing queue saturation and throughput collapse. Throughput is also affected by the write fanout in a replicated system: in single-leader replication, every write must propagate to all replicas, so the leader's throughput is bounded by the slowest synchronous replica. In leaderless systems, throughput scales more gracefully because writes go to w out of n nodes in parallel, not to a single bottleneck.",
+      "connector": "Think of throughput like a highway's cars-per-hour capacity — it tells you how much traffic the road can sustain in steady state, regardless of how fast any individual car is traveling.",
+      "techContext": "We increased Kafka producer throughput from 50 MB/s to 300 MB/s by batching messages and enabling lz4 compression, reducing per-message overhead without touching consumer latency.",
+      "exampleSentence": "After tuning batch sizes and connection pooling, our payment processor throughput rose from 800 transactions per second to 4,200, well above the Black Friday peak projection.",
+      "codeExample": {
+        "language": "python",
+        "code": "import time\n\ndef measure_throughput(fn, duration_seconds=10):\n    \"\"\"Count how many times fn() completes in the given window.\"\"\"\n    count = 0\n    deadline = time.monotonic() + duration_seconds\n    while time.monotonic() < deadline:\n        fn()\n        count += 1\n    return count / duration_seconds  # operations per second"
+      },
+      "etymology": "Compound of through and put, first recorded in 1915 in industrial engineering to describe the rate at which raw material passes through a factory. Adopted by computing in the 1960s.",
+      "unlockLevel": 1,
+      "tags": [
+        "distributed-systems",
+        "performance",
+        "databases",
+        "streaming"
+      ],
+      "category": "performance",
+      "backingCard": {
+        "bookId": "distributed-data-systems",
+        "chapterId": "dds-ch01-reliable-scalable-maintainable",
+        "cardId": "dds-ch01-c007"
+      }
+    },
+    {
+      "id": "dds-bas-0060-0000-0000-0000-000000000006",
+      "word": "ACID",
+      "pronunciation": "AS-id",
+      "partOfSpeech": "noun",
+      "shortDefinition": "Transaction guarantees: Atomicity, Consistency, Isolation, Durability — the classical relational promise.",
+      "simpleDefinition": "ACID is the set of four safety guarantees that a transactional database promises. Atomicity: a transaction's writes either all succeed or all roll back — there is no half-applied state. Consistency: the database preserves your declared invariants across every transaction. Isolation: concurrent transactions cannot see each other's uncommitted state. Durability: once committed, data survives crashes.",
+      "longDefinition": "Coined by Härder and Reuter in 1983, ACID formalises the intuition that a database transaction should behave like a single, indivisible unit of work. Kleppmann notes that each property is more nuanced than the acronym suggests. Atomicity is really about abortability — the ability to roll back all writes if anything fails midway. Consistency (the C) is misleading: it is an application-level invariant that the database can only partially enforce through constraints; the bulk of consistency is the application's responsibility, making the C the weakest letter in the acronym. Isolation addresses concurrency: the textbook definition is serializability (transactions appear to execute one at a time), but most production databases default to weaker levels — read committed or snapshot isolation — because full serializability is expensive. Durability guarantees that committed data survives power loss or crashes, typically by fsyncing the write-ahead log to disk before acknowledging a commit. Perfect durability is impossible in theory (simultaneous multi-disk failure) but operationally achievable through replication and periodic backups.",
+      "connector": "Think of ACID like the four rules of a bank vault: every transaction is all-or-nothing (Atomic), the vault's accounting rules always hold (Consistent), one transaction doesn't see another's work-in-progress (Isolated), and whatever is deposited stays there even through a power outage (Durable).",
+      "techContext": "PostgreSQL's default isolation level is Read Committed, not Serializable — if your application relies on ACID to prevent lost updates, you need to explicitly use SELECT FOR UPDATE or raise the isolation level.",
+      "exampleSentence": "The money transfer bug was caused by running the debit and credit as separate statements without a transaction; ACID atomicity would have rolled back the debit if the credit failed.",
+      "codeExample": {
+        "language": "sql",
+        "code": "-- ACID transaction: both writes succeed or both roll back\nBEGIN;\n  UPDATE accounts\n    SET balance = balance - 500\n    WHERE id = 'alice' AND balance >= 500;  -- check constraint\n\n  UPDATE accounts\n    SET balance = balance + 500\n    WHERE id = 'bob';\nCOMMIT;\n-- If any statement fails, ROLLBACK is automatic"
+      },
+      "etymology": "Acronym coined by Andreas Reuter and Theo Härder in their 1983 paper 'Principles of Transaction-Oriented Database Recovery'. The chemistry metaphor (acid vs base) was deliberate — BASE emerged decades later as the opposing philosophy.",
+      "unlockLevel": 1,
+      "tags": [
+        "databases",
+        "transactions",
+        "consistency",
+        "reliability"
+      ],
+      "category": "transactions",
+      "backingCard": {
+        "bookId": "distributed-data-systems",
+        "chapterId": "dds-ch07-transactions",
+        "cardId": "dds-ch07-c001"
+      }
+    },
+    {
+      "id": "dds-bas-0070-0000-0000-0000-000000000007",
+      "word": "BASE",
+      "pronunciation": "BAYSS",
+      "partOfSpeech": "noun",
+      "shortDefinition": "NoSQL trade-off: Basically Available, Soft state, Eventually consistent — prioritises availability over strict consistency.",
+      "simpleDefinition": "BASE is the alternative philosophy to ACID, embraced by many NoSQL databases. Basically Available means the system tries to respond even when some nodes are down, possibly returning stale data. Soft state means data may be in transition as replicas converge. Eventually consistent means all replicas will agree on the same value — but not immediately, and not at any guaranteed time.",
+      "longDefinition": "Eric Brewer introduced BASE around 2000 as a way to describe the design priorities of systems like Amazon Dynamo that deliberately sacrifice strict transactional guarantees for higher availability and lower latency. Kleppmann is candid about BASE's limits as a technical specification: it is 'mostly a marketing term' — less a rigorous anomaly model than a declaration of intent. Basically Available does not define what 'available' means precisely; Soft state acknowledges convergence in progress without stating when convergence completes; Eventually consistent does not specify a time bound or a winning value on conflict. The real engineering substance lies in understanding which specific anomalies a BASE system permits: dirty reads, lost updates, stale reads, and write conflicts are each different problems requiring different mitigation strategies. Modern cloud databases (DynamoDB, Cassandra, Cosmos DB) offer tunable consistency that blurs the ACID/BASE boundary — you can request stronger guarantees per operation at the cost of higher latency.",
+      "connector": "Think of BASE like a social media feed — posts may appear slightly out of order, and for a few seconds you might see an older snapshot than your friend sees, but eventually everyone's feed converges to the same state. The system stays usable throughout, even during outages.",
+      "techContext": "DynamoDB defaults to eventually consistent reads (BASE) but supports strongly consistent reads per-request — we use consistent reads only for writes preceded by a conditional check to avoid paying the latency on every read.",
+      "exampleSentence": "The shopping cart service runs on a BASE store so it stays available during partial outages, accepting that two devices may briefly show different cart contents before converging.",
+      "etymology": "Acronym coined by Eric Brewer circa 2000 as a deliberate chemistry counterpoint to ACID, after his formulation of the CAP theorem. The 'base vs acid' metaphor implies opposite properties on the same spectrum.",
+      "unlockLevel": 1,
+      "tags": [
+        "databases",
+        "consistency",
+        "nosql",
+        "distributed-systems"
+      ],
+      "category": "consistency",
+      "backingCard": {
+        "bookId": "distributed-data-systems",
+        "chapterId": "dds-ch07-transactions",
+        "cardId": "dds-ch07-c002"
+      }
+    },
+    {
+      "id": "dds-bas-0080-0000-0000-0000-000000000008",
+      "word": "CAP Theorem",
+      "pronunciation": "KAP THEER-em",
+      "partOfSpeech": "noun",
+      "shortDefinition": "A distributed system can guarantee at most two of: Consistency, Availability, and Partition tolerance.",
+      "simpleDefinition": "The CAP theorem says that when a network partition occurs — nodes can no longer communicate — a distributed system must choose between staying consistent (refusing to answer if it can't guarantee the latest data) or staying available (answering with potentially stale data). Since partitions are a fact of life in any distributed network, every distributed database is really a CP or AP system depending on which it prioritizes.",
+      "longDefinition": "Eric Brewer conjectured CAP in 2000; Gilbert and Lynch formally proved it in 2002. The theorem states that a distributed system cannot simultaneously guarantee Consistency (every read returns the most recent write), Availability (every request receives a non-error response), and Partition Tolerance (the system continues operating despite network partitions that split nodes into isolated groups). Since network partitions are unavoidable in real distributed systems, the meaningful choice is between CP (sacrifice availability during a partition to preserve consistency) and AP (sacrifice consistency during a partition to stay available). Kleppmann is careful about CAP's limitations as a design guide: its definition of 'consistency' is linearizability — a very strong guarantee — and its definition of 'availability' requires every node to respond, which is stricter than most SLAs require. Real systems occupy a spectrum rather than sitting cleanly in CP or AP categories, and many make different trade-offs depending on the operation. PACELC extends CAP by noting that even without partitions, there is a latency–consistency trade-off that CAP ignores.",
+      "connector": "Think of CAP like a doctor's office during a power outage — the staff can either wait for records to sync (consistent but unavailable to patients) or see patients with possibly outdated records (available but potentially inconsistent). Keeping both current records and continuous service during the outage is not physically possible.",
+      "techContext": "etcd is a CP datastore — during a network partition it refuses reads and writes on the minority partition rather than risk serving stale data, making it suitable for distributed coordination tasks like leader election.",
+      "exampleSentence": "When designing the checkout service we chose an AP datastore because availability during network partitions is more important than linearizable reads; we handle consistency at the application layer with idempotent writes.",
+      "etymology": "CAP is an acronym from the three properties. Brewer's 2000 PODC keynote titled 'Towards Robust Distributed Systems' introduced the conjecture; it was proved formally by Seth Gilbert and Nancy Lynch in 2002.",
+      "unlockLevel": 1,
+      "tags": [
+        "distributed-systems",
+        "consistency",
+        "availability",
+        "theory"
+      ],
+      "category": "consistency",
+      "backingCard": {
+        "bookId": "distributed-data-systems",
+        "chapterId": "dds-ch09-consistency-and-consensus",
+        "cardId": "dds-ch09-c009"
+      }
+    },
+    {
+      "id": "dds-bas-0090-0000-0000-0000-000000000009",
+      "word": "Leader",
+      "pronunciation": "LEE-der",
+      "partOfSpeech": "noun",
+      "shortDefinition": "The single replica designated to accept all writes in a leader-based replication scheme.",
+      "simpleDefinition": "In single-leader replication, one node is elected as the leader and is the only node allowed to accept write operations. Every other node (a follower) receives a copy of those writes via the replication log. The leader serialises all writes, which eliminates write conflicts but makes the leader a bottleneck and a single point of failure for writes.",
+      "longDefinition": "Kleppmann describes the leader (also called primary or master in other systems) as the gatekeeper of all write operations in leader-based replication. All clients that need to write data must send their writes to the leader. The leader records the write to its local storage, then propagates the change to followers through a replication log. The primary advantage of this model is conflict-free writes: because all writes are serialised through a single node, two concurrent writes to the same record never produce a conflict — the leader simply processes one before the other. The costs are equally clear: the leader is a bottleneck for write throughput, a single point of failure for writes (followers cannot accept writes while the leader is unavailable), and in a geographically distributed deployment the leader's location determines write latency for all clients. Leader election — the process of choosing a new leader when the current one fails — is one of the hardest problems in distributed systems, because it requires consensus (agreement among nodes) which touches on the FLP impossibility result. PostgreSQL, MySQL, MongoDB, and Kafka all default to single-leader replication.",
+      "connector": "Think of the leader like a head chef in a kitchen — only the head chef decides what goes on the menu (accepts writes). The other cooks (followers) execute those recipes faithfully, but they never modify the menu themselves.",
+      "techContext": "In a PostgreSQL streaming replication setup, the primary is the leader — all INSERTs, UPDATEs, and DELETEs go to the primary, which writes to the WAL and streams it to standbys.",
+      "exampleSentence": "After the leader node crashed, Patroni automatically promoted the most up-to-date follower to become the new leader within ten seconds, keeping the write path available.",
+      "codeExample": {
+        "language": "bash",
+        "code": "# Check which PostgreSQL node is currently the leader\npsql -c \"SELECT pg_is_in_recovery();\"\n# Returns: f (false) → this node is the leader (primary)\n#          t (true)  → this node is a follower (standby)\n\n# View current leader in a Patroni cluster\npatronictl -c /etc/patroni/config.yml list"
+      },
+      "etymology": "Old English lǣdere (one who leads), from lǣdan (to lead). In distributed systems, the term displaced 'master' (from single-master replication) in the 2010s due to inclusivity concerns.",
+      "unlockLevel": 1,
+      "tags": [
+        "distributed-systems",
+        "replication",
+        "databases",
+        "fault-tolerance"
+      ],
+      "category": "replication",
+      "backingCard": {
+        "bookId": "distributed-data-systems",
+        "chapterId": "dds-ch05-replication",
+        "cardId": "dds-ch05-c009"
+      }
+    },
+    {
+      "id": "dds-bas-0100-0000-0000-0000-000000000010",
+      "word": "Follower",
+      "pronunciation": "FOL-oh-er",
+      "partOfSpeech": "noun",
+      "shortDefinition": "A read-only replica that applies changes forwarded from the leader.",
+      "simpleDefinition": "A follower (also called a standby, replica, or secondary) is a database node that receives a stream of changes from the leader and applies them to its own copy of the data. Followers can serve read traffic, providing read scaling, but they cannot accept write operations. Any writes sent to a follower are rejected or redirected to the leader.",
+      "longDefinition": "In Kleppmann's single-leader replication model, followers are passive consumers of the replication log. Each follower maintains a log sequence number (LSN in PostgreSQL, binlog position in MySQL) that tracks how far it has processed the leader's change stream. The gap between the leader's current LSN and a follower's replay position is the replication lag. Followers are valuable for two reasons: read scaling (distributing read queries across many followers so the leader handles only writes) and fault tolerance (promoting a follower to leader if the current leader fails). Asynchronous followers introduce a consistency trade-off: reads from a lagging follower may return stale data, because a recent write that the leader has acknowledged may not yet have been replicated. Applications that need to read their own writes must either route those reads to the leader or wait for the follower to catch up to the write's LSN before reading from it. A synchronous follower — one that must acknowledge a write before the leader confirms it to the client — eliminates this stale-read risk but adds write latency.",
+      "connector": "Think of a follower like a court stenographer — they record everything the judge (leader) says in real time, maintaining an exact transcript, but they cannot issue rulings themselves.",
+      "techContext": "We serve 80% of our read traffic from three asynchronous followers, routing only reads that need read-your-writes guarantees — like showing a user their own profile edits — to the leader.",
+      "exampleSentence": "The follower's replication lag spiked to 45 seconds during a bulk import, causing users who had just updated their profiles to see their old data when we redirected them to a follower for load balancing.",
+      "codeExample": {
+        "language": "sql",
+        "code": "-- On a PostgreSQL follower (standby): check replication lag\nSELECT\n  now() - pg_last_xact_replay_timestamp() AS replication_lag,\n  pg_is_in_recovery()                      AS is_follower,\n  pg_last_wal_replay_lsn()                 AS replay_position;"
+      },
+      "etymology": "Old English folgere (attendant, disciple), from folgian (to follow). In distributed systems, 'follower' replaced 'slave' (from master-slave replication) in the 2010s as part of an industry-wide move toward more inclusive terminology.",
+      "unlockLevel": 1,
+      "tags": [
+        "distributed-systems",
+        "replication",
+        "databases",
+        "read-scaling"
+      ],
+      "category": "replication",
+      "backingCard": {
+        "bookId": "distributed-data-systems",
+        "chapterId": "dds-ch05-replication"
+      }
+    },
+    {
+      "id": "dds-bas-0110-0000-0000-0000-000000000011",
+      "word": "Quorum",
+      "pronunciation": "KWOR-um",
+      "partOfSpeech": "noun",
+      "shortDefinition": "The minimum number of nodes that must acknowledge a read or write for it to be considered successful.",
+      "simpleDefinition": "A quorum is the voting majority required for a distributed operation to succeed. In a cluster of n nodes, a write quorum of w means at least w nodes must confirm the write before it is considered durable. A read quorum of r means at least r nodes must respond before the read is considered current. The key insight: if w + r > n, the read and write sets must overlap, so at least one node in every read has seen the latest write.",
+      "longDefinition": "Kleppmann introduces quorums in the context of leaderless replication (Dynamo-style systems like Cassandra, Riak, and DynamoDB). In a cluster of n replicas, a write succeeds when w nodes acknowledge it; a read succeeds when r nodes respond. The condition w + r > n guarantees that reads see the latest write because the read set and write set share at least one node. Common configurations: in a five-node cluster with w=3, r=3, the system can tolerate two node failures for both reads and writes. Asymmetric configurations are possible: w=1, r=5 maximises write speed at the cost of always reading all nodes; w=5, r=1 maximises read speed at the cost of requiring all nodes for every write. Kleppmann is careful to note that quorum does not guarantee strong consistency in all edge cases — concurrent writes, network partitions, and sloppy quorums can all result in a read quorum that misses the latest write even when w + r > n. Quorum is best thought of as a probabilistic consistency tool, not an absolute one.",
+      "connector": "Think of a quorum like a jury: for a verdict to hold, a majority of jurors must agree. If only a minority heard the evidence (a partition), you must wait for more jurors to be available before reaching a valid verdict.",
+      "techContext": "In our Cassandra cluster (n=5, rf=3) we use QUORUM consistency (w=2, r=2) for most operations — any two out of three replicas must respond, tolerating one replica failure without impacting availability.",
+      "exampleSentence": "By raising the write quorum from ONE to QUORUM before a rolling upgrade, we ensured that every committed write was safely replicated to a majority of nodes before we began taking nodes offline.",
+      "codeExample": {
+        "language": "python",
+        "code": "from cassandra.cluster import Cluster\nfrom cassandra.policies import ConsistencyLevel\n\ncluster = Cluster(['10.0.0.1', '10.0.0.2', '10.0.0.3'])\nsession = cluster.connect('my_keyspace')\n\n# QUORUM: majority of replicas must respond\nsession.default_consistency_level = ConsistencyLevel.QUORUM\n\nresult = session.execute(\n    'SELECT * FROM orders WHERE id = %s', [order_id]\n)"
+      },
+      "etymology": "From Latin quorum (of whom), the genitive plural of qui (who). Originally the minimum number of magistrates or legislators required for a valid session of a governing body. Extended to computing to describe the minimum node agreement required for a distributed operation.",
+      "unlockLevel": 1,
+      "tags": [
+        "distributed-systems",
+        "replication",
+        "consistency",
+        "nosql"
+      ],
+      "category": "consistency",
+      "backingCard": {
+        "bookId": "distributed-data-systems",
+        "chapterId": "dds-ch05-replication",
+        "cardId": "dds-ch05-c012"
+      }
+    },
+    {
+      "id": "dds-bas-0120-0000-0000-0000-000000000012",
+      "word": "Eventual Consistency",
+      "pronunciation": "ih-VEN-choo-ul kon-SIS-ten-see",
+      "partOfSpeech": "noun",
+      "shortDefinition": "A liveness guarantee that replicas will converge to the same value given no new writes.",
+      "simpleDefinition": "Eventual consistency is a promise that if you stop writing to a distributed database, all of its replicas will eventually agree on the same data. It says nothing about how long that convergence takes, and it says nothing about what users see in the meantime. A follower that is 10 seconds behind the leader will return stale data for those 10 seconds — that is acceptable under eventual consistency.",
+      "longDefinition": "Kleppmann is unsparing about how weak eventual consistency is as a guarantee. It does not bound how long 'eventually' takes, it does not specify which value replicas converge to if conflicting writes occurred, and it does not protect against anomalies like reading your own writes, seeing time go backwards (non-monotonic reads), or seeing responses before the questions that prompted them (violating consistent prefix reads). Under continuous write load — the normal state of any production system — replicas may never fully converge because new writes keep arriving faster than old ones propagate. The practical consequence is that applications built on eventually-consistent stores must explicitly handle stale reads or use stronger consistency levels (read-your-writes, monotonic reads, linearizable reads) for the specific operations that require them. The term was popularised by Werner Vogels (CTO of Amazon) in a 2008 Communications of the ACM article to describe DynamoDB's default consistency model.",
+      "connector": "Think of eventual consistency like sending a group text message: everyone will eventually see the message, but for a few seconds some people have read it and others haven't, so asking the group a question and getting answers back may produce confusing results.",
+      "techContext": "DynamoDB's default read consistency is eventual — to guarantee you see your own writes, you must pass ConsistentRead=True, which adds latency and cost by routing the read through the leader partition.",
+      "exampleSentence": "Because of eventual consistency, the profile page briefly showed the old avatar after the user had already uploaded a new one — we fixed it by routing profile reads to the leader for five seconds after a write.",
+      "etymology": "Coined in the distributed systems literature in the 1990s to describe the weakest liveness property for replica convergence. Popularised as a product term by Werner Vogels (Amazon CTO) in his 2008 ACM article 'Eventually Consistent'.",
+      "unlockLevel": 1,
+      "tags": [
+        "distributed-systems",
+        "consistency",
+        "replication",
+        "nosql"
+      ],
+      "category": "consistency",
+      "backingCard": {
+        "bookId": "distributed-data-systems",
+        "chapterId": "dds-ch05-replication",
+        "cardId": "dds-ch05-c005"
+      }
+    },
+    {
+      "id": "dds-bas-0130-0000-0000-0000-000000000013",
+      "word": "Strong Consistency",
+      "pronunciation": "STRONG kon-SIS-ten-see",
+      "partOfSpeech": "noun",
+      "shortDefinition": "Every read reflects the most recent committed write, as if there were only one copy of the data.",
+      "simpleDefinition": "Strong consistency means that no matter which replica you read from, you always get the most up-to-date value. There is no window during which a replica can return stale data. Achieving this requires coordination between replicas on every operation, which adds latency — especially in geographically distributed systems where coordination requires network round-trips.",
+      "longDefinition": "Strong consistency, often equated with linearizability in Kleppmann's treatment, is the guarantee that a distributed system behaves identically to a single-node system with a perfectly reliable disk. Every read must return the value written by the most recent completed write. Achieving this in a replicated system requires that before any read is served, all replicas agree on the current value — or the system routes every read through a single authoritative node. Systems that provide strong consistency by default include Google Spanner (via TrueTime and Paxos), etcd (via Raft), and CockroachDB (via Raft). Most eventually-consistent stores like Cassandra and DynamoDB offer strong consistency as an opt-in per-request option. The performance cost is real: strong consistency across data centers requires round-trip coordination before every read, and that coordination is bounded below by the speed of light between data centers. Kleppmann notes that strong consistency and linearizability are sometimes used interchangeably but can have subtle definitional differences across the academic literature.",
+      "connector": "Think of strong consistency like a shared whiteboard in a physical conference room — everyone in the room sees exactly the same thing at the same time, and any change made by one person is immediately visible to all others with no delay.",
+      "techContext": "We switched the inventory service from DynamoDB's eventual consistency to consistent reads (strong consistency) after discovering that concurrent orders were occasionally depleting stock below zero due to stale reads.",
+      "exampleSentence": "Strong consistency was non-negotiable for the distributed lock service — we used etcd, which provides linearizable reads via Raft consensus, so only one process can hold a lock at a time.",
+      "etymology": "The adjective 'strong' contrasts with 'weak' or 'eventual' consistency models in distributed systems theory. The term emerged in the consistency model literature of the 1990s as formal taxonomies of replica consistency were developed by Ahamad, Neiger, Burns, Kohli, and Hutto.",
+      "unlockLevel": 1,
+      "tags": [
+        "distributed-systems",
+        "consistency",
+        "databases",
+        "replication"
+      ],
+      "category": "consistency",
+      "backingCard": {
+        "bookId": "distributed-data-systems",
+        "chapterId": "dds-ch09-consistency-and-consensus"
+      }
+    },
+    {
+      "id": "dds-bas-0140-0000-0000-0000-000000000014",
+      "word": "Replication Factor",
+      "pronunciation": "rep-lih-KAY-shun FAK-ter",
+      "partOfSpeech": "noun",
+      "shortDefinition": "How many copies of each piece of data are stored across nodes in a cluster.",
+      "simpleDefinition": "The replication factor is the number of copies of every piece of data in your cluster. A replication factor of 3 means each partition or row is stored on three different nodes. If one node dies, two copies remain — the cluster keeps operating and can eventually restore the missing copy. Higher replication factors cost more storage but tolerate more simultaneous failures.",
+      "longDefinition": "The replication factor (commonly denoted n or RF in Cassandra's documentation) determines the trade-off between fault tolerance, storage cost, and write latency. With RF=1, there is no redundancy — a single node failure means data loss. With RF=3, the cluster can tolerate one node failure (or two with degraded performance). With RF=5, it can tolerate two failures. The quorum calculation depends on the replication factor: for a cluster with RF=n, a write quorum is floor(n/2) + 1. In Cassandra, the replication factor is set per keyspace and per data center. In Kafka, the replication factor is set per topic and determines how many broker copies of each partition are maintained. In HDFS, the default replication factor is 3, optimised for the failure profile of commodity disks in a rack. Increasing the replication factor increases write fanout — every write must propagate to RF nodes instead of one — so write throughput per unit of hardware declines as RF increases.",
+      "connector": "Think of the replication factor like the number of copies you keep of an important document — one original is risky, three copies in different drawers means you're protected against losing any one of them.",
+      "techContext": "We set Cassandra's replication factor to 3 in production (RF=3) so the cluster can survive a full availability zone outage — any AZ failure takes down at most one copy of each partition.",
+      "exampleSentence": "After a disk failure took down one node, the replication factor of 3 kept the cluster fully operational, and the replacement node automatically received its missing partitions via streaming repair.",
+      "codeExample": {
+        "language": "sql",
+        "code": "-- Cassandra: create keyspace with replication factor 3\nCREATE KEYSPACE orders\nWITH replication = {\n  'class': 'NetworkTopologyStrategy',\n  'us-east-1': 3,\n  'eu-west-1': 3\n};"
+      },
+      "etymology": "Replication from Latin replicare (to fold back, to repeat); factor from Latin factor (maker, doer), from facere (to make). The compound term entered distributed systems vocabulary with the popularisation of Cassandra and Kafka in the 2010s.",
+      "unlockLevel": 1,
+      "tags": [
+        "distributed-systems",
+        "replication",
+        "fault-tolerance",
+        "databases"
+      ],
+      "category": "replication",
+      "backingCard": {
+        "bookId": "distributed-data-systems",
+        "chapterId": "dds-ch05-replication"
+      }
+    },
+    {
+      "id": "dds-bas-0150-0000-0000-0000-000000000015",
+      "word": "Write Fanout",
+      "pronunciation": "RITE FAN-owt",
+      "partOfSpeech": "noun",
+      "shortDefinition": "The number of nodes that must receive and acknowledge a single write operation.",
+      "simpleDefinition": "Write fanout is how many nodes a single write touches. In a cluster with a replication factor of 3 and a write quorum of 2, every write fans out to 3 nodes (the full RF) but only needs 2 acknowledgments before returning success. Higher fanout means more durability but also more network traffic, more CPU, and lower peak write throughput.",
+      "longDefinition": "Write fanout describes the amplification cost of replication: a single logical write from the client produces one leader write plus RF-1 follower writes, each of which must be transmitted over the network, applied to disk, and acknowledged. In a synchronous replication model, all fanout writes must complete before the leader responds; in an asynchronous model, the leader responds after its local write and replicates in the background. Kleppmann's Twitter fan-out example in Chapter 1 illustrates a more extreme version: when a celebrity with 30 million followers posts a tweet, the write must fan out to 30 million user timeline caches — a completely different kind of write amplification driven by social graph structure rather than replication topology. The term is also used in the context of event streaming: a Kafka producer writes a message to one partition leader, which replicates to min.insync.replicas additional brokers — the fanout is the replication factor of that topic's partition. Managing fanout is a key concern in high-throughput systems because each fanout write consumes network bandwidth and CPU on every receiving node.",
+      "connector": "Think of write fanout like broadcasting an announcement in a building — one message goes out, but every floor's intercom must relay it. More floors (higher fanout) means more total work, but everyone hears the announcement safely.",
+      "techContext": "Twitter's original architecture used a pull model where fanout was deferred to read time; they later switched to push-at-write fanout for most users, pre-computing home timelines, which shifted load from reads to writes.",
+      "exampleSentence": "The social feed service's write fanout spiked to 200,000 during a celebrity's viral post, exhausting the timeline cache write throughput and triggering the circuit breaker on downstream services.",
+      "etymology": "Fan out from the electrical engineering term for the number of inputs a logic gate can drive simultaneously; in computing it generalises to any broadcast or replication of a signal or message to multiple recipients.",
+      "unlockLevel": 1,
+      "tags": [
+        "distributed-systems",
+        "replication",
+        "performance",
+        "databases"
+      ],
+      "category": "replication",
+      "backingCard": {
+        "bookId": "distributed-data-systems",
+        "chapterId": "dds-ch05-replication"
+      }
+    },
+    {
+      "id": "dds-bas-0160-0000-0000-0000-000000000016",
+      "word": "Fault Tolerance",
+      "pronunciation": "FAWLT TOL-er-ence",
+      "partOfSpeech": "noun",
+      "shortDefinition": "The ability of a system to continue operating correctly in the presence of component failures.",
+      "simpleDefinition": "A fault-tolerant system keeps working even when some of its parts break. If a disk fails, the system reads from a replica. If a node crashes, traffic is rerouted to healthy nodes. Fault tolerance is not about preventing failures — that is impossible at scale — it is about designing the system so that failures in components do not become failures of the whole service.",
+      "longDefinition": "Kleppmann draws a precise distinction between a fault (a single component deviating from its specification) and a failure (the whole system stopping to provide the required service). Fault tolerance is the set of design decisions that prevent faults from cascading into failures. It is achieved through three complementary strategies: redundancy (multiple copies of every critical component — RAID for disks, replicas for databases, multiple availability zones for cloud deployments), isolation (confining failures so they cannot propagate — circuit breakers, bulkheads, containerisation), and recovery (designing for fast restoration — automatic restarts, checkpoint-based stream recovery, idempotent retries). Counterintuitively, Kleppmann advocates for deliberately injecting faults in production (Chaos Engineering, as popularised by Netflix's Chaos Monkey) to verify that fault-tolerance machinery actually works. Fault-tolerance machinery that is never triggered in production may fail silently when a real fault occurs. At sufficient scale, hardware faults happen constantly — a cluster of 10,000 disks experiences roughly one disk failure per day at industry-standard MTTF rates.",
+      "connector": "Think of fault tolerance like the redundant systems on a commercial aircraft — if one engine fails, the other keeps the plane flying. The passengers (users) never notice the failure because the system was designed to absorb it.",
+      "techContext": "We validated our fault tolerance by running Chaos Monkey in staging — it randomly terminated EC2 instances every 30 minutes. Within two sprints we had identified and fixed three single points of failure that would have caused production outages.",
+      "exampleSentence": "The fault-tolerant design of our Kafka cluster meant that losing a broker during a rolling restart simply redirected partition leaders to other brokers — no message loss and no consumer lag spike.",
+      "etymology": "Fault from Latin fallita (a stumbling, a defect), from fallere (to deceive, to fail); tolerance from Latin tolerantia (endurance), from tolerare (to bear). The compound entered engineering vocabulary in the 1960s for aerospace and nuclear systems, later adopted by computing.",
+      "unlockLevel": 1,
+      "tags": [
+        "distributed-systems",
+        "reliability",
+        "fault-tolerance",
+        "architecture"
+      ],
+      "category": "reliability",
+      "backingCard": {
+        "bookId": "distributed-data-systems",
+        "chapterId": "dds-ch01-reliable-scalable-maintainable",
+        "cardId": "dds-ch01-c004"
+      }
+    },
+    {
+      "id": "dds-bas-0170-0000-0000-0000-000000000017",
+      "word": "Reliability",
+      "pronunciation": "rih-lie-uh-BIL-ih-tee",
+      "partOfSpeech": "noun",
+      "shortDefinition": "The property of a system that works correctly even when things go wrong — hardware faults, software bugs, or human errors.",
+      "simpleDefinition": "Reliability means the system does what it promises to do, consistently, even under adverse conditions. A reliable database returns accurate data and accepts writes correctly not just on sunny days but also when a disk is degraded, a software bug triggers an unusual code path, or an operator misconfigures a setting. Reliability is the umbrella property that fault tolerance, redundancy, and testing all serve.",
+      "longDefinition": "Kleppmann opens 'Designing Data-Intensive Applications' with reliability as the most foundational property of data systems. He defines it through four user expectations: the system performs the expected function, it tolerates mistakes by users or unusual usage patterns, its performance is good enough for the required use case under expected load, and it prevents unauthorized access and abuse. The key word is correctly — a system that occasionally returns wrong answers, drops writes, or crashes under heavy load is not reliable even if it is fast and scalable most of the time. Kleppmann classifies fault sources into three categories: hardware faults (random and independent — mitigated by redundancy), software errors (correlated and systematic — mitigated by testing, sandboxing, and canary deployments), and human errors (the leading cause of outages according to studies of large internet services — mitigated by good tooling, abstractions, and operator workflows). Crucially, reliability is achievable even with unreliable components: the goal is not zero faults but a system design that prevents faults from becoming failures.",
+      "connector": "Think of reliability like a car that starts every morning regardless of the weather, even if some sensors occasionally flicker or a warning light comes on — it keeps working through minor component issues without leaving you stranded.",
+      "techContext": "Our reliability engineering team runs quarterly game days simulating an entire availability zone failure — if the service cannot maintain its 99.9% SLO during the simulation, we do not ship the quarter's features until the gaps are fixed.",
+      "exampleSentence": "The system maintained its reliability SLA during the botched configuration deployment because the change was tested in staging first and the rollback mechanism automatically restored the previous config within 90 seconds.",
+      "etymology": "From reliable (from French relier, to fasten, to rely on, from Latin religare), with the suffix -ity forming an abstract noun. In engineering contexts reliability gained a precise technical definition in the mid-20th century aerospace and manufacturing industries.",
+      "unlockLevel": 1,
+      "tags": [
+        "distributed-systems",
+        "reliability",
+        "fault-tolerance",
+        "architecture"
+      ],
+      "category": "reliability",
+      "backingCard": {
+        "bookId": "distributed-data-systems",
+        "chapterId": "dds-ch01-reliable-scalable-maintainable",
+        "cardId": "dds-ch01-c001"
+      }
+    },
+    {
+      "id": "dds-bas-0180-0000-0000-0000-000000000018",
+      "word": "Scalability",
+      "pronunciation": "skay-luh-BIL-ih-tee",
+      "partOfSpeech": "noun",
+      "shortDefinition": "A system's ability to handle growing load by adding resources without degrading performance.",
+      "simpleDefinition": "Scalability describes how gracefully a system handles more load — more users, more data, more requests per second. A scalable system maintains acceptable performance as load grows by adding hardware or nodes. But scalability is not a binary property; it always refers to a specific type of load growth along a specific performance axis, and the right strategy depends on identifying which load parameter is actually the bottleneck.",
+      "longDefinition": "Kleppmann is careful to frame scalability as a question requiring precise definition, not a general property. 'Can the system scale?' is meaningless without answering: scale with respect to what load? Along what performance axis? The first step in a scalability analysis is identifying the relevant load parameters — the numbers that describe how much work your system is doing. For a web server, requests per second. For a database, read/write ratio. For a cache, hit rate. For Twitter's home timeline, the distribution of followers per user turned out to be the critical parameter that shaped their entire architecture. Once load parameters are defined, the scalability question becomes: if we double this parameter, what must we do to maintain performance? Two resource strategies exist: vertical scaling (bigger machines — simple but has hardware ceilings) and horizontal scaling (more machines — requires shared-nothing architecture but scales without bound). Most internet-scale systems use horizontal scaling for stateless services and a careful mix for stateful ones, since scaling stateful services (databases, queues) horizontally requires partitioning and replication with their associated complexity.",
+      "connector": "Think of scalability like a restaurant that handles more customers by adding more tables and waitstaff rather than making each waiter faster — horizontal growth that keeps service quality consistent as demand grows.",
+      "techContext": "The stateless API layer scales horizontally via autoscaling groups that add or remove instances based on CPU utilisation, while the stateful database layer scales horizontally through read replicas and eventually through sharding.",
+      "exampleSentence": "The service had good scalability for read-heavy load — adding three read replicas tripled our read throughput — but write scalability hit a wall at the single leader, which we later addressed with partitioning.",
+      "etymology": "From scalable (capable of being scaled), from scale (from Latin scala, a ladder or flight of steps), with the suffix -ity. The computing meaning of 'scaling' a system — adjusting its capacity proportionally — emerged in the 1980s.",
+      "unlockLevel": 1,
+      "tags": [
+        "distributed-systems",
+        "performance",
+        "architecture",
+        "scalability"
+      ],
+      "category": "scalability",
+      "backingCard": {
+        "bookId": "distributed-data-systems",
+        "chapterId": "dds-ch01-reliable-scalable-maintainable",
+        "cardId": "dds-ch01-c005"
+      }
+    },
+    {
+      "id": "dds-bas-0190-0000-0000-0000-000000000019",
+      "word": "Tail Latency",
+      "pronunciation": "TAYL LAY-ten-see",
+      "partOfSpeech": "noun",
+      "shortDefinition": "The slowest requests in a distribution, typically expressed as the 99th or 99.9th percentile response time.",
+      "simpleDefinition": "Tail latency is the response time experienced by the slowest fraction of requests — the outliers at the 'tail' of the distribution. If your p99 is 2 seconds, one out of every hundred requests takes 2 seconds or longer. Tail latency matters disproportionately in distributed systems because end-to-end response time is dominated by the slowest call in a chain of dependencies.",
+      "longDefinition": "Kleppmann explains that the mean (average) response time is a poor summary statistic because it hides the users having the worst experience. A system with a 50 ms median and a 30-second p99 is not a 50 ms system — it is a system that inflicts 30-second waits on 1% of users. Percentiles reveal what the mean conceals: p50 is the median (half of requests are faster), p95 means 5% are slower, p99 means 1% are slower, p999 means 0.1% are slower. Tail latency compounds in microservices architectures: if a user request requires five sequential downstream calls each with a p99 of 100 ms, the end-to-end p99 is roughly 500 ms. Even parallel fan-out is susceptible — the slowest response in a parallel call set determines the total response time. High-percentile latencies (p99, p999) are called tail latency and are the industry standard for SLA definition. Amazon, for instance, defines its internal service SLAs in the 99.9th percentile because the customers with the most data (and thus the slowest queries) are often the highest-value customers. Common causes of tail latency spikes include JVM garbage collection pauses, lock contention, a slow disk read caused by a cache miss, and head-of-line blocking.",
+      "connector": "Think of tail latency like airport security — 95% of passengers sail through quickly, but the occasional bag inspection creates a long queue. The p99 time is how long that unlucky 1% waits, and if your service calls the security scanner for every flight, one slow bag check holds up the entire plane.",
+      "techContext": "We added a timeout hedge on our downstream inventory calls: after 50 ms with no response, we issue a duplicate request to a second replica. This reduced our end-to-end p99 from 800 ms to 120 ms by turning tail latency into a race condition.",
+      "exampleSentence": "The SLA requires p99 latency below 500 ms, so the team tracks tail latency on every service in the critical path — a spike in any one of them cascades to a violation at the end-to-end level.",
+      "etymology": "Tail from Old English tægl (the appendage at the rear of an animal); in probability and statistics, the 'tail' of a distribution refers to the extreme end. Tail latency as a compound term emerged in the distributed systems literature in the 2000s, popularised by Amazon and Google's internal engineering culture.",
+      "unlockLevel": 1,
+      "tags": [
+        "distributed-systems",
+        "performance",
+        "observability",
+        "sre"
+      ],
+      "category": "performance",
+      "backingCard": {
+        "bookId": "distributed-data-systems",
+        "chapterId": "dds-ch01-reliable-scalable-maintainable",
+        "cardId": "dds-ch01-c010"
+      }
+    },
+    {
+      "id": "dds-bas-0200-0000-0000-0000-000000000020",
+      "word": "Replication Lag",
+      "pronunciation": "rep-lih-KAY-shun LAG",
+      "partOfSpeech": "noun",
+      "shortDefinition": "The delay between a write being committed on the leader and that write appearing on a follower.",
+      "simpleDefinition": "Replication lag is the time gap between when the leader records a write and when a follower has applied that same write to its own copy. During this window, the follower is stale. A user who reads from a lagging follower may see old data — the update they just submitted, the message they just sent, the account balance they just changed — all can appear to have vanished if the read arrives before the follower catches up.",
+      "longDefinition": "Kleppmann identifies replication lag as a source of some of the most insidious bugs in distributed applications, specifically because it is invisible in development environments — local machines have sub-millisecond replication lag while production systems under load may have tens or hundreds of milliseconds of lag that widens during heavy write bursts, follower compaction pauses, or network congestion. Three consistency anomalies arise directly from replication lag: the read-your-writes problem (you write a value but immediately read stale data from a lagging follower), the monotonic reads problem (refreshing a page makes data appear to go backwards in time because you hit a different, more-lagging follower), and the consistent-prefix reads problem (you see a reply before the question that prompted it because the reply and question were in different partitions with different lags). Each anomaly has a mitigation strategy, and Kleppmann devotes significant coverage to them in Chapter 5. Monitoring replication lag is a standard operational concern — PostgreSQL exposes it via pg_stat_replication, MySQL via SHOW SLAVE STATUS, and Kafka via consumer group lag metrics.",
+      "connector": "Think of replication lag like the delay in a live news feed from a satellite broadcast — the anchor says something, but a viewer watching through a relay sees it a few seconds later. If both viewers are asked 'what just happened?', they may give different answers depending on whether the relay has caught up.",
+      "techContext": "We alert on replication lag exceeding 5 seconds on any follower — when it spikes above that threshold, our read-routing logic automatically shifts those reads to the leader until the follower recovers, preventing users from seeing stale data.",
+      "exampleSentence": "The replication lag grew to 90 seconds during a bulk index rebuild, causing the customer service dashboard — which read from a follower — to show order statuses that were already an hour old.",
+      "codeExample": {
+        "language": "sql",
+        "code": "-- PostgreSQL: measure replication lag on the primary\nSELECT\n  application_name,\n  write_lag,\n  flush_lag,\n  replay_lag\nFROM pg_stat_replication;\n\n-- On a standby: how far behind is this follower?\nSELECT now() - pg_last_xact_replay_timestamp()\n  AS replication_lag_seconds;"
+      },
+      "etymology": "Replication from Latin replicare (to repeat); lag from Scandinavian origin (Old Norse laga, to go slowly). The compound term became standard in database administration as asynchronous replication spread through MySQL and PostgreSQL in the 2000s.",
+      "unlockLevel": 1,
+      "tags": [
+        "distributed-systems",
+        "replication",
+        "consistency",
+        "databases"
+      ],
+      "category": "replication",
+      "backingCard": {
+        "bookId": "distributed-data-systems",
+        "chapterId": "dds-ch05-replication",
+        "cardId": "dds-ch05-c005"
+      }
+    },
+    {
+      "id": "dds-bas-0210-0000-0000-0000-000000000021",
+      "word": "Failover",
+      "pronunciation": "FAYL-oh-ver",
+      "partOfSpeech": "noun",
+      "shortDefinition": "Automatic promotion of a follower to become the new leader when the current leader fails.",
+      "simpleDefinition": "Failover is what happens when the leader dies and the cluster must elect a replacement. The most up-to-date follower is promoted to leader, its replication lag becomes the new baseline, and clients are redirected to it. Done correctly, failover is invisible to users — they experience only a brief write pause while the election happens. Done incorrectly, failover causes data loss, split-brain, or extended outages.",
+      "longDefinition": "Kleppmann identifies failover as one of the most error-prone operations in database administration, with several failure modes that are each dangerous in different ways. First, the old leader's last writes may not have replicated before it died — if the new leader has a different state than the old leader, the old leader's unacknowledged writes are lost, violating the durability guarantee the client received. Second, split-brain: if two nodes both believe they are the leader simultaneously, both accept writes, and the conflicting writes cannot be automatically reconciled. Production incidents from split-brain can corrupt data irreparably. Third, choosing the wrong timeout for declaring a leader dead: too short and a slow-but-alive leader gets demoted unnecessarily (causing unnecessary failover and potential data loss); too long and the cluster is unavailable for writes for the duration. Tools like Patroni (PostgreSQL), Orchestrator (MySQL), and the Raft consensus algorithm built into etcd and CockroachDB automate failover with explicit mechanisms to prevent split-brain. A fencing token (a monotonically increasing epoch number) is the standard mechanism to ensure the old leader is blocked from making writes after being demoted.",
+      "connector": "Think of failover like the vice-president assuming the presidency when the president is incapacitated — the handover must happen quickly, but the transition must also ensure the old leader cannot still issue conflicting orders from their hospital bed.",
+      "techContext": "Patroni orchestrates PostgreSQL failover: it monitors the primary's health via the Etcd quorum and promotes the most-current standby within 30 seconds of a confirmed failure, issuing a fencing fence to block the old primary from accepting writes.",
+      "exampleSentence": "The leader's disk failed at 3 a.m., but because we had configured automatic failover with a 15-second detection timeout, the standby was promoted and writes resumed before the on-call engineer even saw the alert.",
+      "etymology": "Fail from Old French faillir (to be lacking, to miss); over from Old English ofer (above, across). The compound failover entered data centre operations vocabulary in the 1990s to describe automatic redundancy switching in high-availability systems.",
+      "unlockLevel": 1,
+      "tags": [
+        "distributed-systems",
+        "replication",
+        "fault-tolerance",
+        "databases"
+      ],
+      "category": "replication",
+      "backingCard": {
+        "bookId": "distributed-data-systems",
+        "chapterId": "dds-ch05-replication"
+      }
+    },
+    {
+      "id": "dds-bas-0220-0000-0000-0000-000000000022",
+      "word": "Read Replica",
+      "pronunciation": "REED REP-lih-kuh",
+      "partOfSpeech": "noun",
+      "shortDefinition": "A follower node configured to serve read traffic, offloading reads from the primary.",
+      "simpleDefinition": "A read replica is a follower specifically configured to handle read queries — SELECT statements, analytical queries, dashboard loads — so the primary leader can focus on write operations. By distributing reads across several read replicas, you multiply a database's read capacity without any changes to the write path.",
+      "longDefinition": "Read replicas are the most common form of horizontal read scaling in relational databases. Because reads vastly outnumber writes in most web applications (often by a 10:1 to 100:1 ratio), offloading reads to asynchronous followers dramatically reduces load on the primary leader without requiring sharding. The trade-off is eventual consistency: because read replicas are asynchronous followers, they may be milliseconds to seconds behind the primary. For most read workloads — product listings, user profiles, analytics dashboards — slight staleness is acceptable. For workloads that require read-your-writes guarantees — showing a user their own just-submitted data — reads must be routed to the primary. Cloud providers make read replicas easy: Amazon RDS supports up to 15 read replicas per primary; Google Cloud SQL and Azure Database for PostgreSQL offer similar capabilities. In Kafka's nomenclature, follower partitions act as read replicas and can be configured to accept consumer reads in versions 2.4+ via the rack-aware consumer feature.",
+      "connector": "Think of a read replica like a photocopy of a reference book in a library — readers can consult the photocopies freely without queuing at the original, and the librarian who makes updates only touches the original, keeping it free for new entries.",
+      "techContext": "We configured two RDS read replicas and updated the ORM connection pool to route SELECT queries round-robin across them while keeping all INSERT/UPDATE/DELETE queries on the primary — this reduced primary CPU from 85% to 30% during peak hours.",
+      "exampleSentence": "The analytics team's complex reporting queries were causing CPU spikes on the primary, so we provisioned a dedicated read replica for them, isolating their workload from transactional traffic.",
+      "codeExample": {
+        "language": "python",
+        "code": "import psycopg2\n\n# Route reads to replica, writes to primary\nPRIMARY_DSN  = 'host=db-primary  dbname=app user=app'\nREPLICA_DSN  = 'host=db-replica1 dbname=app user=app'\n\nprimary = psycopg2.connect(PRIMARY_DSN)\nreplica = psycopg2.connect(REPLICA_DSN)\n\ndef get_user(user_id):\n    # Reads go to replica — eventual consistency is fine here\n    cur = replica.cursor()\n    cur.execute('SELECT * FROM users WHERE id = %s', [user_id])\n    return cur.fetchone()\n\ndef update_email(user_id, new_email):\n    # Writes always go to primary\n    cur = primary.cursor()\n    cur.execute('UPDATE users SET email = %s WHERE id = %s',\n                [new_email, user_id])\n    primary.commit()"
+      },
+      "etymology": "Read from Old English rǣdan (to advise, to interpret, to read); replica from Latin replicare (to repeat). The compound term became standard database administration vocabulary in the early 2000s with the spread of MySQL replication in web applications.",
+      "unlockLevel": 1,
+      "tags": [
+        "distributed-systems",
+        "replication",
+        "databases",
+        "scalability"
+      ],
+      "category": "replication",
+      "backingCard": {
+        "bookId": "distributed-data-systems",
+        "chapterId": "dds-ch05-replication"
+      }
+    },
+    {
+      "id": "dds-bas-0230-0000-0000-0000-000000000023",
+      "word": "WAL",
+      "pronunciation": "WOL (or W-A-L as initialism)",
+      "partOfSpeech": "noun",
+      "shortDefinition": "Write-Ahead Log — a sequential durability log written before changes are applied to data pages.",
+      "simpleDefinition": "The WAL is a sequential log that a database writes before making any changes to its actual data pages. If the server crashes mid-operation, the WAL records exactly what was in progress; on restart the database replays or rolls back the WAL to restore a consistent state. The WAL is also what PostgreSQL uses to stream changes to follower replicas.",
+      "longDefinition": "The write-ahead log is the central durability mechanism of most relational databases and many distributed storage systems. The core rule is simple: before any change is applied to a data page on disk, a record of that change must first be written (fsynced) to the WAL. A crash at any point during a transaction leaves the WAL as the source of truth for recovery: uncommitted transactions are rolled back, committed transactions whose pages were not yet flushed are replayed. This makes WAL-based crash recovery reliable and fast — only the WAL needs to be replayed, not the entire dataset. In PostgreSQL, the WAL also serves as the replication log: physical replication streams raw WAL segments to standbys, which apply them to maintain byte-identical state. Logical replication decodes the WAL into row-level change events (INSERT/UPDATE/DELETE with old and new values) and streams those to subscribers, enabling cross-version and cross-database replication. The WAL is also the foundation of point-in-time recovery: by replaying a base backup plus all subsequent WAL segments up to a chosen timestamp, you can reconstruct the database at any past moment. Kleppmann covers WAL in Chapter 3 (storage internals) and Chapter 5 (replication log methods).",
+      "connector": "Think of the WAL like the running receipt tape at a cash register — before the cashier updates the till, the transaction is printed on the tape. If the register loses power mid-transaction, the tape tells you exactly what was completed and what wasn't.",
+      "techContext": "PostgreSQL's wal_level = logical configuration enables CDC pipelines via Debezium — the WAL is decoded into a stream of row-level changes that are published to Kafka topics for downstream consumers.",
+      "exampleSentence": "After the server crashed mid-transaction, PostgreSQL replayed the WAL on restart and rolled back the partial writes, ensuring the database came up in a consistent state with no corruption.",
+      "codeExample": {
+        "language": "sql",
+        "code": "-- PostgreSQL: inspect WAL configuration and current position\nSHOW wal_level;       -- minimal | replica | logical\nSHOW synchronous_commit;\n\nSELECT pg_current_wal_lsn();   -- current write position\nSELECT pg_walfile_name(pg_current_wal_lsn());  -- current WAL file"
+      },
+      "etymology": "Write from Old English wrītan (to scratch, to inscribe); ahead from Old English on heafod (at the head, in front); log from nautical usage (a log chip thrown overboard to measure speed, recorded in the ship's logbook). WAL as an acronym was formalised in the database systems literature by Mohan et al. in the ARIES recovery algorithm paper (1992).",
+      "unlockLevel": 1,
+      "tags": [
+        "databases",
+        "storage",
+        "replication",
+        "durability"
+      ],
+      "category": "storage",
+      "backingCard": {
+        "bookId": "distributed-data-systems",
+        "chapterId": "dds-ch03-storage-and-retrieval",
+        "cardId": "dds-ch03-c008"
+      }
+    },
+    {
+      "id": "dds-bas-0240-0000-0000-0000-000000000024",
+      "word": "Durability",
+      "pronunciation": "dyoo-ruh-BIL-ih-tee",
+      "partOfSpeech": "noun",
+      "shortDefinition": "The ACID guarantee that committed data survives crashes, typically enforced via disk persistence.",
+      "simpleDefinition": "Durability means that once a database tells you a transaction is committed, that data will not disappear even if the server crashes, the power cuts out, or the disk develops an error. The database achieves this by fsyncing the write-ahead log to disk before confirming the commit — so on restart, even if the data pages were not yet written, the WAL can replay the transaction.",
+      "longDefinition": "Durability is the D in ACID. Kleppmann notes that perfect durability is theoretically impossible — simultaneous failure of all replicas in all data centers would lose the data — but operationally, durable systems use multiple complementary mechanisms to make data loss astronomically improbable. Single-node durability is achieved by fsyncing the WAL to a persistent storage device before acknowledging a commit; if the server crashes after the fsync, the WAL replay restores the committed state on restart. Distributed durability extends this: a write is not acknowledged until at least one synchronous replica has also persisted it to disk, so even a total loss of the primary node does not lose the data. Cloud databases like RDS and Spanner go further by writing to multiple physical disks across multiple availability zones before acknowledging a commit. The trade-off: fsync adds latency to every write, which is why some systems offer a 'lazy fsync' option that improves write throughput at the cost of a small data-loss window on crash. PostgreSQL's synchronous_commit = off is such an option — it still writes to the WAL but does not fsync until slightly later, risking at most a few seconds of transactions on crash.",
+      "connector": "Think of durability like saving a document with Ctrl+S before closing — you are guaranteeing that the work is on disk and will survive a power outage, not just in RAM where it would be lost if the power cuts out.",
+      "techContext": "We set PostgreSQL synchronous_commit = on for financial transactions to ensure committed payments are durable before the API returns 200 OK, accepting the additional write latency that comes with fsyncing the WAL.",
+      "exampleSentence": "Even though the database server rebooted unexpectedly during peak traffic, every committed payment transaction was intact after restart because durability was enforced via WAL fsync before each commit acknowledgment.",
+      "etymology": "From Latin durabilitas (lasting quality), from durabilis (lasting), from durare (to last, to endure). In database systems the term acquired its precise technical meaning through the ACID formulation by Härder and Reuter in 1983.",
+      "unlockLevel": 1,
+      "tags": [
+        "databases",
+        "transactions",
+        "storage",
+        "reliability"
+      ],
+      "category": "transactions",
+      "backingCard": {
+        "bookId": "distributed-data-systems",
+        "chapterId": "dds-ch07-transactions"
+      }
+    },
+    {
+      "id": "dds-bas-0250-0000-0000-0000-000000000025",
+      "word": "Atomicity",
+      "pronunciation": "at-uh-MIS-ih-tee",
+      "partOfSpeech": "noun",
+      "shortDefinition": "The ACID guarantee that all operations in a transaction either all succeed or all roll back.",
+      "simpleDefinition": "Atomicity means a transaction is indivisible — it either completes entirely or has no effect at all. If you transfer money between two accounts and the server crashes after debiting the first account but before crediting the second, atomicity guarantees that the debit is rolled back. Users are never left with a half-applied state.",
+      "longDefinition": "Atomicity is the A in ACID. Kleppmann argues that the word is slightly misleading because in physics, 'atomic' means indivisible — but in the database context, the key property is not indivisibility per se but abortability: the ability to abandon a partially executed transaction and undo all its effects. This makes atomicity fundamentally a fault-tolerance property rather than a concurrency property. Atomicity says nothing about what other concurrent transactions can see while a transaction is in progress — that is Isolation's responsibility. The implementation is typically a combination of the write-ahead log and undo logs: before modifying any data pages, the database writes the original values to an undo log so it can reverse them if the transaction aborts. Single-object atomicity (a single row or document) is almost universal, even in key-value stores; multi-object atomicity (spanning multiple tables or documents) is the distinguishing feature of full transactional databases. Distributed atomicity — where the transaction spans multiple nodes, databases, or services — requires a distributed commit protocol such as two-phase commit (2PC) or a saga pattern.",
+      "connector": "Think of atomicity like a vending machine — you put in money, make a selection, and you either get the item and keep the change, or the machine returns all your money. The machine never takes your money and gives you nothing — there is no partial outcome.",
+      "techContext": "MongoDB added multi-document ACID transactions (including atomicity across collections) only in version 4.0 in 2018; before that, multi-document operations were not atomic and required application-level compensating transactions for rollback.",
+      "exampleSentence": "The order service wraps inventory decrement and payment charge in a single atomic transaction — if the payment gateway times out, the inventory is automatically restored via rollback, preventing ghost orders.",
+      "codeExample": {
+        "language": "sql",
+        "code": "-- Atomic bank transfer: both succeed or both roll back\nBEGIN;\n  UPDATE accounts\n    SET balance = balance - 200\n    WHERE id = 'alice' AND balance >= 200;\n\n  -- Check that the debit actually happened (not zero rows)\n  DO $$\n  BEGIN\n    IF NOT FOUND THEN\n      RAISE EXCEPTION 'Insufficient funds';\n    END IF;\n  END $$;\n\n  UPDATE accounts\n    SET balance = balance + 200\n    WHERE id = 'bob';\nCOMMIT;"
+      },
+      "etymology": "From Greek atomos (indivisible), from a- (not) + tomos (cut), from temnein (to cut). In database systems the term was formalised through the ACID acronym by Härder and Reuter in 1983.",
+      "unlockLevel": 1,
+      "tags": [
+        "databases",
+        "transactions",
+        "reliability",
+        "acid"
+      ],
+      "category": "transactions",
+      "backingCard": {
+        "bookId": "distributed-data-systems",
+        "chapterId": "dds-ch07-transactions"
+      }
+    },
+    {
+      "id": "dds-bas-0260-0000-0000-0000-000000000026",
+      "word": "Isolation",
+      "pronunciation": "eye-suh-LAY-shun",
+      "partOfSpeech": "noun",
+      "shortDefinition": "The ACID guarantee that concurrently executing transactions do not interfere with each other.",
+      "simpleDefinition": "Isolation means concurrent transactions run as if they were alone in the database. One transaction cannot see the uncommitted work of another, and the final state is as if the transactions ran one at a time. In practice, full isolation (serializability) is expensive, so most databases default to weaker levels that permit some anomalies in exchange for better performance.",
+      "longDefinition": "Isolation is the I in ACID and the most complex of the four properties because it governs concurrency. The textbook definition is serializability: the result of executing transactions concurrently must be equivalent to some serial execution of those same transactions. Serializability prevents all concurrency anomalies — dirty reads, non-repeatable reads, phantom reads, lost updates, and write skew. Kleppmann notes that most production databases default to weaker isolation levels because serializability has high performance cost. Read Committed (the PostgreSQL default) prevents dirty reads (seeing uncommitted writes) and dirty writes (overwriting uncommitted writes) but allows non-repeatable reads and lost updates. Snapshot Isolation (REPEATABLE READ in MySQL, the default in Oracle) gives each transaction a consistent point-in-time snapshot, preventing non-repeatable reads, but still allows write skew. Serializable Snapshot Isolation (SSI) detects write skew at commit time without blocking reads. The choice of isolation level is a trade-off between preventing anomalies and achieving throughput — and many production incidents stem from code that assumes serializable behavior from a database running at a weaker level.",
+      "connector": "Think of isolation like separate exam rooms — each student (transaction) takes their test independently, unaffected by what others are writing. When papers are graded, the results are as if each student had the room to themselves.",
+      "techContext": "We upgraded from PostgreSQL's default READ COMMITTED to REPEATABLE READ for the reservation system after discovering lost updates — two concurrent bookings for the same seat could both succeed because each transaction read the 'available' status before either had committed.",
+      "exampleSentence": "Without proper transaction isolation, two concurrent requests to claim the last ticket could both read 'quantity=1' and both decrement it, resulting in a quantity of -1 and two valid tickets for the same seat.",
+      "etymology": "From Italian isolato (isolated, insulated), from Latin insula (island). In database contexts, isolation was formalised as one of the ACID properties by Härder and Reuter in 1983, building on earlier work by Gray on transaction processing.",
+      "unlockLevel": 1,
+      "tags": [
+        "databases",
+        "transactions",
+        "concurrency",
+        "acid"
+      ],
+      "category": "transactions",
+      "backingCard": {
+        "bookId": "distributed-data-systems",
+        "chapterId": "dds-ch07-transactions",
+        "cardId": "dds-ch07-c007"
+      }
+    },
+    {
+      "id": "dds-bas-0270-0000-0000-0000-000000000027",
+      "word": "Schema-on-Read",
+      "pronunciation": "SKEE-muh on REED",
+      "partOfSpeech": "noun",
+      "shortDefinition": "A strategy where data structure is interpreted at read time rather than enforced on write, as in document stores.",
+      "simpleDefinition": "Schema-on-read means the database accepts data in any shape and lets the application interpret the structure when it reads the data. MongoDB, Elasticsearch, and HDFS work this way — you can store a document without declaring its fields upfront. This is flexible for heterogeneous data but puts the burden of schema enforcement on the application code.",
+      "longDefinition": "Kleppmann contrasts schema-on-read (the approach of document databases and data lakes) with schema-on-write (the approach of relational databases). In schema-on-write, the database enforces a schema at insert time — adding a column requires a schema migration, and every row in a table has the same columns. In schema-on-read, the structure is implicit in the application code that reads the data, not declared in the database. The advantage of schema-on-read is flexibility: different documents in the same collection can have different fields, making it easy to accommodate heterogeneous data or to add fields without a migration. The cost is that schema enforcement is entirely the application's responsibility — the database will not prevent you from inserting malformed documents, and bugs that write incorrect fields are caught only at read time (often in production). Schema-on-read is analogous to dynamic typing in programming languages: quick to write, but requires discipline and testing to avoid runtime type errors at the data layer. It is well suited to data with naturally heterogeneous or schema-less structure (event logs, user-generated content, sensor readings) and poorly suited to data with strict invariants that the database should enforce (financial records, identity data).",
+      "connector": "Think of schema-on-read like a filing cabinet where anyone can toss in any document — there are no strict folders. The structure only matters when someone retrieves and interprets a document. Very flexible, but only if everyone who reads the cabinet agrees on what the documents mean.",
+      "techContext": "We use MongoDB's schema-on-read for user preferences — every user can have arbitrary key-value pairs without a migration — but we added a Mongoose schema layer in the application to enforce structure and prevent malformed documents from being written.",
+      "exampleSentence": "Schema-on-read let us onboard three new event types to the analytics pipeline in a single afternoon without any database migrations, but it also meant a missing 'timestamp' field in production data wasn't caught until the reporting query broke a week later.",
+      "etymology": "Schema from Greek skhēma (form, figure, shape), from ekhein (to hold, to have). Read from Old English rǣdan (to interpret). The compound term was popularised in the 2010s to distinguish document and data lake approaches from traditional relational schema design.",
+      "unlockLevel": 1,
+      "tags": [
+        "databases",
+        "nosql",
+        "data-modeling",
+        "schema"
+      ],
+      "category": "data-modeling",
+      "backingCard": {
+        "bookId": "distributed-data-systems",
+        "chapterId": "dds-ch02-data-models-and-query-languages",
+        "cardId": "dds-ch02-c006"
+      }
+    },
+    {
+      "id": "dds-bas-0280-0000-0000-0000-000000000028",
+      "word": "Document Locality",
+      "pronunciation": "DOK-yoo-ment loh-KAL-ih-tee",
+      "partOfSpeech": "noun",
+      "shortDefinition": "Storing all data for a document in one contiguous disk location so a single read fetches the full entity.",
+      "simpleDefinition": "Document locality means that all the data you need for a single entity — say, a user profile with their address, preferences, and order history — is stored together in one place on disk. When you retrieve the document, a single disk read fetches everything. In contrast, a normalised relational schema splits that data across multiple tables, requiring multiple reads and joins.",
+      "longDefinition": "Kleppmann explains document locality as the key performance advantage of document databases over normalised relational schemas. When an application typically accesses an entire entity at once — a user profile, a product catalogue entry, a blog post with its comments — storing all that data contiguously on disk means a single disk seek retrieves everything the application needs. In a normalised relational schema, the same data is spread across multiple tables linked by foreign keys, requiring the query planner to perform multiple index lookups, join operations, and potentially multiple disk reads to assemble the full entity. The limitation of document locality is the cost of updates: if a document is large and an update modifies only a small part of it, the entire document must be rewritten. MongoDB, for instance, stores documents as BSON and must rewrite the full document for any field change if the new value is larger than the old one (expanding the document). Document locality is therefore most valuable when documents are read frequently as a whole and written infrequently — content management systems, product catalogues, and user profiles are good fits. It is poorly suited to applications that frequently access fragments of documents or that need to join data across document types.",
+      "connector": "Think of document locality like keeping all your medical records in a single manila folder — when the doctor asks about your history, they pull one folder, not fifteen. In contrast, a normalised database keeps your prescriptions in one cabinet, your X-rays in another, and your visit notes in a third.",
+      "techContext": "MongoDB's document model with locality works well for our product catalogue — each product document embeds its variants, images, and metadata so a single find() call retrieves everything the product page needs without any joins.",
+      "exampleSentence": "Document locality made the blog post endpoint 60% faster after we embedded comments directly into the post document — the API no longer needed a separate query to the comments table.",
+      "etymology": "Document from Latin documentum (lesson, proof, example), from docere (to teach). Locality from Latin localitas (local character), from locus (place). The compound term appears in Kleppmann's framing in Chapter 2 to describe the performance trade-off specific to document data models.",
+      "unlockLevel": 1,
+      "tags": [
+        "databases",
+        "nosql",
+        "data-modeling",
+        "performance"
+      ],
+      "category": "data-modeling",
+      "backingCard": {
+        "bookId": "distributed-data-systems",
+        "chapterId": "dds-ch02-data-models-and-query-languages",
+        "cardId": "dds-ch02-c007"
+      }
+    },
+    {
+      "id": "dds-bas-0290-0000-0000-0000-000000000029",
+      "word": "Polyglot Persistence",
+      "pronunciation": "POL-ee-glot per-SIS-tence",
+      "partOfSpeech": "noun",
+      "shortDefinition": "Using multiple different database technologies within a single application, each chosen for its strengths.",
+      "simpleDefinition": "Polyglot persistence means deliberately using different databases for different parts of your application, matching the data store to the access pattern. Use a relational database for transactional data, a document store for user profiles, a graph database for social connections, a time-series database for metrics, and a cache for hot reads. No single database is the best fit for every use case.",
+      "longDefinition": "Kleppmann introduces polyglot persistence in Chapter 2 as a natural consequence of having diverse data models. The relational model is excellent for structured data with complex relationships and ACID requirements. Document databases excel at hierarchical, self-contained entities with variable structure. Graph databases handle traversals over highly connected data efficiently. Time-series databases are optimised for append-heavy, time-ordered data with downsampling and retention policies. Key-value stores provide O(1) point lookups for cache-friendly data. The polyglot persistence pattern acknowledges that a single data store cannot be best-in-class for all these access patterns simultaneously — or if it claims to be, it will have made trade-offs that hurt some workloads. The cost of polyglot persistence is operational complexity: each data store has its own operational model, backup strategy, monitoring story, and failure mode. Teams need expertise across multiple systems, and data consistency across stores requires care (dual writes, change data capture, eventual consistency across boundaries). The pattern is most appropriate for organisations with sufficient operational maturity to manage the added complexity.",
+      "connector": "Think of polyglot persistence like a professional kitchen with specialised equipment — the sous vide machine for proteins, the wood-fired oven for bread, the blast chiller for desserts. Each tool excels at its specific task, and the chef chooses the right one rather than forcing everything through the same appliance.",
+      "techContext": "Our platform uses PostgreSQL for financial transactions, Redis for session caching and rate-limit counters, Elasticsearch for full-text search, and ClickHouse for analytics — each database chosen for the access pattern it handles best.",
+      "exampleSentence": "Adopting polyglot persistence meant the product search moved from a slow SQL LIKE query to Elasticsearch, reducing search latency from 800 ms to 12 ms while keeping order management on the relational database.",
+      "etymology": "Polyglot from Greek polus (many) + glōtta (tongue, language) — literally speaking many languages. Persistence from Latin persistere (to persist, to continue). The compound was coined by Martin Fowler and Pramod Sadalage around 2011 to describe the emerging practice of mixing multiple data stores in modern applications.",
+      "unlockLevel": 1,
+      "tags": [
+        "databases",
+        "architecture",
+        "nosql",
+        "data-modeling"
+      ],
+      "category": "data-modeling",
+      "backingCard": {
+        "bookId": "distributed-data-systems",
+        "chapterId": "dds-ch02-data-models-and-query-languages",
+        "cardId": "dds-ch02-c011"
+      }
+    },
+    {
+      "id": "dds-bas-0300-0000-0000-0000-000000000030",
+      "word": "NoSQL",
+      "pronunciation": "noh-ESS-kyoo-EL",
+      "partOfSpeech": "noun",
+      "shortDefinition": "A broad class of databases that diverge from the relational model, often trading ACID for scale or flexibility.",
+      "simpleDefinition": "NoSQL databases are any databases that don't follow the traditional relational, SQL-based model. They typically sacrifice some ACID guarantees in exchange for horizontal scalability, flexible schema design, or specialised data structures. The term is an umbrella covering document stores (MongoDB), key-value stores (Redis, DynamoDB), wide-column stores (Cassandra, HBase), and graph databases (Neo4j).",
+      "longDefinition": "Kleppmann uses NoSQL not as a precise technical term but as a broad category descriptor. The NoSQL movement emerged in the late 2000s and early 2010s as internet-scale companies (Google, Amazon, Facebook) found that traditional relational databases could not scale horizontally to meet their needs without prohibitive complexity. NoSQL databases trade the relational model's strictures — normalisation, foreign key constraints, complex joins, and ACID transactions — for properties better suited to web-scale workloads: horizontal scalability through sharding, flexible schema design accommodating heterogeneous data, high write throughput through asynchronous replication, and tunable consistency that allows lower latency at the cost of stricter guarantees. The four main NoSQL data models each serve different access patterns: document stores (MongoDB, CouchDB) for hierarchical, self-contained entities; key-value stores (Redis, DynamoDB, Riak) for O(1) point lookups; wide-column stores (Cassandra, HBase, Bigtable) for time-series and sparse, high-cardinality data; and graph databases (Neo4j, JanusGraph) for traversal-heavy social or knowledge graph data. Kleppmann notes that 'NoSQL' is a retronym — the databases existed before the term, and it is more a marketing label than a technical specification. Modern databases increasingly blur the NoSQL/SQL boundary: PostgreSQL supports JSON documents and full-text search; Cassandra added CQL (a SQL-like query language); CockroachDB provides PostgreSQL-compatible SQL with horizontal scalability.",
+      "connector": "Think of NoSQL like the restaurant alternatives to fine dining — fast food, food trucks, and pop-ups each optimise for a different trade-off (speed, flexibility, specialisation) instead of trying to replicate the white-tablecloth experience. They're not worse, they're different tools for different contexts.",
+      "techContext": "We use Cassandra (a NoSQL wide-column store) for our event log because it handles high write throughput across multiple data centers better than PostgreSQL — we accept eventual consistency for event ingestion because events are append-only and never updated.",
+      "exampleSentence": "The team chose a NoSQL document store for the product catalog because the schema varied significantly between product categories, and schema migrations on a 200-million-row relational table were becoming operationally painful.",
+      "etymology": "The term NoSQL was coined (or popularised) by Johan Oskarsson in 2009 as the hashtag for a meetup about non-relational databases. It has been reinterpreted as 'Not Only SQL' to acknowledge that many NoSQL systems now support SQL-like query languages.",
+      "unlockLevel": 1,
+      "tags": [
+        "databases",
+        "nosql",
+        "architecture",
+        "scalability"
+      ],
+      "category": "data-modeling",
+      "backingCard": {
+        "bookId": "distributed-data-systems",
+        "chapterId": "dds-ch02-data-models-and-query-languages",
+        "cardId": "dds-ch02-c004"
+      }
+    }
+  ]
+}

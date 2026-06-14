@@ -1,0 +1,1838 @@
+{
+  "chapterId": "dbi-ch11-replication-and-failover",
+  "shardIndex": 1,
+  "cards": [
+    {
+      "id": "dbi-ch11-c001",
+      "order": 1,
+      "title": "Why Replicate — Fault Tolerance, Read Scaling, and Geographic Locality",
+      "teaser": "Replication is not a single idea. The three reasons to replicate — surviving node failure, offloading reads, and placing data closer to users — lead to different architectural choices, and conflating them produces systems optimized for none of the three.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "A single-node database is a single point of failure. Every operational goal that reaches beyond one machine is fundamentally a replication problem."
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Fault tolerance.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " If the primary node fails — hardware, OS, data center — a replica holds a copy of the data and can be promoted to accept writes. Without replication, a single node failure is a full outage. With it, failure triggers a promotion, not a loss."
+              }
+            ],
+            [
+              {
+                "text": "Read scaling.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Most OLTP workloads are read-heavy. A replica that accepts read queries reduces the load on the primary. AWS RDS read replicas, MySQL replicas, and PostgreSQL hot standbys all serve this purpose: the primary focuses on writes; replicas absorb reads."
+              }
+            ],
+            [
+              {
+                "text": "Geographic locality.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " A replica in a region close to a user subset reduces read latency from 100 ms across a continent to sub-10 ms from a nearby availability zone. Multi-region replication is the enabling mechanism for global applications."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Each goal places different demands on the replication mechanism. Fault tolerance needs low replication lag — ideally synchronous confirmation — so no writes are lost at failover. Read scaling tolerates lag, because slightly stale reads are often acceptable. Geographic locality requires write coordination across regions, which is architecturally expensive and introduces the risk of write conflicts."
+            }
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "info",
+          "runs": [
+            {
+              "text": "Petrov's framing in Database Internals: replication is the mechanism by which storage and compute are distributed across machines. Once you replicate, you inherit the full complexity of distributed systems — partial failures, network partitions, and the trade-offs described by the CAP theorem."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "You replicate for three reasons: so the system survives a crash (fault tolerance), so reads don't all hit one machine (read scaling), and so data is physically close to users (geographic locality). Each reason pulls you toward different design choices, so it matters which one — or which combination — you are actually optimizing for."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "dbi-ch11-c002",
+      "order": 2,
+      "title": "The Three Architectures — Single-Leader, Multi-Leader, and Leaderless",
+      "teaser": "Every replicated system makes one foundational choice: who is allowed to accept writes? The answer defines the entire topology — its conflict model, its latency profile, and its failure behavior.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Replicated systems can be organized around three fundamental architectures:"
+            }
+          ]
+        },
+        {
+          "type": "code",
+          "language": "text",
+          "text": "Single-Leader (Primary/Replica)\n\n  Clients ──writes──▶ [Primary] ──WAL stream──▶ [Replica 1]\n                              └─────────────▶ [Replica 2]\n  Clients ──reads───▶ [Replica 1] or [Replica 2]\n\n────────────────────────────────────────────────────────────\n\nMulti-Leader (Active/Active)\n\n  Clients ──writes──▶ [Leader A] ◀──▶ [Leader B] ◀──▶ [Leader C]\n  (all leaders accept writes; conflict resolution required)\n\n────────────────────────────────────────────────────────────\n\nLeaderless (Dynamo-style)\n\n  Clients ──writes──▶ [Node 1]  (quorum write: W of N nodes)\n                  └──▶ [Node 2]\n                  └──▶ [Node 3]\n  Clients ──reads───▶ quorum read: R of N nodes; last-write-wins"
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Single-leader",
+                "marks": ["bold"]
+              },
+              {
+                "text": " (primary/replica) — one node accepts all writes and streams them to followers. Simple conflict model (no conflicts possible), but the leader is a bottleneck and a single point of write availability. PostgreSQL streaming replication, MySQL binlog replication, and AWS RDS all use this model."
+              }
+            ],
+            [
+              {
+                "text": "Multi-leader",
+                "marks": ["bold"]
+              },
+              {
+                "text": " (active/active) — multiple nodes accept writes simultaneously. Writes replicate between leaders in all directions. Enables writes from multiple regions but requires conflict detection and resolution. MySQL Group Replication, CockroachDB, and Galera Cluster are examples."
+              }
+            ],
+            [
+              {
+                "text": "Leaderless",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — any node accepts writes; a quorum (W out of N) confirms the write. Reads use a quorum (R out of N) to detect the most recent value. Amazon DynamoDB, Apache Cassandra, and Riak use this model. It maximizes availability — there is no single node whose failure causes a write outage — but staleness and conflict resolution become the application's concern."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "warning",
+          "runs": [
+            {
+              "text": "The single-leader model is the right default for relational databases with strong consistency requirements. Multi-leader and leaderless architectures trade consistency guarantees for availability and geo-distribution — the right trade-off for some applications, but catastrophic for others (e.g., financial ledgers with multi-leader writes)."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The first question in any replicated system is: which nodes can accept writes? One node (single-leader) keeps things simple but concentrates the bottleneck. Multiple nodes (multi-leader) let every region write but create conflicts. Any node (leaderless) gives the most availability but makes staleness and conflict the application's problem."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "dbi-ch11-c003",
+      "order": 3,
+      "title": "Physical Replication — WAL Shipping, Byte for Byte",
+      "teaser": "Physical replication sends the raw WAL stream — the same log records used for crash recovery — to a replica that replays them identically. The result is a byte-for-byte copy of the primary's data files. It is the simplest, most robust form of replication a relational engine can provide.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "PostgreSQL's physical replication (and its older sibling, WAL archiving) reuses the existing WAL infrastructure described in chapter 4. The primary generates WAL for every write. Instead of only writing WAL to local disk for crash recovery, it also sends that stream to standbys."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The standby runs the same log replay loop used during crash recovery — indefinitely. It receives WAL records, applies them to local data files using the page-level physical changes, and advances its replay LSN. The standby's data files are a byte-for-byte mirror of the primary's at the replayed LSN."
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Physical WAL records",
+                "marks": ["bold"]
+              },
+              {
+                "text": " describe changes at the storage layer: \"write these bytes at this offset in this page.\" They are engine-version specific and cluster-specific — the same WAL cannot be replayed on a different PostgreSQL major version or a different server with a different system identifier."
+              }
+            ],
+            [
+              {
+                "text": "No schema filtering",
+                "marks": ["bold"]
+              },
+              {
+                "text": " is possible. Physical replication always replicates the entire cluster — every database, every table, every system catalog change. Selective table replication is not supported."
+              }
+            ],
+            [
+              {
+                "text": "Full-page writes",
+                "marks": ["bold"]
+              },
+              {
+                "text": " ("
+              },
+              {
+                "text": "full_page_writes = on",
+                "marks": ["code"]
+              },
+              {
+                "text": ") embed complete page images in WAL after each checkpoint, protecting against torn writes on the standby during initial sync or after a standby restart."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "info",
+          "runs": [
+            {
+              "text": "WAL shipping (the older form of physical replication) copies completed WAL segment files (16 MB each) to the standby. Streaming replication (covered in the next card) sends records in real time as they are written. Both replay identically; streaming is just lower-latency."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Physical replication takes the same log records the database already writes for crash recovery and ships them to a replica, which replays them page-by-page. The replica ends up with an identical copy of every byte on the primary. It is simple and robust but replicates everything — you cannot select individual tables."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "dbi-ch11-c004",
+      "order": 4,
+      "title": "Streaming Replication — The Continuous WAL Stream",
+      "teaser": "Streaming replication keeps a standby milliseconds behind the primary by maintaining a persistent connection through which WAL records flow continuously — not in batched segments, but record-by-record as they are written.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Classic WAL shipping copies segments to the standby only when a segment file is complete (every 16 MB by default). Under low write rates, a segment might not fill for minutes or hours. The standby falls proportionally behind."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Streaming replication eliminates this gap by opening a persistent TCP connection between the primary's WAL sender process and the standby's WAL receiver process. Records flow through this connection as soon as they are written to the primary's WAL buffer — no waiting for a segment to fill."
+            }
+          ]
+        },
+        {
+          "type": "code",
+          "language": "text",
+          "text": "Primary:\n  [Client] ──SQL write──▶ [Backend process]\n                              │\n                              ▼\n                        [WAL writer] ──WAL record──▶ pg_wal/\n                              │\n                              ▼ (streaming)\n                        [WAL sender] ──TCP stream──▶ [WAL receiver] on Standby\n\nStandby:\n  [WAL receiver] ──write──▶ pg_wal/ (local copy)\n                                │\n                                ▼\n                        [Startup process / WAL applier] ──apply──▶ data files"
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Key operational parameters in PostgreSQL streaming replication:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "primary_conninfo",
+                "marks": ["code"]
+              },
+              {
+                "text": " in the standby's configuration — the connection string to the primary."
+              }
+            ],
+            [
+              {
+                "text": "wal_level = replica",
+                "marks": ["code"]
+              },
+              {
+                "text": " on the primary — required to emit the additional WAL records that standbys need."
+              }
+            ],
+            [
+              {
+                "text": "max_wal_senders",
+                "marks": ["code"]
+              },
+              {
+                "text": " — maximum simultaneous streaming connections from the primary. Each standby consumes one WAL sender process."
+              }
+            ],
+            [
+              {
+                "text": "wal_keep_size",
+                "marks": ["code"]
+              },
+              {
+                "text": " — how much WAL the primary retains for a lagging standby. If the standby falls too far behind and WAL is recycled, the standby must be rebuilt from a fresh base backup."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "info",
+          "runs": [
+            {
+              "text": "MySQL achieves the same result differently: the primary writes changes to its binary log (binlog); replicas connect via a dedicated IO thread that streams binlog events; a SQL thread applies them. The abstraction is identical — a durable, ordered change stream shipped continuously — but the format is logical (row events) rather than physical WAL records."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Streaming replication keeps a TCP connection open between the primary and each standby. As the primary writes WAL records, they are immediately forwarded over the wire. The standby replays them as they arrive. The result: the standby is typically only milliseconds behind, not minutes — the difference between a practical hot standby and an impractical warm one."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "dbi-ch11-c005",
+      "order": 5,
+      "title": "Logical Replication — Row-Based, Selective, Cross-Version",
+      "teaser": "Logical replication ships row-level changes — INSERT, UPDATE, DELETE — not raw WAL bytes. This makes it filter-capable (replicate only specific tables), cross-version-compatible, and consumable by non-PostgreSQL systems. The trade-off is higher overhead and more complex conflict handling.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Physical replication is a black box: the standby receives and applies page-level changes without interpreting them. Logical replication decodes the WAL into a higher-level stream of row changes — the logical replication protocol — that any subscriber can consume."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The PostgreSQL logical replication architecture (introduced in PostgreSQL 10):"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Publication",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — defined on the primary with "
+              },
+              {
+                "text": "CREATE PUBLICATION mypub FOR TABLE orders, payments",
+                "marks": ["code"]
+              },
+              {
+                "text": ". Specifies which tables (or all tables) to replicate and which operations (INSERT, UPDATE, DELETE, TRUNCATE)."
+              }
+            ],
+            [
+              {
+                "text": "Subscription",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — defined on the subscriber with "
+              },
+              {
+                "text": "CREATE SUBSCRIPTION mysub CONNECTION '...' PUBLICATION mypub",
+                "marks": ["code"]
+              },
+              {
+                "text": ". The subscriber connects to the publisher, does an initial table copy, then streams ongoing changes."
+              }
+            ],
+            [
+              {
+                "text": "Logical decoding",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — the WAL decoder (using an output plugin like "
+              },
+              {
+                "text": "pgoutput",
+                "marks": ["code"]
+              },
+              {
+                "text": ") translates physical WAL records into a logical change stream: BEGIN, relation-qualified INSERT/UPDATE/DELETE tuples, COMMIT."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Key differences from physical replication:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Selective.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Replicate specific tables, not the whole cluster."
+              }
+            ],
+            [
+              {
+                "text": "Cross-version.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " A PostgreSQL 15 subscriber can receive changes from a PostgreSQL 16 publisher — essential for zero-downtime major version upgrades."
+              }
+            ],
+            [
+              {
+                "text": "Cross-platform.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Third-party tools (Debezium, pglogical) consume the logical replication stream and feed it to Kafka, Elasticsearch, or other systems."
+              }
+            ],
+            [
+              {
+                "text": "No DDL replication.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " By default, schema changes (ALTER TABLE, CREATE INDEX) are not replicated. The application must manage schema changes on subscribers separately."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "info",
+          "runs": [
+            {
+              "text": "MySQL's binlog has always been logical (row-based events with binlog_format=ROW). MySQL's logical replication story is therefore older and more mature than PostgreSQL's. Debezium uses MySQL's binlog and PostgreSQL's logical decoding as their respective change data capture (CDC) sources."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Logical replication translates the raw WAL into human-readable row changes — \"row 42 in table orders was updated from X to Y\" — and streams those to subscribers. Because it speaks rows, not pages, it can filter to specific tables and work across major database versions. The downside: it needs more CPU to decode, and schema changes are your problem to handle manually."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "dbi-ch11-c006",
+      "order": 6,
+      "title": "Replication Slot — Durable Position Tracking for Subscribers",
+      "teaser": "A replication slot is a durable cursor the primary maintains on behalf of a subscriber. It records how far the subscriber has consumed the WAL stream and prevents the primary from recycling WAL segments the subscriber still needs.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Without a replication slot, a standby that falls behind — due to network partition, maintenance, or slow replay — risks losing access to the WAL it needs. The primary recycles old WAL segments to reclaim disk space. If a segment is recycled before the standby consumes it, the standby cannot catch up and must be rebuilt from a fresh base backup."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "A replication slot solves this by persisting the subscriber's consumption position on the primary:"
+            }
+          ]
+        },
+        {
+          "type": "code",
+          "language": "text",
+          "text": "-- Create a physical replication slot (for streaming replication)\nSELECT pg_create_physical_replication_slot('standby1_slot');\n\n-- Create a logical replication slot (for logical decoding)\nSELECT pg_create_logical_replication_slot('cdc_slot', 'pgoutput');\n\n-- Inspect slot positions\nSELECT slot_name, confirmed_flush_lsn, restart_lsn, wal_status\nFROM pg_replication_slots;"
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "restart_lsn",
+                "marks": ["code"]
+              },
+              {
+                "text": " — the earliest WAL position the primary must retain. All WAL from this LSN forward is protected from recycling."
+              }
+            ],
+            [
+              {
+                "text": "confirmed_flush_lsn",
+                "marks": ["code"]
+              },
+              {
+                "text": " (logical slots) — the LSN up to which the subscriber has confirmed it has processed and durably stored the changes."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "warning",
+          "runs": [
+            {
+              "text": "Replication slots are the most operationally dangerous PostgreSQL feature for disk management. A slot for a subscriber that is disconnected, dead, or simply slow will prevent WAL recycling indefinitely. The primary's pg_wal directory fills until the disk is exhausted, causing the primary itself to crash. Always monitor pg_replication_slots and set wal_keep_size as a secondary floor. Consider max_slot_wal_keep_size (PostgreSQL 13+) to cap WAL retained per slot."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "A replication slot is the primary's bookmark for each subscriber. It says: \"this subscriber has consumed up to this point in the log; don't delete anything newer.\" It solves the problem of a subscriber reconnecting after a gap and finding its WAL gone. The danger: a forgotten or dead slot keeps growing forever, eventually filling the primary's disk."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "dbi-ch11-c007",
+      "order": 7,
+      "title": "Replication Slot Operational Gotchas",
+      "teaser": "Slots are durable by design — they survive restarts. That durability is also the failure mode: an inactive slot silently accumulates WAL until the disk fills. Production slot management requires monitoring, size caps, and a drop policy for abandoned slots.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The most common PostgreSQL disaster story that involves replication slots follows a predictable pattern: a subscriber is taken offline for maintenance (or quietly dies), nobody notices the slot is still active, the primary accumulates WAL for days or weeks, and the primary crashes when its disk fills — taking the production database offline."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Mitigation toolbox:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "max_slot_wal_keep_size",
+                "marks": ["code"]
+              },
+              {
+                "text": " (PostgreSQL 13+) — set a per-slot WAL retention cap (e.g., "
+              },
+              {
+                "text": "max_slot_wal_keep_size = 10GB",
+                "marks": ["code"]
+              },
+              {
+                "text": "). If a slot exceeds this, PostgreSQL invalidates it rather than letting WAL grow unbounded. The subscriber must rebuild, but the primary stays alive."
+              }
+            ],
+            [
+              {
+                "text": "Monitoring.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Alert on "
+              },
+              {
+                "text": "pg_replication_slots.wal_status = 'unreserved'",
+                "marks": ["code"]
+              },
+              {
+                "text": " or "
+              },
+              {
+                "text": "'lost'",
+                "marks": ["code"]
+              },
+              {
+                "text": ". Alert when "
+              },
+              {
+                "text": "pg_current_wal_lsn() - restart_lsn",
+                "marks": ["code"]
+              },
+              {
+                "text": " exceeds a threshold (e.g., 5 GB)."
+              }
+            ],
+            [
+              {
+                "text": "Drop abandoned slots.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " "
+              },
+              {
+                "text": "SELECT pg_drop_replication_slot('slot_name')",
+                "marks": ["code"]
+              },
+              {
+                "text": " when a subscriber is permanently gone. Logical replication subscriptions dropped with "
+              },
+              {
+                "text": "DROP SUBSCRIPTION",
+                "marks": ["code"]
+              },
+              {
+                "text": " automatically drop the slot on the publisher."
+              }
+            ],
+            [
+              {
+                "text": "Avoid slots for short-lived CDC consumers.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Tools like Debezium that consume the logical decoding stream must guarantee their slot is always actively consumed or the slot must be dropped before the consumer goes offline."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "info",
+          "runs": [
+            {
+              "text": "AWS RDS for PostgreSQL and Aurora PostgreSQL expose replication slot management but add their own retention controls. Aurora limits logical replication WAL retention via aurora_logical_replication_wal_retention. On RDS, the rds.logical_replication parameter must be set to 1 to enable logical slots. Both still require the same vigilance around slot monitoring."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Replication slots are persistent bookmarks, which means they keep accumulating WAL even when no one is reading. The safe operation practice: set a per-slot WAL size cap, alert when a slot falls behind a threshold, and drop slots promptly when a subscriber is permanently gone. The unconstrained slot is one of the easiest ways to kill a healthy production database."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "dbi-ch11-c008",
+      "order": 8,
+      "title": "Synchronous vs Asynchronous Replication",
+      "teaser": "Asynchronous replication confirms the commit before the replica acknowledges receipt. Synchronous replication waits for at least one replica to confirm. The difference is one of durability: with async replication, a failover after a primary crash can lose the last few committed transactions.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The commit path on a single-leader system can take two forms:"
+            }
+          ]
+        },
+        {
+          "type": "code",
+          "language": "text",
+          "text": "Asynchronous:\n\n  Client ──COMMIT──▶ Primary\n  Primary: write WAL to disk\n  Primary: return \"committed\" to client   ←── client unblocked immediately\n  Primary: stream WAL to standbys (best-effort, background)\n\n  Risk: if primary dies before WAL reaches standby,\n        the last N committed transactions are lost.\n\n─────────────────────────────────────────────────────────\n\nSynchronous:\n\n  Client ──COMMIT──▶ Primary\n  Primary: write WAL to disk\n  Primary: stream WAL to standby(s)\n  Standby: write WAL to disk, send acknowledgment ←── primary waits here\n  Primary: return \"committed\" to client   ←── client unblocked\n\n  Guarantee: standby has the record; failover loses nothing.\n  Cost: commit latency += network round-trip to standby."
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "PostgreSQL configures synchronous replication via "
+            },
+            {
+              "text": "synchronous_standby_names",
+              "marks": ["code"]
+            },
+            {
+              "text": " on the primary. Setting it to "
+            },
+            {
+              "text": "FIRST 1 (standby1)",
+              "marks": ["code"]
+            },
+            {
+              "text": " means at least one named standby must acknowledge before the commit returns."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Semi-synchronous replication — used by MySQL Group Replication and configurable in PostgreSQL — is the common middle ground: the primary waits for the replica to confirm WAL receipt (not application), reducing the acknowledgment latency while still ensuring no committed transaction is entirely lost at failover."
+            }
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "warning",
+          "runs": [
+            {
+              "text": "If the synchronous standby becomes unavailable, PostgreSQL blocks all commits indefinitely until the standby reconnects or is removed from synchronous_standby_names. This is the correct behavior — the administrator said no commit should proceed without confirmation — but it means the synchronous standby is now in your availability critical path. Design accordingly."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Asynchronous replication says \"I'll tell the client the write is done and send it to replicas in the background.\" Synchronous replication says \"I won't tell the client until at least one replica confirms it has the record.\" Async is faster but risks losing the last few writes if the primary crashes. Sync is safer but adds a network round-trip to every commit."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "dbi-ch11-c009",
+      "order": 9,
+      "title": "Hot Standby vs Warm Standby",
+      "teaser": "A hot standby serves read queries while continuously replaying WAL. A warm standby replays WAL but rejects all connections. The choice is between running capacity and faster failover with simpler operation.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Not all standbys are created equal. PostgreSQL distinguishes between two standby modes based on whether they accept client connections during recovery:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Hot standby",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — "
+              },
+              {
+                "text": "hot_standby = on",
+                "marks": ["code"]
+              },
+              {
+                "text": " in PostgreSQL. The standby accepts read-only connections while replaying WAL. Queries that touch pages currently being modified by WAL replay may block briefly (a \"conflict\"), but the standby is available as a read replica at all times. This is the standard configuration for production read replicas."
+              }
+            ],
+            [
+              {
+                "text": "Warm standby",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — "
+              },
+              {
+                "text": "hot_standby = off",
+                "marks": ["code"]
+              },
+              {
+                "text": ". Replays WAL continuously but rejects all connections. Useful when the standby's role is purely disaster recovery — it does not need to serve read traffic, and disabling hot standby simplifies WAL replay (no conflict resolution required). Promotes faster to primary because there are no active queries to clean up."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "A "
+            },
+            {
+              "text": "cold standby",
+              "marks": ["bold"]
+            },
+            {
+              "text": " (a third option not intrinsic to PostgreSQL but common in operations) is not continuously replaying WAL — it is a restored backup or an infrequently synchronized copy that requires manual steps to bring current before promotion. Cold standbys have the largest recovery time objective (RTO) and are appropriate only for budget-constrained environments."
+            }
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "info",
+          "runs": [
+            {
+              "text": "AWS RDS Multi-AZ uses a warm standby in the passive AZ: it receives synchronous writes but does not serve read traffic. AWS RDS Read Replicas are hot standbys. Aurora's read replicas are hot standbys sharing the same distributed storage volume as the primary — a different architecture that eliminates WAL shipping entirely."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "A hot standby keeps replaying WAL and also answers read queries from clients. A warm standby keeps replaying WAL but turns away all connections. Hot is more useful day-to-day — it offloads reads — but slightly more complex to operate. Warm is simpler and promotes faster, but sits idle until it is needed for failover."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "dbi-ch11-c010",
+      "order": 10,
+      "title": "Read Replica — Offloading Reads and the Staleness Trade-off",
+      "teaser": "A read replica is a hot standby used explicitly for read traffic. It lowers load on the primary but introduces the possibility of reading stale data — a property applications must explicitly handle.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Read replicas are one of the simplest and highest-leverage scalability moves available to a relational database operator. A workload that is 80% reads can direct that 80% to one or more replicas, reducing primary CPU and I/O proportionally."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The fundamental constraint is replication lag. Because replication is asynchronous in most configurations, the replica's view of the data is behind the primary's by some amount — typically milliseconds on a healthy, low-load system, but minutes or hours under failure conditions or extreme load."
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Read-your-own-writes violation.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " A user writes a record (routed to the primary) then immediately reads it (routed to a replica). If the replica hasn't yet applied that write, the read returns stale data. The user sees their own write disappear. Common mitigations: always route reads for a user to the primary for N seconds after that user writes; use sticky sessions that pin a user to a specific replica or the primary."
+              }
+            ],
+            [
+              {
+                "text": "Monotonic reads violation.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Two sequential reads from different replicas can return a newer result followed by an older one (if replicas have different lag). The user experiences time going backward."
+              }
+            ],
+            [
+              {
+                "text": "Causal consistency.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " PostgreSQL 10+ supports "
+              },
+              {
+                "text": "recovery_min_apply_delay",
+                "marks": ["code"]
+              },
+              {
+                "text": " (intentional delay on a standby) and "
+              },
+              {
+                "text": "pg_last_wal_replay_lsn()",
+                "marks": ["code"]
+              },
+              {
+                "text": " for applications that need to verify a replica has applied a specific LSN before routing a read to it."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "info",
+          "runs": [
+            {
+              "text": "AWS RDS and Aurora expose read replica lag via CloudWatch metrics (ReplicaLag). In Aurora, read replicas typically lag by under 20 ms because they share the same distributed storage volume — WAL shipping is replaced by a distributed log that all nodes read from. The read-your-own-writes problem is reduced, though not eliminated."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "A read replica handles reads while the primary handles writes, which dramatically reduces primary load in read-heavy workloads. The catch: the replica may be a few milliseconds behind, so a read immediately after a write might return stale data. Applications need to be designed around that staleness — either by routing certain reads to the primary or by accepting that replication lag is possible."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "dbi-ch11-c011",
+      "order": 11,
+      "title": "Replica Lag Monitoring",
+      "teaser": "Replica lag is the operational heartbeat of a replication setup. Measuring it in bytes, seconds, and transactions gives operations teams the leading indicators they need before a lagging replica becomes a failover nightmare.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Lag can be measured at three levels, each providing a different signal:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Bytes behind.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " "
+              },
+              {
+                "text": "pg_current_wal_lsn() - sent_lsn",
+                "marks": ["code"]
+              },
+              {
+                "text": " (from "
+              },
+              {
+                "text": "pg_stat_replication",
+                "marks": ["code"]
+              },
+              {
+                "text": " on the primary) gives the byte offset between the primary's current WAL position and what has been sent to the standby. The write, flush, and replay lag columns further decompose this: sent but not written, written but not flushed, flushed but not applied."
+              }
+            ],
+            [
+              {
+                "text": "Seconds behind.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " "
+              },
+              {
+                "text": "pg_stat_replication.replay_lag",
+                "marks": ["code"]
+              },
+              {
+                "text": " measures the wall-clock time by which the standby's applied position lags the primary. This is the number most relevant to read staleness — it tells you how old the data a read replica is serving."
+              }
+            ],
+            [
+              {
+                "text": "Transactions behind.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " For logical replication, "
+              },
+              {
+                "text": "pg_replication_slots.confirmed_flush_lsn",
+                "marks": ["code"]
+              },
+              {
+                "text": " compared to "
+              },
+              {
+                "text": "pg_current_wal_lsn()",
+                "marks": ["code"]
+              },
+              {
+                "text": " reveals how many log bytes of unconfirmed transactions are waiting. MySQL exposes "
+              },
+              {
+                "text": "Seconds_Behind_Master",
+                "marks": ["code"]
+              },
+              {
+                "text": " in "
+              },
+              {
+                "text": "SHOW REPLICA STATUS",
+                "marks": ["code"]
+              },
+              {
+                "text": ", which measures the timestamp difference between the current event being applied and the primary's most recent event."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Healthy baselines to monitor against: bytes lag should be near zero under normal load; seconds lag should be under 1 second for synchronous-like behavior; sudden spikes usually indicate network issues, a write storm on the primary, or a long-running transaction on the standby blocking WAL application."
+            }
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "info",
+          "runs": [
+            {
+              "text": "repmgr (Replication Manager for PostgreSQL) and Patroni both expose replication lag as a first-class metric in their health checks. Tools like check_postgres and pgBadger provide alerting wrappers around pg_stat_replication. In production, lag should be an on-call alert — a standby that is minutes behind on an async setup cannot be used for zero-data-loss failover."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Replica lag is how far behind the standby is compared to the primary. You can measure it in bytes (how much WAL hasn't been applied yet), in seconds (how old the standby's data is), or in transactions (how many commits haven't landed yet). All three tell you something slightly different, and all three should be alarmed on in production — a lagging standby is a ticking clock before a failover that loses data."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "dbi-ch11-c012",
+      "order": 12,
+      "title": "Failover Orchestration — Detecting Failure and Promoting a Replica",
+      "teaser": "Failover is two sequential problems: detect that the primary is truly down (not just slow), then promote exactly one replica to the new primary. Both steps are harder than they look, and getting either wrong causes data loss or split-brain.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The failover sequence, unrolled:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "numbered",
+          "items": [
+            [
+              {
+                "text": "Detect failure.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " The monitoring agent (Patroni, Stolon, repmgr) polls the primary via TCP or SQL queries ("
+              },
+              {
+                "text": "SELECT 1",
+                "marks": ["code"]
+              },
+              {
+                "text": "). A timeout triggers a suspicion. Multiple agents must agree (consensus) to avoid reacting to a transient network hiccup."
+              }
+            ],
+            [
+              {
+                "text": "Confirm failure.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Before promoting, a quorum of agents confirms the primary is unreachable from multiple vantage points — not just the single monitoring agent. This prevents a network partition from causing a false failover where the primary is still alive and serving traffic."
+              }
+            ],
+            [
+              {
+                "text": "Fence the primary.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Before promoting a replica, the orchestrator must ensure the old primary cannot accept writes. This is covered in depth in the split-brain card."
+              }
+            ],
+            [
+              {
+                "text": "Select the promotion candidate.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Choose the standby with the highest replay LSN — the least behind. Promoting a standby with older data means losing writes the primary had confirmed."
+              }
+            ],
+            [
+              {
+                "text": "Promote the replica.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Signal the chosen standby to become primary (see promotion details in the next card). Remaining standbys reconfigure to stream from the new primary."
+              }
+            ],
+            [
+              {
+                "text": "Update the routing layer.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Point the load balancer's write endpoint (e.g., HAProxy, PgBouncer, AWS Route 53 health checks) to the new primary's IP or DNS name."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "info",
+          "runs": [
+            {
+              "text": "The detection-to-promotion window is the RTO (recovery time objective). Patroni, backed by etcd or Consul for distributed coordination, typically achieves 30–60 second failover times. AWS RDS Multi-AZ typically completes failover in 60–120 seconds. Aurora Multi-AZ typically completes in under 30 seconds due to its shared-storage architecture that eliminates WAL shipping entirely."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Failover is: first figure out the primary is really dead (not just slow), fence it so it can't take more writes, pick the most up-to-date replica, promote that replica to primary, and redirect traffic. Do any step wrong and you either wait too long, lose data, or end up with two nodes both thinking they are the primary."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "dbi-ch11-c013",
+      "order": 13,
+      "title": "Automatic vs Manual Failover — Patroni, Stolon, RDS Multi-AZ",
+      "teaser": "Automatic failover eliminates human reaction time from the RTO equation but requires a distributed consensus layer to do safely. Manual failover is slower but simpler, eliminating the risk of a misfired automated promotion.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The ecosystem of PostgreSQL high-availability tools broadly splits into two categories:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Patroni",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — the most widely deployed open-source PostgreSQL HA solution. Uses a distributed consensus store (etcd, Consul, or ZooKeeper) as the single source of truth for who the current primary is. The Patroni daemon on each node runs a leader election loop. When the primary's Patroni loses its lease on the consensus store, another node acquires the lease and promotes itself. Patroni also handles configuration management, replication slot creation, and can run pre/post-promote hooks."
+              }
+            ],
+            [
+              {
+                "text": "Stolon",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — similar to Patroni but architecturally different: a separate sentinel (stolon-keeper, stolon-proxy, stolon-sentinel) component topology. Less commonly deployed but well-suited for Kubernetes environments."
+              }
+            ],
+            [
+              {
+                "text": "repmgr",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — older, simpler. Provides replication setup automation and manual failover commands. Automatic failover requires a separate repmgrd daemon and is less robust than Patroni. Good for teams that want tooling without the full automated failover complexity."
+              }
+            ],
+            [
+              {
+                "text": "AWS RDS Multi-AZ",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — fully managed. AWS uses synchronous physical replication to a standby in a different AZ. Failover is triggered automatically when RDS detects primary failure, typically within 60–120 seconds. The connection endpoint DNS name flips to the standby. No user action required; no Patroni needed."
+              }
+            ],
+            [
+              {
+                "text": "Manual failover",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — using "
+              },
+              {
+                "text": "pg_ctl promote",
+                "marks": ["code"]
+              },
+              {
+                "text": " or "
+              },
+              {
+                "text": "repmgr standby promote",
+                "marks": ["code"]
+              },
+              {
+                "text": ". An operator decides when to promote. Slower (minutes to hours depending on on-call response time) but zero risk of accidental split-brain triggered by a false positive."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "info",
+          "runs": [
+            {
+              "text": "Patroni's consensus-backed automatic failover is the industry standard for self-managed PostgreSQL HA as of 2024. Zalando, GitHub, GitLab, and many large PostgreSQL deployments use it. The etcd cluster backing Patroni must itself be highly available — three nodes minimum — or Patroni cannot achieve quorum and will not promote."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Automatic failover (Patroni, RDS Multi-AZ) uses a consensus system to decide when the primary is really dead and elect a new one without human involvement — fast recovery, but requires a well-tuned distributed coordination layer. Manual failover is slower but simpler: a human decides, executes the promotion command, and updates routing. The choice depends on how much RTO you can afford versus how much operational complexity you want to run."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "dbi-ch11-c014",
+      "order": 14,
+      "title": "Promotion — Trigger File, WAL Truncation, and the Divergence Problem",
+      "teaser": "Promotion turns a replica into a writable primary. The mechanics are a one-way door: the replica stops replaying WAL, opens for writes, and begins generating new WAL. Any other replicas that were ahead of the promoted node now have WAL that will never be applied — the divergence problem.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "When PostgreSQL promotes a standby, the sequence is:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "numbered",
+          "items": [
+            [
+              {
+                "text": "Signal delivery.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " The orchestrator signals promotion via "
+              },
+              {
+                "text": "pg_ctl promote",
+                "marks": ["code"]
+              },
+              {
+                "text": " (sends SIGUSR1 to the postmaster), a trigger file ("
+              },
+              {
+                "text": "trigger_file",
+                "marks": ["code"]
+              },
+              {
+                "text": " in older versions), or the "
+              },
+              {
+                "text": "pg_promote()",
+                "marks": ["code"]
+              },
+              {
+                "text": " function (PostgreSQL 12+). Patroni uses "
+              },
+              {
+                "text": "pg_promote()",
+                "marks": ["code"]
+              },
+              {
+                "text": " via psql."
+              }
+            ],
+            [
+              {
+                "text": "WAL replay stops.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " The startup process (running the WAL replay loop) exits recovery mode. The standby stops accepting WAL from the old primary."
+              }
+            ],
+            [
+              {
+                "text": "WAL timeline advance.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " PostgreSQL increments its timeline ID (a concept borrowed from point-in-time recovery). The new primary writes a timeline switch record to WAL. All future WAL on this primary is on timeline N+1."
+              }
+            ],
+            [
+              {
+                "text": "WAL truncation.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Any WAL in the promoted replica's pg_wal that had not been applied from the old primary is removed or abandoned. The promoted node starts writing new WAL from its current applied position forward."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The "
+            },
+            {
+              "text": "divergence problem",
+              "marks": ["bold"]
+            },
+            {
+              "text": " arises when the old primary had confirmed writes that the promoted standby had not yet received. If the old primary later comes back online, it has a different WAL history than the new primary — both timelines branched from the point of promotion. The old primary must "
+            },
+            {
+              "text": "never",
+              "marks": ["italic"]
+            },
+            {
+              "text": " be allowed to rejoin as a peer. It must be reinitialized as a new standby using "
+            },
+            {
+              "text": "pg_basebackup",
+              "marks": ["code"]
+            },
+            {
+              "text": " or "
+            },
+            {
+              "text": "pg_rewind",
+              "marks": ["code"]
+            },
+            {
+              "text": " — a tool that rewinds a diverged PostgreSQL cluster back to the last common WAL point so it can resync from the new primary without a full base backup."
+            }
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "warning",
+          "runs": [
+            {
+              "text": "pg_rewind (available since PostgreSQL 9.5) can rewind a former primary quickly, but it requires that the old primary's WAL divergence is not too large and that wal_log_hints = on (or data checksums are enabled) was set before the incident. Patroni runs pg_rewind automatically during reinstatement. If pg_rewind fails, a full pg_basebackup is the fallback."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Promotion signals the standby to stop replaying and start accepting writes. It bumps a timeline counter so everyone knows a new primary epoch has begun, and truncates any unapplied WAL from the old primary. The risk: if the old primary had committed writes the standby never received, those writes are gone. The old primary — now with diverged history — can never just rejoin; it must be rewound or rebuilt from scratch."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "dbi-ch11-c015",
+      "order": 15,
+      "title": "Split-Brain Prevention via Fencing — STONITH and Fencing Tokens",
+      "teaser": "Split-brain occurs when two nodes both believe they are the primary and accept writes simultaneously. The resulting data divergence is often unrecoverable. Fencing — shooting the other node in the head — is the engineering term for preventing this, and it must happen before any promotion.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The failure scenario that fencing prevents:"
+            }
+          ]
+        },
+        {
+          "type": "code",
+          "language": "text",
+          "text": "Timeline:\n\n  [Primary] ──── heavy load, appears unresponsive ────────[still alive, serving writes]\n     │\n  [Monitor] sees timeout ──▶ promotes [Standby] to primary\n\n  Now:\n  [Old Primary]  still accepting writes → timeline A\n  [New Primary]  accepting writes       → timeline B\n\n  Both believe they are authoritative.\n  Application writes to both (depending on routing).\n  Data diverges. Neither copy is complete. Recovery may be impossible."
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "STONITH — \"Shoot The Other Node In The Head\" — is the cluster engineering term for any mechanism that ensures a node is positively offline before its replacement is promoted:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "IPMI / iDRAC power commands.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " The orchestrator sends a power-off command to the primary's management interface via the network before promoting the standby. Even if the primary's OS is alive, it is physically powered off."
+              }
+            ],
+            [
+              {
+                "text": "Cloud instance termination.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " In AWS, the orchestrator calls "
+              },
+              {
+                "text": "ec2:TerminateInstances",
+                "marks": ["code"]
+              },
+              {
+                "text": " or detaches the EBS volume from the primary before promotion. Patroni in cloud environments uses this via a \"watchdog\" fence agent."
+              }
+            ],
+            [
+              {
+                "text": "Fencing tokens (lease-based).",
+                "marks": ["bold"]
+              },
+              {
+                "text": " The consensus store (etcd, Consul) issues a monotonically increasing token with each leader lease. The storage layer (or proxy) rejects any write from a node presenting an older token. Even if the old primary is alive, its writes are refused — a form of STONITH without physical hardware action."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Patroni implements fencing via a Watchdog daemon: if the Patroni daemon on the primary loses its etcd lease and cannot promptly fence itself via the watchdog, the watchdog reboots the OS. The primary fences itself rather than requiring the orchestrator to fence it externally."
+            }
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "warning",
+          "runs": [
+            {
+              "text": "A high-availability system without a fencing mechanism is not truly HA — it is a system that will eventually produce split-brain under sufficiently pathological conditions. Never deploy an automatic failover system without a working fence. Test the fence regularly. A fence that has never been tested has an unknown probability of working when needed."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Split-brain is when two nodes both think they're the primary and write different data. It's the worst outcome in HA systems. Fencing prevents it by guaranteeing the old primary is positively offline — powered off, instance terminated, or its writes rejected by the storage layer — before the new primary is promoted. STONITH (Shoot The Other Node In The Head) is the blunt but accurate name for this class of operations."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "dbi-ch11-c016",
+      "order": 16,
+      "title": "Cascading Replication — Replica of a Replica",
+      "teaser": "Cascading replication lets a standby itself stream WAL to downstream standbys, forming a replication tree. This reduces WAL sender load on the primary and saves inter-datacenter bandwidth, at the cost of increased lag for downstream nodes.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "In a standard replication setup, every standby connects directly to the primary. If the primary has ten standbys across three data centers, it must run ten WAL sender processes and sustain ten simultaneous streams — each sending the full WAL throughput over potentially expensive WAN links."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Cascading replication addresses this by introducing intermediate standbys that forward the WAL stream:"
+            }
+          ]
+        },
+        {
+          "type": "code",
+          "language": "text",
+          "text": "Direct replication:\n  [Primary] ──▶ [Standby A]  (DC-East)\n  [Primary] ──▶ [Standby B]  (DC-West, expensive WAN)\n  [Primary] ──▶ [Standby C]  (DC-West, expensive WAN)\n  [Primary] ──▶ [Standby D]  (DC-West, expensive WAN)\n\nCascading replication:\n  [Primary] ──▶ [Standby A]  (DC-East)   ← one WAN stream from Primary\n  [Primary] ──▶ [Relay B]    (DC-West)   ← one WAN stream from Primary\n                    ├──▶ [Standby C]     (local to DC-West)\n                    └──▶ [Standby D]     (local to DC-West)"
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "In PostgreSQL, cascading is configured by setting the standby's "
+            },
+            {
+              "text": "primary_conninfo",
+              "marks": ["code"]
+            },
+            {
+              "text": " to point at another standby rather than the primary. The intermediate standby must have "
+            },
+            {
+              "text": "wal_level = replica",
+              "marks": ["code"]
+            },
+            {
+              "text": " and "
+            },
+            {
+              "text": "max_wal_senders > 0",
+              "marks": ["code"]
+            },
+            {
+              "text": " — the same requirements as a primary for serving WAL senders."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Trade-offs:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Reduced primary WAL sender load.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " The primary serves fewer direct connections. Useful when "
+              },
+              {
+                "text": "max_wal_senders",
+                "marks": ["code"]
+              },
+              {
+                "text": " would otherwise be exhausted."
+              }
+            ],
+            [
+              {
+                "text": "WAN bandwidth savings.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " One WAN stream per remote data center instead of N streams."
+              }
+            ],
+            [
+              {
+                "text": "Compounded lag.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Downstream standbys inherit the relay's lag plus their own. A two-hop cascade doubles the worst-case lag."
+              }
+            ],
+            [
+              {
+                "text": "Relay is a single point of failure.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " If the relay crashes, all downstream standbys stop receiving WAL until the relay recovers or they are reconfigured to connect directly to the primary."
+              }
+            ]
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Cascading replication makes a standby act as a mini-primary for other standbys downstream of it. Instead of ten standbys all connecting to the primary, one intermediate standby connects to the primary and forwards the stream to nine others. You save bandwidth and primary load, but downstream nodes lag more and the intermediate relay becomes a single point of failure for its subtree."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "dbi-ch11-c017",
+      "order": 17,
+      "title": "Snapshot-Based Bootstrap — pg_basebackup and Initial Sync Without Downtime",
+      "teaser": "Before a standby can replay WAL, it needs a starting point: a consistent copy of all data files at a known WAL position. pg_basebackup (PostgreSQL), xtrabackup (MySQL), and equivalent tools create this initial snapshot online — the primary continues serving writes during the copy.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "A new standby cannot simply point at a primary's WAL stream and start replaying from the beginning of time. The WAL stream going back to database creation is not retained. The standby needs a physical copy of the primary's data files — a base backup — that represents a consistent state at a known LSN. WAL replay then continues from that LSN forward."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "PostgreSQL's "
+            },
+            {
+              "text": "pg_basebackup",
+              "marks": ["code"]
+            },
+            {
+              "text": " performs this online:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "numbered",
+          "items": [
+            [
+              {
+                "text": "pg_basebackup",
+                "marks": ["code"]
+              },
+              {
+                "text": " calls "
+              },
+              {
+                "text": "pg_backup_start()",
+                "marks": ["code"]
+              },
+              {
+                "text": " on the primary, which forces a checkpoint and records the current WAL position as the backup start LSN."
+              }
+            ],
+            [
+              {
+                "text": "It streams all data files from the primary using the replication protocol."
+              }
+            ],
+            [
+              {
+                "text": "WAL records generated during the backup (since the backup start LSN) are included in the backup, ensuring the copy can be made consistent during recovery even though the primary kept writing."
+              }
+            ],
+            [
+              {
+                "text": "pg_basebackup",
+                "marks": ["code"]
+              },
+              {
+                "text": " calls "
+              },
+              {
+                "text": "pg_backup_stop()",
+                "marks": ["code"]
+              },
+              {
+                "text": ", which records the backup end LSN. The standby replays WAL from backup start to backup end to make the data files consistent, then continues streaming from backup end forward."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "MySQL's Percona XtraBackup performs the same function for InnoDB: takes a hot physical backup by copying InnoDB tablespace files while recording the binlog position, then applies the InnoDB redo log to make the copy consistent. The result is a consistent snapshot at a known binlog position from which replication can begin."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Patroni automates "
+            },
+            {
+              "text": "pg_basebackup",
+              "marks": ["code"]
+            },
+            {
+              "text": " (or pgBackRest, Barman, WAL-G as alternatives) when bootstrapping a new cluster member. When adding a standby to an existing Patroni cluster, Patroni runs the bootstrap automatically: base backup, configure streaming, start recovery."
+            }
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "info",
+          "runs": [
+            {
+              "text": "For very large databases (multiple terabytes), pg_basebackup can take hours. pgBackRest offers parallel backup and restore with delta restore — only changed blocks are transferred when reinitializing a diverged standby. WAL-G (used by Zalando's Patroni setups) streams base backups to object storage (S3) and enables efficient cross-region standby bootstrapping."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Before a standby can start replaying WAL, it needs a complete copy of the database files at a known starting point. pg_basebackup takes that snapshot while the primary keeps running: it forces a checkpoint, copies all the files over the network, captures any WAL generated during the copy, and hands you a consistent starting point. The standby then just picks up the WAL stream from there."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "dbi-ch11-c018",
+      "order": 18,
+      "title": "Putting It Together — Replication Architecture Decision Map",
+      "teaser": "Choosing a replication architecture is a sequence of decisions, not a menu choice. Each decision narrows the option space: the goal drives the topology, the topology drives the consistency mode, the consistency mode drives the failover strategy.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "A practical decision sequence for designing a replication architecture:"
+            }
+          ]
+        },
+        {
+          "type": "code",
+          "language": "text",
+          "text": "1. PRIMARY GOAL?\n\n   Fault tolerance only          → Single-leader, sync or semi-sync, hot/warm standby\n   Fault tolerance + read scale  → Single-leader, async replicas, hot standbys\n   Multi-region writes           → Multi-leader (accept conflict complexity)\n   Maximum availability          → Leaderless (accept eventual consistency)\n\n2. CONSISTENCY MODE?\n\n   Zero data loss at failover    → Synchronous replication (commit waits for ACK)\n   Low-latency commits           → Asynchronous (accept potential last-write loss)\n   Middle ground                 → Semi-synchronous (MySQL) / quorum commit\n\n3. REPLICATION FORMAT?\n\n   Full cluster, same version    → Physical (streaming WAL)\n   Selective tables, CDG, upgrade path → Logical (pgoutput / binlog)\n\n4. FAILOVER MODE?\n\n   Automated, low RTO            → Patroni + etcd (self-managed)\n                                    or AWS RDS Multi-AZ (managed)\n   Human-in-the-loop             → repmgr manual promote / pg_ctl promote\n\n5. FENCING?\n\n   Cloud                         → Instance termination API (mandatory)\n   On-premises                   → IPMI/STONITH or Patroni watchdog (mandatory)\n   Never skip                    → No fencing = no real HA"
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The dominant production configuration for a relational database requiring strong consistency and automated failover:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Single-leader streaming physical replication."
+              }
+            ],
+            [
+              {
+                "text": "One synchronous standby in the same data center for zero-data-loss failover."
+              }
+            ],
+            [
+              {
+                "text": "One or more asynchronous hot standbys for read traffic."
+              }
+            ],
+            [
+              {
+                "text": "Patroni on top for automated failover with etcd consensus and watchdog fencing."
+              }
+            ],
+            [
+              {
+                "text": "Replication slots for each standby, with "
+              },
+              {
+                "text": "max_slot_wal_keep_size",
+                "marks": ["code"]
+              },
+              {
+                "text": " to prevent disk exhaustion."
+              }
+            ],
+            [
+              {
+                "text": "Replica lag monitoring on "
+              },
+              {
+                "text": "pg_stat_replication",
+                "marks": ["code"]
+              },
+              {
+                "text": " with alerts."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "info",
+          "runs": [
+            {
+              "text": "The AWS managed equivalent: RDS Multi-AZ (synchronous standby in a second AZ, automated failover) plus RDS Read Replicas (async hot standbys for read traffic). Aurora replaces the entire streaming replication layer with a distributed storage volume, reducing failover time to under 30 seconds and eliminating WAL shipping as a concept — though the same architectural trade-offs around consistency mode and read staleness still apply."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Replication design is a chain of decisions: what is the goal, how much data can you afford to lose at failover, do you need to filter tables, and who triggers the promotion? Each answer constrains the next. Most production relational systems land on single-leader streaming replication with one synchronous standby for durability, async replicas for reads, and an orchestrator like Patroni for automated failover with fencing."
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

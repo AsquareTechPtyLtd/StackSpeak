@@ -1,0 +1,866 @@
+{
+  "stack": "distributed-data-systems-advanced-3",
+  "words": [
+    {
+      "id": "dds-ad3-0010-0000-0000-0000-000000000001",
+      "word": "CRDT",
+      "pronunciation": "SEE-ar-dee-tee",
+      "partOfSpeech": "noun",
+      "shortDefinition": "Conflict-free Replicated Data Type — a data structure that can be updated concurrently on multiple replicas and always merges deterministically.",
+      "simpleDefinition": "A CRDT is a data structure mathematically designed so that concurrent updates from any number of replicas always produce the same merged result — no locks, no coordination rounds, no conflict-resolution code required. Every replica accepts writes immediately and reconciles lazily whenever it syncs with peers.",
+      "longDefinition": "Conflict-Free Replicated Data Types were formalised by Marc Shapiro, Nuno Preguiça, Carlos Baquero, and Marek Zawirski in a 2011 INRIA report and a landmark SOSP paper. The core insight: if you design operations so they commute (order doesn't matter) or design the merge function to be commutative, associative, and idempotent, then you never need coordination. This gives you Strong Eventual Consistency (SEC) by mathematical construction. Before CRDTs, systems needing high availability under partitions had two bad options: refuse writes (sacrificing availability) or accept conflicting writes and handle them with hand-written application logic. CRDTs offer a third path. Production deployments in 2024–2026 include Redis Enterprise Active-Active (CRDT-backed counters and sets across data centres), Riak 2.0 (telco and financial services), Yjs (powering Figma's multiplayer and Notion's real-time sync), and Automerge 2.0 (the Rust/WASM rewrite underpinning the Local-first Software movement).",
+      "connector": "Think of a CRDT like a shared collaborative document where everyone edits simultaneously and the system always converges to one correct result — no 'resolve conflicts' dialog, ever.",
+      "techContext": "We store shopping-cart contents as an OR-Set CRDT so customers can add items offline on their phone and sync later without any server-side conflict resolution logic.",
+      "exampleSentence": "By modelling the collaborative whiteboard's object positions as CRDTs, the team eliminated the entire server-side merge queue and let every client write locally with zero round-trip latency.",
+      "codeExample": {
+        "language": "python",
+        "code": "# G-Counter CRDT: grow-only counter across 3 nodes\nclass GCounter:\n    def __init__(self, node_id: str, num_nodes: int):\n        self.node_id = node_id\n        self.counts = [0] * num_nodes  # index = node index\n        self.idx = int(node_id.split('-')[1])\n\n    def increment(self):\n        self.counts[self.idx] += 1\n\n    def value(self) -> int:\n        return sum(self.counts)\n\n    def merge(self, other: 'GCounter') -> 'GCounter':\n        result = GCounter(self.node_id, len(self.counts))\n        result.counts = [\n            max(a, b) for a, b in zip(self.counts, other.counts)\n        ]\n        return result\n\n# Two nodes increment independently, then merge\nnode0 = GCounter('node-0', 3)\nnode1 = GCounter('node-1', 3)\nnode0.increment(); node0.increment()   # node0 sees 2\nnode1.increment()                       # node1 sees 1\nmerged = node0.merge(node1)\nprint(merged.value())  # 3 — deterministic regardless of merge order"
+      },
+      "etymology": "Conflict-free from Latin conflictus ('collision') + free; Replicated from Latin replicare ('to fold back, repeat'); coined in the 2011 INRIA/SOSP papers by Shapiro et al.",
+      "unlockLevel": 36,
+      "tags": [
+        "distributed-systems",
+        "replication",
+        "consistency",
+        "frontier-2026"
+      ],
+      "category": "data structures",
+      "backingCard": {
+        "bookId": "distributed-data-systems",
+        "chapterId": "dds-ch13-modern-distributed-data-patterns"
+      }
+    },
+    {
+      "id": "dds-ad3-0020-0000-0000-0000-000000000002",
+      "word": "Operation-Based CRDT",
+      "pronunciation": "op-uh-RAY-shun-bayst SEE-ar-dee-tee",
+      "partOfSpeech": "noun",
+      "shortDefinition": "A CRDT variant that replicates operations rather than full state, relying on causal delivery for correct convergence.",
+      "simpleDefinition": "An operation-based CRDT (CmRDT — Commutative Replicated Data Type) broadcasts tiny operation messages — 'increment by 1', 'add element X' — rather than shipping the entire data structure on every sync. Convergence is guaranteed because all concurrent operations are designed to commute. The tradeoff: the network must deliver each operation exactly once and in causal order.",
+      "longDefinition": "In an operation-based CRDT, every mutation is represented as an operation message that is broadcast to all replicas. The correctness guarantee is that all concurrent operations commute: applying operation A then B gives the same result as applying B then A. Sequential (causally ordered) operations need not commute. This makes CmRDTs message-efficient — an 'increment' is a few bytes rather than the full counter vector — but demands a stronger network: exactly-once delivery with causal ordering. In practice, causal delivery is implemented via causal broadcast protocols layered on top of TCP or message queues. Yjs uses operation-based CRDTs for collaborative text: each character insertion is a tiny operation that encodes its position relative to already-inserted neighbours, and the entire history of operations defines the document. Compared to state-based CRDTs, operation-based CRDTs scale better when the data structure is large (megabytes of state) but become fragile if the causal-delivery layer fails.",
+      "connector": "Think of operation-based CRDTs like sending text messages ('add this item to the list') rather than mailing the entire updated shopping list every time something changes.",
+      "techContext": "Our collaborative text editor uses operation-based CRDTs delivered over a causal broadcast channel so each keystroke propagates as a tiny delta, not a full document snapshot.",
+      "exampleSentence": "Switching from state-based to operation-based CRDTs cut the per-sync payload from 200 KB to under 100 bytes for typical editing sessions, making real-time collaboration viable on mobile networks.",
+      "codeExample": {
+        "language": "typescript",
+        "code": "// Simplified operation-based counter (CmRDT)\ntype Op = { type: 'increment'; nodeId: string; seq: number };\n\nclass OpBasedCounter {\n  private value = 0;\n  private applied = new Set<string>();\n\n  apply(op: Op): void {\n    const key = `${op.nodeId}:${op.seq}`;\n    if (this.applied.has(key)) return; // idempotency guard\n    this.applied.add(key);\n    this.value += 1;\n  }\n\n  read(): number {\n    return this.value;\n  }\n}\n\n// Each node broadcasts ops; causal delivery ensures order\nconst replica = new OpBasedCounter();\nreplica.apply({ type: 'increment', nodeId: 'A', seq: 1 });\nreplica.apply({ type: 'increment', nodeId: 'B', seq: 1 });\nreplica.apply({ type: 'increment', nodeId: 'A', seq: 1 }); // duplicate — ignored\nconsole.log(replica.read()); // 2"
+      },
+      "etymology": "Operation from Latin operatio ('work performed'); based CRDT indicating the replication unit is the operation rather than state; CmRDT acronym from Shapiro et al. (2011).",
+      "unlockLevel": 36,
+      "tags": [
+        "distributed-systems",
+        "replication",
+        "consistency",
+        "frontier-2026"
+      ],
+      "category": "data structures",
+      "backingCard": {
+        "bookId": "distributed-data-systems",
+        "chapterId": "dds-ch13-modern-distributed-data-patterns"
+      }
+    },
+    {
+      "id": "dds-ad3-0030-0000-0000-0000-000000000003",
+      "word": "State-Based CRDT",
+      "pronunciation": "STAYT-bayst SEE-ar-dee-tee",
+      "partOfSpeech": "noun",
+      "shortDefinition": "A CRDT variant that ships full state to peers and merges via a join (least upper bound) on a semilattice.",
+      "simpleDefinition": "A state-based CRDT (CvRDT — Convergent Replicated Data Type) periodically sends its entire local state to other replicas. A merge function computes the join of the two states — mathematically the least upper bound on a semilattice — and the result is guaranteed to be commutative, associative, and idempotent. This means duplicates and out-of-order delivery are harmless.",
+      "longDefinition": "State-based CRDTs place their correctness requirements on the data structure's merge function rather than on the network. The merge must satisfy three properties: commutativity (A merge B = B merge A), associativity ((A merge B) merge C = A merge (B merge C)), and idempotency (A merge A = A). These properties together form a join-semilattice. Because merge is idempotent, at-least-once delivery is sufficient — receiving the same state twice produces the same result. The canonical example is the G-Counter: each node maintains a vector of per-node counts; merge takes the element-wise maximum; the value is the sum. Two nodes independently incrementing always converge to the correct total. State-based CRDTs are simpler to implement and reason about than operation-based variants, but they can be bandwidth-intensive for large structures since the full state is shipped on every sync. Delta-state CRDTs (a 2016 extension) address this by shipping only the recently changed delta, combining the simple network model of CvRDTs with the small message size of CmRDTs.",
+      "connector": "Think of state-based CRDTs like two friends who periodically exchange their full address books and always keep the more complete version of each contact — the merge is trivial and duplicates cause no harm.",
+      "techContext": "We use a state-based OR-Set CRDT for our presence system: each server sends its full set of online user IDs to peers every 5 seconds, and the merge discards no additions.",
+      "exampleSentence": "The state-based CRDT's idempotent merge meant we could tolerate packet duplication in our UDP-based sync protocol without any deduplication layer on the receive side.",
+      "codeExample": {
+        "language": "python",
+        "code": "# G-Set: state-based grow-only set CRDT\nfrom dataclasses import dataclass, field\nfrom typing import Set\n\n@dataclass\nclass GSet:\n    elements: Set[str] = field(default_factory=set)\n\n    def add(self, element: str) -> None:\n        self.elements.add(element)\n\n    def value(self) -> Set[str]:\n        return frozenset(self.elements)\n\n    def merge(self, other: 'GSet') -> 'GSet':\n        # Join = set union (least upper bound on subset lattice)\n        return GSet(elements=self.elements | other.elements)\n\n    def __le__(self, other: 'GSet') -> bool:\n        return self.elements <= other.elements  # lattice order\n\na = GSet(); a.add('alice'); a.add('bob')\nb = GSet(); b.add('bob'); b.add('carol')\nmerged = a.merge(b)\nprint(merged.value())  # frozenset({'alice', 'bob', 'carol'})\n# merge is commutative, associative, idempotent"
+      },
+      "etymology": "State from Latin status ('condition, standing'); based CRDT indicating the replication unit is full state; CvRDT acronym (Convergent) from Shapiro et al. (2011).",
+      "unlockLevel": 36,
+      "tags": [
+        "distributed-systems",
+        "replication",
+        "consistency",
+        "frontier-2026"
+      ],
+      "category": "data structures",
+      "backingCard": {
+        "bookId": "distributed-data-systems",
+        "chapterId": "dds-ch13-modern-distributed-data-patterns"
+      }
+    },
+    {
+      "id": "dds-ad3-0040-0000-0000-0000-000000000004",
+      "word": "Strong Eventual Consistency",
+      "pronunciation": "STRONG ih-VEN-chuh-wul kun-SIS-ten-see",
+      "partOfSpeech": "noun",
+      "shortDefinition": "A consistency model guaranteeing that all replicas that have received the same set of updates will be in identical states.",
+      "simpleDefinition": "Strong Eventual Consistency (SEC) strengthens the basic eventual consistency promise. Plain eventual consistency only says replicas will *eventually* converge — it says nothing about *what* they converge to. SEC adds a determinism guarantee: any two replicas that have seen the same set of updates are in exactly the same state, regardless of the order the updates arrived. CRDTs provide SEC by construction.",
+      "longDefinition": "Strong Eventual Consistency was formalised by Marc Shapiro et al. in the same 2011 work that introduced CRDTs. It defines two properties: eventual delivery (every update delivered to any correct replica is eventually delivered to all correct replicas) and strong convergence (correct replicas that have delivered the same updates have equivalent state). The 'strong' in SEC is the convergence guarantee — two replicas do not merely trend toward agreement; they are provably identical the moment their update sets match. This makes SEC far more useful in practice than plain eventual consistency: you can reason about the final state without knowing the delivery order. SEC is the consistency model provided by all well-formed CRDTs. It is weaker than linearisability (which requires a total order on all operations globally) but stronger than basic eventual consistency (which makes no determinism guarantee). For workloads where coordination is too expensive — collaborative editing, mobile offline sync, geo-distributed counters — SEC is often the right target.",
+      "connector": "Think of SEC like two people independently solving the same jigsaw puzzle from the same set of pieces — regardless of the order they placed pieces, if they have all the same pieces they end up with the identical picture.",
+      "techContext": "Our offline-first mobile app targets Strong Eventual Consistency using CRDTs for user preferences so that data merged after reconnecting is always deterministic regardless of which device wrote what and when.",
+      "exampleSentence": "Strong Eventual Consistency let the team guarantee that any two clients who had synced the same updates would display identical document states — something plain eventual consistency couldn't promise.",
+      "etymology": "Strong intensifying Eventual Consistency; formalised by Shapiro, Preguiça, Baquero, and Zawirski in 'Conflict-Free Replicated Data Types' (SOSP 2011).",
+      "unlockLevel": 36,
+      "tags": [
+        "distributed-systems",
+        "consistency",
+        "replication"
+      ],
+      "category": "concepts",
+      "backingCard": {
+        "bookId": "distributed-data-systems",
+        "chapterId": "dds-ch13-modern-distributed-data-patterns"
+      }
+    },
+    {
+      "id": "dds-ad3-0050-0000-0000-0000-000000000005",
+      "word": "HTAP",
+      "pronunciation": "EYE-tap",
+      "partOfSpeech": "noun",
+      "shortDefinition": "Hybrid Transactional/Analytical Processing — a system architecture that handles both OLTP and OLAP workloads on the same data in real time.",
+      "simpleDefinition": "HTAP databases serve transactional reads/writes (OLTP) and large analytical scans (OLAP) from a single system — eliminating the ETL pipeline that historically separated them. Analytics can query freshly committed transactions, sometimes within seconds, instead of waiting hours for a warehouse sync.",
+      "longDefinition": "Gartner coined the term Hybrid Transactional/Analytical Processing in 2014, but the idea predates the label: Oracle's in-memory option and SAP HANA both targeted the same problem. The traditional architecture maintains a row-oriented OLTP database and a separate columnar data warehouse connected by an ETL pipeline, introducing hours of staleness and operational complexity. HTAP eliminates that gap. Architectural approaches vary: SingleStore maintains a row-oriented in-memory store for writes and a column-oriented store for reads, migrating rows asynchronously. TiDB separates TiKV (row-oriented, Raft-replicated) from TiFlash (a columnar learner replica), with the query optimizer routing automatically. Google Spanner paired with BigQuery federated queries provides near-real-time analytical access to operational data. The critical caveat: HTAP does not make analytical queries free. Heavy OLAP scans compete with OLTP write latency for memory bandwidth and CPU cache even in well-isolated designs. Many teams adopt HTAP to eliminate ETL and then discover that their largest analytical queries degrade P99 write latency — sizing for both workloads is essential.",
+      "connector": "Think of HTAP like a restaurant where the kitchen serves both a fast-casual counter and a fine-dining room from the same prep — you get freshness and variety, but the kitchen must be sized for both services simultaneously.",
+      "techContext": "We migrated to TiDB's HTAP model so our fraud-detection analytics queries run against TiFlash without touching TiKV, giving us sub-second freshness with no impact on transaction P99 latency.",
+      "exampleSentence": "With HTAP, the risk dashboard started showing real-time position data instead of yesterday's warehouse snapshot, eliminating a 12-hour window during which traders were flying blind.",
+      "codeExample": {
+        "language": "sql",
+        "code": "-- TiDB: route heavy analytic query to TiFlash columnar replica\n-- Add hint to force columnar engine (TiFlash) for this scan\nSELECT\n    region,\n    COUNT(*) AS order_count,\n    SUM(amount) AS revenue\nFROM orders /*+ READ_FROM_STORAGE(tiflash[orders]) */\nWHERE created_at >= NOW() - INTERVAL 1 HOUR\nGROUP BY region\nORDER BY revenue DESC;\n-- Reads from columnar TiFlash replica; zero impact on OLTP TiKV writes"
+      },
+      "etymology": "Acronym coined by Gartner analyst Donald Feinberg in a 2014 research note; Hybrid combining Transactional (from Latin transactus, 'carried through') and Analytical (Greek analytikos, 'able to resolve').",
+      "unlockLevel": 36,
+      "tags": [
+        "distributed-systems",
+        "databases",
+        "analytics",
+        "frontier-2026"
+      ],
+      "category": "architecture",
+      "backingCard": {
+        "bookId": "distributed-data-systems",
+        "chapterId": "dds-ch13-modern-distributed-data-patterns",
+        "cardId": "dds-ch13-c003"
+      }
+    },
+    {
+      "id": "dds-ad3-0060-0000-0000-0000-000000000006",
+      "word": "Lakehouse Architecture",
+      "pronunciation": "LAYK-hows ar-kih-TEK-chur",
+      "partOfSpeech": "noun",
+      "shortDefinition": "A storage architecture combining data lake flexibility with data warehouse performance via open table formats over object storage.",
+      "simpleDefinition": "A lakehouse puts an ACID transaction layer on top of the same cheap object storage files used by a data lake. You get warehouse reliability (ACID, schema enforcement, query performance) without moving data into a separate warehouse system. One copy of the data serves transactions, analytics, and ML pipelines simultaneously.",
+      "longDefinition": "The lakehouse emerged from a tension every large data platform eventually hits: data lakes (S3/GCS/ADLS + Parquet) are cheap and schema-flexible but lack ACID transactions, making concurrent writers unsafe. Data warehouses (Snowflake, BigQuery, Redshift) provide ACID and strong query performance but are expensive, vendor-locked, and require ETL from the lake, doubling storage costs and creating consistency drift. Databricks coined 'lakehouse' in a 2020 CIDR paper and implemented it via Delta Lake. The three architectural properties defining a lakehouse are: open-format storage (data lives as Parquet/ORC in object storage, readable by any query engine), an ACID transaction layer (an open table format provides optimistic concurrency, commit history, and rollback), and direct BI and ML access (tools connect directly without an intermediate export). By 2024, Microsoft Fabric, AWS Lake Formation, and Google BigLake all offer lakehouse architectures. The open table formats that implement this are Apache Iceberg, Delta Lake, and Apache Hudi.",
+      "connector": "Think of a lakehouse like a public library where books (data files) stay on the shelves (object storage) and a cataloguing system (table format) provides the transaction guarantees — no need to photocopy books into a separate archive.",
+      "techContext": "Our lakehouse on S3 with Apache Iceberg lets Spark streaming jobs, Trino ad-hoc queries, and PyTorch training jobs all read from the same Parquet files with full snapshot isolation.",
+      "exampleSentence": "Adopting a lakehouse architecture eliminated the nightly Redshift load job entirely — analytics now query the same Iceberg tables that the ingestion pipeline writes to, with data visible within seconds of commit.",
+      "codeExample": {
+        "language": "python",
+        "code": "# Write and query an Iceberg lakehouse table with PySpark\nfrom pyspark.sql import SparkSession\n\nspark = SparkSession.builder \\\n    .config('spark.sql.extensions',\n            'org.apache.iceberg.spark.extensions.IcebergSparkSessionExtensions') \\\n    .config('spark.sql.catalog.glue_catalog',\n            'org.apache.iceberg.spark.SparkCatalog') \\\n    .config('spark.sql.catalog.glue_catalog.warehouse', 's3://my-lakehouse/') \\\n    .getOrCreate()\n\n# ACID upsert into the lakehouse table\nspark.sql(\"\"\"\n  MERGE INTO glue_catalog.db.orders AS t\n  USING new_orders AS s ON t.order_id = s.order_id\n  WHEN MATCHED THEN UPDATE SET *\n  WHEN NOT MATCHED THEN INSERT *\n\"\"\")\n\n# Time-travel query — see state as of yesterday\ndf = spark.read.option('as-of-timestamp',\n        '2026-06-06 00:00:00') \\\n    .format('iceberg').load('glue_catalog.db.orders')"
+      },
+      "etymology": "Portmanteau of 'data lake' + 'data warehouse'; coined by Databricks researchers in their 2020 CIDR paper 'Lakehouse: A New Generation of Open Platforms'.",
+      "unlockLevel": 36,
+      "tags": [
+        "distributed-systems",
+        "analytics",
+        "storage",
+        "frontier-2026"
+      ],
+      "category": "architecture",
+      "backingCard": {
+        "bookId": "distributed-data-systems",
+        "chapterId": "dds-ch13-modern-distributed-data-patterns",
+        "cardId": "dds-ch13-c004"
+      }
+    },
+    {
+      "id": "dds-ad3-0070-0000-0000-0000-000000000007",
+      "word": "Apache Iceberg",
+      "pronunciation": "uh-PACH-ee EYE-suh-burg",
+      "partOfSpeech": "noun",
+      "shortDefinition": "An open table format for huge analytic datasets that adds ACID transactions, schema evolution, and time travel to object storage.",
+      "simpleDefinition": "Apache Iceberg is a metadata specification layered on top of Parquet (or ORC) files in S3/GCS/ADLS. It tracks snapshots, manifests, and data file locations in a way that gives any query engine — Spark, Trino, Flink, DuckDB — ACID semantics, full schema evolution, and the ability to query historical versions of the table at any past snapshot.",
+      "longDefinition": "Apache Iceberg was created at Netflix in 2017 to solve the scalability failures of Hive's directory-based table format, which serialised all metadata operations through a single Thrift server and broke under partition counts in the millions. Iceberg's key design decisions: an immutable snapshot tree where every commit writes a new snapshot file, manifest lists that point to manifest files that point to data files (avoiding full directory scans), and hidden partitioning that decouples the physical partition layout from the query predicate (so repartitioning is a metadata operation, not a data rewrite). The v2 spec (2021) added positional and equality delete files for efficient row-level deletes without full file rewrites. Adoption as of 2024–2026 is dominant in cloud-neutral contexts: Apple's data platform runs exabytes of Iceberg, Netflix originated it, Airbnb standardised on it, and AWS Glue, Snowflake Iceberg Tables, and BigQuery Managed Tables all support it natively. Its primary advantage over Delta Lake is engine portability — any conformant engine can read an Iceberg table without vendor-specific libraries.",
+      "connector": "Think of Apache Iceberg like a library card catalogue with immutable index cards — each commit adds a new card pointing to data files; old cards remain for historical queries and you can roll back by simply discarding the newest card.",
+      "techContext": "We standardised on Apache Iceberg across our data platform so Spark ETL jobs, Trino ad-hoc queries, and Flink streaming sinks all read and write the same tables with full ACID isolation.",
+      "exampleSentence": "After migrating from Hive to Apache Iceberg, partition discovery time dropped from 4 minutes to 80 milliseconds because Iceberg's manifest files replaced a full S3 LIST operation over 2 million objects.",
+      "codeExample": {
+        "language": "sql",
+        "code": "-- Create an Iceberg table via Spark SQL\nCREATE TABLE catalog.db.events (\n  event_id   BIGINT,\n  user_id    STRING,\n  event_type STRING,\n  payload    STRING,\n  created_at TIMESTAMP\n)\nUSING iceberg\nPARTITIONED BY (days(created_at))   -- hidden partitioning\nTBLPROPERTIES (\n  'format-version' = '2',\n  'write.delete.mode' = 'merge-on-read'\n);\n\n-- Time-travel: query yesterday's snapshot\nSELECT COUNT(*) FROM catalog.db.events\nTIMESTAMP AS OF '2026-06-06 00:00:00';\n\n-- Inspect snapshot history\nSELECT snapshot_id, committed_at, operation\nFROM catalog.db.events.snapshots\nORDER BY committed_at DESC LIMIT 5;"
+      },
+      "etymology": "Named metaphorically — like an iceberg, most of the structure (metadata manifests and snapshot tree) is hidden below the surface, with only the data files visible at first glance; an Apache Software Foundation top-level project since 2020.",
+      "unlockLevel": 36,
+      "tags": [
+        "distributed-systems",
+        "analytics",
+        "storage",
+        "frontier-2026"
+      ],
+      "category": "technologies",
+      "backingCard": {
+        "bookId": "distributed-data-systems",
+        "chapterId": "dds-ch13-modern-distributed-data-patterns"
+      }
+    },
+    {
+      "id": "dds-ad3-0080-0000-0000-0000-000000000008",
+      "word": "Delta Lake",
+      "pronunciation": "DEL-tuh LAYK",
+      "partOfSpeech": "noun",
+      "shortDefinition": "An open storage layer by Databricks that adds ACID transactions and scalable metadata management to Apache Spark and object storage.",
+      "simpleDefinition": "Delta Lake adds a transaction log (the `_delta_log` directory of JSON commit files) on top of Parquet files in object storage, giving you ACID guarantees, schema enforcement, and time-travel queries. It is the native table format of the Databricks lakehouse and is now an open standard governed by the Linux Foundation.",
+      "longDefinition": "Delta Lake was open-sourced by Databricks in 2019 after years of internal use to solve the 'swamp' problem: Parquet files in S3 without coordination are vulnerable to partial writes, concurrent writer corruption, and the impossibility of atomic multi-file operations. Delta's transaction log is a sequential append-only journal of JSON commit entries stored in `_delta_log/`. Every write appends a new JSON file describing the data files added and removed; checkpoint files (written every 10 commits by default) compact the log for fast table reconstruction. Key capabilities: ACID transactions (optimistic concurrency control via log versioning), time travel (`VERSION AS OF`, `TIMESTAMP AS OF`), schema enforcement and evolution, and Z-order clustering for data skipping. Deletion vectors (2023) replaced full-file rewrites for point deletes with bitmap-based markers, dramatically reducing write amplification. Delta Universal Format (UniForm, 2023) allows a Delta table to be read as Iceberg, reducing lock-in. Adoption is dominant in Databricks-centric environments and tightly integrated with Unity Catalog for governance.",
+      "connector": "Think of Delta Lake like Git for your data — every commit is recorded in an ordered log, you can check out any past version, and concurrent writers use optimistic locking to avoid corruption.",
+      "techContext": "Our Databricks pipelines use Delta Lake with Z-order on `user_id` so that per-user queries skip 95% of data files via statistics-based pruning, reducing scan costs by 10x.",
+      "exampleSentence": "Delta Lake's ACID guarantees let us safely run concurrent Spark streaming writers and batch compaction jobs on the same table — something that routinely corrupted data under plain Parquet.",
+      "codeExample": {
+        "language": "python",
+        "code": "from delta.tables import DeltaTable\nfrom pyspark.sql import SparkSession\n\nspark = SparkSession.builder \\\n    .config('spark.sql.extensions',\n            'io.delta.sql.DeltaSparkSessionExtension') \\\n    .getOrCreate()\n\n# Upsert (merge) into a Delta table\ndelta_table = DeltaTable.forPath(spark, 's3://bucket/orders')\n\ndelta_table.alias('target').merge(\n    new_df.alias('source'),\n    'target.order_id = source.order_id'\n).whenMatchedUpdateAll() \\\n .whenNotMatchedInsertAll() \\\n .execute()\n\n# Time travel: read table as it was 24 hours ago\ndf_yesterday = spark.read \\\n    .format('delta') \\\n    .option('timestampAsOf', '2026-06-06') \\\n    .load('s3://bucket/orders')\n\n# View history\nspark.sql('DESCRIBE HISTORY delta.`s3://bucket/orders`').show()"
+      },
+      "etymology": "Delta (Greek letter Δ) signifying change or difference — the table format tracks deltas (changes) between versions; Lake referring to the data lake storage layer; open-sourced by Databricks in 2019.",
+      "unlockLevel": 36,
+      "tags": [
+        "distributed-systems",
+        "analytics",
+        "storage",
+        "frontier-2026"
+      ],
+      "category": "technologies",
+      "backingCard": {
+        "bookId": "distributed-data-systems",
+        "chapterId": "dds-ch13-modern-distributed-data-patterns",
+        "cardId": "dds-ch13-c005"
+      }
+    },
+    {
+      "id": "dds-ad3-0090-0000-0000-0000-000000000009",
+      "word": "Apache Hudi",
+      "pronunciation": "uh-PACH-ee HOO-dee",
+      "partOfSpeech": "noun",
+      "shortDefinition": "An open table format supporting record-level upserts and deletes on data lakes, optimised for near-real-time CDC ingestion.",
+      "simpleDefinition": "Apache Hudi (Hadoop Upserts Deletes and Incrementals) was built by Uber to handle massive CDC pipelines where millions of rows are upserted per second. It adds a record-level index and a timeline of commit instants to Parquet/ORC files, supporting both copy-on-write (query-optimised) and merge-on-read (write-optimised) storage layouts.",
+      "longDefinition": "Apache Hudi originated at Uber in 2016 to handle the ingestion of database change events at scale — a use case where every changed row in operational databases needed to be reflected in the data lake within minutes, without rewriting entire Parquet files on every upsert. Hudi's timeline is an ordered sequence of commit instants (commit, delta-commit, compaction, clean) stored on the file system. Each table record is tracked by a record key and partition path in a global index (HBase, bloom filter, or in-memory), allowing point-delete and point-upsert without full file scans. Two storage layouts: Copy-on-Write (COW) rewrites affected Parquet files on every write — optimal for read-heavy workloads; Merge-on-Read (MOR) appends delta log files and merges them into base Parquet files asynchronously during compaction — optimal for write-heavy CDC. Hudi is dominant at Uber, Amazon, and ByteDance for high-throughput streaming ingestion. Among the three open table formats, Hudi has the most mature support for streaming upserts at scale, while Iceberg leads in query-engine portability and Delta leads in Databricks-centric stacks.",
+      "connector": "Think of Apache Hudi like a database's row-level change tracking applied to your data lake — rather than rewriting the entire ledger when one entry changes, it surgically updates only the affected record.",
+      "techContext": "We use Apache Hudi's Merge-on-Read layout to ingest 50 million CDC events per hour from MySQL binlogs into our S3 data lake, with compaction running every 30 minutes to reclaim query performance.",
+      "exampleSentence": "Apache Hudi's record-level index let us reflect individual order status updates in the data lake within 90 seconds of the MySQL write, replacing a Redshift full-reload job that took 6 hours.",
+      "codeExample": {
+        "language": "python",
+        "code": "# Write CDC events to a Hudi MOR table with PySpark\nhudi_options = {\n    'hoodie.table.name': 'orders',\n    'hoodie.datasource.write.recordkey.field': 'order_id',\n    'hoodie.datasource.write.partitionpath.field': 'created_date',\n    'hoodie.datasource.write.table.type': 'MERGE_ON_READ',\n    'hoodie.datasource.write.operation': 'upsert',\n    'hoodie.datasource.write.precombine.field': 'updated_at',\n    'hoodie.upsert.shuffle.parallelism': 200,\n}\n\ncdc_df.write \\\n    .format('hudi') \\\n    .options(**hudi_options) \\\n    .mode('append') \\\n    .save('s3://bucket/hudi/orders/')\n\n# Read latest snapshot\nspark.read.format('hudi') \\\n    .load('s3://bucket/hudi/orders/') \\\n    .createOrReplaceTempView('orders')"
+      },
+      "etymology": "Acronym for Hadoop Upserts Deletes and Incrementals; developed at Uber by Vinoth Chandar and team starting 2016; donated to Apache Software Foundation in 2019.",
+      "unlockLevel": 36,
+      "tags": [
+        "distributed-systems",
+        "analytics",
+        "storage",
+        "frontier-2026"
+      ],
+      "category": "technologies",
+      "backingCard": {
+        "bookId": "distributed-data-systems",
+        "chapterId": "dds-ch13-modern-distributed-data-patterns"
+      }
+    },
+    {
+      "id": "dds-ad3-0100-0000-0000-0000-000000000010",
+      "word": "ANN Search",
+      "pronunciation": "AY-en-EN SURCH",
+      "partOfSpeech": "noun",
+      "shortDefinition": "Approximate Nearest Neighbour search — finding vectors close to a query in high-dimensional embedding space without exhaustive scan.",
+      "simpleDefinition": "ANN search finds the K vectors in a large dataset that are most similar to a query vector, trading a small amount of recall accuracy for orders-of-magnitude speedup over exact search. It is the core database primitive behind semantic search, RAG pipelines, recommendation systems, and duplicate detection in the LLM era.",
+      "longDefinition": "Embedding models (OpenAI text-embedding-ada-002, Cohere embed-v3, Google textembedding-gecko) encode text, images, or other data as dense floating-point vectors of 768 to 3072 dimensions. Two semantically similar items have embeddings that are close in this high-dimensional space as measured by cosine similarity, inner product, or L2 distance. Exact nearest-neighbour search over millions of vectors requires comparing the query against every stored vector — O(n·d) per query — which is prohibitively expensive at scale. ANN indexes build auxiliary data structures during ingestion that allow approximate search in O(log n) or better time, at the cost of occasionally missing a true nearest neighbour (recall < 100%). The two dominant index families are HNSW (graph-based, best recall-latency tradeoff for query-heavy workloads) and IVFFlat (cluster-based, faster to build, lower recall). The quality of an ANN index is measured by the recall@K metric: the fraction of true top-K neighbours returned. By 2025, ANN search is table-stakes for any database targeting operational workloads — PostgreSQL (pgvector), Elasticsearch, Redis Stack, Cassandra 5.0, and MongoDB Atlas all ship ANN indexes.",
+      "connector": "Think of ANN search like asking a librarian to find the five books most similar to one you liked — rather than reading every book in the library, they use an index to make a very good guess in seconds.",
+      "techContext": "Our RAG pipeline uses ANN search over 50 million document embeddings in pgvector, achieving sub-10ms p99 latency with 96% recall@5 using an HNSW index built at ef_construction=128.",
+      "exampleSentence": "Replacing exact k-NN search with an HNSW-based ANN index cut query latency from 4 seconds to 8 milliseconds at 99% recall, making real-time semantic search viable in the API response path.",
+      "codeExample": {
+        "language": "sql",
+        "code": "-- pgvector: ANN search with HNSW index\n-- Create table with vector column\nCREATE TABLE documents (\n  id         BIGSERIAL PRIMARY KEY,\n  content    TEXT,\n  embedding  vector(1536)   -- OpenAI ada-002 dimension\n);\n\n-- Build HNSW index (built once; query is fast)\nCREATE INDEX ON documents\n  USING hnsw (embedding vector_cosine_ops)\n  WITH (m = 16, ef_construction = 64);\n\n-- ANN query: find 5 nearest neighbours to a query vector\nSELECT id, content,\n       1 - (embedding <=> '[0.12, -0.34, ...]'::vector) AS similarity\nFROM documents\nORDER BY embedding <=> '[0.12, -0.34, ...]'::vector\nLIMIT 5;"
+      },
+      "etymology": "Approximate from Latin approximare ('to come near'); Nearest Neighbour from computational geometry; ANN as an acronym popularised in the late 1990s with the FLANN and Annoy libraries.",
+      "unlockLevel": 36,
+      "tags": [
+        "distributed-systems",
+        "databases",
+        "machine-learning",
+        "frontier-2026"
+      ],
+      "category": "concepts",
+      "backingCard": {
+        "bookId": "distributed-data-systems",
+        "chapterId": "dds-ch13-modern-distributed-data-patterns",
+        "cardId": "dds-ch13-c007"
+      }
+    },
+    {
+      "id": "dds-ad3-0110-0000-0000-0000-000000000011",
+      "word": "HNSW",
+      "pronunciation": "EYE-ch-en-es-DOB-yuh",
+      "partOfSpeech": "noun",
+      "shortDefinition": "Hierarchical Navigable Small World — a graph-based ANN index providing fast approximate nearest-neighbour lookups in vector databases.",
+      "simpleDefinition": "HNSW builds a multi-layer graph where the top layer contains a sparse set of coarse entry points and each layer below is a progressively denser graph of the same vectors. A query starts at the top layer, greedily navigates to the most similar node, then descends to the next layer and repeats — like zooming in on a map. Build is slow; queries run in milliseconds with high recall.",
+      "longDefinition": "HNSW was introduced by Yu. A. Malkov and D. A. Yashunin in a 2016 paper and has become the dominant ANN index for query-heavy workloads. It extends the Navigable Small World (NSW) graph — where every node is connected to its K nearest neighbours — with a hierarchical structure that dramatically accelerates graph traversal. Layer 0 is the full graph; each higher layer contains a geometrically decreasing random subset of nodes (controlled by the `ml` parameter). Queries enter at the single node in the top layer, perform greedy best-first search within the layer, then descend to the next denser layer and search again. The `ef` parameter (size of the candidate list during search) trades recall for speed: higher ef finds closer neighbours but examines more nodes. Build parameters `M` (edges per node) and `ef_construction` control index quality and build time. HNSW provides excellent recall-latency tradeoffs for static or slowly changing datasets; its weakness is that inserting new vectors requires updating graph edges, and deletion is difficult (typically handled with tombstones). As of 2024, HNSW is the default index in pgvector (v0.5.0+), Qdrant, Weaviate, and Redis Stack.",
+      "connector": "Think of HNSW like a road atlas with multiple zoom levels — you start on the highway map to get close, then switch to city streets for precision, descending through layers until you find your destination.",
+      "techContext": "We tuned our pgvector HNSW index to m=32, ef_construction=128 to achieve 98% recall@10 on our 10-million-vector product catalog, accepting a 3x slower build time for the improved accuracy.",
+      "exampleSentence": "After switching from IVFFlat to HNSW, recall@10 on our embedding search jumped from 87% to 97% at the same query latency budget, directly improving the relevance of our recommendation results.",
+      "codeExample": {
+        "language": "sql",
+        "code": "-- Build and tune an HNSW index in pgvector\nCREATE INDEX idx_embedding_hnsw\n  ON products\n  USING hnsw (embedding vector_ip_ops)   -- inner product distance\n  WITH (\n    m = 16,               -- edges per node (higher = better recall, more memory)\n    ef_construction = 64  -- candidate list size at build time\n  );\n\n-- At query time, increase ef for higher recall on critical paths\nSET hnsw.ef_search = 100;  -- default is 40\n\nSELECT product_id, name,\n       embedding <#> query_vec AS neg_inner_product\nFROM products\nORDER BY embedding <#> query_vec\nLIMIT 10;"
+      },
+      "etymology": "Hierarchical Navigable Small World — named after the Small World phenomenon (Milgram, 1967) in network theory; hierarchical referring to the layered graph structure; introduced by Malkov and Yashunin (2016).",
+      "unlockLevel": 36,
+      "tags": [
+        "distributed-systems",
+        "databases",
+        "machine-learning",
+        "frontier-2026"
+      ],
+      "category": "data structures",
+      "backingCard": {
+        "bookId": "distributed-data-systems",
+        "chapterId": "dds-ch13-modern-distributed-data-patterns"
+      }
+    },
+    {
+      "id": "dds-ad3-0120-0000-0000-0000-000000000012",
+      "word": "pgvector",
+      "pronunciation": "PEE-jee-VEK-tor",
+      "partOfSpeech": "noun",
+      "shortDefinition": "A PostgreSQL extension that adds vector data types and ANN index support, enabling semantic search without a dedicated vector database.",
+      "simpleDefinition": "pgvector adds a `vector(n)` column type to PostgreSQL and supports approximate nearest-neighbour search via HNSW and IVFFlat indexes using SQL operators like `<->` (L2 distance) and `<=>` (cosine). It lets teams run semantic search and RAG pipelines inside their existing PostgreSQL database without deploying a separate vector store.",
+      "longDefinition": "pgvector was created by Andrew Kane and first released in 2021. It adds two things to PostgreSQL: a native `vector(n)` data type that stores dense floating-point vectors of up to 16,000 dimensions (v0.7+), and index support for ANN search. The v0.5.0 release (2023) added HNSW indexes alongside the original IVFFlat index, dramatically improving recall-latency tradeoffs. Distance operators: `<->` for L2 (Euclidean), `<=>` for cosine similarity, and `<#>` for negative inner product. The critical advantage of pgvector over dedicated vector databases is colocation: vector search can be combined with arbitrary SQL predicates in a single query without a two-step fetch pattern. Supabase, Neon, and most managed PostgreSQL providers ship pgvector by default. For datasets under approximately 10 million vectors where query latency budgets allow sub-100ms responses, pgvector avoids the operational overhead of a separate vector database entirely. For larger datasets, disk-based ANN indexes (as in Qdrant or Milvus) remain necessary since pgvector requires the entire HNSW graph to fit in shared_buffers for optimal performance.",
+      "connector": "Think of pgvector like adding a GPS coordinate column to your database — the data lives right next to your other tables, and you can filter on both 'near this location' and 'owned by this user' in one query.",
+      "techContext": "We store document embeddings in the same PostgreSQL database as our metadata so a single query can do ANN search filtered by `tenant_id` and `created_at` without any application-side join.",
+      "exampleSentence": "pgvector let our four-person team add semantic search to the product without standing up a new operational component — it was a single CREATE EXTENSION and a new index on the existing documents table.",
+      "codeExample": {
+        "language": "sql",
+        "code": "-- Enable pgvector and store embeddings\nCREATE EXTENSION IF NOT EXISTS vector;\n\nCREATE TABLE documents (\n  id         BIGSERIAL PRIMARY KEY,\n  tenant_id  UUID NOT NULL,\n  content    TEXT,\n  embedding  vector(1536)\n);\n\n-- HNSW index for ANN search\nCREATE INDEX ON documents\n  USING hnsw (embedding vector_cosine_ops);\n\n-- Semantic search filtered by tenant (combined SQL + ANN)\nSELECT id, content,\n       1 - (embedding <=> $1::vector) AS score\nFROM documents\nWHERE tenant_id = $2\nORDER BY embedding <=> $1::vector\nLIMIT 5;"
+      },
+      "etymology": "pg prefix for PostgreSQL (originally POSTGRES from UC Berkeley, 1986) + vector from Latin vector ('carrier'); the extension name coined by Andrew Kane in 2021.",
+      "unlockLevel": 36,
+      "tags": [
+        "distributed-systems",
+        "databases",
+        "machine-learning",
+        "frontier-2026"
+      ],
+      "category": "technologies",
+      "backingCard": {
+        "bookId": "distributed-data-systems",
+        "chapterId": "dds-ch13-modern-distributed-data-patterns",
+        "cardId": "dds-ch13-c007"
+      }
+    },
+    {
+      "id": "dds-ad3-0130-0000-0000-0000-000000000013",
+      "word": "Serverless OLTP",
+      "pronunciation": "SUR-vur-les OH-el-tee-pee",
+      "partOfSpeech": "noun",
+      "shortDefinition": "Transactional databases that automatically scale compute to zero when idle and scale up on demand, with per-request billing.",
+      "simpleDefinition": "Serverless OLTP removes the capacity-provisioning decision from transactional databases. Compute scales to zero when idle and scales up automatically under load; billing is per-request or per-ACU rather than per-provisioned-instance. It is the right model for workloads with spiky, unpredictable, or low average-utilisation traffic patterns.",
+      "longDefinition": "Traditional relational databases require upfront capacity provisioning: choose an instance size, pay 24/7, and manage the cluster. For most startup workloads, B2B SaaS apps where most tenants are idle at night, or batch-driven pipelines, this wastes money and adds operational burden. Serverless OLTP removes that decision. Four systems have made this pattern credible for production by 2024: Aurora Serverless v2 (AWS) scales Aurora Capacity Units in sub-second granularity; unlike v1 (which had cold-start pauses), v2 scales continuously and its shared storage layer means scaling is purely compute. Neon separates PostgreSQL storage from compute on an object-storage-backed layer, allowing compute to scale to zero within seconds (cold start ~500ms); it also supports copy-on-write database branching. PlanetScale (built on Vitess) offers per-row-read billing and zero-downtime schema changes via non-blocking DDL. CockroachDB Serverless provides multi-tenant managed CockroachDB with per-request billing and inherent multi-region strong consistency. The billing tradeoff: serverless is cheaper below ~20–30% sustained CPU utilisation; above that threshold, provisioned instances win on cost.",
+      "connector": "Think of serverless OLTP like a taxi versus a company car — you pay only for the rides you take rather than owning a vehicle that sits in a garage unused most of the time.",
+      "techContext": "We use Neon's serverless PostgreSQL for our staging and development environments, paying near zero during nights and weekends when the environments are idle.",
+      "exampleSentence": "After migrating the low-traffic internal tools database to Aurora Serverless v2, the monthly database bill dropped from $900 to $40 because the instance scaled to minimum capacity during the 20 hours per day it saw no traffic.",
+      "codeExample": {
+        "language": "yaml",
+        "code": "# AWS Aurora Serverless v2 cluster configuration (Terraform)\nresource \"aws_rds_cluster\" \"main\" {\n  cluster_identifier   = \"app-db\"\n  engine               = \"aurora-postgresql\"\n  engine_version       = \"16.1\"\n  database_name        = \"appdb\"\n  master_username      = var.db_username\n  master_password      = var.db_password\n  serverlessv2_scaling_configuration {\n    min_capacity = 0.5   # minimum ACUs (0.5 = ~1 GB RAM)\n    max_capacity = 16    # maximum ACUs (16 = ~32 GB RAM)\n  }\n}\n\nresource \"aws_rds_cluster_instance\" \"writer\" {\n  cluster_identifier = aws_rds_cluster.main.id\n  instance_class     = \"db.serverless\"   # serverless v2 instance class\n  engine             = aws_rds_cluster.main.engine\n}"
+      },
+      "etymology": "Serverless coined circa 2014 with AWS Lambda — not meaning 'no servers' but 'no server management'; OLTP (Online Transactional Processing) coined by Jim Gray in the 1970s to distinguish short-latency transactional workloads from analytical batch processing.",
+      "unlockLevel": 36,
+      "tags": [
+        "distributed-systems",
+        "databases",
+        "cloud",
+        "frontier-2026"
+      ],
+      "category": "architecture",
+      "backingCard": {
+        "bookId": "distributed-data-systems",
+        "chapterId": "dds-ch13-modern-distributed-data-patterns",
+        "cardId": "dds-ch13-c008"
+      }
+    },
+    {
+      "id": "dds-ad3-0140-0000-0000-0000-000000000014",
+      "word": "DuckDB Pattern",
+      "pronunciation": "DUK-dee-bee PAT-urn",
+      "partOfSpeech": "noun",
+      "shortDefinition": "In-process analytical query execution against files (Parquet, CSV) without a server, enabling embedded OLAP directly in applications.",
+      "simpleDefinition": "DuckDB is a columnar analytical database packaged as a shared library — like SQLite for OLAP. You import it in Python, Go, or Rust; it runs vectorised SQL directly against Parquet, CSV, or Delta/Iceberg files in the same process; there is no server to deploy, no port, no cluster. For any analytical workload that fits on one machine, it eliminates the need for a Spark cluster.",
+      "longDefinition": "DuckDB was developed by Mark Raasveldt and Hannes Mühleisen at CWI Amsterdam; v1.0 was released in 2024. Its deployment model is the architectural shift: it is a shared library. Applications link DuckDB and execute SQL in-process, reading from local Parquet files, S3 objects, PostgreSQL, SQLite, or pandas/Arrow dataframes. Vectorised execution processes data in columnar chunks — the same technique that makes BigQuery fast — but on a laptop. Benchmark performance on TPC-H SF100 (10 GB) on a MacBook M2 is competitive with managed cloud warehouses. Emerging deployment patterns: local data transformation (dbt + DuckDB for local development before promoting to BigQuery), embedded analytics in backend services (Go/Rust services computing aggregates in-process), lakehouse query layer (DuckDB's Iceberg and Delta extensions allow querying lakehouse tables from S3 directly), and WASM in the browser (DuckDB-WASM runs full analytical SQL client-side). MotherDuck extends DuckDB with managed cloud execution for larger datasets. DuckDB represents the same architectural shift SQLite made for OLTP: eliminating the server as a required deployment unit.",
+      "connector": "Think of the DuckDB pattern like a pocket calculator that can do the work of a supercomputer for most practical calculations — you get it instantly, run it anywhere, and only reach for the mainframe when the numbers genuinely overflow.",
+      "techContext": "Our data engineering team uses DuckDB locally to run full dbt pipelines against Parquet sample files, iterating in seconds before promoting transformations to Snowflake for production.",
+      "exampleSentence": "By embedding DuckDB in the reporting service, we eliminated the Redshift query round-trip for per-tenant analytics — reports that took 3 seconds via the warehouse now render in 80 milliseconds from pre-staged Parquet.",
+      "codeExample": {
+        "language": "python",
+        "code": "import duckdb\n\n# Query Parquet files on S3 directly — no server required\ncon = duckdb.connect()   # in-memory; or duckdb.connect('analytics.db') for persistent\n\n# Install and load S3 extension\ncon.execute(\"INSTALL httpfs; LOAD httpfs;\")\ncon.execute(\"\"\"\n  SET s3_region='us-east-1';\n  SET s3_access_key_id='...';  -- or use IAM role\n  SET s3_secret_access_key='...';\n\"\"\")\n\n# Aggregate over a partitioned Parquet dataset on S3\ndf = con.execute(\"\"\"\n  SELECT\n    date_trunc('day', event_time) AS day,\n    event_type,\n    COUNT(*)     AS event_count,\n    COUNT(DISTINCT user_id) AS unique_users\n  FROM read_parquet('s3://my-data/events/year=2026/month=06/*.parquet')\n  GROUP BY 1, 2\n  ORDER BY 1 DESC\n\"\"\").df()\n\nprint(df.head())"
+      },
+      "etymology": "DuckDB: duck chosen as a playful mascot referencing relational/OLAP (ducks glide on the surface like SQL on data); coined by CWI Amsterdam researchers; first released 2019, v1.0 in 2024.",
+      "unlockLevel": 36,
+      "tags": [
+        "distributed-systems",
+        "analytics",
+        "databases",
+        "frontier-2026"
+      ],
+      "category": "technologies",
+      "backingCard": {
+        "bookId": "distributed-data-systems",
+        "chapterId": "dds-ch13-modern-distributed-data-patterns",
+        "cardId": "dds-ch13-c009"
+      }
+    },
+    {
+      "id": "dds-ad3-0150-0000-0000-0000-000000000015",
+      "word": "Multi-Region Active-Active",
+      "pronunciation": "MUL-tee-REE-jun AK-tiv AK-tiv",
+      "partOfSpeech": "noun",
+      "shortDefinition": "A deployment topology where multiple geographic regions each accept writes simultaneously, requiring conflict resolution strategies.",
+      "simpleDefinition": "Multi-region active-active means clients in every region can write to their local region and those writes are replicated to all other regions. Unlike active-passive (one region writes, others read), active-active delivers low-latency writes everywhere — at the cost of the hardest distributed systems problem: what happens when two regions write to the same record at the same time?",
+      "longDefinition": "In a single-region database, strong consistency is achievable with moderate performance cost. In multi-region, the speed of light becomes the fundamental constraint: a round-trip between us-east-1 and eu-west-1 takes ~90 ms. Requiring cross-region acknowledgement on every write means P50 write latency is measured in hundreds of milliseconds — unacceptable for interactive applications. The systems that have made active-active tractable: Google Spanner uses TrueTime (GPS and atomic clock synchronisation) to implement external consistency across regions, serialising cross-region commits with bounded latency. CockroachDB's multi-region settings pin the Raft leaseholder to a home region per row, giving regional rows local write latency while maintaining global ACID. Cassandra/ScyllaDB with LOCAL_QUORUM provides fast regional writes with last-write-wins or application-defined conflict resolution. DynamoDB Global Tables uses last-write-wins on item timestamps. The fundamental tradeoff that cannot be engineered away: for records writable in multiple regions simultaneously, you must choose a conflict resolution strategy — last-write-wins, application-level resolution, CRDTs (for supported operations), or cross-region consensus (correct but latency-expensive). Most teams who believe they need active-active actually need active-passive with fast failover; active-active is appropriate only when users in different regions generate conflicting writes to the same records.",
+      "connector": "Think of multi-region active-active like two people editing the same shared document from opposite sides of the world simultaneously — the system works great until they both edit the same sentence at the same time.",
+      "techContext": "We run multi-region active-active with CockroachDB using regional-by-row tables that pin each user's data to their home region, delivering 12 ms write latency globally versus 180 ms with a single-region primary.",
+      "exampleSentence": "The team discovered that their 'multi-region active-active' requirement was actually 'active-passive with fast failover' — their US and EU users never wrote to the same records, eliminating the conflict problem entirely.",
+      "codeExample": {
+        "language": "sql",
+        "code": "-- CockroachDB: regional-by-row table for multi-region active-active\n-- Each row is pinned to the home region of the user\nCREATE TABLE user_profiles (\n  user_id    UUID PRIMARY KEY,\n  name       STRING,\n  email      STRING,\n  crdb_region crdb_internal_region AS (\n    CASE\n      WHEN user_id::STRING < 'M' THEN 'us-east1'\n      ELSE 'eu-west1'\n    END\n  ) STORED\n) LOCALITY REGIONAL BY ROW AS crdb_region;\n\n-- Writes to a US user: resolved locally in us-east1 (<15ms)\n-- Writes to an EU user: resolved locally in eu-west1 (<15ms)\n-- Cross-region reads: use follower reads with AS OF SYSTEM TIME"
+      },
+      "etymology": "Active-active from operations/availability terminology — both nodes are 'active' (serving writes) simultaneously, contrasted with active-passive where only one node accepts writes at a time.",
+      "unlockLevel": 36,
+      "tags": [
+        "distributed-systems",
+        "replication",
+        "architecture",
+        "frontier-2026"
+      ],
+      "category": "architecture",
+      "backingCard": {
+        "bookId": "distributed-data-systems",
+        "chapterId": "dds-ch13-modern-distributed-data-patterns",
+        "cardId": "dds-ch13-c010"
+      }
+    },
+    {
+      "id": "dds-ad3-0160-0000-0000-0000-000000000016",
+      "word": "Feature Store",
+      "pronunciation": "FEE-chur STOR",
+      "partOfSpeech": "noun",
+      "shortDefinition": "A data system for storing, versioning, and serving ML features consistently across training and online inference.",
+      "simpleDefinition": "A feature store bridges ML training and production by guaranteeing that the features used to train a model are computed identically at inference time. It has two components: an offline store (columnar, for point-in-time correct training data retrieval) and an online store (low-latency key-value, for sub-millisecond feature serving during predictions).",
+      "longDefinition": "Training-serving skew is the defining problem a feature store solves: you train a model using features computed in a batch pipeline — 'user's average purchase value over the last 30 days' — and in production you compute the same feature differently (different time window, different data source, different preprocessing), so the model sees inputs it was never trained on. Performance degrades silently. A feature store guarantees parity through two integrated components. The offline store (BigQuery, Redshift, S3 Parquet) holds historical feature values with point-in-time correct joins: when generating training data for a model trained on events at time T, you retrieve only feature values that were available before T, preventing future data leakage that inflates offline metrics. The online store (Redis, DynamoDB, Cassandra) holds the latest feature values per entity, served in single-digit milliseconds during prediction. A materialisation pipeline continuously syncs from offline to online. Leading systems: Feast (open-source, Linux Foundation, supports streaming via Kafka); Tecton (managed, built by Uber Michelangelo veterans); Databricks Feature Store (Delta tables + MLflow integration). The online-offline parity problem is the central engineering challenge: batch features are straightforward, but streaming features ('failed logins in last 5 minutes') require a Flink/Kafka Streams pipeline maintaining running aggregates in the online store.",
+      "connector": "Think of a feature store like a standardised ingredient depot for ML models — both the chef who developed the recipe (training) and the restaurant kitchen (serving) must use the same measured ingredients from the same source.",
+      "techContext": "Our Feast feature store materialises 200+ features to Redis on a 5-minute lag so our fraud model's online inference uses the same feature definitions that validated during offline training, eliminating silent accuracy decay.",
+      "exampleSentence": "After deploying the feature store, the team discovered that the production recommendation model had been computing user engagement scores over a 7-day window while training used a 30-day window — a discrepancy that explained the 15% accuracy gap.",
+      "codeExample": {
+        "language": "python",
+        "code": "# Feast: define and retrieve features\nfrom feast import FeatureStore, Entity, FeatureView, Field\nfrom feast.types import Float64, Int64\nfrom datetime import timedelta\n\n# Define a feature view\nuser_stats_fv = FeatureView(\n    name='user_stats',\n    entities=['user_id'],\n    ttl=timedelta(days=1),\n    schema=[\n        Field(name='purchase_count_7d', dtype=Int64),\n        Field(name='avg_order_value_30d', dtype=Float64),\n    ],\n    online=True,\n)\n\n# Training: point-in-time correct retrieval (no data leakage)\nstore = FeatureStore(repo_path='.')\ntraining_df = store.get_historical_features(\n    entity_df=labels_df,   # contains entity_id + event_timestamp\n    features=['user_stats:purchase_count_7d',\n              'user_stats:avg_order_value_30d'],\n).to_df()\n\n# Online serving: sub-millisecond from Redis\nonline_features = store.get_online_features(\n    features=['user_stats:purchase_count_7d'],\n    entity_rows=[{'user_id': 'u-12345'}],\n).to_dict()"
+      },
+      "etymology": "Feature from ML terminology (an input variable to a model); store in the data engineering sense of a purpose-built data system; concept pioneered by Uber's Michelangelo platform (2017) and Airbnb's Zipline; the term 'feature store' standardised circa 2018–2019.",
+      "unlockLevel": 36,
+      "tags": [
+        "distributed-systems",
+        "machine-learning",
+        "databases",
+        "frontier-2026"
+      ],
+      "category": "architecture",
+      "backingCard": {
+        "bookId": "distributed-data-systems",
+        "chapterId": "dds-ch13-modern-distributed-data-patterns"
+      }
+    },
+    {
+      "id": "dds-ad3-0170-0000-0000-0000-000000000017",
+      "word": "Time-Series Database",
+      "pronunciation": "TYM-SEER-eez DAY-tuh-bayz",
+      "partOfSpeech": "noun",
+      "shortDefinition": "A database optimised for sequential time-stamped measurements, with built-in compression, downsampling, and retention policies.",
+      "simpleDefinition": "A time-series database (TSDB) is purpose-built for workloads where data arrives as timestamped measurements — metrics, IoT sensor readings, financial ticks, application traces — at very high write rates, and queries are always time-range aggregations. General-purpose databases handle this poorly because B-tree indexes degrade under high-cardinality append-only writes and lack built-in downsampling and retention.",
+      "longDefinition": "Time-series data has structural characteristics that distinguish it from OLTP and OLAP workloads: it is almost exclusively append-only (new data points are always in the future), queries are almost always over a time range with aggregations (rate, mean, percentile), and the data is highly compressible because adjacent values are correlated. A Kubernetes cluster with 1,000 nodes and 200 metrics per node produces 200,000 unique time series, each writing a data point every 15 seconds — 13 million writes per minute. General databases fail here because B-tree indexes are poorly suited for high-write-rate time-ordered data and have no concept of downsampling or time-aware compression. Leading TSDBs in 2024–2026: TimescaleDB (PostgreSQL extension with hypertable chunking, continuous aggregates, and columnar compression — the 'fits in PostgreSQL' option); InfluxDB 3.0 (Rust rewrite on Apache Arrow/Parquet with object-storage backend, SQL and InfluxQL, API-compatible with Prometheus line protocol); QuestDB (column-oriented with memory-mapped file appends, ~4M rows/second write throughput, used in financial tick data); Prometheus + Thanos/Mimir (the de facto standard for Kubernetes observability). Core TSDB primitives absent from general databases: downsampling (automatically aggregate high-resolution data into coarser buckets as it ages), retention policies (auto-drop data older than N days), and Gorilla-style compression (delta-of-delta encoding achieves 12:1 compression ratios on float metrics).",
+      "connector": "Think of a time-series database like a seismograph's recording drum — it is purpose-built to capture millions of sequential measurements efficiently, archive older readings at lower resolution, and query patterns across time windows.",
+      "techContext": "We store Kubernetes pod metrics in Mimir (Prometheus-compatible TSDB) with 30-day raw retention, 1-year 1-minute downsampled retention, and Gorilla compression reducing storage by 14x versus raw float64.",
+      "exampleSentence": "Migrating application metrics from PostgreSQL to TimescaleDB cut storage costs by 90% through columnar compression and automated downsampling of month-old data from 10-second to 1-minute resolution.",
+      "codeExample": {
+        "language": "sql",
+        "code": "-- TimescaleDB: create a hypertable and continuous aggregate\nCREATE TABLE metrics (\n  time       TIMESTAMPTZ NOT NULL,\n  host       TEXT,\n  metric     TEXT,\n  value      DOUBLE PRECISION\n);\n\n-- Convert to hypertable (auto-partitions by time into chunks)\nSELECT create_hypertable('metrics', 'time',\n  chunk_time_interval => INTERVAL '1 day');\n\n-- Continuous aggregate: pre-compute 1-minute bucketed stats\nCREATE MATERIALIZED VIEW metrics_1min\nWITH (timescaledb.continuous) AS\nSELECT\n  time_bucket('1 minute', time) AS bucket,\n  host,\n  metric,\n  avg(value) AS avg_val,\n  max(value) AS max_val\nFROM metrics\nGROUP BY bucket, host, metric;\n\n-- Retention: drop raw data older than 30 days\nSELECT add_retention_policy('metrics', INTERVAL '30 days');"
+      },
+      "etymology": "Time-series from statistics — a sequence of data points indexed in time order; database from Greek basis ('foundation'); the TSDB category formalised with InfluxDB (2013) and Prometheus (2012) though time-series storage predates these.",
+      "unlockLevel": 36,
+      "tags": [
+        "distributed-systems",
+        "databases",
+        "observability",
+        "frontier-2026"
+      ],
+      "category": "technologies",
+      "backingCard": {
+        "bookId": "distributed-data-systems",
+        "chapterId": "dds-ch13-modern-distributed-data-patterns"
+      }
+    },
+    {
+      "id": "dds-ad3-0180-0000-0000-0000-000000000018",
+      "word": "Zero-ETL",
+      "pronunciation": "ZEE-roh-EE-tee-el",
+      "partOfSpeech": "noun",
+      "shortDefinition": "A paradigm eliminating explicit extract-transform-load pipelines by federating or replicating operational data directly into the analytics layer via CDC.",
+      "simpleDefinition": "Zero-ETL replaces the scheduled ETL batch job with a native CDC feed from the database — changes stream to the analytics destination continuously instead of arriving hours later via a pipeline job. The explicit ETL orchestration layer disappears; the database's own change log becomes the integration mechanism.",
+      "longDefinition": "Classical data pipelines run ETL on a schedule: extract records modified since the last run, transform them, load them into the warehouse. This introduces latency (data is stale by the job interval), operational complexity (the job is another system to maintain and debug), and fragility (schema changes break the extraction query). Zero-ETL replaces this with native CDC: DynamoDB Streams delivers every insert, update, and delete within seconds to Lambda or Kinesis. AWS Aurora to Redshift zero-ETL (GA 2023) replicates Aurora MySQL changes to Redshift via binlog CDC in seconds, with schema changes propagating automatically — eliminating the Firehose/Glue/DMS pipeline that was standard before. Snowflake Streams and Dynamic Tables (GA 2024) track DML changes in Snowflake tables and trigger incremental SQL processing without an external orchestrator. Debezium reads from MySQL binlog, PostgreSQL logical replication slot, or MongoDB oplog and publishes events to Kafka — the standard architecture for self-hosted zero-ETL. PostgreSQL logical replication (native since PG 10) enables row-level streaming to any subscriber, powering Supabase Realtime and Neon branching. The 'zero' in zero-ETL is marketing: extraction (from the binlog), transformation (target schema differs from source), and loading still occur — what disappears is the explicit orchestrated batch job and the hours of latency it introduced.",
+      "connector": "Think of zero-ETL like replacing a daily newspaper delivery with a live news feed — instead of waiting for the next edition, every change streams to readers the moment it happens.",
+      "techContext": "We configured Aurora MySQL to Redshift zero-ETL integration so our analytics warehouse reflects production order data within 30 seconds of commit, replacing a nightly DMS migration job that introduced 14 hours of lag.",
+      "exampleSentence": "Zero-ETL reduced the operational surface of our data platform from four separate DMS replication jobs to a single integration configured in the AWS console, while shrinking data freshness lag from hours to seconds.",
+      "codeExample": {
+        "language": "sql",
+        "code": "-- Snowflake: streams and dynamic tables for zero-ETL incremental processing\n-- Create a stream on the source table to track changes\nCREATE STREAM orders_stream ON TABLE raw_orders\n  APPEND_ONLY = FALSE;   -- capture inserts, updates, deletes\n\n-- Dynamic Table: auto-refreshes when orders_stream has new data\nCREATE DYNAMIC TABLE orders_enriched\n  TARGET_LAG = '1 minute'    -- refresh within 1 minute of source change\n  WAREHOUSE = 'etl_wh'\nAS\n  SELECT\n    o.order_id,\n    o.user_id,\n    u.email,\n    o.amount,\n    o.status,\n    o.created_at\n  FROM orders_stream o\n  JOIN users u ON o.user_id = u.user_id\n  WHERE METADATA$ACTION = 'INSERT';"
+      },
+      "etymology": "Zero indicating the elimination of the ETL step; ETL acronym for Extract-Transform-Load, coined in data warehousing literature of the 1990s; popularised as 'Zero-ETL' by AWS at re:Invent 2022.",
+      "unlockLevel": 36,
+      "tags": [
+        "distributed-systems",
+        "data-engineering",
+        "analytics",
+        "frontier-2026"
+      ],
+      "category": "architecture",
+      "backingCard": {
+        "bookId": "distributed-data-systems",
+        "chapterId": "dds-ch13-modern-distributed-data-patterns",
+        "cardId": "dds-ch13-c013"
+      }
+    },
+    {
+      "id": "dds-ad3-0190-0000-0000-0000-000000000019",
+      "word": "Data Mesh",
+      "pronunciation": "DAY-tuh MESH",
+      "partOfSpeech": "noun",
+      "shortDefinition": "An organisational and architectural pattern treating data as a product, with domain teams owning their own data pipelines and interfaces.",
+      "simpleDefinition": "Data mesh applies the microservices philosophy to data: instead of funnelling all data into a central platform managed by a separate data team, domain teams own, operate, and publish their data as first-class products. The central team provides self-serve infrastructure; governance is federated and enforced by the platform, not by manual review.",
+      "longDefinition": "Data mesh was introduced by Zhamak Dehghani in a 2019 Medium article and expanded in her 2022 O'Reilly book. The problem it addresses: at scale, centralised data platforms fail for the same reason monolithic applications fail — a single team cannot understand all domains deeply enough, cannot keep pace with all domain requirements, and becomes an organisational bottleneck, producing stale, incomplete, poorly documented data that no one trusts. The four principles: domain ownership (the team that creates data owns and maintains it — Checkout owns checkout data, Identity owns identity data); data as a product (each domain publishes data with an SLA, schema contract, documentation, and discoverability in a catalog — quality is a product metric); self-serve infrastructure (a platform team provides tooling for domain teams to build, deploy, and monitor data products without becoming infrastructure engineers); federated computational governance (global standards — PII tagging, encryption, access control, SLA tiers — defined centrally but enforced automatically by the platform). The microservices analogy is imperfect: data products have a property services do not — consumers read and derive from data across domain boundaries constantly, making schema changes in one domain ripple to all downstream consumers. Data mesh is primarily an organisational pattern; you cannot implement it by deploying a data catalog.",
+      "connector": "Think of data mesh like a farmers' market versus a supermarket — instead of a central buyer sourcing everything, each producer brings their own certified products, and the market provides shared infrastructure (stalls, payment) with consistent quality standards.",
+      "techContext": "Our data mesh implementation has the Payments team publishing a `payments.transactions` data product on Iceberg with a 99.9% freshness SLA and a published Avro schema that downstream teams subscribe to via the internal data catalog.",
+      "exampleSentence": "After adopting data mesh, the central data team stopped being a bottleneck for schema changes — domain teams published versioned data products independently, and downstream consumers subscribed to the catalog rather than queuing requests.",
+      "etymology": "Data from Latin datum ('something given'); mesh from Old English referring to an interlocking network of nodes; coined by Zhamak Dehghani in 2019 drawing on the microservices distributed ownership analogy.",
+      "unlockLevel": 36,
+      "tags": [
+        "distributed-systems",
+        "data-engineering",
+        "architecture",
+        "frontier-2026"
+      ],
+      "category": "architecture",
+      "backingCard": {
+        "bookId": "distributed-data-systems",
+        "chapterId": "dds-ch13-modern-distributed-data-patterns",
+        "cardId": "dds-ch13-c006"
+      }
+    },
+    {
+      "id": "dds-ad3-0200-0000-0000-0000-000000000020",
+      "word": "Open Table Format",
+      "pronunciation": "OH-pen TAY-bul FOR-mat",
+      "partOfSpeech": "noun",
+      "shortDefinition": "A vendor-neutral specification defining how tables, snapshots, and manifests are stored on object storage — implemented by Iceberg, Delta Lake, and Hudi.",
+      "simpleDefinition": "An open table format is a metadata specification layered on top of columnar data files (Parquet, ORC) in object storage. It defines how concurrent writers coordinate, how historical snapshots are retained, how schema changes are tracked, and how row-level deletes and upserts work — without any data movement into a proprietary format.",
+      "longDefinition": "Without a table format, a directory of Parquet files in S3 is just a directory: no transaction isolation, no way to delete specific rows without rewriting files, no history, and no coordination between concurrent writers. An open table format adds a metadata layer that provides all of these. The three dominant formats are Apache Iceberg (immutable snapshot tree with manifest lists and manifest files), Delta Lake (sequential JSON transaction log in `_delta_log/`), and Apache Hudi (timeline of commit instants with record-level indexing). All three provide ACID transactions, time travel, schema evolution, and hidden partitioning. The 'open' distinguishes them from proprietary formats (Snowflake's internal format, BigQuery's Capacitor) — any conformant query engine can read an open table format file without vendor-specific code. The ecosystem is converging: Delta Universal Format (UniForm, 2023) allows a Delta table to also be read as Iceberg; Apache XTable (incubating, 2024) provides bidirectional translation between all three. Choosing a format depends on ecosystem fit: Iceberg for maximum engine portability; Delta for Databricks-centric stacks; Hudi for high-throughput CDC upsert pipelines. By 2026, the distinction matters less than in 2021 because all major query engines support all three.",
+      "connector": "Think of an open table format like a standardised shipping container specification — any ship (query engine) from any country (vendor) can handle the container (data files) because the dimensions and locking mechanisms are defined by an open standard.",
+      "techContext": "We chose Apache Iceberg as our open table format because it is supported natively by Snowflake, BigQuery, and Redshift Spectrum, giving us the freedom to swap query engines without migrating data.",
+      "exampleSentence": "Standardising on an open table format meant the ML team could query production data with DuckDB locally, the analytics team used Trino in the cloud, and the streaming team wrote with Flink — all against the same Parquet files.",
+      "codeExample": {
+        "language": "python",
+        "code": "# PyIceberg: interact with an open table format catalog\nfrom pyiceberg.catalog import load_catalog\n\n# Connect to an AWS Glue catalog (Iceberg)\ncatalog = load_catalog('glue', **{\n    'type': 'glue',\n    'warehouse': 's3://my-lakehouse/iceberg/',\n})\n\n# List tables in the database\nfor ns, table_name in catalog.list_tables('analytics'):\n    print(f'{ns}.{table_name}')\n\n# Load table and inspect snapshots (time travel metadata)\ntable = catalog.load_table('analytics.orders')\nfor snapshot in table.metadata.snapshots:\n    print(snapshot.snapshot_id, snapshot.timestamp_ms)\n\n# Scan with predicate pushdown — engine reads only relevant files\ndf = table.scan(\n    row_filter=\"created_at >= '2026-06-01'\",\n    selected_fields=['order_id', 'amount', 'status'],\n).to_arrow()"
+      },
+      "etymology": "Open indicating vendor-neutral, publicly specified; table referring to the relational table abstraction; format referring to the file and metadata layout specification; the category crystallised with the rise of Iceberg, Delta, and Hudi circa 2019–2021.",
+      "unlockLevel": 36,
+      "tags": [
+        "distributed-systems",
+        "analytics",
+        "storage",
+        "frontier-2026"
+      ],
+      "category": "concepts",
+      "backingCard": {
+        "bookId": "distributed-data-systems",
+        "chapterId": "dds-ch13-modern-distributed-data-patterns"
+      }
+    },
+    {
+      "id": "dds-ad3-0210-0000-0000-0000-000000000021",
+      "word": "OR-Set CRDT",
+      "pronunciation": "OR-SET SEE-ar-dee-tee",
+      "partOfSpeech": "noun",
+      "shortDefinition": "An Observed-Remove Set CRDT that uses unique tags per add to correctly resolve concurrent add/remove operations.",
+      "simpleDefinition": "An OR-Set (Observed-Remove Set) is a CRDT set that correctly handles the concurrent add/remove problem. When one replica adds element X and another replica concurrently removes X, a naive set would lose X. OR-Set gives add priority by tagging each add with a unique identifier — a remove only removes the specific tags it has observed, leaving any concurrently added tags intact.",
+      "longDefinition": "The fundamental challenge in a replicated set is concurrent add and remove. If replica A adds element 'apple' and replica B concurrently removes 'apple' (without knowing about A's add), what should the merged state be? There is no universally correct answer — it is a semantic decision. The OR-Set resolves this by making add win over concurrent removes: each add operation generates a unique token (a UUID or (node-id, timestamp) tuple) attached to the element. The element is considered present if any of its associated tokens are in the set. A remove operation specifies which tokens to remove — only those tokens it has observed. A concurrent add on another replica generates a new token that the remove did not observe, so the element survives the merge. The result: concurrent adds and removes are resolved as 'add wins'. Yjs uses an OR-Set variant for collaborative text editing (each character insertion gets a unique ID; deletions reference specific IDs). Redis Enterprise's Active-Active mode uses OR-Set semantics for its CRDT set type. The tradeoff is space: tokens accumulate over time and must be garbage-collected. The 2PC-free convergence of OR-Sets makes them indispensable for offline-first and geo-distributed applications where concurrent mutations on the same set are expected.",
+      "connector": "Think of an OR-Set like a contract where each signature has a unique ID — even if someone tries to cancel a signature they didn't see, new signatures added simultaneously survive because they have different IDs.",
+      "techContext": "We use an OR-Set CRDT for the set of active collaborators in a shared workspace so users joining from offline devices are never accidentally removed by a concurrent logout from another session.",
+      "exampleSentence": "Switching to an OR-Set CRDT eliminated the race condition where a user's concurrent 'add to favourites' and their partner's 'remove' could silently erase the addition depending on message delivery order.",
+      "codeExample": {
+        "language": "python",
+        "code": "import uuid\nfrom dataclasses import dataclass, field\nfrom typing import Dict, Set\n\n@dataclass\nclass ORSet:\n    \"\"\"Observed-Remove Set CRDT — add wins on concurrent add/remove.\"\"\"\n    # element -> set of unique tokens for present adds\n    _added: Dict[str, Set[str]] = field(default_factory=dict)\n    _removed: Set[str] = field(default_factory=set)\n\n    def add(self, element: str) -> str:\n        token = str(uuid.uuid4())\n        self._added.setdefault(element, set()).add(token)\n        return token  # broadcast (element, token) as the operation\n\n    def remove(self, element: str) -> None:\n        # Remove all currently observed tokens for this element\n        self._removed |= self._added.get(element, set())\n\n    def value(self) -> Set[str]:\n        # An element is present if it has at least one token not removed\n        return {\n            e for e, tokens in self._added.items()\n            if tokens - self._removed\n        }\n\n    def merge(self, other: 'ORSet') -> 'ORSet':\n        merged = ORSet()\n        for e, tokens in (self._added | other._added).items():\n            merged._added[e] = self._added.get(e, set()) | other._added.get(e, set())\n        merged._removed = self._removed | other._removed\n        return merged"
+      },
+      "etymology": "OR from Observed-Remove — removes are scoped to observed tokens; Set from the mathematical set; OR-Set formalised by Shapiro et al. (2011) as the canonical solution to the concurrent add/remove problem in CRDT literature.",
+      "unlockLevel": 36,
+      "tags": [
+        "distributed-systems",
+        "replication",
+        "consistency",
+        "frontier-2026"
+      ],
+      "category": "data structures",
+      "backingCard": {
+        "bookId": "distributed-data-systems",
+        "chapterId": "dds-ch13-modern-distributed-data-patterns"
+      }
+    },
+    {
+      "id": "dds-ad3-0220-0000-0000-0000-000000000022",
+      "word": "G-Counter CRDT",
+      "pronunciation": "JEE-KOWN-ter SEE-ar-dee-tee",
+      "partOfSpeech": "noun",
+      "shortDefinition": "A grow-only counter CRDT where each replica increments its own slot and the total is the sum of all slots.",
+      "simpleDefinition": "A G-Counter (Grow-only Counter) is the simplest non-trivial CRDT. Each node in the cluster maintains a vector of per-node counts; a node only increments its own slot. The current value is the sum of all slots. Merging two G-Counters takes the element-wise maximum of their vectors — converging correctly regardless of message order or duplication.",
+      "longDefinition": "The G-Counter is the canonical state-based CRDT example. Its structure is a vector of non-negative integers, one slot per node (indexed by node ID). A node can only increment its own slot — this prevents conflicting concurrent increments to the same slot. The merge function takes element-wise maximum: max(A[i], B[i]) for each slot i. This satisfies the semilattice properties: commutativity, associativity, and idempotency. The value is the sum of all slots. Correctness: even if two nodes both increment their own slots concurrently and then merge, the result is the correct total because each node's contribution is tracked independently. The G-Counter cannot support decrement (that would violate the 'grows only' property that enables idempotent merge). For decrement support, a PN-Counter pairs two G-Counters: one for increments, one for decrements; the value is sum(increments) − sum(decrements). Real-world uses: distributed page-view counters (each CDN edge node has a slot), like/vote counts in distributed social platforms, and any scenario where an exact count must converge across nodes without coordination. Redis Enterprise implements G-Counter semantics in its CRDT counter type used across Active-Active geo-replicated clusters.",
+      "connector": "Think of a G-Counter like a relay race with each runner recording their own lap time independently — the total race time is the sum of all individual times, and there's no confusion about who contributed what.",
+      "techContext": "We model page-view counts as G-Counters across our CDN edge nodes so each edge increments its own slot locally and we get the correct global total from any replica without coordination.",
+      "exampleSentence": "Implementing the view counter as a G-Counter eliminated the distributed lock that had been a write bottleneck — each data-centre node now increments independently and the total converges within seconds.",
+      "codeExample": {
+        "language": "python",
+        "code": "from dataclasses import dataclass, field\nfrom typing import List\n\n@dataclass\nclass GCounter:\n    node_id: int\n    num_nodes: int\n    _slots: List[int] = field(init=False)\n\n    def __post_init__(self):\n        self._slots = [0] * self.num_nodes\n\n    def increment(self, delta: int = 1) -> None:\n        \"\"\"Only increment own slot.\"\"\"\n        self._slots[self.node_id] += delta\n\n    def value(self) -> int:\n        return sum(self._slots)\n\n    def merge(self, other: 'GCounter') -> 'GCounter':\n        \"\"\"Element-wise max — commutative, associative, idempotent.\"\"\"\n        result = GCounter(self.node_id, self.num_nodes)\n        result._slots = [\n            max(a, b) for a, b in zip(self._slots, other._slots)\n        ]\n        return result\n\n# Simulation: two nodes increment independently then merge\nnode0 = GCounter(node_id=0, num_nodes=2)\nnode1 = GCounter(node_id=1, num_nodes=2)\nnode0.increment(5)\nnode1.increment(3)\nmerged = node0.merge(node1)\nprint(merged.value())   # 8 — correct regardless of sync order"
+      },
+      "etymology": "G for Grow-only — the counter can only grow (increment), never shrink; Counter from Latin computare ('to reckon'); introduced as the canonical state-based CRDT example in Shapiro et al. (2011).",
+      "unlockLevel": 36,
+      "tags": [
+        "distributed-systems",
+        "replication",
+        "consistency"
+      ],
+      "category": "data structures",
+      "backingCard": {
+        "bookId": "distributed-data-systems",
+        "chapterId": "dds-ch13-modern-distributed-data-patterns"
+      }
+    },
+    {
+      "id": "dds-ad3-0230-0000-0000-0000-000000000023",
+      "word": "Tiered Storage",
+      "pronunciation": "TEERD STOR-ij",
+      "partOfSpeech": "noun",
+      "shortDefinition": "Automatically migrating older or colder data from fast local storage to cheaper object storage while keeping it queryable.",
+      "simpleDefinition": "Tiered storage transparently moves data between storage tiers — hot (NVMe SSD), warm (HDD), cold (object storage like S3) — based on access frequency and age. Recent data stays on fast local storage for low-latency access; older data migrates to cheap object storage, remaining queryable but with higher latency.",
+      "longDefinition": "The economics of storage are starkly tiered: NVMe SSD costs ~$0.10–0.20/GB/month; object storage (S3 Standard) costs ~$0.023/GB/month — a 5–10x difference. For workloads that access recent data frequently and old data rarely (time-series metrics, log archives, event streams, message broker data), storing everything on SSDs is wasteful. Tiered storage automates the migration: data is written to the hot tier, and a background process moves data to colder tiers based on configurable policies (age, last access time, custom predicates). Apache Kafka's tiered storage (GA in Kafka 3.6, 2023) offloads older log segments to S3/GCS/Azure Blob while keeping recent segments on local disk; consumers that need to replay old data fetch transparently from object storage. Apache Pulsar has had tiered storage via Apache BookKeeper since 2019 (offloading to AWS S3, GCS, or Aliyun OSS). InfluxDB 3.0's architecture stores all data on object storage by default, reading recent data from a local query buffer. TimescaleDB's tiered storage (Timescale Cloud, 2023) automatically moves hypertable chunks to object storage after a configurable age. The tradeoff: queries against cold-tier data pay object storage access latency (10–100ms per request vs. sub-millisecond for SSD), so tiered storage works best when cold data is accessed infrequently or in large batches.",
+      "connector": "Think of tiered storage like a filing system where today's documents stay on your desk, last month's go in a cabinet, and last year's go in the archive room — everything is still retrievable, just with different access times.",
+      "techContext": "Our Kafka cluster uses tiered storage to offload segments older than 7 days to S3, reducing broker EBS costs by 70% while keeping full topic replay capability for our CDC consumers.",
+      "exampleSentence": "Enabling tiered storage on our Kafka cluster reduced local disk usage from 12 TB to 800 GB while preserving 90 days of retention for audit replay, cutting broker infrastructure cost by 65%.",
+      "codeExample": {
+        "language": "yaml",
+        "code": "# Apache Kafka broker configuration for tiered storage\n# kafka/config/server.properties\n\n# Enable tiered storage\nremote.log.storage.system.enable=true\n\n# S3 remote log storage plugin\nremote.log.storage.manager.class.name=\\\n  org.apache.kafka.server.log.remote.storage.S3RemoteStorageManager\n\n# Segment local retention (keep hot tier for 7 days)\nlog.local.retention.ms=604800000  # 7 days in ms\n\n# Total remote retention (90 days on S3)\nlog.retention.ms=7776000000       # 90 days in ms\n\n# Topic-level tiering (override per topic)\n# kafka-topics.sh --alter --topic events \\\n#   --config local.retention.ms=86400000   # 1-day hot tier"
+      },
+      "etymology": "Tiered from the French tirer ('to arrange in rows'); storage from Old French estorage ('the act of storing'); the term 'tiered storage' predates databases in the storage industry (IBM HSM, 1960s–70s) but was adopted by databases circa 2019–2023.",
+      "unlockLevel": 36,
+      "tags": [
+        "distributed-systems",
+        "storage",
+        "databases",
+        "frontier-2026"
+      ],
+      "category": "concepts",
+      "backingCard": {
+        "bookId": "distributed-data-systems",
+        "chapterId": "dds-ch13-modern-distributed-data-patterns"
+      }
+    },
+    {
+      "id": "dds-ad3-0240-0000-0000-0000-000000000024",
+      "word": "Training-Serving Skew",
+      "pronunciation": "TRAYN-ing SUR-ving SKYOO",
+      "partOfSpeech": "noun",
+      "shortDefinition": "Divergence between the feature values used during ML model training and those available at inference time, silently degrading model accuracy.",
+      "simpleDefinition": "Training-serving skew occurs when a model is trained on features computed one way and then served using features computed differently — different time windows, different data sources, different preprocessing steps. The model sees inputs at inference time that differ from what it was trained on, causing silent accuracy degradation that can be nearly impossible to diagnose without a feature store.",
+      "longDefinition": "Training-serving skew is the leading source of silent ML production failures. It arises from multiple causes: different computation pipelines for training versus serving (a batch Spark job versus a real-time Python function that implement the same feature differently), data leakage in training (using features that weren't available at the time of each training example, inflating offline metrics), different preprocessing normalisation in training code versus serving code, and drift in the underlying data distribution over time. The skew is insidious because offline model metrics (AUC, F1, RMSE) can look excellent while online performance degrades — the model was evaluated on features computed consistently, but production serves inconsistent features. Diagnosis typically requires logging both raw inputs and computed features at serving time, then comparing them against the training distribution. The systematic solution is a feature store that guarantees feature computation parity: the same feature definition used in training (via point-in-time correct historical retrieval from the offline store) is materialised into the online store for serving. Point-in-time correct joins are essential for the training side — without them, you inadvertently use future feature values (data leakage) that inflate offline metrics and make the skew worse.",
+      "connector": "Think of training-serving skew like a chef developing a recipe using aged balsamic vinegar but the restaurant kitchen using regular vinegar — the dish looks right but tastes different from what the chef intended.",
+      "techContext": "We caught training-serving skew in our churn model by logging online feature values and comparing their distribution to the training set — the '30-day activity score' was being computed over a 7-day window in the serving API.",
+      "exampleSentence": "After instrumenting the serving pipeline, the team discovered that the revenue prediction model had a 23% mean absolute error in production despite 98% offline accuracy — training-serving skew in the normalisation step was the cause.",
+      "etymology": "Training from machine learning terminology (the offline phase where a model learns from labelled data); Serving (the online phase where the model makes predictions); Skew from statistics (asymmetry or divergence from a reference distribution); the compound term popularised by the feature store literature circa 2017–2019.",
+      "unlockLevel": 36,
+      "tags": [
+        "distributed-systems",
+        "machine-learning",
+        "data-engineering",
+        "frontier-2026"
+      ],
+      "category": "concepts",
+      "backingCard": {
+        "bookId": "distributed-data-systems",
+        "chapterId": "dds-ch13-modern-distributed-data-patterns"
+      }
+    },
+    {
+      "id": "dds-ad3-0250-0000-0000-0000-000000000025",
+      "word": "Point-in-Time Correct Join",
+      "pronunciation": "POYNT-in-TYM kuh-REKT JOYN",
+      "partOfSpeech": "noun",
+      "shortDefinition": "A join that uses the feature values that were available at the time of each training example, preventing future data leakage.",
+      "simpleDefinition": "A point-in-time correct join retrieves feature values as they existed at the exact timestamp of each training label — not the current value. If your label says a user churned on June 1st, the join returns the user's features as they appeared on May 31st, not their features today. Without this, you inadvertently use future information that was unavailable at prediction time, inflating offline metrics and making models fail silently in production.",
+      "longDefinition": "Data leakage through temporal contamination is one of the most common and difficult-to-detect bugs in ML pipelines. When generating training data, you need features for each labelled event as they existed just before that event occurred. A naive join on `entity_id` returns the most recent feature value — which may incorporate data computed after the label's event timestamp, information the model could never have had in production. This inflates offline metrics (AUC, RMSE) because the model effectively 'sees the future' during evaluation. Point-in-time correct joins solve this by treating feature history as a temporal table: for each (entity_id, event_timestamp) pair in the label set, retrieve the feature value whose validity interval includes event_timestamp (i.e., the latest feature value with a computed_at timestamp <= event_timestamp). Implementing this correctly requires the offline feature store to record the computation timestamp of every feature value alongside the value itself. Feature stores (Feast, Tecton, Databricks Feature Store) implement point-in-time correct retrieval as their primary offline API. Delta Lake's time travel and Iceberg's snapshot queries are the storage primitives underlying many implementations. Without point-in-time correct joins, offline/online metric discrepancies are almost inevitable at scale.",
+      "connector": "Think of a point-in-time correct join like a time-locked safe — when evaluating what a model would have predicted on June 1st, you open only the safe that was sealed on May 31st, not today's safe that contains information that didn't exist yet.",
+      "techContext": "Our Feast feature store's get_historical_features API performs point-in-time correct joins by indexing all feature values with their write timestamp, preventing the data leakage that inflated our offline churn-model AUC by 8 points.",
+      "exampleSentence": "After switching to point-in-time correct joins for training data generation, the offline-to-online accuracy gap on the credit risk model closed from 12% to under 1%, confirming that temporal leakage had been the dominant noise source.",
+      "codeExample": {
+        "language": "python",
+        "code": "# Feast: point-in-time correct feature retrieval for training\nimport pandas as pd\nfrom feast import FeatureStore\n\nstore = FeatureStore(repo_path='.')\n\n# Entity dataframe: each row = (entity_id, event_timestamp)\n# The event_timestamp is the label's event time — features are\n# retrieved as they existed BEFORE this timestamp (no leakage)\nentity_df = pd.DataFrame({\n    'user_id': ['u-001', 'u-002', 'u-001'],\n    'event_timestamp': pd.to_datetime([\n        '2026-06-01 10:00:00',   # retrieve features < this time\n        '2026-06-02 14:30:00',\n        '2026-06-05 09:15:00',\n    ]),\n    'label': [1, 0, 1],  # churn labels\n})\n\n# Feast performs a point-in-time correct join internally\ntraining_df = store.get_historical_features(\n    entity_df=entity_df,\n    features=[\n        'user_stats:purchase_count_30d',\n        'user_stats:days_since_last_login',\n    ],\n).to_df()\n\nprint(training_df.head())\n# Each row shows features as they existed at event_timestamp\n# — no future data contamination"
+      },
+      "etymology": "Point-in-time from financial accounting (a balance-sheet snapshot at a specific moment); correct indicating temporal accuracy; join from relational algebra (Codd, 1970); the compound term popularised in the feature store literature by Uber, Airbnb, and Feast documentation circa 2018–2020.",
+      "unlockLevel": 36,
+      "tags": [
+        "distributed-systems",
+        "machine-learning",
+        "data-engineering",
+        "frontier-2026"
+      ],
+      "category": "concepts",
+      "backingCard": {
+        "bookId": "distributed-data-systems",
+        "chapterId": "dds-ch13-modern-distributed-data-patterns"
+      }
+    },
+    {
+      "id": "dds-ad3-0260-0000-0000-0000-000000000026",
+      "word": "Log-Based Message Broker",
+      "pronunciation": "LOG-bayst MES-ij BROH-ker",
+      "partOfSpeech": "noun",
+      "shortDefinition": "A message broker that persists messages as an ordered, durable log so consumers can replay from any offset.",
+      "simpleDefinition": "A log-based message broker (Kafka, Apache Pulsar, Amazon Kinesis) treats the broker as an append-only, durable log rather than a transient queue. Messages are written to disk and retained for a configurable period regardless of whether they have been consumed. Consumers track their own read position (offset) and can replay from any point in the log, turning the broker into a replayable source of truth.",
+      "longDefinition": "The central insight of the log-based broker model — developed at LinkedIn and open-sourced as Apache Kafka in 2011 — is that a message broker should be a durable ordered store, not a delivery mechanism that discards messages after acknowledgement. In a traditional broker (RabbitMQ, ActiveMQ), the broker tracks which consumers have seen which messages; delivery is its responsibility; messages are deleted on acknowledgement. In the log-based model, every message is written sequentially to a partition (an independent ordered log); consumers are responsible for tracking their own position (offset — a sequential integer); the broker retains messages for a configured duration (hours, days, or indefinitely with tiered storage). This changes the broker's role fundamentally: the log can serve as the system of record — Jay Kreps's 2013 essay 'The Log: What every software engineer should know about real-time data's unifying abstraction' formalised this thesis. Because the log is complete and durable, any consumer can replay from offset 0 to rebuild derived state, enabling CDC, event sourcing, CQRS, and stream-table duality patterns. Apache Pulsar extends the model with tiered storage (offloading cold segments to S3) and decoupled compute/storage via Apache BookKeeper. Amazon Kinesis follows the same model on managed infrastructure.",
+      "connector": "Think of a log-based message broker like a library journal that every patron can read from any page, rather than a to-do list where completed tasks are torn out and discarded.",
+      "techContext": "We use Kafka as a log-based message broker for our CDC pipeline so that new downstream consumers can replay the full order history from offset 0 rather than only receiving events published after they subscribed.",
+      "exampleSentence": "The log-based message broker's replay capability let the team bootstrap a new Elasticsearch index from scratch by replaying six months of events rather than building a separate historical backfill pipeline.",
+      "codeExample": {
+        "language": "python",
+        "code": "from confluent_kafka import Consumer, TopicPartition\n\n# Log-based consumer: controls its own offset (replay from beginning)\nconf = {\n    'bootstrap.servers': 'kafka:9092',\n    'group.id': 'audit-replay-consumer',\n    'enable.auto.commit': False,  # manual offset control\n    'auto.offset.reset': 'earliest',\n}\n\nconsumer = Consumer(conf)\ntopic = 'orders'\n\n# Replay from the very beginning of the log (offset 0)\ntopic_partitions = consumer.partitions_for_topic(topic)\nassignment = [\n    TopicPartition(topic, p, 0)  # offset=0: start from beginning\n    for p in topic_partitions\n]\nconsumer.assign(assignment)\nconsumer.seek_to_beginning(assignment)\n\nwhile True:\n    msg = consumer.poll(timeout=1.0)\n    if msg is None:\n        break\n    process(msg.value())\n    consumer.commit()  # commit offset only after processing"
+      },
+      "etymology": "Log from the nautical ship's log — a chronological record of events; based indicating the underlying storage model; message broker coined in enterprise messaging (IBM MQSeries, 1990s); log-based variant popularised by the Apache Kafka design paper (Kreps et al., 2011).",
+      "unlockLevel": 36,
+      "tags": [
+        "distributed-systems",
+        "messaging",
+        "stream-processing"
+      ],
+      "category": "architecture",
+      "backingCard": {
+        "bookId": "distributed-data-systems",
+        "chapterId": "dds-ch11-stream-processing"
+      }
+    },
+    {
+      "id": "dds-ad3-0270-0000-0000-0000-000000000027",
+      "word": "Delta-State CRDT",
+      "pronunciation": "DEL-tuh-STAYT SEE-ar-dee-tee",
+      "partOfSpeech": "noun",
+      "shortDefinition": "A CRDT optimisation that propagates only the recent change delta rather than full state, reducing network overhead.",
+      "simpleDefinition": "A delta-state CRDT (δ-CRDT) extends state-based CRDTs by shipping only the small delta — what changed since the last sync — instead of the full state on every gossip round. It preserves the simple network model of state-based CRDTs (at-least-once delivery, no causal ordering required) while dramatically reducing message size for large data structures.",
+      "longDefinition": "Delta-state CRDTs were introduced in a 2016 paper by Paulo Sérgio Almeida, Ali Shoker, and Carlos Baquero as an optimisation to pure state-based (CvRDT) propagation. The core problem with state-based CRDTs is bandwidth: a G-Counter in a 100-node cluster must ship the entire 100-element vector on every gossip round even if only one slot changed. In a δ-CRDT, each mutating operation produces both the updated state and a delta — the minimal state that, when joined with any other replica's state, propagates the change correctly. Replicas exchange deltas (tiny, usually constant-size) rather than full states, and can buffer and batch multiple deltas before shipping. The join operation on deltas is the same semilattice join as for full states — idempotency and commutativity are preserved. This gives δ-CRDTs the best of both worlds: the relaxed network model of CvRDTs (at-least-once delivery) and the small message size of CmRDTs (operation messages). Automerge 2.0 (2023, rewritten in Rust with WASM targets) and Yjs both use delta-based propagation internally. As of 2024–2026, delta-state CRDTs are the dominant implementation approach for production CRDT systems, especially in mobile and peer-to-peer contexts where bandwidth is constrained.",
+      "connector": "Think of a delta-state CRDT like a shared spreadsheet that sends only the changed cells rather than the entire sheet on every keystroke — you get the same eventual result with a fraction of the bandwidth.",
+      "techContext": "Our mobile offline-sync library uses δ-CRDTs so that a user editing a shared document on a low-bandwidth mobile connection sends deltas of under 100 bytes per keystroke rather than the full document state.",
+      "exampleSentence": "Switching from full-state to delta-state CRDT propagation reduced sync bandwidth by 97% for large shared workspaces, making the real-time collaboration feature viable for users on mobile data plans.",
+      "codeExample": {
+        "language": "python",
+        "code": "# Delta-state G-Counter: ships only the changed slot as the delta\nfrom dataclasses import dataclass, field\nfrom typing import List, Optional\n\n@dataclass\nclass DeltaGCounter:\n    node_id: int\n    num_nodes: int\n    _slots: List[int] = field(init=False)\n\n    def __post_init__(self):\n        self._slots = [0] * self.num_nodes\n\n    def increment(self, delta: int = 1) -> 'DeltaGCounter':\n        \"\"\"Mutate and return the delta (only own slot changed).\"\"\"\n        self._slots[self.node_id] += delta\n        # Delta: a GCounter with only the changed slot set\n        d = DeltaGCounter(self.node_id, self.num_nodes)\n        d._slots[self.node_id] = self._slots[self.node_id]\n        return d  # ship this tiny delta to peers, not full _slots\n\n    def join(self, other: 'DeltaGCounter') -> None:\n        \"\"\"Merge full state or delta — same semilattice join.\"\"\"\n        self._slots = [\n            max(a, b) for a, b in zip(self._slots, other._slots)\n        ]\n\n    def value(self) -> int:\n        return sum(self._slots)"
+      },
+      "etymology": "Delta (Greek Δ) meaning a small incremental change; state indicating the replication unit is state (not operations); CRDT as before; introduced as δ-CRDT by Almeida, Shoker, and Baquero (2016).",
+      "unlockLevel": 36,
+      "tags": [
+        "distributed-systems",
+        "replication",
+        "consistency",
+        "frontier-2026"
+      ],
+      "category": "data structures",
+      "backingCard": {
+        "bookId": "distributed-data-systems",
+        "chapterId": "dds-ch13-modern-distributed-data-patterns"
+      }
+    },
+    {
+      "id": "dds-ad3-0280-0000-0000-0000-000000000028",
+      "word": "Gorilla Compression",
+      "pronunciation": "guh-RIL-uh kum-PRESH-un",
+      "partOfSpeech": "noun",
+      "shortDefinition": "Facebook's XOR-based float compression technique for time-series data that exploits sequential timestamp and value similarity.",
+      "simpleDefinition": "Gorilla compression encodes time-series floating-point values using XOR of consecutive values and variable-length bit packing. Adjacent metric values are typically close together — CPU utilisation at t and t+15s differ by a small delta — so their XOR has many leading zeros, compressing to a handful of bits. Facebook's 2015 VLDB paper reported 12:1 compression ratios, enabling an in-memory time-series store for 2 billion data points.",
+      "longDefinition": "Gorilla was Facebook's in-memory TSDB, described in the 2015 VLDB paper 'Gorilla: A Fast, Scalable, In-Memory Time Series Database'. The key compression insight applies to both timestamps and values. Timestamp compression: rather than storing raw Unix timestamps (8 bytes each), store the delta between consecutive timestamps (usually a constant like 15 seconds in Prometheus scraping), then the delta-of-deltas. If the scrape interval is perfectly regular, the delta-of-delta is 0 and encodes in a single bit. Value compression: store the first value as a raw 64-bit float, then XOR each subsequent value with its predecessor. Because adjacent metric values change slowly (CPU rarely jumps from 40% to 95% in one scrape), the XOR has many leading and trailing zero bits. The non-zero portion (the 'meaningful bits') is variable-length encoded using 5 bits to specify the leading zeros, 6 bits for the length, and then only the meaningful bits. Typical metric values compress from 64 bits to 1.37 bits on average. This technique is now used across the time-series ecosystem: InfluxDB, Prometheus's TSDB (chunks use Gorilla-style encoding), TimescaleDB's columnar compression, QuestDB, and VictoriaMetrics all implement variants of Gorilla-style XOR compression for float columns.",
+      "connector": "Think of Gorilla compression like describing a movie scene by scene — instead of describing each frame in full detail, you say 'same as before except the actor moved 3 pixels left', since adjacent frames are almost identical.",
+      "techContext": "TimescaleDB's Gorilla compression on our metrics table reduced float storage from 8 bytes per value to an average of 1.2 bytes, enabling a 6x increase in in-memory metrics retention within the same RAM budget.",
+      "exampleSentence": "After enabling Gorilla compression on the Prometheus TSDB, the 30-day metrics retention that previously required 2 TB of disk fit in 180 GB — a 11x reduction that allowed us to extend retention to 6 months at the same cost.",
+      "etymology": "Named after the Gorilla TSDB project at Facebook (a playful name for the in-memory beast handling large scale); the compression algorithm described in 'Gorilla: A Fast, Scalable, In-Memory Time Series Database' (Pelkonen et al., VLDB 2015).",
+      "unlockLevel": 36,
+      "tags": [
+        "distributed-systems",
+        "databases",
+        "storage"
+      ],
+      "category": "concepts",
+      "backingCard": {
+        "bookId": "distributed-data-systems",
+        "chapterId": "dds-ch13-modern-distributed-data-patterns"
+      }
+    },
+    {
+      "id": "dds-ad3-0290-0000-0000-0000-000000000029",
+      "word": "Change Feed",
+      "pronunciation": "CHAYNJ FEED",
+      "partOfSpeech": "noun",
+      "shortDefinition": "A database feature that exposes an ordered stream of all document or row changes for downstream consumers to subscribe to.",
+      "simpleDefinition": "A change feed is a database-native mechanism that continuously emits an ordered log of every insert, update, and delete as it happens. Consumers subscribe to this feed to build derived views, trigger side effects, replicate data to other systems, or implement event-driven architectures — without polling the source database.",
+      "longDefinition": "A change feed is the database-native expression of CDC (Change Data Capture). Rather than an external tool tailing a binary log (Debezium reading MySQL's binlog), a change feed is a first-class database API. DynamoDB Streams is one of the earliest and most widely deployed change feeds: every item-level change in a DynamoDB table is captured in an ordered stream accessible for 24 hours, consumed by Lambda functions or Kinesis. Cosmos DB Change Feed exposes an ordered, persistent log of all document changes per logical partition, used for event sourcing, cache invalidation, and search index synchronisation. CockroachDB's Change Data Capture (CDC, GA 2020) streams row-level changes to Kafka, Google Cloud Pub/Sub, or a webhook in Avro or JSON format with guaranteed ordering per key. MongoDB Change Streams (introduced in 3.6) use the oplog to emit real-time change events; Atlas Stream Processing (2024) connects change streams directly to serverless compute. PostgreSQL 10+ logical replication slots underpin change feeds in Supabase Realtime, Neon branching, and PgBouncer-based CDC solutions. The architectural value of a change feed over polling: it is push-based (no polling interval lag), it captures deletes (polling misses hard deletes), and it is ordered (consumers know the exact sequence of changes).",
+      "connector": "Think of a change feed like subscribing to a database's event log the way you subscribe to a newspaper — instead of checking whether anything changed, you receive each change the moment it is committed.",
+      "techContext": "We subscribe to Cosmos DB's change feed to keep our Elasticsearch search index in sync — every product document update streams to a Function App that re-indexes the document within 2 seconds of the write.",
+      "exampleSentence": "The change feed let the team implement a real-time notification service without polling — users receive push notifications within 500 milliseconds of a relevant document changing in Cosmos DB.",
+      "codeExample": {
+        "language": "python",
+        "code": "# Azure Cosmos DB: process a change feed in Python\nfrom azure.cosmos import CosmosClient\nimport time\n\nclient = CosmosClient(url='https://account.documents.azure.com',\n                      credential='<key>')\ncontainer = client.get_database_client('mydb') \\\n                   .get_container_client('orders')\n\n# Read change feed from the beginning\ncontinuation = None\nwhile True:\n    response = container.query_items_change_feed(\n        is_start_from_beginning=(continuation is None),\n        continuation=continuation,\n    )\n    changes = list(response)\n    for change in changes:\n        print(f\"Changed: {change['id']} status={change.get('status')}\")\n        # process: update search index, send notification, etc.\n\n    continuation = response.continuation_token\n    if not changes:\n        time.sleep(1)  # poll when caught up; feed is otherwise push"
+      },
+      "etymology": "Change from Old English cenge ('exchange'); feed from Old English fēdan ('to nourish, supply continuously'); the term popularised by Azure Cosmos DB's 'Change Feed' feature (2016) and DynamoDB Streams (2014).",
+      "unlockLevel": 36,
+      "tags": [
+        "distributed-systems",
+        "databases",
+        "stream-processing",
+        "frontier-2026"
+      ],
+      "category": "concepts",
+      "backingCard": {
+        "bookId": "distributed-data-systems",
+        "chapterId": "dds-ch13-modern-distributed-data-patterns"
+      }
+    },
+    {
+      "id": "dds-ad3-0300-0000-0000-0000-000000000030",
+      "word": "Embedded Analytics",
+      "pronunciation": "em-BED-id an-uh-LIT-iks",
+      "partOfSpeech": "noun",
+      "shortDefinition": "Running analytical queries in-process alongside application code — e.g. DuckDB — rather than in a separate data warehouse cluster.",
+      "simpleDefinition": "Embedded analytics means running analytical SQL inside the same process as your application code, using a library like DuckDB, rather than sending queries to a separate warehouse cluster over the network. This eliminates the server-provisioning overhead, network round-trips, and billing model of cloud warehouses for workloads that fit on a single machine.",
+      "longDefinition": "Traditional analytics requires a separate server process — a Redshift cluster, a BigQuery project, a Spark cluster — with a network hop from the application to the analytics engine. For a wide class of workloads this is unnecessary overhead: a data engineer transforming 100 GB of Parquet files locally, a backend service computing per-tenant aggregates over its own data, an edge compute node summarising IoT sensor data, or a notebook exploring a dataset client-side. Embedded analytics libraries provide full OLAP capability as a linked library with no server, no port, and no network. DuckDB (CWI Amsterdam, v1.0 2024) is the paradigm-defining tool: import duckdb in Python, Go, R, or Rust and execute vectorised columnar SQL against local Parquet, CSV, S3 objects, PostgreSQL, Arrow in-memory tables, or lakehouse tables (Iceberg, Delta). DuckDB-WASM (2021) takes this further, running full analytical SQL in the browser via WebAssembly. MotherDuck extends the embedded model with optional cloud spill for larger-than-RAM datasets. The distinction from HTAP: embedded analytics runs in the application process (no separate database process); HTAP is a database architecture that handles both workloads in one server. Embedded analytics represents the same architectural shift SQLite made for OLTP in 2000 — eliminating the server as a required deployment unit — but for analytical workloads.",
+      "connector": "Think of embedded analytics like a scientific calculator built into your phone — you get full computational capability wherever you are without connecting to a separate computation server.",
+      "techContext": "Our backend service uses embedded DuckDB to run per-customer analytics queries over pre-staged Parquet files in S3, returning results in 200ms without routing through Redshift and paying per-query costs.",
+      "exampleSentence": "Embedded analytics with DuckDB eliminated the separate BI cluster for internal reporting — the application server queries its own data files in-process and renders dashboards with no additional infrastructure.",
+      "codeExample": {
+        "language": "python",
+        "code": "import duckdb\n\n# Embedded analytics: no server, no network — library linked in-process\ncon = duckdb.connect()  # or persistent: duckdb.connect('analytics.duckdb')\n\n# Read Parquet from S3, run analytic query, return pandas DataFrame\ncon.execute(\"INSTALL httpfs; LOAD httpfs;\")\ncon.execute(\"SET s3_region='us-east-1';\")\n\n# Vectorised columnar aggregation over S3 Parquet files\nresult = con.execute(\"\"\"\n  SELECT\n    tenant_id,\n    date_trunc('week', event_time) AS week,\n    COUNT(*)                        AS event_count,\n    COUNT(DISTINCT user_id)         AS active_users,\n    SUM(revenue_usd)                AS total_revenue\n  FROM read_parquet(\n    's3://data/events/year=2026/**/*.parquet',\n    hive_partitioning = true\n  )\n  WHERE tenant_id = ?\n  GROUP BY 1, 2\n  ORDER BY 2 DESC\n\"\"\", ['tenant-42']).df()\n\nprint(result)"
+      },
+      "etymology": "Embedded from Latin imbedded ('set firmly into'); analytics from Greek analytikos ('able to resolve'); the compound term popularised by DuckDB's rise in the data engineering community circa 2022–2024, drawing contrast with server-based 'external analytics'.",
+      "unlockLevel": 36,
+      "tags": [
+        "distributed-systems",
+        "analytics",
+        "databases",
+        "frontier-2026"
+      ],
+      "category": "concepts",
+      "backingCard": {
+        "bookId": "distributed-data-systems",
+        "chapterId": "dds-ch13-modern-distributed-data-patterns",
+        "cardId": "dds-ch13-c009"
+      }
+    }
+  ]
+}
