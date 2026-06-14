@@ -61,3 +61,16 @@ fun deterministicUUID(input: String): String {
     return "${hex.substring(0, 8)}-${hex.substring(8, 12)}-${hex.substring(12, 16)}-" +
         "${hex.substring(16, 20)}-${hex.substring(20, 32)}"
 }
+
+/**
+ * The 16 raw bytes of a UUID string in standard (big-endian) order — byte 0 is
+ * the first hex pair. Matches Swift's `withUnsafeBytes(of: uuid.uuid)` iteration
+ * order, which SM-2's jitter hashes over.
+ */
+fun uuidBytes(uuid: String): ByteArray {
+    val hex = uuid.replace("-", "")
+    require(hex.length == 32) { "not a UUID: $uuid" }
+    return ByteArray(16) { i ->
+        ((Character.digit(hex[i * 2], 16) shl 4) or Character.digit(hex[i * 2 + 1], 16)).toByte()
+    }
+}
