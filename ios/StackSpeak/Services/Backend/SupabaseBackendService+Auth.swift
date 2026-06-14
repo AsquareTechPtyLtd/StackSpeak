@@ -117,6 +117,65 @@ extension SupabaseBackendService {
         return try apply(authData: data)
     }
 
+    // MARK: - Google (web OAuth, PKCE)
+
+    /// The custom scheme + redirect registered in Supabase → Auth → URL
+    /// Configuration. `ASWebAuthenticationSession` intercepts this scheme itself,
+    /// so it needs no Info.plist URL-type registration (and not registering it
+    /// keeps other apps from launching us on it).
+    private static let googleCallbackScheme = "stackspeak"
+    private static let googleRedirectURI = "stackspeak://auth-callback"
+
+    func signInWithGoogle(present: any WebAuthPresenting) async throws -> BackendUserID {
+        // PKCE: keep the verifier on-device; only its hash travels in the URL.
+        let verifier = PKCE.codeVerifier()
+        var components = URLComponents(
+            url: config.url.appendingPathComponent("/auth/v1/authorize"),
+            resolvingAgainstBaseURL: false)
+        components?.queryItems = [
+            URLQueryItem(name: "provider", value: "google"),
+            URLQueryItem(name: "redirect_to", value: Self.googleRedirectURI),
+            URLQueryItem(name: "code_challenge", value: PKCE.codeChallenge(for: verifier)),
+            URLQueryItem(name: "code_challenge_method", value: "s256"),
+        ]
+        guard let authorizeURL = components?.url else { throw BackendError.transport }
+
+        let callbackURL = try await present.authenticate(
+            url: authorizeURL, callbackScheme: Self.googleCallbackScheme)
+
+        guard let code = Self.queryValue("code", in: callbackURL) else {
+            // GoTrue redirects with ?error/&error_description on denial.
+            if let message = Self.queryValue("error_description", in: callbackURL)
+                ?? Self.queryValue("error", in: callbackURL) {
+                throw BackendError.message(message)
+            }
+            throw BackendError.transport
+        }
+
+        // Exchange the authorization code + verifier for a session.
+        struct Body: Encodable { let auth_code: String; let code_verifier: String }
+        var request = restRequest(path: "/auth/v1/token", query: "grant_type=pkce")
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try Self.encode(Body(auth_code: code, code_verifier: verifier))
+        let (data, response) = try await send(request)
+        try Self.checkREST(data, response)
+        return try apply(authData: data)
+    }
+
+    /// Reads a parameter from a redirect URL, checking both the query and the
+    /// fragment (GoTrue places OAuth params in either depending on flow).
+    private static func queryValue(_ name: String, in url: URL) -> String? {
+        let components = URLComponents(url: url, resolvingAgainstBaseURL: false)
+        if let value = components?.queryItems?.first(where: { $0.name == name })?.value {
+            return value
+        }
+        guard let fragment = components?.fragment else { return nil }
+        var fragmentComponents = URLComponents()
+        fragmentComponents.percentEncodedQuery = fragment
+        return fragmentComponents.queryItems?.first(where: { $0.name == name })?.value
+    }
+
     private func refresh(refreshToken: String) async throws -> BackendUserID {
         var request = restRequest(path: "/auth/v1/token", query: "grant_type=refresh_token")
         request.httpMethod = "POST"

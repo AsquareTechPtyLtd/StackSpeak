@@ -18,6 +18,9 @@ struct SyncAccountSection: View {
     @AppStorage(SyncDefaults.accountLinkedKey) private var linked = false
     @AppStorage(SyncDefaults.lastSyncedAtKey) private var lastSyncedAt = 0.0
     @State private var rawNonce = ""
+    // Retained for the lifetime of the view: ASWebAuthenticationSession holds its
+    // presentation-context provider weakly, so the presenter must outlive the flow.
+    @State private var googleAuth = WebAuthPresenter()
     @State private var errorMessage: String?
     @State private var statusMessage: String?
     @State private var isWorking = false
@@ -102,6 +105,16 @@ struct SyncAccountSection: View {
         .signInWithAppleButtonStyle(theme.systemColorScheme == .dark ? .white : .black)
         .frame(height: 44)
         .clipShape(.rect(cornerRadius: RadiusTokens.card))
+        .disabled(isWorking)
+
+        Button { signInWithGoogle() } label: {
+            Text("profile.sync.google")
+                .font(TypographyTokens.subheadline.weight(.medium))
+                .foregroundColor(theme.colors.accent)
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, theme.spacing.sm)
+        }
+        .buttonStyle(.plain)
         .disabled(isWorking)
 
         Button { showEmailAuth = true } label: {
@@ -199,6 +212,27 @@ struct SyncAccountSection: View {
                     .syncIfEligible()
             } catch {
                 errorMessage = error.localizedDescription
+            }
+        }
+    }
+
+    private func signInWithGoogle() {
+        guard let services else { return }
+        isWorking = true
+        errorMessage = nil
+        statusMessage = nil
+        Task {
+            defer { isWorking = false }
+            do {
+                _ = try await services.backend.signInWithGoogle(present: googleAuth)
+                linked = true
+                await SyncCoordinator(backend: services.backend, modelContext: modelContext)
+                    .syncIfEligible()
+            } catch {
+                // Swallow the user simply dismissing the web-auth sheet.
+                if (error as? ASWebAuthenticationSessionError)?.code != .canceledLogin {
+                    errorMessage = error.localizedDescription
+                }
             }
         }
     }

@@ -15,6 +15,10 @@ struct NoOpBackendService: BackendService {
         throw BackendError.notConfigured
     }
 
+    func signInWithGoogle(present: any WebAuthPresenting) async throws -> BackendUserID {
+        throw BackendError.notConfigured
+    }
+
     func signUpWithEmail(_ email: String, password: String) async throws -> EmailSignUpResult {
         throw BackendError.notConfigured
     }

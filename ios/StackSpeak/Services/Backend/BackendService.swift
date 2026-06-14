@@ -25,6 +25,13 @@ protocol BackendService: Sendable {
     @discardableResult
     func signInWithApple(idToken: String, rawNonce: String) async throws -> BackendUserID
 
+    /// Signs in through a provider's web OAuth flow (Google) using PKCE. The
+    /// `present` seam runs the system web-auth sheet and returns the callback
+    /// URL; all OAuth/PKCE specifics stay inside the backend so nothing leaks to
+    /// the UI. Establishes the provider-linked session, like `signInWithApple`.
+    @discardableResult
+    func signInWithGoogle(present: any WebAuthPresenting) async throws -> BackendUserID
+
     /// Creates an email/password account. Returns `.signedIn` when a session is
     /// issued immediately, or `.confirmationRequired` when the project requires
     /// the user to confirm via an emailed link before first sign-in.
@@ -45,6 +52,17 @@ protocol BackendService: Sendable {
 
     /// Forgets the local session (sign-out). Does not delete remote data.
     func signOut() async
+}
+
+/// Presents a provider's web OAuth flow and returns the final callback URL.
+/// Implemented in the app layer (it wraps `ASWebAuthenticationSession`, which
+/// needs a window anchor); injected into the backend so AuthenticationServices /
+/// UIKit never leak into `SupabaseBackendService`.
+protocol WebAuthPresenting: Sendable {
+    /// Opens `url` in a system web-auth sheet and resolves with the redirect URL
+    /// once the provider calls back to `callbackScheme://…`. Throws on
+    /// user-cancel (`ASWebAuthenticationSessionError.canceledLogin`) or failure.
+    func authenticate(url: URL, callbackScheme: String) async throws -> URL
 }
 
 /// Opaque backend user identifier (a Supabase `auth.users.id` today).
@@ -83,4 +101,12 @@ enum BackendError: Error, Equatable {
         default: return String(localized: "sync.error.generic")
         }
     }
+}
+
+// Conform to LocalizedError so `(error as Error).localizedDescription` — the form
+// used in catch blocks — surfaces our message instead of the generic NSError
+// bridge. Without this, `BackendError.message("…")` would display as
+// "The operation couldn't be completed…".
+extension BackendError: LocalizedError {
+    var errorDescription: String? { localizedDescription }
 }
