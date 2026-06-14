@@ -31,6 +31,8 @@ struct HomeView: View {
     @State var showNotificationBanner = false
     @State var showNotificationPrompt = false
     @State private var showStackManagement = false
+    @State var showWordGoalEditor = false
+    @State var showProSheet = false
     @State var path: [UUID] = []
 
     // Fresh-install / reinstall restore nudge: shown on Home only while there's
@@ -91,6 +93,29 @@ struct HomeView: View {
                     StackManagementView()
                 }
             }
+            .sheet(isPresented: $showWordGoalEditor) {
+                DailyWordGoalSheet(
+                    current: userProgress?.dailyWordGoal ?? 5,
+                    onApply: applyWordGoal
+                )
+                .presentationDetents([.medium])
+            }
+            .sheet(isPresented: $showProSheet) {
+                ProGateSheet()
+            }
+    }
+
+    /// Applies a new daily word goal (Pro): reshapes today's set immediately and
+    /// reloads. The synced preference propagates on the next sync cycle.
+    private func applyWordGoal(_ goal: Int) {
+        guard let progress = userProgress, let services else { return }
+        do {
+            try services.word.setDailyWordGoal(goal, userProgress: progress)
+        } catch {
+            viewModel.errorMessage = error.localizedDescription
+            return
+        }
+        Task { await viewModel.loadTodaysWords(wordService: services.word, userProgress: progress) }
     }
 
     private var mainZStack: some View {

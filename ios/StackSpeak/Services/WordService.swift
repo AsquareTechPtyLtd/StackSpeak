@@ -132,7 +132,7 @@ final class WordService: WordRepository {
             from: shuffled,
             startingAt: userProgress.wordQueueCursor,
             userProgress: userProgress,
-            count: 5
+            count: Self.effectiveDailyGoal(userProgress)
         )
 
         // No qualifying words yet (e.g. user's selectedStacks haven't been finalized).
@@ -156,6 +156,52 @@ final class WordService: WordRepository {
         modelContext.insert(dailySet)
         try modelContext.save()
         return dailySet
+    }
+
+    /// Minimum words/day a user can set. No maximum — the daily set naturally
+    /// tops out at however many words currently qualify.
+    static let minDailyWordGoal = 3
+
+    /// The clamped daily goal used for selection.
+    static func effectiveDailyGoal(_ userProgress: UserProgress) -> Int {
+        max(minDailyWordGoal, userProgress.dailyWordGoal)
+    }
+
+    /// Sets the daily word goal and reshapes today's set in place so the change
+    /// takes effect immediately: growing appends fresh qualifying words from the
+    /// queue, shrinking trims trailing words. The `DailySet`'s completion set is
+    /// preserved, so already-practiced words stay done.
+    @discardableResult
+    func setDailyWordGoal(_ goal: Int, userProgress: UserProgress) throws -> DailySet {
+        let clamped = max(Self.minDailyWordGoal, goal)
+        userProgress.dailyWordGoal = clamped
+
+        let dayString = DailySet.todayString()
+        let descriptor = FetchDescriptor<DailySet>(predicate: #Predicate { $0.dayString == dayString })
+        guard let set = try modelContext.fetch(descriptor).first, !set.wordIds.isEmpty else {
+            // Nothing generated yet today — produce a fresh set at the new goal.
+            return try generateDailySet(for: Date(), userProgress: userProgress)
+        }
+
+        let current = set.wordIds
+        if clamped > current.count {
+            let allWords = try modelContext.fetch(FetchDescriptor<Word>())
+            let shuffled = deterministicShuffle(allWords, seed: userProgress.shuffleSeed)
+            let (more, newCursor) = selectQualifyingWords(
+                from: shuffled,
+                startingAt: userProgress.wordQueueCursor,
+                userProgress: userProgress,
+                count: clamped - current.count
+            )
+            let existing = Set(current)
+            set.wordIds = current + more.map(\.id).filter { !existing.contains($0) }
+            userProgress.wordQueueCursor = newCursor
+        } else if clamped < current.count {
+            set.wordIds = Array(current.prefix(clamped))
+        }
+
+        try modelContext.save()
+        return set
     }
 
     func fetchWord(byId id: UUID) throws -> Word? {

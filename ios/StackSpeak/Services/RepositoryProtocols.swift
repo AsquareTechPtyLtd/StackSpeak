@@ -13,6 +13,8 @@ protocol WordRepository {
     func fetchWord(byId id: UUID) throws -> Word?
     func fetchWords(matching query: String, filters: WordFilters) throws -> [Word]
     func generateDailySet(for date: Date, userProgress: UserProgress) throws -> DailySet
+    @discardableResult
+    func setDailyWordGoal(_ goal: Int, userProgress: UserProgress) throws -> DailySet
 }
 
 /// Protocol for user progress data access

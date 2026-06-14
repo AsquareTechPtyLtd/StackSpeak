@@ -15,7 +15,9 @@ import Foundation
 /// `schemaVersion` lets future shape changes migrate safely; `updatedAt` drives
 /// last-write/merge decisions during sync.
 struct ProgressSnapshot: Codable, Equatable {
-    static let currentSchemaVersion = 1
+    // v2 (2026-06): added `dailyWordGoal`. Optional so pre-v2 rows still decode
+    // (a missing value is treated as the default 5 on apply).
+    static let currentSchemaVersion = 2
 
     var schemaVersion: Int
     var updatedAt: Date
@@ -38,6 +40,9 @@ struct ProgressSnapshot: Codable, Equatable {
     var selectedStacks: [String]
     var shuffleSeed: String
     var wordQueueCursor: Int
+
+    // Preference (v2+). Optional/defaulted so pre-v2 snapshots still decode.
+    var dailyWordGoal: Int? = nil
 
     // Sub-records
     var reviewStates: [ReviewStateDTO]

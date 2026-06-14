@@ -20,6 +20,9 @@ extension SyncCoordinator {
         p.wordsWithTwoCorrectIds = Self.uuids(s.wordsWithTwoCorrectIds)
         p.wordsCreditedForLevelIds = Self.uuids(s.wordsCreditedForLevelIds)
         p.selectedStacks = Set(s.selectedStacks)
+        // Only apply when present — a pre-v2 snapshot omits it, and we must not
+        // clobber the local default with a missing value.
+        if let goal = s.dailyWordGoal { p.dailyWordGoal = goal }
 
         applyReviewStates(s.reviewStates, to: p)
         applyAssessmentResults(s.assessmentResults, to: p)

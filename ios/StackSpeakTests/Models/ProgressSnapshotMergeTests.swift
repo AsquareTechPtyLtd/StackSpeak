@@ -29,6 +29,22 @@ struct ProgressSnapshotMergeTests {
         #expect(m.bookmarkedWordIds == ["b1"])
     }
 
+    @Test("dailyWordGoal is last-write-wins by updatedAt (a preference, not monotonic)")
+    func dailyWordGoalLastWriteWins() {
+        var older = base(updatedAt: Date(timeIntervalSince1970: 1000)); older.dailyWordGoal = 5
+        var newer = base(updatedAt: Date(timeIntervalSince1970: 2000)); newer.dailyWordGoal = 9
+        // The side written later wins regardless of argument order.
+        #expect(ProgressSnapshot.merge(local: older, remote: newer).dailyWordGoal == 9)
+        #expect(ProgressSnapshot.merge(local: newer, remote: older).dailyWordGoal == 9)
+    }
+
+    @Test("A newer pre-v2 snapshot (nil goal) merges to nil → apply defaults to 5")
+    func dailyWordGoalNilFromOlderSchema() {
+        let newerNoGoal = base(updatedAt: Date(timeIntervalSince1970: 2000)) // v1: goal nil
+        var olderWithGoal = base(updatedAt: Date(timeIntervalSince1970: 1000)); olderWithGoal.dailyWordGoal = 7
+        #expect(ProgressSnapshot.merge(local: newerNoGoal, remote: olderWithGoal).dailyWordGoal == nil)
+    }
+
     @Test("Un-bookmarking on the newer device is honoured")
     func bookmarkLastWriteWins() {
         var a = base(updatedAt: Date(timeIntervalSince1970: 2000))

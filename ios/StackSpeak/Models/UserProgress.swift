@@ -45,6 +45,11 @@ final class UserProgress {
     var wordsLoadedToday: Int = 0
     var lastWordsLoadedResetDate: Date = Date.distantPast
 
+    /// How many vocab words land each day. Default 5; Pro users can set any value
+    /// ≥ 3 (no upper cap — the daily set tops out at the qualifying pool). Synced
+    /// across devices as a preference (last-write-wins).
+    var dailyWordGoal: Int = 5
+
     // MARK: - Book reading preferences
 
     /// `nil` means unlimited (the default). A value sets a global daily cap across all books.

@@ -38,6 +38,8 @@ extension ProgressSnapshot {
             // from the other seed would produce wrong word ordering.
             shuffleSeed: newerByUpdate.shuffleSeed,
             wordQueueCursor: newerByUpdate.wordQueueCursor,
+            // Preference — last-write-wins, like bookmarks/selectedStacks above.
+            dailyWordGoal: newerByUpdate.dailyWordGoal,
             reviewStates: mergeReviewStates(local.reviewStates, remote.reviewStates),
             assessmentResults: mergeById(local.assessmentResults, remote.assessmentResults, id: \.id),
             practicedSentences: mergeSentences(local.practicedSentences, remote.practicedSentences),

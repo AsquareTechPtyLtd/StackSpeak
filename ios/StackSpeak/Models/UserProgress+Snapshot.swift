@@ -24,6 +24,7 @@ extension UserProgress {
             selectedStacks: selectedStacks.sorted(),
             shuffleSeed: shuffleSeed.uuidString,
             wordQueueCursor: wordQueueCursor,
+            dailyWordGoal: dailyWordGoal,
             reviewStates: reviewStates.map {
                 .init(wordId: $0.wordId.uuidString, easinessFactor: $0.easinessFactor,
                       interval: $0.interval, repetitions: $0.repetitions,
