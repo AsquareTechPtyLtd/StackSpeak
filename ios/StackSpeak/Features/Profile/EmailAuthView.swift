@@ -108,6 +108,10 @@ struct EmailAuthView: View {
     private func finishLinked() async {
         guard let services else { return }
         linked = true
+        // Pick up an existing same-Apple-ID purchase so a returning user doesn't
+        // have to tap "Get Pro" / Restore after signing in. Runs before sync so a
+        // just-activated entitlement lets the (Pro-gated) sync run this pass.
+        await services.purchase.refreshEntitlement()
         await SyncCoordinator(backend: services.backend, modelContext: modelContext).syncIfEligible()
         dismiss()
     }

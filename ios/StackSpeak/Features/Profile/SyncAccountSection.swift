@@ -206,6 +206,9 @@ struct SyncAccountSection: View {
             do {
                 _ = try await services.backend.signInWithApple(idToken: idToken, rawNonce: rawNonce)
                 linked = true
+                // Pick up an existing same-Apple-ID purchase so a returning user
+                // doesn't have to tap "Get Pro" / Restore after signing in.
+                await services.purchase.refreshEntitlement()
                 // Push local progress up to the now-linked account immediately.
                 // No-ops until Pro is active (gated inside the coordinator).
                 await SyncCoordinator(backend: services.backend, modelContext: modelContext)
@@ -226,6 +229,9 @@ struct SyncAccountSection: View {
             do {
                 _ = try await services.backend.signInWithGoogle(present: googleAuth)
                 linked = true
+                // Pick up an existing same-Apple-ID purchase so a returning user
+                // doesn't have to tap "Get Pro" / Restore after signing in.
+                await services.purchase.refreshEntitlement()
                 await SyncCoordinator(backend: services.backend, modelContext: modelContext)
                     .syncIfEligible()
             } catch {
