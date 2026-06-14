@@ -1,0 +1,1181 @@
+{
+  "chapterId": "dbi-ch13-modern-database-patterns",
+  "shardIndex": 13,
+  "cards": [
+    {
+      "id": "dbi-ch13-c001",
+      "order": 1,
+      "title": "Serverless OLTP Engines",
+      "teaser": "Aurora Serverless, PlanetScale, and Neon decouple billing from provisioning — you pay for transactions, not idle servers. Achieving this without sacrificing ACID guarantees required fundamental re-thinking of how a transactional engine allocates compute.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Traditional RDBMS provisioning is a binary choice: the server is either running (and billing you) or stopped (and unavailable). Serverless OLTP engines break that coupling. The unit of cost becomes the request or the compute-second, and the engine must be able to scale from zero to serving traffic in sub-second time."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Three distinct engine architectures have converged on this goal:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Aurora Serverless v2 (2022)",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — Aurora decoupled the MySQL/PostgreSQL compute layer from storage entirely (see card 2). Serverless v2 adds fractional ACU (Aurora Capacity Unit) scaling: the engine scales in increments of 0.5 ACU, adjusting every few seconds based on connection count and CPU pressure. The storage layer is always warm; only compute scales to zero. Cold start is under 5 seconds because the log-structured storage already contains all state — no data files to hydrate."
+              }
+            ],
+            [
+              {
+                "text": "PlanetScale (Vitess + MySQL, 2021–2025)",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — built on Vitess sharding middleware atop MySQL. PlanetScale's \"schema changes without locks\" feature (non-blocking DDL via ghost tables) and branching model (database branches like git branches) made it popular for Next.js / Vercel deployments. The serverless pricing is per-row-read/write, not per instance. In 2025, PlanetScale dropped its free tier, signalling that pure serverless OLTP economics remain difficult without vertical integration."
+              }
+            ],
+            [
+              {
+                "text": "Neon (2022–2026)",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — a cloud-native Postgres fork that separates the Postgres compute process from a custom Zenith storage layer (now called Neon Storage). Compute can scale to zero in seconds; wakeup takes ~500 ms because the storage layer retains all page state. Branching is instant (copy-on-write at the storage layer) — used heavily for preview environments and CI. The engine is open-source and designed for multi-tenant serverless from day one."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "info",
+          "runs": [
+            {
+              "text": "The critical engineering challenge in all three: connection pooling. Postgres and MySQL open a process or thread per connection — incompatible with thousands of transient serverless functions. Aurora uses a proxy (RDS Proxy), PlanetScale multiplexes at the Vitess vtgate layer, and Neon ships a built-in connection pooler (PgBouncer integration) as a first-class feature."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Serverless OLTP means the database bills you per query, not per hour of server uptime. Making that work requires separating compute from storage so compute can vanish when idle and restart in under a second when a query arrives — without losing any committed data."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "dbi-ch13-c002",
+      "order": 2,
+      "title": "Compute-Storage Separation: Aurora's Architecture",
+      "teaser": "Amazon Aurora (2014) redrew the boundary between compute and storage for a relational database. Instead of replicating data pages, Aurora replicates only redo log records — six copies across three AZs. The storage nodes apply the log. No dirty-page flushing, no double-write buffer.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The seminal paper is Verbitski et al., \"Amazon Aurora: Design Considerations for High Throughput Cloud-Native Relational Databases\" (SIGMOD 2017). The central claim: \"The log is the database.\" In a traditional RDBMS, the WAL and the data files are separate artefacts. Aurora eliminates data-file writes from the critical path entirely."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The architecture:"
+            }
+          ]
+        },
+        {
+          "type": "code",
+          "language": "text",
+          "text": "                    ┌──────────────────────────┐\n                    │   Aurora Compute Node     │\n                    │  (MySQL/Postgres process) │\n                    │  - Runs SQL, optimizer,   │\n                    │    buffer pool            │\n                    │  - Emits redo log records │\n                    └───────────┬──────────────┘\n                                │  redo log records only\n                                │  (NO data page writes)\n              ┌─────────────────▼──────────────────────┐\n              │         Aurora Storage Service          │\n              │                                         │\n              │  AZ-1          AZ-2          AZ-3       │\n              │  [seg A] [seg B]  [seg C] [seg D]  ...  │\n              │   6 copies across 3 AZs, 2 per AZ      │\n              │  Each segment independently applies log │\n              │  Quorum write: 4/6 ACKs needed          │\n              │  Quorum read:  3/6 ACKs needed          │\n              └─────────────────────────────────────────┘"
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "What this eliminates compared to traditional MySQL with synchronous replication:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "No double-write buffer.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " MySQL's InnoDB writes every page twice to avoid partial-page writes. Aurora storage uses 10 GiB segment-level checksums and log-based recovery — partial writes are detected and repaired from log."
+              }
+            ],
+            [
+              {
+                "text": "No dirty-page flush on checkpoint.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " The storage layer applies log records lazily. The compute node's buffer pool is purely a cache — eviction is cheap because the storage layer holds all truth."
+              }
+            ],
+            [
+              {
+                "text": "No cross-AZ page replication.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " A 16 KiB InnoDB page write is 16 KiB of network traffic per replica. A redo log record for that same change is typically 100–200 bytes. Aurora's network amplification for a write is 6 log records × ~150 bytes versus the traditional 16 KiB × N replicas."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "warning",
+          "runs": [
+            {
+              "text": "Aurora's approach ties compute and storage contracts together — you cannot independently scale the storage layer to a non-AWS provider. Neon's open-source Zenith storage layer is a community attempt to replicate the pattern outside AWS, but as of 2026 it covers Postgres only and has different failure semantics."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Aurora sends only tiny redo log records to storage — never full 16 KiB pages. Storage nodes reconstruct pages from the log on demand. This eliminates the most expensive I/O in a traditional database: flushing dirty pages and replicating them to every replica."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "dbi-ch13-c003",
+      "order": 3,
+      "title": "Aurora's Failure Semantics: Quorum Writes and Self-Healing",
+      "teaser": "Aurora's 4-of-6 quorum write model tolerates the simultaneous failure of an entire AZ plus one additional node without data loss — and without the compute node ever knowing. Self-healing repair runs in the background at the storage tier.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Aurora partitions the storage volume into 10 GiB segments (called Protection Groups). Each segment has six copies distributed two-per-AZ across three availability zones. Every write to a segment requires ACKs from 4 of 6 copies; every read requires 3 of 6. These quorum numbers satisfy the \"Vw + Vr > V\" condition (4 + 3 > 6), guaranteeing that reads always overlap with the most recent write quorum."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Failure tolerance breakdown:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Loss of 1 AZ (2 copies) + 1 additional node:",
+                "marks": ["bold"]
+              },
+              {
+                "text": " 3 copies remain. Writes are temporarily suspended (cannot reach quorum of 4), but the compute node blocks rather than fails. Reads continue from the 3 surviving copies."
+              }
+            ],
+            [
+              {
+                "text": "Loss of 1 AZ (2 copies):",
+                "marks": ["bold"]
+              },
+              {
+                "text": " 4 copies remain — enough for a write quorum. The database continues serving full read/write traffic. Background repair immediately begins copying the two lost segments to replacement nodes."
+              }
+            ],
+            [
+              {
+                "text": "Background self-healing:",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Aurora storage monitors segment health continuously. When a node is detected as slow or failed, the storage service begins copying the affected segment to a new node before the compute layer is even aware. Mean repair time is measured in seconds (10 GiB segment / 10 GiB/s internal bandwidth ≈ 1 second), far shorter than the hours-long MTTR in traditional RAID-based systems."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "info",
+          "runs": [
+            {
+              "text": "The paper notes that the biggest tail-latency win comes from \"jitter absorption\" — the 4-of-6 quorum means a single slow storage node (the classic cloud \"noisy neighbour\" problem) is ignored rather than becoming the bottleneck. Traditional synchronous replication blocks on the slowest replica; Aurora's quorum discards it."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Aurora keeps 6 copies of every 10 GiB chunk across 3 data centres. A write succeeds when 4 copies confirm it. Lose an entire data centre? You still have 4 copies — writes keep flowing. Background repair restores the 6th copy in about a second."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "dbi-ch13-c004",
+      "order": 4,
+      "title": "HTAP Engines: Row and Column in One System",
+      "teaser": "HTAP (Hybrid Transactional/Analytical Processing) engines serve both OLTP and OLAP workloads without an ETL pipeline in between. The key architectural challenge: row stores are fast for point writes; column stores are fast for aggregate scans. Serving both from one engine requires a dual-format storage tier.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Gartner coined the term HTAP in 2014, but the architectural problem predates the label. SAP HANA (2010) was the first widely deployed HTAP system; its in-memory column store allowed fresh-data analytics. The 2020s generation separated the two storage formats more explicitly and added asynchronous replication between them."
+            }
+          ]
+        },
+        {
+          "type": "code",
+          "language": "text",
+          "text": "  Write path (OLTP)          Read path (OLAP)\n  ─────────────────          ─────────────────\n  INSERT / UPDATE            SELECT COUNT(*), SUM(...)\n       │                     GROUP BY region, month\n       ▼                              │\n  ┌─────────────┐                     │\n  │  Row Store  │  async replication  │\n  │  (InnoDB /  │ ─────────────────►  ▼\n  │  TiKV etc.) │              ┌─────────────┐\n  └─────────────┘              │ Column Store│\n       │                       │ (TiFlash /  │\n  Raft consensus               │ DeltaStore) │\n  (TiDB Raft groups)           └─────────────┘\n  strong consistency           eventual consistency\n  for writes                   (seconds lag)"
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Key 2020s HTAP engines:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "TiDB + TiFlash (PingCAP, 2020)",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — TiDB stores OLTP data in TiKV (a Raft-based distributed KV store using RocksDB). TiFlash is a separate columnar replica synchronised from TiKV in real time via Raft learner replication. The optimizer routes analytical queries to TiFlash and transactional queries to TiKV automatically. Freshness lag is typically 1–5 seconds. TiFlash uses a Delta-Tree storage format: a memtable for recent deltas plus compacted columnar files."
+              }
+            ],
+            [
+              {
+                "text": "SingleStore (formerly MemSQL, 2020–2025)",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — maintains a row-oriented in-memory rowstore for freshly written rows and an on-disk columnstore for compacted data. The \"Universal Storage\" engine (introduced in 2020) unifies the two: rows start in the rowstore and are asynchronously flushed to the columnstore. A single query can span both halves. By 2025, SingleStore dominated HTAP use in financial services and ad-tech."
+              }
+            ],
+            [
+              {
+                "text": "Oracle Database In-Memory (2014, matured 2020–2024)",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — adds a dual-format buffer (the In-Memory Column Store, IMCS) alongside Oracle's traditional row-format buffer cache. The IMCS is populated asynchronously and kept consistent via redo log application. Oracle 23c (2024) added automatic In-Memory population hints driven by query frequency."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "info",
+          "runs": [
+            {
+              "text": "The \"freshness vs. query speed\" trade-off is fundamental to HTAP. TiFlash's Raft learner approach guarantees ordered replication but incurs cross-node network round-trips. SingleStore's in-process rowstore→columnstore flush is faster but couples compute and storage on the same node — limiting independent scaling."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "An HTAP engine keeps two copies of your data internally — one in row format for fast transactional writes, one in column format for fast analytical scans. The engine routes queries to the right copy automatically, cutting the ETL pipeline that traditionally separated operational and analytical databases."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "dbi-ch13-c005",
+      "order": 5,
+      "title": "Vectorised Columnar Engines: DuckDB and ClickHouse",
+      "teaser": "Vectorised query execution processes data in batches of thousands of values — matching the width of CPU SIMD registers — rather than one row at a time. DuckDB (2019) brought this technique to an embeddable analytical engine; ClickHouse (2016) applied it to a distributed column store at internet scale.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The Volcano execution model (Graefe 1990) processes one row at a time: each operator calls next() on its child operator and receives a single tuple. At modern CPU speeds, the overhead of function call dispatch, pointer chasing, and type checks per row dominates actual work. Vectorised execution, formalised by Boncz, Zukowski, and Nes in \"MonetDB/X100: Hyper-Pipelining Query Execution\" (CIDR 2005), batches tuples into vectors of 1,024 to 8,192 values and processes an entire vector per operator call."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "CPU benefits of vector execution:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "SIMD auto-vectorisation.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " A loop over a contiguous int64 array of 1,024 values can be compiled to AVX-512 instructions that process 8 values per CPU cycle. The same loop over a row-oriented record struct cannot."
+              }
+            ],
+            [
+              {
+                "text": "Cache locality.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Columnar storage puts all values of a single column contiguously on disk and in memory. Scanning a 10-column table for a 1-column aggregate loads 1/10th the cache lines of row storage."
+              }
+            ],
+            [
+              {
+                "text": "Branch elimination.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " NULL handling, type checks, and predicate evaluation on a vector can use bitmask operations rather than per-row branches, reducing branch misprediction stalls."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "DuckDB (Mark Raasveldt and Hannes Mühleisen, CWI, 2019) is the canonical modern embedded vectorised engine. Key design choices: (1) columnar-vectorised execution with Apache Arrow-compatible memory layout; (2) no server process — embedded as a library like SQLite; (3) push-based execution model (operators push vectors downstream rather than pull) for better CPU pipeline utilisation; (4) automatic parallelism using all available CPU cores per query. DuckDB 1.0 shipped in January 2024 and by 2026 is standard infrastructure for Python data science workflows."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "ClickHouse (Yandex open-sourced 2016, ClickHouse Inc. 2021) applies the same vectorised approach to a distributed column store. Its MergeTree storage engine stores data in immutable columnar parts, sorted by a primary key, with background merging (similar to LSM compaction but with different merge semantics — no tombstones, just merging sorted runs). ClickHouse can sustain 100+ billion row inserts per day on commodity hardware by batching inserts into large parts and exploiting column compression aggressively."
+            }
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "info",
+          "runs": [
+            {
+              "text": "Apache Arrow (2016) is the in-memory columnar format that DuckDB, Polars, pandas 2.0, and many other tools share. Arrow eliminates serialisation cost when data moves between engines — a DuckDB query result handed to a Python Arrow table requires zero copying. This cross-tool zero-copy ecosystem is a fundamental shift in analytical data stack design."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Vectorised engines process thousands of values in one loop iteration instead of one row at a time — letting the CPU use SIMD instructions that multiply throughput. DuckDB brought this to an embeddable library you can drop into a Python script; ClickHouse applies it to a distributed cluster serving 100 billion rows a day."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "dbi-ch13-c006",
+      "order": 6,
+      "title": "Embedded Database Engines: The DB-as-Library Pattern",
+      "teaser": "SQLite, DuckDB, LMDB, and RocksDB share a defining architectural choice: they are libraries, not servers. The application process links the engine directly. No network sockets, no inter-process communication, no separate daemon to manage.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Richard Hipp wrote SQLite in 2000 for the US Navy, where process overhead and network stacks were unacceptable. The embedded model he established — a complete relational engine callable as a C library — is now the dominant deployment model for databases inside mobile apps, browsers, IoT firmware, and edge functions. SQLite is estimated to have over 1 trillion deployed instances, making it the most-deployed database engine in history."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Key embedded engines and their storage designs:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "SQLite",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — a single cross-platform file (the .db file). Uses a B-tree per table (clustered by rowid) and a separate B-tree per index. WAL mode (introduced 2010) allows concurrent readers during a write. Pages are 4 KiB by default. The full source is ~150 KLOC of carefully tested C with 100% branch coverage in its test suite."
+              }
+            ],
+            [
+              {
+                "text": "LMDB (Lightning Memory-Mapped Database)",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — Howard Chu (Symas Corp) wrote LMDB for OpenLDAP in 2011. It is a pure B+-tree using memory-mapped I/O (mmap). Writes use copy-on-write page allocation — never modifying an existing page in-place — giving it a single-writer/multiple-readers MVCC model with no write-ahead log at all. Durability comes from the OS page cache's mmap flush semantics. Extremely fast reads; single-writer bottleneck limits write throughput."
+              }
+            ],
+            [
+              {
+                "text": "RocksDB",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — Facebook forked LevelDB in 2012 and evolved it into a production-grade embedded LSM-tree engine. Used internally as the storage layer inside TiKV, CockroachDB, YugabyteDB, and MyRocks (MySQL + RocksDB). Key additions over LevelDB: column families, bloom filters per SST level, rate-limited compaction, merge operators, and pluggable compaction strategies."
+              }
+            ],
+            [
+              {
+                "text": "DuckDB",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — the analytical counterpart. Embedded columnar OLAP. Can query Parquet, CSV, and Arrow files in-place without loading them into a database first. By 2026, common in data engineering pipelines as a local-first analytical engine before results are pushed to a warehouse."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "info",
+          "runs": [
+            {
+              "text": "The \"libSQL\" project (2022) is a community fork of SQLite targeting cloud-native embedded use: remote replicas, multi-tenancy, and HTTP-based access (for Cloudflare Workers, edge functions). It demonstrates how the embedded pattern is being extended into the serverless era — retaining the zero-server simplicity while adding cloud-native replication."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "An embedded database is a library you link into your program, not a separate server you connect to. SQLite, LMDB, RocksDB, and DuckDB all work this way — no network overhead, no daemon to manage, the database lives in the process just like any other data structure."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "dbi-ch13-c007",
+      "order": 7,
+      "title": "pgvector Internals: HNSW and IVFFlat in Postgres",
+      "teaser": "pgvector (2021) adds vector similarity search to Postgres. It ships two index types — IVFFlat (inverted file with flat quantisation) and HNSW (Hierarchical Navigable Small World) — each making a different trade-off between build time, query speed, and recall accuracy.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Vector similarity search answers: \"given a query vector, return the K nearest neighbours from a stored set of N vectors.\" The naive approach — compute distance to every stored vector — is O(N·d) where d is the vector dimension (typically 768–3,072 for large language model embeddings). At N = 10 million and d = 1,536 (OpenAI Ada-002 dimensions), a full table scan takes seconds. Approximate Nearest Neighbour (ANN) indexes trade a small amount of recall accuracy for orders-of-magnitude speed improvement."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "pgvector's IVFFlat (inverted file with flat storage):"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Build phase:",
+                "marks": ["bold"]
+              },
+              {
+                "text": " k-means clusters the dataset into lists (typically sqrt(N) lists). Each vector is assigned to its nearest centroid. The index stores, per list, the raw vectors sorted by distance to the centroid."
+              }
+            ],
+            [
+              {
+                "text": "Query phase:",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Compute distance from query vector to all centroids. Scan the top-probes lists (default probes=1). Exact nearest-neighbour search within each scanned list. Increasing probes improves recall at the cost of scanning more vectors."
+              }
+            ],
+            [
+              {
+                "text": "Weakness:",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Requires a full build pass over all data before the index is usable (cannot insert incrementally without degrading partition quality). Recall at probes=1 can be 70–80% on real datasets — often insufficient for semantic search."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "pgvector's HNSW (added in pgvector 0.5.0, 2023; algorithm by Malkov and Yashunin, 2018):"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Graph structure:",
+                "marks": ["bold"]
+              },
+              {
+                "text": " A layered proximity graph. Layer 0 contains all vectors, each connected to its M nearest neighbours (default M=16). Higher layers are exponentially thinned subsets of layer 0, forming a \"highway\" of long-range connections for fast traversal."
+              }
+            ],
+            [
+              {
+                "text": "Query phase:",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Enter at a fixed entry point in the top layer. Greedily traverse neighbours toward the query vector. Descend to the next layer and repeat. At layer 0, maintain a candidate priority queue of ef_search (default 40) candidates. Return the top K."
+              }
+            ],
+            [
+              {
+                "text": "Postgres integration challenge:",
+                "marks": ["bold"]
+              },
+              {
+                "text": " HNSW is an in-memory graph in the original paper. pgvector stores the graph in Postgres buffer pages, meaning graph traversal requires buffer pool lookups — cache misses become the dominant cost. The implementation uses a custom page layout where each \"node\" page stores the vector and its M link pointers."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "warning",
+          "runs": [
+            {
+              "text": "HNSW's build time is O(N · M · log N) — far slower than IVFFlat — and requires holding the entire graph in memory during build for large datasets. The pgvector implementation uses disk-based construction which is slower still. For 100M+ vector datasets, dedicated vector databases (Pinecone, Weaviate, Qdrant) with memory-optimised HNSW implementations outperform pgvector significantly."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "pgvector adds two index types to Postgres for finding similar vectors. IVFFlat clusters vectors into buckets at build time and searches only the closest buckets — fast but needs a full rebuild when data grows. HNSW builds a multi-layer navigation graph and finds neighbours by walking it — higher recall, slower to build, but incrementally insertable."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "dbi-ch13-c008",
+      "order": 8,
+      "title": "Multi-Master Engines: CockroachDB and YugabyteDB",
+      "teaser": "CockroachDB and YugabyteDB achieve globally distributed SQL with multi-master writes by layering Raft consensus over each shard, using MVCC for cross-shard conflict detection, and implementing a transaction coordinator that spans Raft groups with a two-phase commit backed by clock uncertainty bounds.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The Spanner paper (Corbett et al., OSDI 2012) established that serialisable distributed SQL is achievable with atomic clocks (TrueTime). CockroachDB (2015, open-source) and YugabyteDB (2019) replicated Spanner's architecture without atomic clocks, using bounded clock skew (HLC — Hybrid Logical Clocks in YugabyteDB; commit-wait intervals in CockroachDB) to achieve the same serializability guarantee."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Storage layer:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "CockroachDB",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — data is stored in a sorted key-value store (Pebble, a RocksDB-compatible Go implementation, as of CockroachDB 20.2). The key space is divided into 512 MiB ranges, each replicated via Raft (default 3 replicas). Each range's Raft group maintains its own WAL. MVCC is encoded directly into keys: the key format is <key><timestamp>, allowing historical reads without lock acquisition. The transaction coordinator uses a transaction record stored in the Raft group of the first written key."
+              }
+            ],
+            [
+              {
+                "text": "YugabyteDB",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — uses DocDB as the storage layer, also built on RocksDB. Two SQL APIs: YSQL (Postgres-compatible, using the Postgres query layer) and YCQL (Cassandra-compatible). Tablets (shards) are replicated via Raft; the YB-Master service (built on Raft) manages tablet-to-node assignment and schema metadata. MVCC timestamps use Hybrid Logical Clocks for cross-tablet read consistency without global coordination."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The critical conflict-handling path: a distributed transaction writing to two shards in CockroachDB uses a two-phase protocol. In phase 1, intents are written at each shard's Raft group (a provisional MVCC value). In phase 2, the transaction record is atomically committed, and async cleanup resolves intents. A reader encountering an intent checks the transaction record — if committed, the intent is treated as a real value; if aborted, the intent is ignored. This avoids a global lock manager."
+            }
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "info",
+          "runs": [
+            {
+              "text": "Clock skew is the fundamental distributed database adversary. CockroachDB's uncertainty window (default max_offset = 500 ms) means a transaction touching data written within 500 ms of its start must do a \"read refresh\" to verify no conflicting writes occurred. Keeping NTP synchronisation tight (< 5 ms) dramatically reduces restart rates in practice."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "CockroachDB and YugabyteDB split data into small shards, each backed by a Raft consensus group. Transactions write provisional values (intents) across shards, then atomically commit a single transaction record. Any reader finding an intent looks up the transaction record to decide whether to use or skip it — no global lock table required."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "dbi-ch13-c009",
+      "order": 9,
+      "title": "Wide-Column Engines: Cassandra and ScyllaDB",
+      "teaser": "Cassandra's wide-column model — partitioned rows where each row can have thousands of columns — is backed by a write-optimised LSM-tree engine with tunable consistency. ScyllaDB (2015) is a C++ rewrite of Cassandra that eliminates the JVM and adopts a shard-per-core architecture for predictable low-latency writes.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Apache Cassandra (Facebook, 2008; Apache 2010) was designed for write-heavy workloads at internet scale: social network activity feeds, time-ordered event logs, and messaging inboxes. Its data model is a \"wide row\": a partition key selects a partition; within a partition, rows are sorted by a clustering key. A single partition can contain millions of column values sorted and stored contiguously — optimal for time-range scans within one user's data."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Storage engine internals:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Memtable + SSTable (LSM-tree variant)",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — writes land in a per-table in-memory memtable plus a commit log. When the memtable fills, it is flushed to an immutable SSTable (Sorted String Table) on disk. SSTables are periodically merged by a compaction process (strategy: SizeTiered, LeveledCompaction, or TimeWindowCompaction for time-series data)."
+              }
+            ],
+            [
+              {
+                "text": "Partition index + Summary + Bloom filter",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — each SSTable has a partition index (partition key → byte offset in the data file), a sparse in-memory summary of the index, and a Bloom filter to quickly reject missing keys. Reads must check the Bloom filter and potentially multiple SSTables per query — the primary read amplification cost of the LSM design."
+              }
+            ],
+            [
+              {
+                "text": "Tunable consistency",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — Cassandra uses a quorum model (replication factor typically 3). Consistency level can be set per-request: ONE (fastest, may return stale data), QUORUM (majority of replicas must agree), ALL (all replicas). The Dynamo-style gossip protocol and hinted handoff allow continued writes even when a replica is down."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "ScyllaDB (Cloudius Systems / ScyllaDB Inc., 2015) rewrites the Cassandra engine in C++ using the Seastar framework. Key differences: each CPU core owns a dedicated shard of the data and runs an async event loop — eliminating cross-core locks and GC pauses. P99 write latency on ScyllaDB is typically 1–2 ms versus 5–10 ms on Cassandra for equivalent hardware. ScyllaDB 5.0 (2022) introduced Raft-based DDL for safer schema changes, addressing a long-standing weakness in Cassandra's gossip-based schema propagation."
+            }
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "info",
+          "runs": [
+            {
+              "text": "The TimeWindowCompaction strategy (TWCS) is critical for time-series workloads on Cassandra/ScyllaDB. TWCS groups SSTables by the time window of their data — so old, cold data is compacted separately from hot recent data. Combined with TTL-based expiry, entire SSTables containing only expired data can be deleted without a read-heavy merge, giving O(1) data expiry."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Cassandra stores data in an LSM-tree: writes go to memory first, then append to sorted on-disk files that are periodically merged. The wide-column model lets one partition key (like a user ID) own millions of sorted column values — great for time-ordered event lookups. ScyllaDB keeps the same model but runs in C++ with one event loop per CPU core, eliminating Java GC pauses."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "dbi-ch13-c010",
+      "order": 10,
+      "title": "Time-Series Engines: TimescaleDB Hypertables and InfluxDB TSI",
+      "teaser": "Time-series workloads have a defining access pattern: writes are almost always at the current timestamp (append-heavy), reads are recent-range scans, and old data is either downsampled or deleted. TimescaleDB and InfluxDB engineer their storage layouts around this pattern explicitly.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "A naive relational table for time-series data fails at scale because: (1) inserting into an index-ordered B-tree at the current timestamp causes hot-spot contention at the rightmost leaf; (2) deleting old data requires scattered individual row deletions; (3) columnar compression is impossible on interleaved old and new rows."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "TimescaleDB (2017, Postgres extension) — hypertable architecture:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Hypertable → chunks",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — a hypertable is a virtual table that partitions automatically into time-ordered child tables called chunks. A chunk covers a configurable time interval (default 7 days) and, optionally, a space partition (e.g., by device_id). Each chunk is an independent Postgres table with its own indexes."
+              }
+            ],
+            [
+              {
+                "text": "Insert localisation",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — TimescaleDB maintains an in-memory chunk cache. Inserts for the current time window hit only the latest chunk's B-tree, eliminating index hot-spot contention across historical data."
+              }
+            ],
+            [
+              {
+                "text": "Retention and downsampling",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — old chunks can be dropped atomically (DROP TABLE on the child chunk) — O(1) deletion regardless of row count. Continuous aggregates (materialised views over hypertables) support automatic downsampling: raw 1-second data is rolled up to 5-minute averages and the raw chunk is dropped."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "InfluxDB (InfluxData, 2013) — custom TSM (Time-Structured Merge Tree) storage:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "TSM files",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — InfluxDB 1.x stores data in TSM files organised by series key (measurement + tag set). Within a TSM file, values for each field are stored in sorted, compressed blocks. The layout is columnar within a series: all timestamps for a series together, all values for a field together — enabling the Gorilla delta-of-delta timestamp compression (Facebook 2015) and XOR-based float compression."
+              }
+            ],
+            [
+              {
+                "text": "TSI (Time Series Index, InfluxDB 1.5+)",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — the initial in-memory tag index failed at high cardinality (millions of unique series). TSI is an on-disk inverted index for series keys, structured as a log-structured merge tree of index files. It allows InfluxDB to handle 10M+ series without OOM errors."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "info",
+          "runs": [
+            {
+              "text": "InfluxDB 3.0 (2024) is a complete rewrite in Rust using Apache Arrow Flight for data transfer and Apache Parquet for on-disk storage — converging on the open columnar standard rather than a proprietary format. The query language migrated from InfluxQL to SQL and InfluxData's Flux. This signals the broader trend: purpose-built formats converging toward open columnar standards."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Time-series engines partition data by time window (TimescaleDB chunks, InfluxDB TSM files) so that inserts always hit the latest partition, old partitions can be dropped in one operation, and columns of timestamps compress extremely well — recent timestamps are nearly sequential, making delta encoding trivial."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "dbi-ch13-c011",
+      "order": 11,
+      "title": "Graph Database Engines: Neo4j Storage Layout",
+      "teaser": "Neo4j (2010) pioneered the property graph model for production use. Its native graph storage uses fixed-size records for nodes and relationships — enabling O(1) neighbour traversal via linked lists of relationship records, independent of total graph size.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The fundamental query in a graph database is: \"given this node, what are its neighbours?\" In a relational database, this requires a JOIN on an edge table — O(log N) with an index, O(N) without. Neo4j's native graph storage makes this O(degree) regardless of total graph size by physically embedding relationship pointers into each node record."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Storage layout:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Node store",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — fixed-size 15-byte records (Neo4j 4.x). Each record contains: in-use flag (1 byte), first relationship record pointer (4 bytes), first property record pointer (4 bytes), label store pointer (5 bytes), extra byte. Fixed size means node ID directly maps to a byte offset: node_id × 15 = file offset. O(1) node lookup by ID."
+              }
+            ],
+            [
+              {
+                "text": "Relationship store",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — fixed-size 34-byte records. Each relationship record stores: start node ID, end node ID, relationship type, four relationship chain pointers (previous/next for both start and end node's doubly-linked list of relationships). Traversing all relationships of a node requires following the linked list of relationship records — O(degree) I/Os, not O(graph size)."
+              }
+            ],
+            [
+              {
+                "text": "Property store",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — properties (key-value pairs) are stored in separate property records chained off node and relationship records. Short string values (<23 bytes) are inlined; longer strings and arrays go to dynamic stores."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Neo4j 5.0 (2022) introduced a new storage engine architecture allowing block devices and pluggable storage backends. The Cypher query language (2011, declarative graph pattern matching) became an industry standard adopted by multiple graph databases (TigerGraph, SAP HANA Graph, Amazon Neptune). openCypher (2015) is the open-source specification."
+            }
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "info",
+          "runs": [
+            {
+              "text": "The fixed-record-size design is the key insight of native graph storage: it trades storage density (fixed records waste space for sparsely-propertied nodes) for O(1) random access by ID. This is the same trade-off LMDB makes with its B+-tree pages — predictable memory layout over compactness."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Neo4j stores nodes and relationships as fixed-size records. Each node record holds a pointer to its first relationship; each relationship record is part of a doubly-linked list for both its start and end nodes. Following a node's relationships means walking a linked list — O(degree) — not scanning an index over the whole graph."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "dbi-ch13-c012",
+      "order": 12,
+      "title": "Hardware-Aware Engines: NVMe and Persistent Memory",
+      "teaser": "NVMe SSDs deliver 1–7 million IOPS at microsecond latency — three orders of magnitude faster than spinning disks. Engines designed for spinning-disk I/O patterns (large sequential writes, minimise random reads) leave most of that performance on the table. Hardware-aware engines redesign buffer management, WAL I/O, and index structures for the NVMe and persistent memory reality.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The storage hierarchy latency numbers that define hardware-aware engine design (circa 2024–2026):"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "DRAM",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — 100 ns random read, ~50 GB/s bandwidth per NUMA node."
+              }
+            ],
+            [
+              {
+                "text": "Intel Optane (3D XPoint persistent memory, 2019–2022)",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — 300 ns access in App Direct mode (byte-addressable, durable), ~40 GB/s. Intel discontinued Optane in 2022; the persistent memory category did not achieve mass adoption."
+              }
+            ],
+            [
+              {
+                "text": "NVMe SSD (PCIe 4.0/5.0)",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — 20–100 μs random read, 1–7M IOPS, 7–14 GB/s sequential. The key insight: at 20 μs, a context switch to handle an I/O completion is a significant fraction of the I/O latency itself."
+              }
+            ],
+            [
+              {
+                "text": "SATA SSD",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — 100–200 μs, 100K IOPS. Traditional database I/O assumptions were designed here."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Adaptations for NVMe:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "io_uring (Linux 5.1+, 2019)",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — a kernel I/O interface that eliminates syscall overhead for batched I/O operations. TiKV, RocksDB, ScyllaDB, and ClickHouse all adopted io_uring to saturate NVMe queues without per-I/O system call cost. Traditional pread/pwrite issue one syscall per I/O; io_uring batches hundreds of operations through a shared ring buffer."
+              }
+            ],
+            [
+              {
+                "text": "Smaller page sizes",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — NVMe random read latency is nearly constant from 512 bytes to 4 KiB. Traditional 16 KiB InnoDB pages were sized for SATA latency amortisation. With NVMe, smaller pages reduce read amplification without increasing latency. WiredTiger (MongoDB's engine) defaults to 4 KiB; some NVMe-tuned engines use 2 KiB."
+              }
+            ],
+            [
+              {
+                "text": "SPDK (Storage Performance Development Kit)",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — Intel's userspace NVMe driver bypasses the OS kernel for I/O entirely, using polling rather than interrupts. Eliminates the ~2 μs kernel overhead per I/O at the cost of dedicating CPU cores to polling. Used in TiKV titan storage and experimental FoundationDB backends."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "warning",
+          "runs": [
+            {
+              "text": "Intel Optane's discontinuation (2022) removed persistent memory from mainstream roadmaps. CXL (Compute Express Link) memory pooling, standardised in 2023–2025, is the probable successor: byte-addressable disaggregated memory accessible over PCIe 5.0. Database engines designed for Optane's App Direct mode are being repositioned for CXL-attached memory pools."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "NVMe SSDs are 1,000x faster than spinning disks for random reads, but database engines designed for spinning disks waste that speed by batching I/Os, using large pages, and issuing one syscall per I/O. Hardware-aware engines switch to io_uring for batched async I/O, smaller pages, and sometimes userspace NVMe drivers — removing software overhead that disappears into the noise with slow disks but dominates with fast ones."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "dbi-ch13-c013",
+      "order": 13,
+      "title": "The Cloud-Native DB Engine Evolution",
+      "teaser": "The trajectory from 1980 to 2026 is a story of disaggregation: monolithic engines that owned compute, memory, storage, and replication on one machine → shared-disk engines (Oracle RAC) → shared-nothing distributed engines (Spanner, CockroachDB) → fully disaggregated serverless engines (Aurora, Neon) where every layer scales independently.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Each architectural generation was forced by a different resource constraint:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "1980s–2000s: Monolithic",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — Oracle, DB2, SQL Server. One process on one machine owns everything. Vertical scaling. The WAL, buffer pool, lock manager, query executor, and storage engine are tightly coupled. Replication is log shipping or physical standby — an afterthought, not a first-class architectural concern."
+              }
+            ],
+            [
+              {
+                "text": "2000s–2010s: Shared-nothing distributed",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — Spanner (2012), Cassandra (2008), Riak, HBase. Horizontal scaling by adding nodes. Each node owns its shards. Replication is a consensus protocol (Raft, Paxos) or quorum protocol (Dynamo). Storage and compute scale together — you cannot add compute without also adding storage nodes."
+              }
+            ],
+            [
+              {
+                "text": "2014–2020: Compute-storage separation",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — Aurora (2014), Snowflake (2014). Storage is a separate service that scales independently of compute. Aurora's storage service spans three AZs and is fully managed; Snowflake's S3-backed virtual warehouses scale compute independently of storage. The WAL is the primary replication artefact."
+              }
+            ],
+            [
+              {
+                "text": "2020–2026: Multi-tenant serverless",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — Neon (2022), PlanetScale, CockroachDB Serverless, Aurora Serverless v2. Compute scales to zero. Multiple tenant databases share a storage layer. Branching is O(1) (copy-on-write). The engine is designed from the start for per-request billing and ephemeral compute."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "code",
+          "language": "text",
+          "text": "  MONOLITHIC         SHARED-NOTHING      DISAGGREGATED       SERVERLESS\n  (Oracle, 1980s)    (Spanner, 2012)     (Aurora, 2014)      (Neon, 2022)\n\n  ┌────────────┐     ┌──┐ ┌──┐ ┌──┐     ┌──────────────┐    ┌────────────┐\n  │ SQL+compute│     │N │ │N │ │N │     │ SQL compute  │    │ephemeral   │\n  │ buffer pool│     │o │ │o │ │o │     │ (scales 0→N) │    │compute pods│\n  │ storage    │     │d │ │d │ │d │     └──────┬───────┘    └─────┬──────┘\n  │ WAL        │     │e │ │e │ │e │            │ redo log         │\n  └────────────┘     └──┘ └──┘ └──┘     ┌──────▼───────┐    ┌─────▼──────┐\n        │            each owns           │ distributed  │    │shared page │\n  scale up only      compute+storage     │ storage svc  │    │store (CoW) │\n                     (coupled scale)     └──────────────┘    │multi-tenant│\n                                         independent scale    └────────────┘"
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "What remains constant across all generations: the core engine components Petrov catalogued in 2019 are still present in every system. MVCC, WAL, B-trees and LSM-trees, buffer management — these are not eliminated by disaggregation. They are redistributed: the WAL moves to storage (Aurora), the buffer pool becomes a distributed cache (Neon's local disk cache tier), the transaction coordinator moves to a separate service (CockroachDB's transaction record). The physics of storage, the mathematics of concurrency control, and the trade-offs of ACID remain unchanged."
+            }
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "info",
+          "runs": [
+            {
+              "text": "The 2026 frontier: FoundationDB's record layer model (multi-model database on a single ordered KV substrate), vector search natively integrated into transactional engines (pgvector, Vertex AI AlloyDB), and LLM-generated query plans as a query optimizer hint layer. The engine internals do not change — the surface exposed to applications does."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Database engines went from one machine that did everything, to many machines that each owned their slice, to separate storage and compute services that scale independently, to serverless engines where compute vanishes when idle. In every generation, the same internal components — WAL, MVCC, B-trees, buffer pools — are present. Disaggregation moves where they run, not whether they exist."
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,843 @@
+{
+  "stack": "database-internals-advanced",
+  "words": [
+    {
+      "id": "dbi-adv-0010-0000-0000-0000-000000000001",
+      "word": "LSM-Tree",
+      "pronunciation": "ELL-ess-em TREE",
+      "partOfSpeech": "noun",
+      "shortDefinition": "Log-Structured Merge-tree: writes go to a memtable, flush as immutable SSTables, and are periodically compacted.",
+      "simpleDefinition": "An LSM-Tree never overwrites data in place. Every write lands in a sorted in-memory buffer (the memtable). When the buffer fills, it is frozen and drained to disk as an immutable sorted file (an SSTable). A background process periodically merges SSTables to reclaim space and keep read performance acceptable. All writes are sequential, which is the fastest operation any storage device can do.",
+      "longDefinition": "Patrick O'Neil et al. introduced the Log-Structured Merge-tree in 1996 to solve a fundamental mismatch: database workloads scatter writes across the key space (random writes), but disk throughput is highest for sequential writes. The LSM-tree resolves this by staging all mutations in an in-memory sorted structure — the memtable — and flushing it to disk as a single, sequential, immutable file when full. Older data is never updated in place; instead, compaction periodically merge-sorts multiple SSTable files, retaining only the latest version of each key and discarding tombstones. The design dominates write-heavy workloads in LevelDB, RocksDB, Apache Cassandra, Apache HBase, and ScyllaDB. The trade-off, formalized by the RUM conjecture, is that LSM-trees minimize write (Update) overhead while paying with higher read (Read) overhead and space (Memory) overhead — both mitigated by Bloom filters and compaction strategies.",
+      "connector": "Think of an LSM-tree like a journalist's notebook: you jot everything down as it happens (fast writes), and at the end of the day you re-type and edit the clean final version (compaction). You never scratch out and re-write on the spot.",
+      "techContext": "RocksDB is the reference LSM implementation; it is used as the storage engine inside TiKV, CockroachDB, and LinkedIn's Venice.",
+      "exampleSentence": "After switching from a B-tree engine to an LSM-tree engine, the team's write throughput tripled because every insert became a sequential append to the memtable rather than a random page modification.",
+      "codeExample": {
+        "language": "plaintext",
+        "code": "LSM-Tree write path:\n\n  client write(k, v)\n    ↓\n  1. Append to WAL (sequential, durable)\n    ↓\n  2. Insert into memtable (skip list, O(log N))\n    ↓\n  3. ACK to client\n\n  When memtable reaches size limit:\n    freeze → flush to L0 SSTable on disk\n    background compaction merges L0 files into L1, L2 ...\n\n  Read path: memtable → L0 files → L1 → L2 → ...\n             (newest match wins; Bloom filters skip misses)"
+      },
+      "etymology": "Log-Structured from the append-only log design; Merge-tree from the periodic merge-sort pass that consolidates files. Coined by O'Neil, Cheng, Gawlick, and O'Neil in their 1996 paper.",
+      "unlockLevel": 16,
+      "tags": [
+        "storage-engines",
+        "lsm",
+        "database-internals",
+        "write-optimization"
+      ],
+      "category": "concepts",
+      "backingCard": {
+        "bookId": "database-internals",
+        "chapterId": "dbi-ch03-storage-engines-lsm-trees",
+        "cardId": "dbi-ch03-c001"
+      }
+    },
+    {
+      "id": "dbi-adv-0020-0000-0000-0000-000000000002",
+      "word": "Compaction",
+      "pronunciation": "kum-PAK-shun",
+      "partOfSpeech": "noun",
+      "shortDefinition": "The LSM background process that merges SSTables, discards stale versions and tombstones, and controls file count.",
+      "simpleDefinition": "Because LSM-trees never overwrite data, the same key may exist in dozens of SSTable files — each holding a different version. Compaction is the background job that runs a merge-sort pass over multiple SSTables, keeps only the newest value for each key, drops deleted keys (tombstones), and produces a single consolidated output file. Without compaction, reads degrade and disk fills with stale data.",
+      "longDefinition": "Compaction is the LSM engine's perpetual housekeeping job. Every flush adds a new SSTable file to disk. Without intervention, the file count grows without bound, and a read for any key must probe every file. Compaction solves this with a k-way merge-sort: it opens iterators over all input SSTable files, emits keys in sorted order, retains only the highest-sequence-number record for each key, and writes a new consolidated SSTable. The input files remain on disk — readable by concurrent readers — until all open file handles are released, at which point they are deleted. The trigger conditions, merge policies, and size targets differ between strategies (leveled vs size-tiered), but the merge-sort mechanics are identical. Compaction is also where tombstones are physically removed: once the merge pass confirms no older live version of a deleted key exists in any lower level, the tombstone itself can be dropped. In production RocksDB and Cassandra clusters, compaction typically consumes 2–3× the application write throughput in disk I/O, which must be budgeted during storage capacity planning.",
+      "connector": "Think of compaction like editing drafts of a document: you accumulate many drafts (SSTable files), each slightly newer than the last, and periodically merge them into one clean final version — throwing out all the crossed-out paragraphs (deleted keys) and old revisions (stale versions).",
+      "techContext": "In RocksDB, compaction is triggered when an L0 SSTable count exceeds level0_file_num_compaction_trigger (default 4) or when a level exceeds its size budget.",
+      "exampleSentence": "The on-call engineer saw disk usage spike to 180% of expected because compaction had fallen behind the write rate, leaving three stale versions of every key on disk simultaneously.",
+      "codeExample": {
+        "language": "plaintext",
+        "code": "Compaction merge pass (two input SSTables):\n\n  SSTable A (older): [\"apple\":v1, \"cherry\":v3, \"fig\":v1]\n  SSTable B (newer): [\"banana\":v2, \"cherry\":v5, \"grape\":v1]\n\n  Merge output (cherry:v5 supersedes cherry:v3):\n  [\"apple\":v1, \"banana\":v2, \"cherry\":v5, \"fig\":v1, \"grape\":v1]\n\n  cherry:v3 discarded. Input files A and B eventually deleted."
+      },
+      "etymology": "From Latin compactus ('pressed together'); in database contexts, coined alongside LSM-tree terminology by O'Neil et al. (1996) and popularized by Google's Bigtable paper (2006).",
+      "unlockLevel": 16,
+      "tags": [
+        "storage-engines",
+        "lsm",
+        "database-internals",
+        "write-optimization"
+      ],
+      "category": "concepts",
+      "backingCard": {
+        "bookId": "database-internals",
+        "chapterId": "dbi-ch03-storage-engines-lsm-trees",
+        "cardId": "dbi-ch03-c007"
+      }
+    },
+    {
+      "id": "dbi-adv-0030-0000-0000-0000-000000000003",
+      "word": "Size-Tiered Compaction",
+      "pronunciation": "SYZ-TEERD kum-PAK-shun",
+      "partOfSpeech": "noun",
+      "shortDefinition": "Groups SSTables of similar size and merges them: low write amplification but high space amplification.",
+      "simpleDefinition": "Size-tiered compaction (STCS) watches for groups of N SSTables of roughly the same size — Cassandra's default is N=4 within a 2x factor. When such a group appears, they are merged into a single larger file. That output joins the next size tier, where it will eventually merge with other files of similar size. Writes are cheap because each key is rewritten infrequently, but multiple stale versions of the same key may co-exist across size tiers between merges.",
+      "longDefinition": "In size-tiered compaction, SSTables cascade through size tiers: four 1 MB files merge into one 4 MB file; four 4 MB files merge into one 16 MB file, and so on. A given key is rewritten only when the tier it occupies accumulates enough peers to trigger a merge — far less frequently than in leveled compaction. This gives STCS a low write amplification (approximately 10x) but a high space amplification (up to 2x temporarily, because all input files and the output coexist during the merge). Read amplification also rises between merges, because a point read must probe files across all active size tiers. STCS is the default in Cassandra and ScyllaDB and suits write-heavy, append-mostly workloads — time-series ingestion, log collection, event streams — where disk space is ample and reads are usually batched scans rather than random point lookups. ScyllaDB's Time-Window Compaction Strategy (TWCS) is a STCS variant that groups files by time bucket, enabling fast tombstone collection for TTL-based data.",
+      "connector": "Think of size-tiered compaction like sorting mail into bins by envelope size: you wait until you have four small envelopes, bundle them together, then wait until you have four of the medium bundles, and so on. Each bundle is handled only once per size tier.",
+      "techContext": "STCS is Cassandra's default compaction strategy; it is well-suited to write-heavy workloads but can cause disk space spikes during large compactions.",
+      "exampleSentence": "The team switched from leveled to size-tiered compaction on their event-log table and saw write amplification drop from 25x to 8x, with SSD endurance no longer the limiting factor.",
+      "codeExample": {
+        "language": "plaintext",
+        "code": "Size-tiered compaction cascade over time:\n\nFlushes:  [1MB][1MB][1MB][1MB] → merge → [~4MB]\n                                          [~4MB][~4MB][~4MB][~4MB] → [~16MB]\n\nPeak space usage during 4MB→16MB merge:\n  4 input files (16MB total) + 1 output (16MB) = 32MB on disk\n  → space amplification = 2×"
+      },
+      "etymology": "Size-tiered describes the grouping mechanism (files of similar size); Compaction Strategy is Cassandra's naming convention for pluggable compaction policies.",
+      "unlockLevel": 16,
+      "tags": [
+        "storage-engines",
+        "lsm",
+        "database-internals",
+        "write-optimization"
+      ],
+      "category": "concepts",
+      "backingCard": {
+        "bookId": "database-internals",
+        "chapterId": "dbi-ch03-storage-engines-lsm-trees",
+        "cardId": "dbi-ch03-c006"
+      }
+    },
+    {
+      "id": "dbi-adv-0040-0000-0000-0000-000000000004",
+      "word": "Leveled Compaction",
+      "pronunciation": "LEV-uld kum-PAK-shun",
+      "partOfSpeech": "noun",
+      "shortDefinition": "Organizes SSTables into levels with non-overlapping key ranges; low read/space amplification but high write amplification.",
+      "simpleDefinition": "Leveled compaction (LCS) organizes SSTables into a sequence of levels. From L1 onward, no two SSTables in the same level have overlapping key ranges, and each level's total size budget is 10x the level below. When a level exceeds its budget, one SSTable is merged with the overlapping SSTables in the next level, cascading downward. This invariant means a point read touches at most one file per level — low read amplification — but each key is rewritten many times as it cascades through levels.",
+      "longDefinition": "In leveled compaction (RocksDB's default), the level structure enforces two invariants from L1 downward: non-overlapping key ranges within each level, and strict size budgets (e.g., L1=256 MB, L2=2.5 GB, L3=25 GB at a 10x size ratio). L0 is special — fresh flush output lands here and key ranges may overlap, so reads must check all L0 files. Compaction is triggered when a level exceeds its budget: one SSTable from the overfull level is selected and merged with all overlapping SSTables in the next level, replacing them. This cascades downward as lower levels fill in turn. The non-overlapping invariant means that for an existing key, at most one file per level (after L0) needs to be checked — giving read amplification of L0_count + (number of levels), typically 5–10 I/Os worst case with Bloom filters reducing most misses to zero. The cost is write amplification of roughly 10 × (number of levels − 1) — 30–50x for deep trees — because each key is rewritten every time its level compacts into the next. This is the primary trade-off compared to size-tiered compaction.",
+      "connector": "Think of leveled compaction like filing documents into labeled drawers where each drawer has strict capacity and no overlap between drawers. Every time a drawer fills, you merge the overflow with the next drawer — very organized for reading, but lots of reshuffling.",
+      "techContext": "Leveled compaction is RocksDB's default and is best for read-heavy or mixed workloads where SSD endurance is not a constraint.",
+      "exampleSentence": "After switching to leveled compaction the team's p99 read latency fell by 60%, because each key was now guaranteed to live in at most one file per level rather than scattered across dozens of size-tiered files.",
+      "codeExample": {
+        "language": "plaintext",
+        "code": "Leveled compaction level structure (RocksDB defaults):\n\n  L0  [A-Z][A-M][C-X]   ← overlapping, fresh flushes\n  L1  [A-D][E-H][I-Z]   ← non-overlapping, ≤256 MB total\n  L2  [A-B][C-D]...[Y-Z]← non-overlapping, ≤2.5 GB total\n  L3  ...               ← non-overlapping, ≤25 GB total\n\n  Point read for key \"G\":\n    memtable → check all L0 → 1 file in L1 → 1 file in L2 ...\n    Bloom filters skip misses at each level."
+      },
+      "etymology": "Leveled refers to the multi-level structure with explicit level boundaries; popularized by Google's LevelDB (2011) and extended by RocksDB (Meta, 2013).",
+      "unlockLevel": 16,
+      "tags": [
+        "storage-engines",
+        "lsm",
+        "database-internals",
+        "read-optimization"
+      ],
+      "category": "concepts",
+      "backingCard": {
+        "bookId": "database-internals",
+        "chapterId": "dbi-ch03-storage-engines-lsm-trees",
+        "cardId": "dbi-ch03-c007"
+      }
+    },
+    {
+      "id": "dbi-adv-0050-0000-0000-0000-000000000005",
+      "word": "Bloom Filter",
+      "pronunciation": "BLOOM FIL-ter",
+      "partOfSpeech": "noun",
+      "shortDefinition": "A probabilistic bit-array structure that says 'definitely not here' or 'probably here', eliminating wasted SSTable reads.",
+      "simpleDefinition": "A Bloom filter is a compact bit array attached to each SSTable. When a key is added to the filter, k hash functions each set a bit in the array. At query time, the same k hashes are checked: if any bit is 0, the key is definitely absent — skip this SSTable entirely. If all bits are 1, the key is probably present — read the SSTable to confirm. False negatives are impossible; false positives are rare (about 1% at 10 bits per key).",
+      "longDefinition": "Burton H. Bloom introduced the Bloom filter in 1970 as a space-efficient probabilistic data structure for membership testing. In LSM engines it solves the 'missing-key problem': confirming a key does not exist requires probing every SSTable level, which at 6 levels means 6 disk reads per absent lookup. A per-SSTable Bloom filter reduces this to near zero: for a missing key, the filter's 'definitely not present' answer skips the disk read entirely. The false positive rate is P ≈ (1 - e^(-kn/m))^k, where m is bit-array size and n is key count. At 10 bits/key with k=7 hash functions, the false positive rate is approximately 0.8%. Each additional bit/key roughly halves the rate. In RocksDB every SSTable has a filter block storing the Bloom filter; the filter for a hot SSTable stays in the block cache (LRU). RocksDB also supports prefix Bloom filters that hash only a key prefix, allowing entire SSTables to be skipped for prefix range scans. Bloom filters are exclusively helpful for reads that return nothing — for existing keys, the filter says 'probably present' and the disk read proceeds as normal.",
+      "connector": "Think of a Bloom filter like a building directory at the lobby: it can tell you 'definitely no one by that name works here' (skip the elevator ride) but if it says 'possibly here', you still have to go check the actual office.",
+      "techContext": "RocksDB uses 10 bits/key by default, keeping Bloom filter memory at roughly 1.2 GB per billion keys; this eliminates about 99.2% of wasted disk reads for missing keys.",
+      "exampleSentence": "Adding per-SSTable Bloom filters to their key-value store reduced point-read latency for cache misses from 4 disk reads to an average of 0.3 disk reads, because 99% of absent-key lookups were resolved in memory.",
+      "codeExample": {
+        "language": "plaintext",
+        "code": "Bloom filter mechanics (k=3, m=16 bits):\n\n  Add \"alpha\":  h1→2, h2→5, h3→11 → set bits 2,5,11\n  Add \"bravo\":  h1→0, h2→5, h3→14 → set bits 0,5,14\n\n  Bits: 1 0 1 0 0 1 0 0 0 0 0 1 0 0 1 0\n        0 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15\n\n  Query \"gamma\": h1→3, h2→7, h3→9\n    bit[3]=0 → DEFINITELY NOT PRESENT → skip SSTable ✓\n\n  False positive rate at 10 bits/key, k=7: ~0.8%"
+      },
+      "etymology": "Named after Burton H. Bloom who published the structure in his 1970 paper 'Space/Time Trade-offs in Hash Coding with Allowable Errors' in Communications of the ACM.",
+      "unlockLevel": 16,
+      "tags": [
+        "storage-engines",
+        "lsm",
+        "probabilistic",
+        "database-internals"
+      ],
+      "category": "concepts",
+      "backingCard": {
+        "bookId": "database-internals",
+        "chapterId": "dbi-ch03-storage-engines-lsm-trees",
+        "cardId": "dbi-ch03-c009"
+      }
+    },
+    {
+      "id": "dbi-adv-0060-0000-0000-0000-000000000006",
+      "word": "ARIES",
+      "pronunciation": "AIR-eez",
+      "partOfSpeech": "noun",
+      "shortDefinition": "The 1992 recovery algorithm used by Postgres, SQL Server, and InnoDB: steal/no-force with three-phase Analysis-Redo-Undo.",
+      "simpleDefinition": "ARIES (Algorithm for Recovery and Isolation Exploiting Semantics) is the crash recovery algorithm that powers virtually every production relational database. Its core insight: let the buffer pool write uncommitted pages to disk freely (steal) and skip flushing data pages at commit (no-force) — keeping only the log synchronous. At crash time, three phases restore correctness: Analysis rebuilds in-memory state from the last checkpoint, Redo replays all changes to reconstruct the exact crash state, and Undo rolls back uncommitted transactions.",
+      "longDefinition": "Published in 1992 by Mohan, Haderle, Lindsay, Pirahesh, and Lomet at IBM Research, ARIES solved a problem that earlier recovery schemes handled poorly: recovering a database after a crash when uncommitted dirty pages may already be on disk and some committed pages may not be. The steal/no-force buffer policy maximizes runtime efficiency — the buffer pool is never pinned by uncommitted transactions, and commit only pays the cost of a sequential log write. Recovery then uses three sequential phases. Analysis scans the WAL from the last checkpoint forward, rebuilding the dirty page table (which pages need redo) and transaction table (which transactions need undo). Redo replays every log record from the redo start point — including operations of uncommitted transactions — to restore the exact crash state. Undo reverses all uncommitted changes in reverse LSN order, writing Compensation Log Records (CLRs) for each step so a second crash during undo can resume without repeating work. ARIES is used by PostgreSQL, SQL Server, DB2, and InnoDB. Even Oracle, which predates ARIES, retrofitted ARIES-compatible behavior.",
+      "connector": "Think of ARIES like a detailed film crew roll call after a production emergency: first you figure out exactly who was on set (Analysis), then you replay the footage to reconstruct the shoot state (Redo), then you reverse any shots that were taken without authorization (Undo).",
+      "techContext": "PostgreSQL's WAL and recovery system is an ARIES implementation; pg_wal holds the log, and recovery on startup runs all three ARIES phases automatically.",
+      "exampleSentence": "Because ARIES uses steal/no-force, the database confirmed the large batch commit in 2 ms by flushing only the log — not the 8,000 dirty data pages — and crash recovery handled durability on behalf of the buffer pool.",
+      "codeExample": {
+        "language": "plaintext",
+        "code": "ARIES crash recovery phases:\n\n  [checkpoint]─[T1 begin]─[T2 begin]─[T1 write A]─[T2 write B]─[T1 commit]─CRASH\n\n  Phase 1 ANALYSIS:  scan from checkpoint\n    → TT: {T2: active, lastLSN=write_B}\n    → DPT: {page_A: recLSN=write_A, page_B: recLSN=write_B}\n\n  Phase 2 REDO:  replay from min(recLSN) forward\n    → apply T1 write A, T2 write B, T1 commit\n    → even T2's uncommitted write is replayed (repeat history)\n\n  Phase 3 UNDO:  roll back T2\n    → apply before-image for T2 write B\n    → write CLR recording this undo step"
+      },
+      "etymology": "ARIES is an acronym: Algorithm for Recovery and Isolation Exploiting Semantics. The paper was published at SIGMOD 1992 and is one of the most cited database systems papers ever written.",
+      "unlockLevel": 16,
+      "tags": [
+        "recovery",
+        "wal",
+        "database-internals",
+        "durability"
+      ],
+      "category": "concepts",
+      "backingCard": {
+        "bookId": "database-internals",
+        "chapterId": "dbi-ch04-write-ahead-logging-and-recovery",
+        "cardId": "dbi-ch04-c003"
+      }
+    },
+    {
+      "id": "dbi-adv-0070-0000-0000-0000-000000000007",
+      "word": "Redo Logging",
+      "pronunciation": "REE-doo LOG-ing",
+      "partOfSpeech": "noun",
+      "shortDefinition": "Re-applying logged after-images during crash recovery to restore all changes that reached the log.",
+      "simpleDefinition": "Redo logging is the process of replaying every log record from the redo start point forward after a crash, applying each change's after-image to the appropriate page. It restores the exact crash-time state — including changes from uncommitted transactions, which the undo phase will later reverse. The comparison is simple: if a page's LSN is already at or past the log record's LSN, the change is already on disk — skip it. Otherwise apply it.",
+      "longDefinition": "The redo phase is the second of ARIES's three recovery phases. It begins at the redo start point — the minimum recLSN across all entries in the dirty page table built during Analysis — and scans forward through the WAL to the end of the log. For each log record, the recovery manager reads the target page, compares its pageLSN to the record's LSN: if pageLSN >= recordLSN, the change already reached disk (the page was flushed after the log was written) — skip. If pageLSN < recordLSN, the change is missing — apply the after-image and update pageLSN. Critically, ARIES redoes everything including uncommitted transactions. This 'repeat history' principle is counterintuitive but necessary: the undo phase requires the database to reflect the exact crash state — including dirty writes that may have physically reached disk via the steal buffer policy — before it can safely reverse uncommitted work. Redo is fast because the WAL is read sequentially (the fastest disk access pattern) and most pages are skipped via the pageLSN check.",
+      "connector": "Think of redo logging like rewinding a video and replaying every frame to reconstruct a scene — you play back everything that was filmed, including takes that were later cut, so the editor (the undo phase) can see exactly what was on screen at the moment the power went out.",
+      "techContext": "In PostgreSQL, redo is performed using physical WAL records that describe byte-level changes to specific pages; full-page images (full_page_writes) protect against torn pages during the first write after a checkpoint.",
+      "exampleSentence": "The redo phase completed in 8 seconds despite the database crashing with 40,000 dirty pages because most pageLSN values already reflected the logged changes, and only 2,300 pages actually needed re-application.",
+      "etymology": "Redo from the prefix re- ('again') + do; in database recovery, the term was formalized in the ARIES paper (Mohan et al., 1992) to distinguish forward replay from backward undo.",
+      "unlockLevel": 16,
+      "tags": [
+        "recovery",
+        "wal",
+        "database-internals",
+        "durability"
+      ],
+      "category": "concepts",
+      "backingCard": {
+        "bookId": "database-internals",
+        "chapterId": "dbi-ch04-write-ahead-logging-and-recovery"
+      }
+    },
+    {
+      "id": "dbi-adv-0080-0000-0000-0000-000000000008",
+      "word": "Undo Logging",
+      "pronunciation": "UN-doo LOG-ing",
+      "partOfSpeech": "noun",
+      "shortDefinition": "Reversing uncommitted changes during crash recovery using before-images stored in the log.",
+      "simpleDefinition": "Undo logging is the third phase of ARIES recovery. After redo reconstructs the exact crash state, the transaction table lists every transaction that was active — uncommitted — at crash time. Undo reverses their changes in reverse LSN order by applying the before-images stored in log records, walking backward through each transaction's prevLSN chain. A Compensation Log Record (CLR) is written for each undo step so recovery can survive a second crash mid-undo.",
+      "longDefinition": "In ARIES, the undo phase begins after redo has reconstructed the exact crash-time database state. The transaction table produced by Analysis lists every uncommitted transaction with its lastLSN — the entry point for its undo chain. For each such transaction, recovery follows the prevLSN chain backward from lastLSN. At each update log record, it applies the before-image to the page (restoring the pre-change state) and writes a Compensation Log Record (CLR) recording the undo operation and pointing to the next log record that still needs to be undone (undoNextLSN). CLRs are redoable but never themselves undone — if the system crashes again during undo, the CLRs are replayed in redo and the undo phase resumes from undoNextLSN, guaranteeing forward progress regardless of repeated crashes. Multiple active transactions are processed concurrently in undo, always selecting the highest-LSN operation first across all uncommitted transactions. InnoDB separates undo storage: undo records live in a dedicated undo tablespace rather than the redo log, allowing asynchronous purge after MVCC readers move past them.",
+      "connector": "Think of undo logging like a construction crew reversing a half-finished renovation: they work backward from the most recent change to the oldest, leaving a note at each step recording what they undid so a second crew can pick up exactly where they left off if the first crew has to stop unexpectedly.",
+      "techContext": "In PostgreSQL, undo is not stored in a separate structure — it is reconstructed from the WAL's before-images. In InnoDB, undo records live in a separate undo tablespace (undo_001, undo_002) and are purged asynchronously.",
+      "exampleSentence": "The undo phase took 45 seconds because a long-running analytical transaction had modified 500,000 rows without committing, requiring the recovery manager to reverse every row change in order.",
+      "etymology": "Undo from un- ('reverse') + do; combined with logging (recording operations) to describe the specific recovery technique. Formalized as part of ARIES in the 1992 Mohan et al. paper.",
+      "unlockLevel": 16,
+      "tags": [
+        "recovery",
+        "wal",
+        "database-internals",
+        "durability"
+      ],
+      "category": "concepts",
+      "backingCard": {
+        "bookId": "database-internals",
+        "chapterId": "dbi-ch04-write-ahead-logging-and-recovery"
+      }
+    },
+    {
+      "id": "dbi-adv-0090-0000-0000-0000-000000000009",
+      "word": "CLR",
+      "pronunciation": "SEE-ell-AR",
+      "partOfSpeech": "noun",
+      "shortDefinition": "Compensation Log Record: written during undo to record progress so a second crash can resume without repeating work.",
+      "simpleDefinition": "A CLR is a log record written during the undo phase of crash recovery. For each change that is reversed, ARIES writes a CLR describing what was undone and carrying an undoNextLSN pointer — the LSN of the next change that still needs reversal. If the system crashes again mid-undo, redo replays the CLRs (restoring already-applied undo steps) and undo resumes from undoNextLSN, skipping everything already reversed. CLRs guarantee that undo always makes forward progress.",
+      "longDefinition": "Compensation Log Records are the mechanism that makes ARIES's undo phase crash-safe. Without CLRs, a second crash during undo would restart recovery from scratch, forcing the undo phase to repeat all already-completed reversals. With CLRs, each undo step is durably recorded: the CLR's undoNextLSN field points past the just-undone record to the next one in the prevLSN chain. A CLR is redoable — it describes a physical change to a page and can be replayed during redo — but it is never itself undone, because it has no prevLSN chain entry pointing to an undoable predecessor. This asymmetry ('redoable, not undoable') is what prevents infinite undo loops. Recovery from a crash-during-undo restarts, redo re-applies the CLRs (re-restoring the before-images), and undo uses each CLR's undoNextLSN to skip already-reversed operations and continue from where the previous undo attempt stopped. This property — repeated restartability — guarantees forward progress regardless of how many times the system crashes during recovery.",
+      "connector": "Think of a CLR like a bookmark and progress note left in a multi-volume legal document review: 'I undid volume 3, chapter 8. Next to review is volume 3, chapter 7.' If someone else takes over, they start exactly where the bookmark says.",
+      "techContext": "CLRs appear in SQL Server's transaction log as 'Compensate' log records; they are a direct implementation of the ARIES CLR concept and are visible in transaction log readers like fn_dblog().",
+      "exampleSentence": "After a power failure struck the server mid-undo during a failed database upgrade, the CLRs in the transaction log allowed recovery to resume from the 70% mark rather than restarting the entire multi-hour rollback.",
+      "codeExample": {
+        "language": "plaintext",
+        "code": "Transaction T: LSN 100(begin) 200(write A) 300(write B) 400(write C)\nUndo in progress (most recent first):\n\n  Undo write C (LSN 400) → write CLR at LSN 500\n    CLR.undoNextLSN = 300  (next undo target: write B)\n\n  CRASH HERE\n\n  Recovery restart:\n    Redo: re-applies CLR at LSN 500 (re-undoes write C)\n    Undo: reads CLR, follows undoNextLSN=300\n          → skips LSN 400 (already undone via CLR)\n          → continues undoing write B at LSN 300"
+      },
+      "etymology": "CLR stands for Compensation Log Record; the term was introduced in the ARIES paper (Mohan et al., ACM TODS 1992). 'Compensation' refers to the undo operation compensating for a prior forward update.",
+      "unlockLevel": 16,
+      "tags": [
+        "recovery",
+        "wal",
+        "database-internals",
+        "durability"
+      ],
+      "category": "concepts",
+      "backingCard": {
+        "bookId": "database-internals",
+        "chapterId": "dbi-ch04-write-ahead-logging-and-recovery"
+      }
+    },
+    {
+      "id": "dbi-adv-0100-0000-0000-0000-000000000010",
+      "word": "Fuzzy Checkpoint",
+      "pronunciation": "FUZ-ee CHECK-point",
+      "partOfSpeech": "noun",
+      "shortDefinition": "A checkpoint that lets transactions continue running while dirty pages flush in the background, avoiding a stall.",
+      "simpleDefinition": "A sharp checkpoint pauses all transactions, flushes every dirty page, then resumes — simple but causes a visible stall. A fuzzy checkpoint writes a BEGIN_CHECKPOINT record, lets the database keep running while dirty pages flush in the background, then writes an END_CHECKPOINT record capturing the transaction and dirty page tables as they were at the begin marker. Recovery corrects any staleness by scanning forward from the BEGIN_CHECKPOINT LSN. All production databases use fuzzy checkpoints.",
+      "longDefinition": "A sharp checkpoint's requirement to flush all dirty pages before resuming is impractical in production: a large buffer pool with thousands of dirty pages can stall the database for several seconds, violating latency SLAs. Fuzzy checkpoints (called 'consistent checkpoints' in ARIES terminology) eliminate this stall. The process: write a BEGIN_CHECKPOINT record to the WAL; continue accepting transactions normally; flush dirty pages in the background over a configurable spread window; write an END_CHECKPOINT record containing the transaction table and dirty page table as of the BEGIN time. Because transactions ran during the checkpoint, the captured tables may be stale — some listed-dirty pages may now be clean, and new dirty pages may have appeared. Recovery handles this by loading the tables from END_CHECKPOINT and then scanning forward from BEGIN_CHECKPOINT, updating the dirty page table as it encounters subsequent log records. This corrected table becomes the basis for redo. PostgreSQL spreads checkpoint I/O over checkpoint_completion_target (default 90%) of the checkpoint_timeout interval (default 5 minutes) to avoid write spikes. InnoDB uses a continuous checkpoint that advances as pages are flushed — an even more fine-grained fuzzy approach.",
+      "connector": "Think of a fuzzy checkpoint like photographing a busy newsroom: instead of shouting 'everyone freeze!' for a sharp snapshot, you take a slow-exposure photo while people keep working — the result is slightly blurry (imprecise), but you correct for the blur during development (recovery).",
+      "techContext": "PostgreSQL's checkpoint_completion_target (default 0.9) and checkpoint_timeout (default 5m) control how aggressively the fuzzy checkpoint spreads I/O; the default means at most 5 minutes of WAL to replay after a crash.",
+      "exampleSentence": "After tuning checkpoint_completion_target to 0.5, the team eliminated the periodic write-latency spikes that had been coinciding with checkpoint completion, because dirty page flushing was now spread more evenly across the window.",
+      "etymology": "Fuzzy from the imprecise (blurred) snapshot it captures while the database keeps running; checkpoint from the WAL record that bounds recovery scan distance. The ARIES paper introduced this distinction in 1992.",
+      "unlockLevel": 16,
+      "tags": [
+        "recovery",
+        "wal",
+        "database-internals",
+        "durability"
+      ],
+      "category": "concepts",
+      "backingCard": {
+        "bookId": "database-internals",
+        "chapterId": "dbi-ch04-write-ahead-logging-and-recovery"
+      }
+    },
+    {
+      "id": "dbi-adv-0110-0000-0000-0000-000000000011",
+      "word": "Two-Phase Locking",
+      "pronunciation": "TOO-FAYZ LOK-ing",
+      "partOfSpeech": "noun",
+      "shortDefinition": "A concurrency protocol: acquire all locks before releasing any, guaranteeing serializable transaction schedules.",
+      "simpleDefinition": "Two-Phase Locking (2PL) divides a transaction's lifetime into a growing phase (acquiring locks) and a shrinking phase (releasing locks). The invariant is simple: once a transaction releases any lock, it may not acquire new ones. This single rule is sufficient to guarantee that concurrent transaction schedules are serializable — their result is equivalent to some serial ordering.",
+      "longDefinition": "Two-Phase Locking is the classical concurrency control protocol for achieving serializability. In the growing phase, a transaction acquires shared locks (S locks) on rows it reads and exclusive locks (X locks) on rows it writes. The shrinking phase begins when the transaction releases its first lock — from this point on, no new locks may be acquired. The protocol guarantees serializability because a serialization order can always be constructed by ordering transactions by their lock-point (the moment they hold their maximum lock set). 2PL comes in variants: Basic 2PL releases locks during the shrinking phase and is vulnerable to cascading aborts (another transaction that read an uncommitted value must abort if the writer aborts). Strict 2PL (S2PL) holds all locks until commit or abort, preventing cascading aborts — this is what production databases implement. Rigorous 2PL holds all locks (both S and X) until commit, simplifying lock manager implementation. 2PL does not prevent deadlocks: two transactions can each hold a lock the other needs. Databases detect deadlocks using a waits-for graph and abort one transaction to break the cycle. PostgreSQL, InnoDB, and SQL Server all implement Strict 2PL for write operations, combined with MVCC for reads to avoid shared lock overhead.",
+      "connector": "Think of 2PL like a library book-borrowing system with a strict rule: you may borrow as many books as you like, but once you return your first book, you cannot check out any more. This prevents anyone from rearranging their read set midway through.",
+      "techContext": "InnoDB uses Strict 2PL for write locks combined with MVCC for reads; SELECT ... FOR UPDATE acquires X locks that are held until commit, implementing the strict variant.",
+      "exampleSentence": "The deadlock occurred because transaction A held a row lock on accounts:101 and was waiting for accounts:102, while transaction B held accounts:102 and was waiting for accounts:101 — a classic 2PL cycle that the lock manager detected and resolved by aborting transaction B.",
+      "codeExample": {
+        "language": "sql",
+        "code": "-- Strict 2PL in action: locks held until commit\nBEGIN;\n  -- Growing phase: acquiring X locks\n  UPDATE accounts SET balance = balance - 100 WHERE id = 1;  -- X lock on row 1\n  UPDATE accounts SET balance = balance + 100 WHERE id = 2;  -- X lock on row 2\n  -- Lock point reached: both locks held\nCOMMIT;\n-- Shrinking phase: all locks released at commit\n-- (Strict 2PL: no locks released before COMMIT)"
+      },
+      "etymology": "Two-phase describes the growing and shrinking phases; locking from the mutual-exclusion primitives used. Introduced by Eswaran, Gray, Lorie, and Traiger in their seminal 1976 paper 'The Notions of Consistency and Predicate Locks in a Database System'.",
+      "unlockLevel": 16,
+      "tags": [
+        "concurrency",
+        "locking",
+        "database-internals",
+        "transactions"
+      ],
+      "category": "concepts",
+      "backingCard": {
+        "bookId": "database-internals",
+        "chapterId": "dbi-ch09-concurrency-control",
+        "cardId": "dbi-ch09-c006"
+      }
+    },
+    {
+      "id": "dbi-adv-0120-0000-0000-0000-000000000012",
+      "word": "Strict 2PL",
+      "pronunciation": "STRIKT TOO-PEE-ELL",
+      "partOfSpeech": "noun",
+      "shortDefinition": "2PL variant where all locks are held until commit or abort, preventing cascading aborts.",
+      "simpleDefinition": "Strict 2PL (S2PL) is the variant of Two-Phase Locking that holds all acquired locks until the transaction commits or aborts. Basic 2PL allows releasing locks during the shrinking phase, which enables cascading aborts: another transaction that read an uncommitted value must itself abort if the writer aborts. Strict 2PL eliminates this by ensuring no uncommitted data is ever visible to other transactions through the lock mechanism.",
+      "longDefinition": "In basic 2PL, a transaction can release locks before it commits — once it passes the lock point and enters the shrinking phase. This is technically serializable but creates a vulnerability: if transaction T1 releases a row lock and T2 reads that row before T1 commits, T2 now depends on T1's outcome. If T1 aborts, T2 has read uncommitted data (a dirty read in the lock-based model) and must be aborted too — this is a cascading abort. Strict 2PL prevents this by holding all exclusive locks (X locks on written rows) until commit or abort. No other transaction can read the locked rows until the writer has finished, so there is never a dirty-read dependency and cascading aborts are impossible. Rigorous 2PL goes further, holding all locks (including shared read locks) until commit. Most production databases implement Strict 2PL as the default for write operations: PostgreSQL holds row-level write locks until the transaction ends; InnoDB releases record locks only at commit. Combined with MVCC for reads, S2PL delivers practical concurrency — readers don't block on the writer's lock since MVCC gives them a snapshot — while maintaining serializability for write-write conflicts.",
+      "connector": "Think of Strict 2PL like a contractor who won't hand over the keys to a renovation until the final inspection is complete: no one can use the work-in-progress because the contractor holds the key (lock) until the job is certified done (committed).",
+      "techContext": "PostgreSQL uses Strict 2PL for DML operations: row-level write locks are held until COMMIT or ROLLBACK; MVCC provides readers with snapshot isolation without acquiring read locks.",
+      "exampleSentence": "Strict 2PL ensured that when the payment transaction aborted due to insufficient funds, the downstream notification service never saw the partial account state because the row locks were still held at the time of the abort.",
+      "codeExample": {
+        "language": "sql",
+        "code": "-- Strict 2PL: X lock held until COMMIT\nBEGIN;\n  UPDATE orders SET status = 'processing' WHERE id = 42;\n  -- Row 42 is now X-locked; other writers block\n  -- Basic 2PL could release lock here (risky)\n  -- Strict 2PL holds the lock until...\nCOMMIT;  -- ← X lock released here (not before)\n\n-- Cascading abort scenario prevented:\n-- T2: SELECT * FROM orders WHERE id = 42;\n-- With S2PL, T2 sees the old value until T1 commits."
+      },
+      "etymology": "Strict from the stronger constraint of holding locks beyond the lock point; 2PL abbreviation for Two-Phase Locking. The distinction between strict and basic 2PL was formalized by Gray et al. in the 1976 paper that introduced 2PL.",
+      "unlockLevel": 16,
+      "tags": [
+        "concurrency",
+        "locking",
+        "database-internals",
+        "transactions"
+      ],
+      "category": "concepts",
+      "backingCard": {
+        "bookId": "database-internals",
+        "chapterId": "dbi-ch09-concurrency-control",
+        "cardId": "dbi-ch09-c007"
+      }
+    },
+    {
+      "id": "dbi-adv-0130-0000-0000-0000-000000000013",
+      "word": "fsync Semantics",
+      "pronunciation": "EFF-sink seh-MAN-tiks",
+      "partOfSpeech": "noun",
+      "shortDefinition": "The OS call that guarantees written data reaches durable storage; WAL correctness depends on fsync before commit.",
+      "simpleDefinition": "fsync() is the POSIX system call that flushes a file's data from the OS page cache to durable storage — the storage device itself acknowledges the write. Without fsync, the OS may acknowledge a write while data sits in volatile kernel buffers, vulnerable to power loss. WAL's durability guarantee depends entirely on fsync: the commit log record must be fsynced before the database tells the client 'committed'. A failed or silently degraded fsync produces a 'lost commit' with no error visible to the application.",
+      "longDefinition": "When an application writes to a file on Linux, the write typically goes into the kernel's page cache — fast volatile memory. The fsync(2) system call instructs the kernel to flush those dirty pages to the underlying storage device and wait for the device to confirm the write. Only after fsync returns can a WAL-based database safely acknowledge a commit. The semantics matter in subtle ways. On Linux, a failed fsync (due to an I/O error) returns an error, but crucially, re-trying fsync on the same file descriptor after an error may silently succeed on some kernel versions — because the kernel cleared the error state even though the data was not durably written. PostgreSQL discovered this in 2018 (the 'PostgreSQL fsync bug') and added explicit checks. Filesystem barriers are a related mechanism: on some file systems and storage controllers, the write order must be preserved across a power cycle. A database that writes the WAL before the data page and depends on ordering guarantees — not just durability — needs either fsync per record or an appropriate sync_file_range call. Group commit (batching multiple commits into a single fsync) is the primary technique for amortizing fsync latency without compromising durability. On NVMe storage, fsync latency is 50–200 µs; on spinning disks, 1–10 ms.",
+      "connector": "Think of fsync like a certified mail signature: a regular write is like dropping a letter in a mailbox (it's gone from your hands but not confirmed delivered), while fsync is like getting the recipient's signature — you don't confirm delivery to the application until the storage device signs off.",
+      "techContext": "PostgreSQL's synchronous_commit = on (default) ensures the commit WAL record is fsynced before the client receives confirmation; synchronous_commit = off skips the fsync for a latency gain at the cost of up to commit_delay milliseconds of committed data loss on crash.",
+      "exampleSentence": "When the storage engineer disabled the battery-backed write cache without notifying the database team, the server's effective fsync latency jumped from 150 µs to 8 ms and transaction throughput collapsed from 12,000 to 1,400 commits per second.",
+      "codeExample": {
+        "language": "c",
+        "code": "// WAL commit sequence in pseudocode\nint wal_fd = open(\"pg_wal/000000010000000000000001\", O_RDWR);\n\n// Write commit log record\nwrite(wal_fd, commit_record, sizeof(commit_record));\n\n// CRITICAL: fsync before acknowledging commit to client\n// If this call fails, the commit must NOT be acknowledged\nif (fsync(wal_fd) != 0) {\n    handle_fsync_error();  // abort, do not reply success\n}\n\n// Only now is it safe to tell the client: commit confirmed\nsend_commit_ack(client);"
+      },
+      "etymology": "fsync is a POSIX system call name: f (file descriptor) + sync (synchronize to durable storage). The 'semantics' qualifier refers to the precise guarantees it provides and their implications for database durability.",
+      "unlockLevel": 16,
+      "tags": [
+        "durability",
+        "wal",
+        "database-internals",
+        "storage"
+      ],
+      "category": "concepts",
+      "backingCard": {
+        "bookId": "database-internals",
+        "chapterId": "dbi-ch04-write-ahead-logging-and-recovery"
+      }
+    },
+    {
+      "id": "dbi-adv-0140-0000-0000-0000-000000000014",
+      "word": "Doublewrite Buffer",
+      "pronunciation": "DUB-ul-ryt BUF-er",
+      "partOfSpeech": "noun",
+      "shortDefinition": "InnoDB's mechanism that writes pages to a separate area before their final location, protecting against torn writes.",
+      "simpleDefinition": "A torn write occurs when a crash interrupts a partial 16 KB page write to disk: the storage device wrote 4 KB of a new page over the first 4 KB of the old page and then power failed, leaving a corrupted hybrid. InnoDB's doublewrite buffer protects against this by writing pages to a sequential 'doublewrite area' on disk first, then to their final locations. If a crash leaves a torn final-location page, InnoDB copies the intact page from the doublewrite area during recovery.",
+      "longDefinition": "The torn-write problem arises from the mismatch between database page size (InnoDB: 16 KB) and the atomic write unit of most storage devices (typically 512 bytes or 4 KB). A crash partway through writing a page leaves a partially-overwritten page on disk that is neither the old version nor the new version — a corrupted state that no amount of WAL replay can fix, because WAL requires a correct base page to apply changes to. InnoDB solves this with the doublewrite buffer: before writing a batch of dirty pages to their final tablespace locations, InnoDB first writes them sequentially to a reserved doublewrite area (a contiguous range of pages in the system tablespace, default 2 MB). After the sequential write is fsynced, the pages are written to their intended final locations. If a crash occurs during the final writes, InnoDB's recovery reads each page from its tablespace location: if the page's checksum is invalid (torn write), it copies the intact page from the doublewrite area and uses it as the base for WAL redo. The doublewrite buffer adds roughly 5–10% write overhead (each page is written twice) but eliminates the torn-write data corruption risk. On filesystems supporting atomic writes (ext4 with bigalloc, ZFS, or hardware-level 4K-native drives), the doublewrite buffer can be disabled with innodb_doublewrite=0.",
+      "connector": "Think of the doublewrite buffer like making a photocopy of a document before filing it: if the original gets damaged in the filing cabinet (torn write), you always have the clean copy to restore from.",
+      "techContext": "InnoDB enables the doublewrite buffer by default (innodb_doublewrite=ON). MySQL 8.0.20+ moved the doublewrite buffer out of the system tablespace into separate files for better I/O isolation.",
+      "exampleSentence": "After the storage controller firmware bug caused intermittent partial 16 KB page writes, the doublewrite buffer saved the production database from corruption by providing intact page copies that recovery used to repair the torn pages.",
+      "etymology": "Doublewrite describes the two-write sequence: once to the buffer area, once to the final location. The term is InnoDB-specific and was introduced when InnoDB was still a third-party storage engine for MySQL.",
+      "unlockLevel": 16,
+      "tags": [
+        "durability",
+        "innodb",
+        "database-internals",
+        "storage"
+      ],
+      "category": "concepts",
+      "backingCard": {
+        "bookId": "database-internals",
+        "chapterId": "dbi-ch04-write-ahead-logging-and-recovery"
+      }
+    },
+    {
+      "id": "dbi-adv-0150-0000-0000-0000-000000000015",
+      "word": "Log Sequence Number",
+      "pronunciation": "LOG SEE-kwens NUM-ber",
+      "partOfSpeech": "noun",
+      "shortDefinition": "A monotonically increasing byte offset in the WAL used to order changes and decide what to redo during recovery.",
+      "simpleDefinition": "A Log Sequence Number (LSN) is the address of a log record in the WAL stream — in PostgreSQL, a 64-bit byte offset into the WAL files. Every data page stores the LSN of the last log record that modified it (pageLSN). During redo, the recovery manager compares the log record's LSN with the page's pageLSN: if pageLSN >= recordLSN, the change is already on disk — skip it. This single comparison makes redo both correct and idempotent.",
+      "longDefinition": "LSNs are the spine of the ARIES recovery algorithm. They appear in four critical places. In the WAL itself, each log record has a unique, monotonically increasing LSN — its byte offset in the sequential log stream. In every data page header, the pageLSN records the LSN of the most recent log record that modified that page; the pageLSN comparison is the fundamental redo safety check. In the transaction table, each active transaction tracks its lastLSN — the LSN of its most recent log record, used as the entry point for the prevLSN undo chain. In the dirty page table, each dirty page entry stores its recLSN (recovery LSN) — the earliest log record that dirtied the page since its last flush, which determines how far back redo must scan for that page. LSNs are monotonically increasing so ordering is preserved: a larger LSN means a later change. In PostgreSQL, LSNs are human-readable: pg_current_wal_lsn() returns the primary's current position, and the difference between a standby's replay LSN and the primary's current LSN is the exact byte count of un-applied WAL — the replication lag expressed in WAL bytes. In InnoDB, the LSN is the total bytes written to the redo log since database creation, advancing continuously.",
+      "connector": "Think of an LSN like a page number in a legal document: every entry is stamped with the page it was recorded on, so anyone reviewing the document can instantly determine the order of events and identify exactly which changes need to be re-applied to bring any section up to date.",
+      "techContext": "PostgreSQL exposes LSNs via pg_current_wal_lsn() and pg_last_wal_replay_lsn() on standbys; the difference in bytes is the replication lag, frequently used in monitoring.",
+      "exampleSentence": "The DBA confirmed that the standby was only 2.3 MB behind the primary by comparing pg_current_wal_lsn() on the primary with pg_last_wal_replay_lsn() on the standby — an LSN difference that translated to less than half a second of lag.",
+      "codeExample": {
+        "language": "sql",
+        "code": "-- PostgreSQL: monitor replication lag via LSNs\nSELECT\n  pg_current_wal_lsn()              AS primary_lsn,\n  sent_lsn,\n  replay_lsn,\n  pg_wal_lsn_diff(\n    pg_current_wal_lsn(), replay_lsn\n  )                                 AS lag_bytes\nFROM pg_stat_replication;\n\n-- pageLSN recovery check (conceptual):\n-- if page.pageLSN >= log_record.lsn → skip (already applied)\n-- if page.pageLSN <  log_record.lsn → apply after-image"
+      },
+      "etymology": "Log Sequence Number from the WAL (Log) + monotonically increasing position (Sequence Number). The term was standardized in the ARIES paper (Mohan et al., 1992) and is used consistently across PostgreSQL, SQL Server, and DB2.",
+      "unlockLevel": 16,
+      "tags": [
+        "wal",
+        "recovery",
+        "database-internals",
+        "replication"
+      ],
+      "category": "concepts",
+      "backingCard": {
+        "bookId": "database-internals",
+        "chapterId": "dbi-ch04-write-ahead-logging-and-recovery"
+      }
+    },
+    {
+      "id": "dbi-adv-0160-0000-0000-0000-000000000016",
+      "word": "Memtable",
+      "pronunciation": "MEM-tay-bul",
+      "partOfSpeech": "noun",
+      "shortDefinition": "The mutable in-memory sorted structure (skip list) in an LSM engine where all writes land before flushing to disk.",
+      "simpleDefinition": "The memtable is the live write buffer of an LSM engine. Every insert, update, and delete lands here first because RAM accepts writes at memory bandwidth — effectively unlimited compared to disk I/O. The memtable maintains sorted key order using a skip list so that when it is flushed to disk, the resulting SSTable file is already sorted. Durability is provided by a WAL: the log record is written to disk before the memtable is updated, so a crash can replay the WAL to reconstruct the memtable.",
+      "longDefinition": "The memtable is the mutable component of the LSM-tree's two-layer architecture. When the active memtable reaches its configured size limit (64 MB in RocksDB by default), it is frozen — made immutable — and a new active memtable begins accepting writes. A background thread flushes the immutable memtable to disk as a Level-0 SSTable, after which the WAL segment that protected that memtable's data can be deleted. Two data structures dominate memtable implementations: skip lists (O(log N) insert/lookup/delete, practical concurrent access under a read-write lock — used by LevelDB, RocksDB, and Cassandra) and red-black trees (strictly balanced BST with deterministic O(log N) bounds). RocksDB supports multiple concurrent memtables (the write buffer manager) so that one memtable can flush to disk while another accepts new writes, preventing write stalls when flush is slower than the write rate. The memtable is the only mutable, queryable data structure in an LSM engine; a read must check the memtable first because it contains the most recent writes.",
+      "connector": "Think of the memtable like the intake desk at a post office: all letters arrive here first, sorted into bins as they come in. When the desk fills up, the clerk freezes it, hands it to a delivery driver (flush), and starts a clean desk for new arrivals.",
+      "techContext": "RocksDB's memtable is a skip list by default with a 64 MB write buffer; the write_buffer_count parameter controls how many immutable memtables can exist simultaneously before writes are stalled.",
+      "exampleSentence": "The write stall alert fired because four memtables had accumulated waiting to flush — the compaction thread was monopolizing I/O bandwidth and the background flusher could not keep pace with the ingest rate.",
+      "etymology": "Memtable is a portmanteau of memory (RAM) + table (data structure); the term was coined in the LSM-tree literature and popularized by LevelDB and Cassandra documentation.",
+      "unlockLevel": 16,
+      "tags": [
+        "storage-engines",
+        "lsm",
+        "database-internals",
+        "write-optimization"
+      ],
+      "category": "concepts",
+      "backingCard": {
+        "bookId": "database-internals",
+        "chapterId": "dbi-ch03-storage-engines-lsm-trees",
+        "cardId": "dbi-ch03-c004"
+      }
+    },
+    {
+      "id": "dbi-adv-0170-0000-0000-0000-000000000017",
+      "word": "SSTable",
+      "pronunciation": "ESS-ess-tay-bul",
+      "partOfSpeech": "noun",
+      "shortDefinition": "Sorted String Table: an immutable, key-sorted on-disk file produced by flushing or compacting an LSM engine.",
+      "simpleDefinition": "An SSTable (Sorted String Table) is the fundamental on-disk building block of an LSM engine. It is created by flushing a full memtable or by compacting existing SSTables, and it is never modified after creation. Its keys are sorted, which enables binary-search index lookups, efficient range scans, and merge-sort compaction. A Bloom filter attached to the SSTable allows most missing-key reads to skip the file entirely.",
+      "longDefinition": "Google's Bigtable paper (2006) popularized the SSTable name. Every SSTable consists of: sorted data blocks (compressed key-value pairs, typically 4–16 KB each); an index block holding the first key of each data block for binary search; a filter block storing the Bloom filter; and a footer with magic number and offset pointers. Sorted keys enable a sparse in-memory index: one entry per data block is sufficient to locate any key — look up the nearest preceding index entry, seek to that block offset, scan forward within the block. Immutability simplifies concurrency dramatically: multiple readers access an SSTable without coordination, and a compaction thread merging two SSTables never interferes with readers on the originals. Merging two sorted SSTable files is a single-pass merge-sort — O(N) time, fully sequential I/O. RocksDB and LevelDB call this structure an SSTable; Cassandra uses the same name (with five component files: Data, Index, Filter, Summary, Statistics); HBase calls the equivalent structure an HFile stored on HDFS. The structural guarantees — immutable, sorted, indexed, with a Bloom filter — are consistent across all implementations.",
+      "connector": "Think of an SSTable like a published encyclopedia volume: once printed it never changes, its entries are alphabetically sorted, and the index in the back lets you find any entry in seconds — just like a Bloom filter plus index block in an SSTable.",
+      "techContext": "In RocksDB, SSTable files have the .sst extension; the sst_dump tool inspects their contents, and rocksdb::Options::table_factory controls the format (BlockBasedTable by default).",
+      "exampleSentence": "After a memtable flush, the new L0 SSTable was 64 MB with 1.2 million keys sorted by user ID — queries for any specific user now read at most one data block rather than scanning the entire file.",
+      "codeExample": {
+        "language": "plaintext",
+        "code": "SSTable file layout:\n\n  ┌───────────────────────────────────────┐\n  │ Data Block 0: sorted key-value pairs  │\n  │   \"alice\" → {age:29, city:\"NYC\"}      │\n  │   \"bob\"   → {age:34, city:\"SF\"}       │\n  ├───────────────────────────────────────┤\n  │ Data Block 1: next sorted range       │\n  │   \"carol\" → ...   \"dave\" → ...        │\n  ├───────────────────────────────────────┤\n  │ Index Block: first key per data block │\n  │   \"alice\" → block 0 offset            │\n  │   \"carol\" → block 1 offset            │\n  ├───────────────────────────────────────┤\n  │ Filter Block: Bloom filter            │\n  ├───────────────────────────────────────┤\n  │ Footer: magic number, offsets         │\n  └───────────────────────────────────────┘"
+      },
+      "etymology": "SSTable stands for Sorted String Table; the name comes from Google's Bigtable paper (Chang et al., OSDI 2006), though the concept was present in the original LSM-tree paper (O'Neil et al., 1996) under different terminology.",
+      "unlockLevel": 16,
+      "tags": [
+        "storage-engines",
+        "lsm",
+        "database-internals",
+        "file-format"
+      ],
+      "category": "concepts",
+      "backingCard": {
+        "bookId": "database-internals",
+        "chapterId": "dbi-ch03-storage-engines-lsm-trees",
+        "cardId": "dbi-ch03-c003"
+      }
+    },
+    {
+      "id": "dbi-adv-0180-0000-0000-0000-000000000018",
+      "word": "Tombstone",
+      "pronunciation": "TOOM-stohn",
+      "partOfSpeech": "noun",
+      "shortDefinition": "A delete marker written to an LSM engine because immutable SSTables cannot erase existing records.",
+      "simpleDefinition": "In a B-tree database, deleting a row means finding and removing the record from its page. In an LSM engine this is impossible because SSTables are immutable. Instead, a delete writes a tombstone — a special record with the key and a 'deleted' marker. The tombstone is flushed to disk like any other write. During reads, a tombstone for a key shadows all older versions of that key, returning 'not found'. During compaction, tombstones and the older live versions they shadow are discarded together.",
+      "longDefinition": "Tombstones are the unavoidable consequence of the LSM engine's append-only design. When a key is deleted, the engine writes a new record to the memtable with a sequence number higher than any existing record for that key, plus a 'type=deletion' marker. This tombstone participates in the lifecycle exactly like any other write: it is flushed to an SSTable, potentially across multiple SSTable files, and eventually consumed by compaction. During reads, the engine searches from newest to oldest: the first record found for a key is authoritative — if it is a tombstone, the key is absent. During compaction, when the merge pass encounters a tombstone, it discards all older records for that key and can itself discard the tombstone once it has confirmed no older live version exists in any level below the current compaction boundary. Tombstone accumulation is a significant operational concern: workloads that delete data faster than compaction can run will see growing disk usage and degraded read performance for deleted key ranges. In Cassandra, tombstones have a configurable gc_grace_seconds (default 10 days) — a grace period before the tombstone is physically removed, ensuring nodes that were temporarily down can receive the deletion via anti-entropy repair before it disappears.",
+      "connector": "Think of a tombstone in an LSM engine exactly like a gravestone in a cemetery: it marks the spot where something used to be, prevents visitors from treating the spot as occupied by a living person, and is only cleared during a planned renovation (compaction) of the grounds.",
+      "techContext": "In Cassandra, tombstone accumulation can cause 'tombstone storms' that degrade read performance; the nodetool tablehistograms command shows the tombstone count distribution across SSTables.",
+      "exampleSentence": "The 'too many tombstones' warning in the Cassandra logs indicated that the application was deleting individual messages faster than STCS compaction could purge them, causing read latency to creep up over days as the tombstone pile grew.",
+      "etymology": "Tombstone is a metaphor from gravestones, which mark the location of a buried person (an absent key) rather than the person themselves. The term is used consistently across Cassandra, RocksDB, and LevelDB documentation.",
+      "unlockLevel": 16,
+      "tags": [
+        "storage-engines",
+        "lsm",
+        "database-internals",
+        "deletes"
+      ],
+      "category": "concepts",
+      "backingCard": {
+        "bookId": "database-internals",
+        "chapterId": "dbi-ch03-storage-engines-lsm-trees",
+        "cardId": "dbi-ch03-c008"
+      }
+    },
+    {
+      "id": "dbi-adv-0190-0000-0000-0000-000000000019",
+      "word": "Blink-Tree",
+      "pronunciation": "BLINK TREE",
+      "partOfSpeech": "noun",
+      "shortDefinition": "A concurrent B-tree variant with right-link pointers and high-keys so splits proceed without holding a parent latch.",
+      "simpleDefinition": "A Blink-Tree (Lehman & Yao, 1981) adds two fields to each B-tree node: a right-link pointer to the node's right sibling, and a high-key recording the maximum key in the node. During a split, the new right sibling and right-link are installed atomically, allowing concurrent readers to follow the link if they arrived at a node that has since been split. The parent is updated afterward — without holding the parent latch — because any reader that arrived too early simply follows the right-link to find the correct node.",
+      "longDefinition": "Standard B-tree splits are problematic under concurrency: when a leaf splits, both the leaf and the parent must be modified atomically, which requires holding latches on both simultaneously (latch coupling up the tree). Lehman and Yao's Blink-Tree eliminates the need for top-down latch coupling by adding a right-link to each node (a pointer to the right sibling) and a high-key (the maximum key stored in the current node). When a node splits, a new right sibling is created, the right-link is installed, and the high-key is updated — all in one atomic step. The parent pointer update is deferred. If a reader descends to a node and finds that the key it is looking for is greater than the node's high-key (meaning the split already occurred and the key moved right), the reader follows the right-link to the new right sibling. No parent latch is needed during the split, and readers never see an inconsistent state because the right-link always leads them to the correct node. PostgreSQL's B-tree implementation uses a Blink-Tree variant; so does InnoDB and SQL Server. The design is sometimes called the 'link-and-high-key trick'. Latch coupling (lock-crabbing) is still used for descents, but the critical section per level is reduced compared to a full split under parent latch.",
+      "connector": "Think of a Blink-Tree like adding emergency exit signs in a building that is being renovated: if a room is being split in two mid-renovation, a visitor who finds themselves on the wrong side simply follows the 'right-link' exit sign to the new correct room, without needing the architect (parent node) to guide them.",
+      "techContext": "PostgreSQL's nbtree (B-tree implementation) uses the Blink-Tree design: every page has a rightlink and a high_key, and the page-split logic writes the right sibling before updating the parent, consistent with the Lehman-Yao protocol.",
+      "exampleSentence": "Under the concurrent bulk load, the Blink-Tree's right-link protocol allowed read queries to continue without blocking during the hundreds of simultaneous leaf-page splits, because each split was visible through the right-link before the parent was updated.",
+      "etymology": "Blink-Tree coined by Lehman and Yao in their 1981 paper 'Efficient Locking for Concurrent Operations on B-Trees'; the 'blink' refers to the right-link (backward link) that distinguishes the structure from a standard B-tree.",
+      "unlockLevel": 16,
+      "tags": [
+        "b-tree",
+        "concurrency",
+        "database-internals",
+        "indexing"
+      ],
+      "category": "concepts",
+      "backingCard": {
+        "bookId": "database-internals",
+        "chapterId": "dbi-ch02-storage-engines-b-trees"
+      }
+    },
+    {
+      "id": "dbi-adv-0200-0000-0000-0000-000000000020",
+      "word": "Latch Coupling",
+      "pronunciation": "LATCH KUP-ling",
+      "partOfSpeech": "noun",
+      "shortDefinition": "Lock-crabbing: hold a parent latch while acquiring the child latch, then release the parent — safe concurrent B-tree descent.",
+      "simpleDefinition": "Latch coupling (also called lock-crabbing) is the protocol for descending a B-tree concurrently without corrupting the structure. To move from a parent node to a child node safely, a thread acquires the child's latch before releasing the parent's latch. At no point is the path between the root and the current node unlatched. Once the child is confirmed safe (no split or merge pending), the parent latch is released and descent continues to the next level.",
+      "longDefinition": "B-tree pages are protected by latches (short-duration, non-deadlock-safe mutual exclusion primitives, distinct from transaction-level locks). Concurrent threads descending the tree could corrupt the structure if they both traverse a node that is being split simultaneously. Latch coupling prevents this by ensuring a thread always holds at least one latch at any point during descent. For a read-only descent, the protocol uses shared latches (S-latches): acquire S-latch on child, release S-latch on parent. For an insert that might cause splits, the optimistic approach acquires S-latches on the path down and upgrades to X-latches only when modification is needed; the conservative approach acquires X-latches all the way down. The 'crabbing' metaphor describes how the hand movements look — one hand grabs the next rung before the other releases the current one. The Blink-Tree improves on latch coupling by allowing split completion without holding the parent latch, reducing latch contention at the cost of additional traversal logic for readers following right-links. PostgreSQL's B-tree implementation uses a combination of Blink-Tree traversal and latch coupling: S-latches for reads, X-latches for modifications, and right-link traversal to recover from races.",
+      "connector": "Think of latch coupling like crossing a river on stepping stones: you always keep one foot on a stable stone before lifting the other. You never have both feet in the air (both latches released) at the same time.",
+      "techContext": "In PostgreSQL, B-tree page latches are implemented as LWLocks (lightweight locks); the buffer manager holds a shared LWLock for read access and an exclusive LWLock for write access during page modifications.",
+      "exampleSentence": "Under 64 concurrent insert threads, latch coupling caused a bottleneck near the B-tree root because every thread had to acquire an exclusive latch on the root when a split propagated all the way up, serializing inserts at the tree apex.",
+      "etymology": "Latch coupling from latch (short-term mutual exclusion, from mechanical latches) + coupling (temporarily pairing two). Lock-crabbing is an alternative name from the crab-like sideways movement of holding one grip while reaching for the next.",
+      "unlockLevel": 16,
+      "tags": [
+        "b-tree",
+        "concurrency",
+        "database-internals",
+        "locking"
+      ],
+      "category": "concepts",
+      "backingCard": {
+        "bookId": "database-internals",
+        "chapterId": "dbi-ch02-storage-engines-b-trees",
+        "cardId": "dbi-ch02-c013"
+      }
+    },
+    {
+      "id": "dbi-adv-0210-0000-0000-0000-000000000021",
+      "word": "Copy-on-Write B-Tree",
+      "pronunciation": "KOP-ee-on-RYT BEE-TREE",
+      "partOfSpeech": "noun",
+      "shortDefinition": "LMDB's approach: every write produces new page copies from leaf to root; a single pointer swap commits the new tree.",
+      "simpleDefinition": "A Copy-on-Write (CoW) B-tree never modifies existing pages. When a leaf is updated, a new copy of the leaf is created with the change applied. That forces a new copy of the parent (to point to the new leaf), which forces a new copy of the grandparent, all the way to the root. A single atomic pointer swap (updating the root pointer in a fixed location) commits the entire new tree version. Readers on the old tree see a completely consistent snapshot until they complete.",
+      "longDefinition": "LMDB (Lightning Memory-Mapped Database) by Howard Chu implements a CoW B-tree that achieves ACID properties without a WAL. Every write transaction creates a new version of every page from the modified leaf up to the root. The old pages remain in place — referenced by any concurrent reader that started before the write — until the last reader holding a reference to them completes. A single root pointer update (one 8-byte write to a fixed location) atomically commits the new tree; the OS's mmap facilities ensure this is crash-safe on systems with correct page-size atomic write semantics. The CoW design eliminates WAL overhead (no log records to write, no fsync of the log) and makes concurrent readers completely non-blocking — they simply retain a reference to the root as of their transaction start and traverse an immutable snapshot. Write transactions are serialized (single writer at a time), which is acceptable for LMDB's embedded use case. Space reclamation is handled by a free-list of pages that have been replaced by CoW and are no longer referenced by any active reader. This is the same design used by ZFS's filesystem layer and macOS APFS. The trade-off: write amplification is O(tree height) — every write rewrites log(N) pages — compared to O(1) page modifications in a WAL-based engine.",
+      "connector": "Think of CoW B-tree writes like editing a shared document using tracked changes in a parallel draft: you copy every affected page, make changes on the copy, and swap in the new draft with a single approval click — readers on the old draft see nothing until they refresh.",
+      "techContext": "LMDB is used as the storage engine in OpenLDAP, Symas CDB, and was used in earlier versions of Lightning Network node implementations. Its CoW design gives it zero-copy reads via mmap.",
+      "exampleSentence": "LMDB's copy-on-write B-tree meant that the read-heavy DNS resolver cache process never stalled waiting for write locks — readers held immutable tree snapshots while a single writer updated the root pointer atomically.",
+      "etymology": "Copy-on-Write is a well-established computer science concept (used in OS fork semantics, filesystems, data structures) applied to B-trees by Howard Chu in his LMDB design, presented at LDAP World 2011.",
+      "unlockLevel": 16,
+      "tags": [
+        "b-tree",
+        "storage-engines",
+        "database-internals",
+        "concurrency"
+      ],
+      "category": "concepts",
+      "backingCard": {
+        "bookId": "database-internals",
+        "chapterId": "dbi-ch02-storage-engines-b-trees",
+        "cardId": "dbi-ch02-c011"
+      }
+    },
+    {
+      "id": "dbi-adv-0220-0000-0000-0000-000000000022",
+      "word": "RUM Conjecture",
+      "pronunciation": "RUM kun-JEK-cher",
+      "partOfSpeech": "noun",
+      "shortDefinition": "No access method can simultaneously minimize Read, Update (write), and Memory (space) amplification.",
+      "simpleDefinition": "The RUM conjecture (Idreos et al., 2016) states that any data structure or access method can minimize at most two of three overheads: Read amplification (extra work per read), Update amplification (extra work per write), and Memory/space amplification (extra disk space per byte of live data). An LSM-tree minimizes Update overhead at the cost of higher Read and Memory overhead. A B-tree balances all three without minimizing any. A sorted array minimizes Read overhead but cannot be efficiently updated.",
+      "longDefinition": "Stratos Idreos, Manos Athanassoulis, and colleagues at Harvard formalized the RUM conjecture in their 2016 CIDR paper 'Designing Access Methods: The RUM Conjecture'. The three overheads are defined as ratios: Read overhead (R) = bytes read from storage / bytes of user data returned; Update overhead (U) = bytes written to storage / bytes of user data written; Memory overhead (M) = bytes used on storage / bytes of live data. The conjecture states that reducing one overhead below a threshold forces at least one other overhead to increase. This is not pessimistic — it is a design compass. An LSM-tree deliberately minimizes U (sequential writes eliminate random I/O) and pays R (multiple SSTable levels to search) and M (stale versions pending compaction). A read-optimized structure like a sorted array has R=1 but infinite U (inserting a record requires rewriting the entire array). A B-tree sits in the middle — R is low (log(N) page reads), U is moderate (one page modified per write plus WAL), M is moderate (fill factor waste, index overhead). Understanding the RUM position of each layer in a system explains its performance profile: RocksDB under TiKV is an LSM-tree (low U, higher R and M), placed beneath a B-tree-style row index that reduces R for reads — each layer's position in the RUM triangle is chosen for the workload it serves.",
+      "connector": "Think of the RUM conjecture like choosing between three types of kitchen storage: an alphabetized spice rack (low R, high U to reorder), a pile of jars (low U to add new ones, high R to find anything), or a cabinet with sections (balanced but nothing minimized). You cannot have all three optimal at once.",
+      "techContext": "The RUM conjecture explains why the choice between leveled and size-tiered compaction in LSM engines is a RUM triangle trade-off: leveled reduces R and M (non-overlapping ranges, low space amp) at the cost of higher U (write amplification); size-tiered does the reverse.",
+      "exampleSentence": "When the architect chose RocksDB over PostgreSQL for the write-heavy metrics pipeline, they were explicitly accepting the RUM conjecture's trade-off: lower Update overhead at the cost of higher Read and Memory overhead, acceptable for a workload that rarely reads individual metrics.",
+      "etymology": "RUM is an acronym: Read amplification, Update amplification, Memory (space) amplification. Coined by Idreos et al. in their 2016 CIDR paper; the acronym was deliberately chosen to be memorable.",
+      "unlockLevel": 16,
+      "tags": [
+        "storage-engines",
+        "database-internals",
+        "design",
+        "trade-offs"
+      ],
+      "category": "concepts",
+      "backingCard": {
+        "bookId": "database-internals",
+        "chapterId": "dbi-ch01-how-databases-are-built",
+        "cardId": "dbi-ch01-c014"
+      }
+    },
+    {
+      "id": "dbi-adv-0230-0000-0000-0000-000000000023",
+      "word": "Group Commit",
+      "pronunciation": "GROOP KOM-it",
+      "partOfSpeech": "noun",
+      "shortDefinition": "Batching multiple transaction commits into a single fsync to amortize disk latency across many clients.",
+      "simpleDefinition": "Each commit requires fsyncing the WAL to make it durable — on spinning disk this costs 1–10 ms, on NVMe 50–200 µs. Serializing one fsync per commit caps throughput at 100–20,000 commits/second. Group commit queues multiple committing transactions and issues a single fsync for the batch. All queued transactions are confirmed together, amortizing the disk round trip across many clients and dramatically increasing throughput.",
+      "longDefinition": "Group commit is the primary technique for scaling WAL-based commit throughput without sacrificing durability. Every commit requires that the commit log record reach stable storage before the application is told 'committed', and every fsync carries a fixed latency cost. Serializing one fsync per commit means the commit rate is bounded by 1 / fsync_latency regardless of CPU or network capacity. Group commit breaks this bound: a commit queue holds all transactions waiting for fsync. A designated thread (or the first queued transaction) drains the queue, writes all queued log records in one batch, calls fsync once, and then wakes all waiting transactions simultaneously. The throughput scales with the concurrency level: with 100 concurrent clients each waiting 10 ms for a spinning-disk fsync, one fsync per 10 ms handles all 100 commits — 10,000 commits/second versus 100 without grouping. PostgreSQL has used group commit since version 8.3, controlled by commit_delay (microseconds to wait before fsync) and commit_siblings (minimum concurrent transactions needed to trigger the delay). InnoDB implements group commit via its prepare-commit sequence; InnoDB's group commit was broken for years due to an interaction with the binary log and was fully repaired in MySQL 5.6. The trade-off: individual commit latency increases slightly (the transaction waits for peers to join the batch), but system throughput increases by orders of magnitude under concurrent load.",
+      "connector": "Think of group commit like a bus that departs every 10 minutes regardless of passenger count: each individual passenger waits a bit longer than a taxi would take, but the total people moved per hour is far higher because the fixed cost (fuel, driver time) is shared.",
+      "techContext": "PostgreSQL's commit_delay (default 0 µs) and commit_siblings (default 5) control group commit aggressiveness; setting commit_delay=100 enables group commit on workloads with 5+ concurrent transactions.",
+      "exampleSentence": "After tuning commit_delay to 200 microseconds, the order-processing service's throughput jumped from 4,200 to 31,000 commits per second because hundreds of concurrent order insertions were sharing each fsync rather than each paying for their own.",
+      "codeExample": {
+        "language": "plaintext",
+        "code": "Without group commit (spinning disk, 10ms fsync):\n  T1 commits → fsync → confirmed   (10ms)\n  T2 commits → fsync → confirmed   (10ms)\n  T3 commits → fsync → confirmed   (10ms)\n  Throughput: ~100 commits/sec\n\nWith group commit:\n  T1,T2,T3 queue → single fsync → all confirmed (10ms)\n  Throughput (100 concurrent): ~10,000 commits/sec"
+      },
+      "etymology": "Group commit from group (batch) + commit (transaction finalization). The technique predates ARIES; early implementations appeared in IBM's System R and were formalized as 'group commit' in the database literature of the 1980s.",
+      "unlockLevel": 16,
+      "tags": [
+        "wal",
+        "durability",
+        "database-internals",
+        "performance"
+      ],
+      "category": "concepts",
+      "backingCard": {
+        "bookId": "database-internals",
+        "chapterId": "dbi-ch04-write-ahead-logging-and-recovery",
+        "cardId": "dbi-ch04-c010"
+      }
+    },
+    {
+      "id": "dbi-adv-0240-0000-0000-0000-000000000024",
+      "word": "Point-in-Time Recovery",
+      "pronunciation": "POINT-in-TYM reh-KUV-er-ee",
+      "partOfSpeech": "noun",
+      "shortDefinition": "Restoring a database to any past moment by replaying archived WAL segments on top of a base backup.",
+      "simpleDefinition": "Point-in-Time Recovery (PITR) lets you restore a database to any specific moment in the past, not just the most recent backup. The mechanism: take a periodic base backup; continuously archive completed WAL segments to long-term storage; at recovery time, restore the base backup and replay archived WAL segments forward until the desired recovery target time or LSN is reached. This bounds potential data loss to seconds rather than hours.",
+      "longDefinition": "A base backup alone creates a daily or weekly recovery point — losing up to 24 hours of data after a failure. WAL archiving fills this gap: PostgreSQL's archive_command copies each completed WAL segment (16 MB by default) to an archive as it rotates. At recovery time, restore_command fetches archived segments, and PostgreSQL's startup recovery process applies them sequentially until the recovery target is reached. Targets can be a timestamp (recovery_target_time), an LSN (recovery_target_lsn), or a transaction ID (recovery_target_xid). When the target is reached, PostgreSQL pauses in recovery mode for inspection before promoting to read-write. PITR is the mechanism behind 'surgical recovery' — restoring to the moment just before a DROP TABLE or an accidental mass-delete. Tools like pgBackRest and Barman automate WAL archiving, compression, encryption, and retention management. Amazon RDS and Aurora implement PITR natively, archiving WAL to S3 automatically and providing restore-to-any-second within the configured retention window. PITR also powers streaming replication: a standby is effectively replaying a continuous WAL stream from the primary — the same log replay mechanism as PITR, but applied in real time.",
+      "connector": "Think of PITR like a DVR for your database: the base backup is the start of the recording, the archived WAL segments are the continuous tape, and PITR lets you rewind to any frame you need — even one second before the disaster.",
+      "techContext": "PostgreSQL PITR requires archive_mode=on and a valid archive_command; pgBackRest is the community-standard tool for managing the archive, providing parallel WAL archiving and verified restore testing.",
+      "exampleSentence": "After an engineer accidentally ran DELETE FROM users without a WHERE clause, the DBA used PITR to restore the database to 30 seconds before the query ran, recovering 2.1 million rows with less than a minute of data loss.",
+      "codeExample": {
+        "language": "bash",
+        "code": "# postgresql.conf: enable WAL archiving\narchive_mode = on\narchive_command = 'pgbackrest --stanza=main archive-push %p'\n\n# recovery.conf (Postgres < 12) or postgresql.conf recovery params:\nrestore_command = 'pgbackrest --stanza=main archive-get %f %p'\nrecovery_target_time = '2026-06-07 14:35:00+00'\nrecovery_target_action = 'promote'\n\n# Restore sequence:\n# 1. pg_basebackup or pgbackrest restore → data files\n# 2. Start PostgreSQL → replays archived WAL to target time\n# 3. Database pauses for inspection, then promotes to RW"
+      },
+      "etymology": "Point-in-Time from the database backup/recovery literature, describing a restore to a specific moment rather than to the nearest backup boundary. PITR was formalized as a feature in PostgreSQL 8.0 (2005), though the concept predates it.",
+      "unlockLevel": 16,
+      "tags": [
+        "recovery",
+        "wal",
+        "database-internals",
+        "backup"
+      ],
+      "category": "concepts",
+      "backingCard": {
+        "bookId": "database-internals",
+        "chapterId": "dbi-ch04-write-ahead-logging-and-recovery",
+        "cardId": "dbi-ch04-c011"
+      }
+    },
+    {
+      "id": "dbi-adv-0250-0000-0000-0000-000000000025",
+      "word": "Dirty Page Table",
+      "pronunciation": "DUR-tee PAYJ TAY-bul",
+      "partOfSpeech": "noun",
+      "shortDefinition": "ARIES in-memory table recording each dirty page's recLSN — the earliest log record needed to make it current.",
+      "simpleDefinition": "The dirty page table (DPT) is an in-memory data structure maintained by the buffer manager during normal database operation. It records one entry per dirty buffer pool page: the page ID and its recLSN — the LSN of the first log record that dirtied the page since it was last flushed to disk. The minimum recLSN across all DPT entries is the redo start point: the earliest WAL position that recovery must replay to bring all dirty pages up to date. The DPT is saved at checkpoint time and rebuilt during the ARIES Analysis phase.",
+      "longDefinition": "The dirty page table is one of two data structures (alongside the transaction table) that drive ARIES recovery. During normal operation, the buffer manager populates the DPT: when a log record modifies a page for the first time since its last flush, an entry (pageId, recLSN=current_LSN) is added. If the page is modified again, the recLSN stays at its original value — it always records the earliest log record that needs to be replayed to reconstruct the page's current state from its last flushed version. When a dirty page is flushed to disk, its DPT entry is removed. At checkpoint time, the DPT is written into the checkpoint record. After a crash, the Analysis phase restores the DPT from the last checkpoint and then scans forward through the log: when an update record is encountered for a page not yet in the DPT, it is added with recLSN = log record's LSN. The minimum recLSN across the final DPT is the redo start point — all WAL before this point is irrelevant to recovery and can be truncated. In PostgreSQL, the DPT is implicit within buffer descriptors; in SQL Server it is an explicit data structure matching the ARIES paper's specification, and Microsoft's internal documentation uses the term 'Dirty Page Table' directly.",
+      "connector": "Think of the dirty page table like a 'work in progress' board in a construction project: each sticky note names a room that has been modified since last inspection (dirty page) and records the date work started on it (recLSN). The oldest date on any note tells you how far back in the project log you need to review.",
+      "techContext": "In PostgreSQL, the equivalent of the DPT is maintained implicitly via buffer descriptors; the checkpoint record captures dirty page information through a different mechanism but serves the same ARIES purpose.",
+      "exampleSentence": "The DBA could estimate worst-case recovery time by dividing the WAL volume between the minimum recLSN in the checkpoint's dirty page table and the current WAL position by the redo replay throughput of approximately 500 MB/s.",
+      "etymology": "Dirty page table from dirty page (a modified buffer pool page not yet flushed) + table (a data structure). The ARIES paper (Mohan et al., 1992) defined and named both the dirty page table and the transaction table as the two key recovery data structures.",
+      "unlockLevel": 16,
+      "tags": [
+        "recovery",
+        "wal",
+        "database-internals",
+        "buffer-management"
+      ],
+      "category": "concepts",
+      "backingCard": {
+        "bookId": "database-internals",
+        "chapterId": "dbi-ch04-write-ahead-logging-and-recovery",
+        "cardId": "dbi-ch04-c009"
+      }
+    },
+    {
+      "id": "dbi-adv-0260-0000-0000-0000-000000000026",
+      "word": "Steal / No-Force",
+      "pronunciation": "STEEL / NOH-FORSS",
+      "partOfSpeech": "noun",
+      "shortDefinition": "The ARIES buffer policy: uncommitted pages may be evicted (steal) and commit only flushes the log, not data pages (no-force).",
+      "simpleDefinition": "Steal and No-Force are two independent buffer pool policies that ARIES uses together for maximum efficiency. Steal means the buffer pool can write an uncommitted transaction's dirty pages to disk to free frames for other transactions — the buffer pool is never 'pinned' by long-running transactions. No-Force means a transaction's commit only requires flushing the WAL log records, not the modified data pages themselves — avoiding slow random I/O at commit time.",
+      "longDefinition": "Four combinations of steal/no-steal and force/no-force are possible. No-Steal/Force is simplest to reason about — uncommitted pages never hit disk, and committed pages are always on disk — but impractical: no-steal pins buffer frames for long transactions causing memory pressure, and force flushes all modified pages at commit causing random I/O spikes. ARIES uses Steal/No-Force — the most complex combination to implement but the most efficient at runtime. Steal allows the buffer pool to freely evict any dirty page (uncommitted or not) to free frames, preventing buffer pressure from long transactions. This means uncommitted data may reach disk — hence the need for undo logging. No-Force means commit only requires flushing the WAL (one sequential write), not all modified data pages (potentially hundreds of random writes). This means committed data may not be on disk yet — hence the need for redo logging. The steal/no-force combination requires both undo (for uncommitted pages that reached disk) and redo (for committed changes not yet on disk), which is exactly what ARIES's three-phase recovery provides. Every major commercial and open-source RDBMS — PostgreSQL, InnoDB, SQL Server, Oracle, DB2 — uses steal/no-force, because the runtime efficiency gains (never stalling on buffer pressure, no random I/O at commit) outweigh the added complexity of ARIES recovery.",
+      "connector": "Think of Steal/No-Force like a bank teller's policy: they can empty your safe-deposit box mid-transaction (steal — evicting your uncommitted pages) to make room for other customers, and they only stamp your receipt when you hand over the paperwork (no-force — logging the commit), not when every coin is physically in the vault.",
+      "techContext": "PostgreSQL's bgwriter and checkpointer implement the steal policy, writing dirty pages to disk continuously. The no-force policy means COMMIT only calls fsync on the WAL buffer, not on the data files.",
+      "exampleSentence": "The steal policy saved the 32 GB buffer pool during the month-end reporting query: the long-running analytical transaction's dirty pages were evicted to make room for the index scans, and ARIES recovery would have handled any crash cleanly.",
+      "etymology": "Steal and Force/No-Force are terms introduced by Gray in the 1978 'Notes on Database Operating Systems' and formalized in the ARIES paper (Mohan et al., 1992) as the four-quadrant buffer policy classification.",
+      "unlockLevel": 16,
+      "tags": [
+        "recovery",
+        "wal",
+        "buffer-management",
+        "database-internals"
+      ],
+      "category": "concepts",
+      "backingCard": {
+        "bookId": "database-internals",
+        "chapterId": "dbi-ch04-write-ahead-logging-and-recovery"
+      }
+    },
+    {
+      "id": "dbi-adv-0270-0000-0000-0000-000000000027",
+      "word": "Snapshot Isolation",
+      "pronunciation": "SNAP-shot eye-soh-LAY-shun",
+      "partOfSpeech": "noun",
+      "shortDefinition": "An isolation level where each transaction reads from a consistent snapshot taken at its start, avoiding read locks.",
+      "simpleDefinition": "Under Snapshot Isolation (SI), each transaction sees a consistent view of the database as it existed at the moment the transaction started. Later changes by other transactions are invisible, even if they commit during the transaction's lifetime. SI is implemented via MVCC: the engine keeps multiple versions of each row, and each transaction reads the version visible as of its start timestamp. Reads never block on writers, and writers never block on readers.",
+      "longDefinition": "Snapshot Isolation was introduced by Berenson et al. in their 1995 SIGMOD paper 'A Critique of ANSI SQL Isolation Levels' as a formally defined isolation level that avoids the classical anomalies (dirty reads, non-repeatable reads, lost updates) without locking readers. Under SI, a transaction T is assigned a start timestamp ts_start when it begins. It reads row versions whose commit timestamp is the largest value ≤ ts_start (the most recent committed version as of the snapshot). Writes are checked for write-write conflicts at commit: if another transaction has written to the same row between T's start and commit, T is aborted (first-committer-wins rule). SI prevents dirty reads (only committed versions are visible), non-repeatable reads (the snapshot is fixed), and lost updates (write-write conflict detection). However, SI does not prevent write skew — a concurrency anomaly where two transactions read overlapping data and each writes based on the other's pre-change view without a direct write-write conflict. Write skew is the canonical SI anomaly. PostgreSQL calls its default isolation level 'Repeatable Read' but implements it as Snapshot Isolation. Oracle's 'Read Committed' is a statement-level snapshot (not transaction-level SI). Full Serializable SI requires additional cycle detection (SSI).",
+      "connector": "Think of Snapshot Isolation like reading yesterday's newspaper while the live broadcast continues: your view of the world is consistent and complete as of when you sat down, even if major events are happening right now — you just don't see them until you pick up tomorrow's paper.",
+      "techContext": "PostgreSQL's REPEATABLE READ isolation level implements Snapshot Isolation via its MVCC engine; each transaction's snapshot is taken at the first query of the transaction and held for its duration.",
+      "exampleSentence": "The monthly report query ran for 8 minutes under Snapshot Isolation without blocking any concurrent writes, because MVCC gave it a fixed snapshot at the start of the transaction while the OLTP load continued writing new rows unobstructed.",
+      "codeExample": {
+        "language": "sql",
+        "code": "-- PostgreSQL: Snapshot Isolation via REPEATABLE READ\nBEGIN ISOLATION LEVEL REPEATABLE READ;\n  -- Snapshot taken here: sees all commits before this point\n  SELECT sum(balance) FROM accounts;  -- 1,000,000\n\n  -- Concurrent T2 commits: INSERT INTO accounts VALUES (99, 500);\n  -- Not visible to this transaction's snapshot\n\n  SELECT sum(balance) FROM accounts;  -- still 1,000,000 (snapshot)\nCOMMIT;"
+      },
+      "etymology": "Snapshot from the photographic snapshot metaphor — the database state is 'photographed' at the start of the transaction; Isolation from the ACID isolation property. Formalized by Berenson et al. in their 1995 SIGMOD critique of SQL isolation levels.",
+      "unlockLevel": 16,
+      "tags": [
+        "concurrency",
+        "mvcc",
+        "database-internals",
+        "transactions"
+      ],
+      "category": "concepts",
+      "backingCard": {
+        "bookId": "database-internals",
+        "chapterId": "dbi-ch09-concurrency-control",
+        "cardId": "dbi-ch09-c016"
+      }
+    },
+    {
+      "id": "dbi-adv-0280-0000-0000-0000-000000000028",
+      "word": "Write Skew",
+      "pronunciation": "RYT SKYOO",
+      "partOfSpeech": "noun",
+      "shortDefinition": "A concurrency anomaly where two transactions read overlapping data and each writes based on the other's pre-change view.",
+      "simpleDefinition": "Write skew is the concurrency anomaly that Snapshot Isolation fails to prevent. Two concurrent transactions T1 and T2 each read the same data, make decisions based on what they see, and each writes to a different row — so there is no write-write conflict to detect. But their combined result violates an application invariant that neither transaction violated individually. The classic example: two doctors both check 'at least one doctor on call?' and both go off-call simultaneously, leaving nobody on duty.",
+      "longDefinition": "Write skew arises in Snapshot Isolation when two transactions have anti-dependency cycles: T1 reads data later written by T2, and T2 reads data later written by T1. Because neither transaction writes to the row the other has written (no write-write conflict), SI's first-committer-wins rule does not abort either transaction. The combined result is anomalous. The canonical example from Berenson et al.: a hospital database with an invariant 'at least one doctor must be on call'. T1 reads: two doctors on call — checks out; writes: doctor Alice off-call. T2 reads: two doctors on call — checks out; writes: doctor Bob off-call. Both commit under SI. Result: no doctors on call, invariant violated. Write skew can occur whenever an application reads a set of rows, computes a decision, and writes to a row in that set (or a row related to it) based on the decision. Prevention options: (1) Serializable isolation (full serializability prevents write skew by definition); (2) Serializable Snapshot Isolation (SSI) in PostgreSQL detects anti-dependency cycles and aborts one transaction; (3) Explicit locking — SELECT FOR UPDATE on the rows read forces T2 to block until T1 commits, serializing the critical section. The phantoms variant (new rows inserted satisfying the read predicate) is the phantom read anomaly.",
+      "connector": "Think of write skew like two roommates both checking the fridge ('is there enough food for a party?'), both seeing a full fridge and each inviting 20 people, while neither buys more food — the combined effect violates the 'enough food' invariant even though neither individual decision was wrong at the time.",
+      "techContext": "PostgreSQL's REPEATABLE READ (Snapshot Isolation) is vulnerable to write skew; use SERIALIZABLE isolation or SELECT FOR UPDATE to prevent it in critical sections.",
+      "exampleSentence": "The double-booking bug was a textbook write skew: both reservation transactions read 'one seat remaining' under Snapshot Isolation, both wrote a booking for that seat, and neither saw a conflict because they wrote to different booking_id rows.",
+      "codeExample": {
+        "language": "sql",
+        "code": "-- Write skew example: on-call doctor system\n-- T1 and T2 both run concurrently under REPEATABLE READ\n\n-- T1:\nBEGIN;\nSELECT count(*) FROM on_call WHERE is_on_call = true; -- 2\n-- Decides: safe to go off call\nUPDATE on_call SET is_on_call = false WHERE doctor_id = 'alice';\nCOMMIT;\n\n-- T2 (concurrent with T1):\nBEGIN;\nSELECT count(*) FROM on_call WHERE is_on_call = true; -- still 2 (snapshot)\nUPDATE on_call SET is_on_call = false WHERE doctor_id = 'bob';\nCOMMIT; -- No conflict: different rows → both succeed\n-- Result: 0 doctors on call. Invariant violated."
+      },
+      "etymology": "Write skew named for the 'skewed' (asymmetric) nature of the conflict: two transactions read the same data but write to different parts of it, so the conflict is not a direct write-write collision. Formalized by Berenson et al. in their 1995 SIGMOD paper.",
+      "unlockLevel": 16,
+      "tags": [
+        "concurrency",
+        "transactions",
+        "database-internals",
+        "anomalies"
+      ],
+      "category": "concepts",
+      "backingCard": {
+        "bookId": "database-internals",
+        "chapterId": "dbi-ch09-concurrency-control",
+        "cardId": "dbi-ch09-c005"
+      }
+    },
+    {
+      "id": "dbi-adv-0290-0000-0000-0000-000000000029",
+      "word": "LRU Replacement",
+      "pronunciation": "ELL-ar-YOO reh-PLAYS-ment",
+      "partOfSpeech": "noun",
+      "shortDefinition": "Buffer pool eviction policy: evict the page not accessed for the longest time; most common approximation in production.",
+      "simpleDefinition": "LRU (Least Recently Used) replacement evicts the buffer pool frame whose page has not been accessed for the longest time when a new page must be loaded and no free frames are available. The assumption is that recently accessed pages are more likely to be accessed again soon (temporal locality). True LRU requires tracking the exact last-access time of every page, which is expensive; production databases use approximations like the Clock algorithm or LRU-K.",
+      "longDefinition": "The buffer pool manager must choose a victim frame to evict whenever a new page is needed and no free frame is available. LRU (Least Recently Used) is the theoretically optimal online eviction policy under workloads with strong temporal locality — accessing a page recently predicts accessing it again soon. In a pure LRU implementation, every page access updates a 'last used' timestamp (or moves the page to the front of an LRU list), and eviction always picks the tail. In practice, maintaining a precise LRU list is expensive under concurrent access (every read requires a write to the LRU structure). Production databases use approximations. The Clock algorithm ('Second Chance') gives each frame a reference bit: on access, set the bit; eviction sweeps the clock hand, clearing bits and evicting the first frame with a cleared bit. InnoDB uses LRU-K (specifically LRU-2): a page must be accessed at least twice before entering the 'hot' portion of the LRU list, protecting against large scans that would flush the entire buffer pool (the 'sequential flood' problem). PostgreSQL uses a Clock algorithm for shared_buffers. All LRU variants struggle with sequential scans: a full table scan accesses every page exactly once, polluting the buffer pool with pages that will never be re-accessed. InnoDB's two-list approach (young/old) mitigates this by initially placing scan pages in the 'old' list where they age out quickly without displacing frequently-used pages.",
+      "connector": "Think of LRU replacement like a desk with limited space: when it fills up, you remove the book you haven't opened in the longest time. If you're reading the same reference books repeatedly, they stay; the ones gathering dust get put back on the shelf.",
+      "techContext": "InnoDB uses a modified LRU with a young/old split (default 37% old): newly loaded pages enter the old portion and are promoted to young only after a second access within innodb_old_blocks_time (default 1000ms), protecting hot pages from scan pollution.",
+      "exampleSentence": "The nightly full-table ETL scan evicted the entire working set of hot OLTP pages from the buffer pool, causing a 10-minute latency spike at the start of the morning trading session while the frequently-accessed index pages were re-read from disk.",
+      "etymology": "LRU stands for Least Recently Used; the eviction policy was introduced in the virtual memory management literature of the 1960s and adopted for database buffer management. The Clock approximation was developed simultaneously in the OS and database communities.",
+      "unlockLevel": 16,
+      "tags": [
+        "buffer-management",
+        "database-internals",
+        "performance",
+        "caching"
+      ],
+      "category": "concepts",
+      "backingCard": {
+        "bookId": "database-internals",
+        "chapterId": "dbi-ch05-buffer-management"
+      }
+    },
+    {
+      "id": "dbi-adv-0300-0000-0000-0000-000000000030",
+      "word": "Serializable Snapshot Isolation",
+      "pronunciation": "seh-REE-uh-lyz-uh-bul SNAP-shot eye-soh-LAY-shun",
+      "partOfSpeech": "noun",
+      "shortDefinition": "SSI: detects and aborts transactions whose snapshot-based execution would form a serialization anomaly cycle.",
+      "simpleDefinition": "Serializable Snapshot Isolation (SSI) upgrades Snapshot Isolation to full serializability by detecting dangerous concurrency patterns at runtime. SSI tracks anti-dependency edges — 'T1 read a value later written by T2' — and detects when these edges form a cycle in the transaction dependency graph (a serialization anomaly). When a dangerous cycle is detected, one of the involved transactions is aborted with a serialization error. SSI is the isolation algorithm behind PostgreSQL's SERIALIZABLE level since version 9.1.",
+      "longDefinition": "Michael Cahill, Uwe Röhm, and Alan Fekete introduced SSI in their 2008 SIGMOD paper 'Serializable Isolation for Snapshot Databases'. The key insight is that write skew and phantom anomalies under Snapshot Isolation always manifest as a specific cycle pattern in the transaction dependency graph: a 'dangerous structure' consisting of two consecutive rw-anti-dependency edges (T1 →rw T2 →rw T3 where T1 and T3 may be the same transaction). SSI instruments each transaction to track SIREAD locks (not blocking locks — just tracking what each transaction has read) and detects when incoming rw-anti-dependencies form dangerous structures. When a dangerous structure is detected, one of the involved transactions is aborted (the one that has not yet committed if possible). SSI is optimistic: it allows transactions to proceed concurrently and only aborts when an actual conflict is detected. The false abort rate (aborting transactions that would have been serializable) is low in practice. PostgreSQL's SERIALIZABLE level implements SSI with per-predicate SIREAD locks; the pg_stat_activity view exposes SSI-related statistics. SSI is theoretically superior to Strict 2PL for read-heavy workloads because readers do not block writers, but it requires abort handling in application code and carries higher overhead for write-skew-prone workloads.",
+      "connector": "Think of SSI like a traffic intersection with a smart camera instead of a traffic light: vehicles proceed freely and the camera watches for dangerous crossing patterns. When it detects a collision about to happen, it radios one car to stop — only those in a genuinely dangerous pattern are interrupted.",
+      "techContext": "PostgreSQL's SERIALIZABLE level uses SSI since version 9.1; SET default_transaction_isolation = 'serializable' enables it globally. The serialization_failures counter in pg_stat_database tracks how often SSI aborts transactions.",
+      "exampleSentence": "After upgrading the bank's transfer service to PostgreSQL SERIALIZABLE isolation, the write skew bug that allowed double-spending disappeared without any explicit SELECT FOR UPDATE locking, because SSI detected the anti-dependency cycle and aborted one of the two conflicting transactions.",
+      "codeExample": {
+        "language": "sql",
+        "code": "-- SSI in PostgreSQL: doctor on-call example resolved\nBEGIN ISOLATION LEVEL SERIALIZABLE;\nSELECT count(*) FROM on_call WHERE is_on_call = true; -- SIREAD lock\nUPDATE on_call SET is_on_call = false WHERE doctor_id = 'alice';\nCOMMIT;\n\n-- Concurrent T2 under SERIALIZABLE:\nBEGIN ISOLATION LEVEL SERIALIZABLE;\nSELECT count(*) FROM on_call WHERE is_on_call = true; -- SIREAD lock\nUPDATE on_call SET is_on_call = false WHERE doctor_id = 'bob';\nCOMMIT;\n-- ERROR: could not serialize access due to read/write dependencies\n-- One transaction aborts → invariant preserved"
+      },
+      "etymology": "Serializable Snapshot Isolation: Serializable (equivalent to serial execution) + Snapshot Isolation (the underlying concurrency mechanism). Coined by Cahill, Röhm, and Fekete in their 2008 SIGMOD paper.",
+      "unlockLevel": 16,
+      "tags": [
+        "concurrency",
+        "transactions",
+        "database-internals",
+        "serializability"
+      ],
+      "category": "concepts",
+      "backingCard": {
+        "bookId": "database-internals",
+        "chapterId": "dbi-ch09-concurrency-control",
+        "cardId": "dbi-ch09-c016"
+      }
+    }
+  ]
+}

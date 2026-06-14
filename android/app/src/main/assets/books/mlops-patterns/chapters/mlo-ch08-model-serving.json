@@ -1,0 +1,1776 @@
+{
+  "chapterId": "mlo-ch08-model-serving",
+  "shardIndex": 8,
+  "cards": [
+    {
+      "id": "mlo-ch08-c001",
+      "order": 1,
+      "title": "Serving Modes — Online, Batch, Streaming",
+      "teaser": "Model serving is not one thing — it is three fundamentally different patterns shaped by latency requirements, data volumes, and delivery mechanisms. Choosing the wrong mode is a systems design error, not a configuration problem.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Every production model ultimately answers a question. How urgently the system needs that answer determines the serving architecture. Three serving modes cover virtually every production ML use case:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Online (synchronous).",
+                "marks": ["bold"]
+              },
+              {
+                "text": " A client sends a request and waits for the prediction. Response must arrive within a latency budget — typically under 100 ms for user-facing systems, often under 10 ms for ad bidding or fraud detection. Each request is scored independently."
+              }
+            ],
+            [
+              {
+                "text": "Batch (offline).",
+                "marks": ["bold"]
+              },
+              {
+                "text": " A scheduler runs inference over a large dataset and writes results to a data store. No user is waiting. Latency is irrelevant; throughput is everything. A nightly recommendation pipeline scoring 100 million users is batch serving."
+              }
+            ],
+            [
+              {
+                "text": "Streaming (event-driven).",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Events arrive on a message bus (Kafka, Kinesis) and are scored as they flow through. Latency is bounded but not synchronous with a waiting client. A fraud detection pipeline scoring transactions as they are posted to Kafka is streaming serving."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The three modes differ across four dimensions: "
+            },
+            {
+              "text": "latency tolerance",
+              "marks": ["italic"]
+            },
+            {
+              "text": " (online: milliseconds; streaming: sub-second to seconds; batch: minutes to hours), "
+            },
+            {
+              "text": "throughput pattern",
+              "marks": ["italic"]
+            },
+            {
+              "text": " (online: bursty; streaming: steady; batch: bulk), "
+            },
+            {
+              "text": "infrastructure coupling",
+              "marks": ["italic"]
+            },
+            {
+              "text": " (online: synchronous call stack; streaming: decoupled via broker; batch: decoupled via scheduler), and "
+            },
+            {
+              "text": "stale prediction tolerance",
+              "marks": ["italic"]
+            },
+            {
+              "text": " (online: zero; streaming: low; batch: high)."
+            }
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "info",
+          "runs": [
+            {
+              "text": "Many real systems combine modes: a batch job pre-computes predictions for common inputs and stores them; online serving checks the cache first and falls back to live inference only on a cache miss. This lambda-style architecture captures the efficiency of batch and the freshness of online."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Online serving is like a waiter taking your order and returning immediately. Batch serving is the kitchen cooking for everyone at once overnight. Streaming serving is a conveyor belt scoring items as they arrive, without anyone waiting at a counter."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "mlo-ch08-c002",
+      "order": 2,
+      "title": "Online Serving — REST and gRPC Endpoints",
+      "teaser": "Online serving exposes a model as a network endpoint that scores one (or a small group of) example per call. The two dominant protocols — REST/HTTP and gRPC — involve real tradeoffs in serialization overhead, ecosystem fit, and streaming capability.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Online inference is synchronous: the calling service sends a payload and blocks until the prediction returns. The endpoint contract defines the input schema (feature vector, image bytes, text) and the output schema (class probabilities, regression value, token sequence). Two protocols dominate:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "REST over HTTP/1.1 or HTTP/2.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Payloads are JSON or MessagePack. Universally supported by any HTTP client. Easy to debug with curl or Postman. JSON serialization adds overhead — parsing a 768-dimensional float array from JSON is orders of magnitude slower than binary. Practical latency floor: ~5–15 ms network round-trip plus inference time."
+              }
+            ],
+            [
+              {
+                "text": "gRPC.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Protocol Buffers for serialization — compact binary encoding, schema-enforced, efficient to parse. Native support for bidirectional streaming. Requires Protobuf schema files and code generation. Preferred for high-QPS (queries per second) internal microservices where bandwidth and parse time matter. Latency improvement over REST is typically 20–40% on large payloads."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Latency budget decomposition for an online serving call:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Network round-trip",
+                "marks": ["bold"]
+              },
+              {
+                "text": " (2–20 ms depending on region co-location)"
+              }
+            ],
+            [
+              {
+                "text": "Request deserialization",
+                "marks": ["bold"]
+              },
+              {
+                "text": " (1–5 ms for JSON; <0.5 ms for Protobuf on large tensors)"
+              }
+            ],
+            [
+              {
+                "text": "Pre-processing",
+                "marks": ["bold"]
+              },
+              {
+                "text": " (tokenization, normalization — 1–50 ms)"
+              }
+            ],
+            [
+              {
+                "text": "Model inference",
+                "marks": ["bold"]
+              },
+              {
+                "text": " (1 ms on a GPU for a small model; 100+ ms for a large transformer)"
+              }
+            ],
+            [
+              {
+                "text": "Response serialization",
+                "marks": ["bold"]
+              },
+              {
+                "text": " (< 1 ms)"
+              }
+            ]
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "warning",
+          "runs": [
+            {
+              "text": "Inference time is rarely the dominant latency component on small models deployed on GPU. Network round-trip, deserialization, and pre-processing together often exceed inference time. Profile the full call path before optimizing the model."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Online serving is a network call: you send features, you get a prediction back. REST uses JSON and is easy to debug; gRPC uses compact binary and is faster for high-volume calls. The total latency is the sum of network time, serialization, pre-processing, and inference — optimize all of them, not just the model."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "mlo-ch08-c003",
+      "order": 3,
+      "title": "Batch Inference — Throughput-Optimized Scoring",
+      "teaser": "Batch inference scores large datasets offline on a schedule. The design goal is maximum throughput at minimum cost — not minimum latency. This inversion relative to online serving changes every architectural decision.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Batch inference is the workhorse of production ML by volume. Most recommendation systems, churn prediction pipelines, content moderation queues, and risk-scoring systems produce the majority of their predictions in batch. The canonical shape:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "1.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " A scheduler (Airflow, Prefect, cron) triggers a job."
+              }
+            ],
+            [
+              {
+                "text": "2.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " The job reads a dataset from a data warehouse or object store (BigQuery, S3, Delta Lake)."
+              }
+            ],
+            [
+              {
+                "text": "3.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " A model server or distributed framework (Spark, Ray) runs inference over all rows."
+              }
+            ],
+            [
+              {
+                "text": "4.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Results are written back to a store where downstream systems read them."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Throughput optimization strategies for batch inference:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Large batch sizes.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " A GPU is most efficient when processing hundreds or thousands of examples simultaneously. Online serving rarely achieves this naturally; batch jobs do."
+              }
+            ],
+            [
+              {
+                "text": "Parallelism.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Partition the dataset across multiple workers (Ray, Spark, Dask). Each worker runs inference on its shard."
+              }
+            ],
+            [
+              {
+                "text": "Model quantization.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Lower precision (INT8, FP16) increases throughput at modest accuracy cost — acceptable for many batch use cases where predictions are inputs to downstream logic."
+              }
+            ],
+            [
+              {
+                "text": "Skip re-scoring unchanged items.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " If a user's features have not changed since the last run, their prediction likely hasn't either. Incremental batch jobs skip unchanged partitions."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "info",
+          "runs": [
+            {
+              "text": "Batch predictions become stale the moment they are written. For time-sensitive decisions (pricing, personalization during a live session), the staleness window — time between batch run and prediction consumption — must be acceptable for the use case. If it is not, the use case belongs in online or streaming serving."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Batch inference is about running a model over millions of examples as cheaply and quickly as possible and storing the results for later use. Nobody is waiting, so you optimize for cost and throughput — big GPU batches, parallel workers, incremental updates."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "mlo-ch08-c004",
+      "order": 4,
+      "title": "Streaming Inference — Event-Driven Scoring",
+      "teaser": "Streaming inference scores events as they arrive on a message bus, achieving near-real-time predictions without the synchronous coupling of online serving. Kafka and Flink are the dominant infrastructure, but the pattern introduces stateful complexity that batch and online do not have.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Streaming inference sits between online and batch: it processes events continuously (like online) but does so asynchronously, decoupled from any waiting client (like batch). The canonical architecture:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Events arrive",
+                "marks": ["bold"]
+              },
+              {
+                "text": " on a Kafka topic (e.g., raw_transactions, clickstream_events, sensor_readings)."
+              }
+            ],
+            [
+              {
+                "text": "A stream processor",
+                "marks": ["bold"]
+              },
+              {
+                "text": " (Flink, Spark Structured Streaming, Kafka Streams) consumes events, computes features, and calls the model."
+              }
+            ],
+            [
+              {
+                "text": "Predictions are emitted",
+                "marks": ["bold"]
+              },
+              {
+                "text": " to an output topic or written directly to a data store or alerting system."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Streaming inference introduces challenges absent from the other two modes:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Feature computation at stream time.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Many ML features are aggregations over time windows (\"number of transactions in the last 10 minutes\"). Computing these correctly in a streaming context requires stateful operators and watermark handling — significantly more complex than point-in-time batch features."
+              }
+            ],
+            [
+              {
+                "text": "Model loading and versioning.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " The stream processor must load and update models without dropping events. Hot-reloading — swapping a model version while the job runs — requires careful state management."
+              }
+            ],
+            [
+              {
+                "text": "Ordering and exactly-once guarantees.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Kafka partitioning means events may arrive out of sequence. Exactly-once processing requires idempotent outputs and transactional commits."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "info",
+          "runs": [
+            {
+              "text": "Feature stores (Feast, Tecton) bridge the batch-stream gap: the same feature definitions compute offline features for training and online/streaming features for serving, reducing training-serving skew — one of the most common causes of model degradation in production."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Streaming inference is like a toll booth that scores every car as it passes rather than waiting for a daily report or having drivers call ahead. Events flow in, predictions flow out, with no client waiting synchronously. The hard part is computing features correctly over time windows while events keep arriving."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "mlo-ch08-c005",
+      "order": 5,
+      "title": "Dynamic Batching — GPU Utilization for Online Requests",
+      "teaser": "Dynamic batching is the technique that makes online serving GPU-efficient: the server groups several concurrent requests into a single batch before calling the model, achieving near-batch throughput with near-online latency. It is the single highest-leverage optimization in model serving infrastructure.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The fundamental tension in online serving is that GPUs are efficient in bulk but clients send single requests. A GPU processes a single item in roughly the same wall-clock time as a batch of 32 items, so single-request serving wastes 97% of GPU capacity."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Dynamic batching resolves this. The model server maintains a short queue — typically 1–10 milliseconds — and batches all requests that arrive within the window before dispatching to the GPU. The results are then fan-outed back to each waiting client. From each client's perspective, the latency is:"
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "latency = queue_wait + batch_inference_time"
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "At low QPS, the queue rarely fills; batches are small and latency is near-optimal. At high QPS, batches grow; GPU utilization approaches 100% and per-request cost drops dramatically. The queue_wait adds a controlled overhead (configured as "
+            },
+            {
+              "text": "max_queue_delay_microseconds",
+              "marks": ["code"]
+            },
+            {
+              "text": " in NVIDIA Triton) that is the tradeoff price for the throughput gain."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Configuration parameters that shape dynamic batching behavior:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "max_batch_size.",
+                "marks": ["code"]
+              },
+              {
+                "text": " The upper limit on batch size. Constrained by GPU memory."
+              }
+            ],
+            [
+              {
+                "text": "max_queue_delay_microseconds.",
+                "marks": ["code"]
+              },
+              {
+                "text": " The maximum time a request waits in the queue for its batch to fill. Trading latency for throughput."
+              }
+            ],
+            [
+              {
+                "text": "preferred_batch_size.",
+                "marks": ["code"]
+              },
+              {
+                "text": " NVIDIA Triton's hint list for batch sizes that are especially efficient on the target hardware (e.g., powers of 2 for TensorRT-compiled models)."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "info",
+          "runs": [
+            {
+              "text": "Dynamic batching is server-side and transparent to the client. It is distinct from client-side batching (sending multiple inputs in one request), which requires API changes. Both can be combined: a client sends a mini-batch of 8, and the server further batches with other concurrent clients."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Dynamic batching is like a bus that leaves every 5 seconds regardless of how many passengers are on board. Clients wait at most one bus-cycle (a few milliseconds). The GPU runs the batch efficiently. Each client pays a tiny wait fee; everyone gets much better throughput."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "mlo-ch08-c006",
+      "order": 6,
+      "title": "Model Servers — What the Abstraction Buys You",
+      "teaser": "A model server is a purpose-built runtime that handles the boilerplate of production inference: HTTP/gRPC endpoints, dynamic batching, multi-model management, health checks, metrics, and hardware utilization — so ML engineers do not reimplement all of it in Flask.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Without a model server, the naive approach is to wrap a model in a Flask or FastAPI app. This works for demos but breaks in production because it omits everything except the inference call:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "No dynamic batching.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Each request hits the model independently."
+              }
+            ],
+            [
+              {
+                "text": "No multi-model loading.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Running multiple models (an ensemble, different versions) requires custom routing logic."
+              }
+            ],
+            [
+              {
+                "text": "No GPU memory management.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Loading and unloading models as traffic patterns shift requires significant engineering."
+              }
+            ],
+            [
+              {
+                "text": "No standard metrics.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Latency percentiles, throughput, queue depth — all must be instrumented manually."
+              }
+            ],
+            [
+              {
+                "text": "No standardized health endpoints.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Kubernetes liveness and readiness probes must be wired by hand."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Model servers provide all of this as infrastructure. The ML engineer's job is reduced to: define the model artifact, define the input/output schema, and configure the server. The server handles the production engineering."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The five model servers that matter in 2025:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "TensorFlow Serving",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — TF-only, mature, production-proven at Google scale."
+              }
+            ],
+            [
+              {
+                "text": "TorchServe",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — PyTorch-official, flexible handler model, good for custom pre/post-processing."
+              }
+            ],
+            [
+              {
+                "text": "NVIDIA Triton Inference Server",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — multi-framework, multi-GPU, highest throughput, industry standard for GPU serving."
+              }
+            ],
+            [
+              {
+                "text": "KServe",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — Kubernetes-native abstraction over multiple backends; the platform layer, not the inference engine."
+              }
+            ],
+            [
+              {
+                "text": "BentoML",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — Python-first packaging + serving; best developer experience; handles containerization automatically."
+              }
+            ]
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "A model server is what sits between your trained model and the outside world in production. It handles the networking, batching, GPU management, and metrics so you don't have to write that infrastructure yourself in Flask. Think of it as a production-grade web server, but purpose-built for running ML models."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "mlo-ch08-c007",
+      "order": 7,
+      "title": "TensorFlow Serving",
+      "teaser": "TensorFlow Serving was the first widely-adopted production model server, introduced by Google in 2016. It established the pattern of serving SavedModel artifacts over gRPC and HTTP, with versioned model management and zero-downtime model updates.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "TensorFlow Serving (TF Serving) was open-sourced by Google in 2016 and set the template that all later model servers followed: a long-running daemon that watches a model directory, loads new versions automatically, and exposes REST and gRPC endpoints."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Key design decisions that distinguish TF Serving:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "SavedModel format.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " TF Serving consumes TensorFlow's SavedModel format — the computation graph plus variables. No Python runtime needed at inference time, enabling C++ serving with lower latency than Python-based alternatives."
+              }
+            ],
+            [
+              {
+                "text": "Versioned model management.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Models are loaded from a versioned directory structure (model_name/1/, model_name/2/). TF Serving can serve multiple versions simultaneously, enabling canary and A/B traffic splitting."
+              }
+            ],
+            [
+              {
+                "text": "Servables and loaders.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " TF Serving's internal abstraction generalizes beyond models — a Servable is anything loadable and queryable. Vocabulary lookups, embedding tables, and pre-processing graphs can all be Servables."
+              }
+            ],
+            [
+              {
+                "text": "REST and gRPC.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Both protocols are supported out of the box. The prediction API uses the Predict RPC definition from the TensorFlow Serving API Protobuf."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Limitations that newer servers address:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "TF-only.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " TF Serving does not natively serve PyTorch, XGBoost, or ONNX models. Teams with mixed framework portfolios need additional infrastructure."
+              }
+            ],
+            [
+              {
+                "text": "Limited custom pre/post-processing.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " All pre-processing must be encoded as TF graph operations or handled outside the server."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "info",
+          "runs": [
+            {
+              "text": "TF Serving remains the right choice for pure TensorFlow shops, especially those that export TensorFlow graphs from training pipelines. Its C++ core and graph-based execution make it among the fastest options for TF models, with a mature operational footprint."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "TensorFlow Serving is a daemon that watches a folder, loads TF models automatically, and serves them over REST and gRPC. It handles versioning and zero-downtime updates. The catch: it only speaks TensorFlow's SavedModel format."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "mlo-ch08-c008",
+      "order": 8,
+      "title": "TorchServe — PyTorch's Official Server",
+      "teaser": "TorchServe is PyTorch's production serving framework, jointly developed by AWS and Meta. Its defining feature is the handler model: users provide a Python class that controls pre-processing, inference, and post-processing, giving full programmatic control with production serving infrastructure.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "TorchServe was released in 2020 as PyTorch's answer to TF Serving. Its core abstraction is the "
+            },
+            {
+              "text": "handler",
+              "marks": ["bold"]
+            },
+            {
+              "text": " — a Python class with four lifecycle methods:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "initialize(context)",
+                "marks": ["code"]
+              },
+              {
+                "text": " — loads the model, tokenizer, any required artifacts."
+              }
+            ],
+            [
+              {
+                "text": "preprocess(data)",
+                "marks": ["code"]
+              },
+              {
+                "text": " — transforms raw request bytes into model input tensors."
+              }
+            ],
+            [
+              {
+                "text": "inference(data)",
+                "marks": ["code"]
+              },
+              {
+                "text": " — runs the model forward pass."
+              }
+            ],
+            [
+              {
+                "text": "postprocess(data)",
+                "marks": ["code"]
+              },
+              {
+                "text": " — converts model output tensors to a JSON-serializable response."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Model artifacts are packaged into a "
+            },
+            {
+              "text": ".mar",
+              "marks": ["code"]
+            },
+            {
+              "text": " (Model ARchive) file using the "
+            },
+            {
+              "text": "torch-model-archiver",
+              "marks": ["code"]
+            },
+            {
+              "text": " CLI. The archive bundles the serialized model, handler code, and any extra files (vocabularies, config files)."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "TorchServe capabilities:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Multi-model serving.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Multiple models loaded simultaneously; management API for hot-loading and unloading."
+              }
+            ],
+            [
+              {
+                "text": "Dynamic batching.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Configurable batch size and timeout per model."
+              }
+            ],
+            [
+              {
+                "text": "A/B testing.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Multiple versions of a model can serve simultaneously with traffic split configured via the management API."
+              }
+            ],
+            [
+              {
+                "text": "Metrics.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Built-in Prometheus-compatible metrics for latency, throughput, and queue size."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "info",
+          "runs": [
+            {
+              "text": "The handler pattern is TorchServe's strength and its complexity. Default handlers exist for common tasks (image classification, object detection, NLP), but custom handlers require writing Python and testing outside the server. The result is maximum flexibility, but it demands more engineering than a purely configuration-driven server."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "TorchServe packages PyTorch models into archive files and serves them through Python handler classes you write. You control every step — how to parse the request, run the model, format the response. It's the most PyTorch-native option, with the tradeoff that custom logic means custom code to maintain."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "mlo-ch08-c009",
+      "order": 9,
+      "title": "NVIDIA Triton Inference Server",
+      "teaser": "NVIDIA Triton is the high-performance, multi-framework model server designed for maximum GPU utilization. It supports TensorFlow, PyTorch, ONNX, TensorRT, and custom backends in a single server instance, and its dynamic batching and concurrent model execution make it the industry standard for GPU-intensive inference.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Triton (formerly TensorRT Inference Server) is NVIDIA's open-source model server, released in 2018. It was designed around a single goal: extract maximum performance from GPU hardware across any framework. Its architecture differs from TF Serving and TorchServe in important ways."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Each model in Triton is described by a "
+            },
+            {
+              "text": "model configuration file",
+              "marks": ["bold"]
+            },
+            {
+              "text": " named "
+            },
+            {
+              "text": "config.pbtxt",
+              "marks": ["code"]
+            },
+            {
+              "text": " (Protocol Buffer text format). A minimal Triton config for a TorchScript model:"
+            }
+          ]
+        },
+        {
+          "type": "code",
+          "language": "protobuf",
+          "code": "name: \"text_classifier\"\nbackend: \"pytorch\"\nmax_batch_size: 64\n\ndynamic_batching {\n  preferred_batch_size: [ 16, 32, 64 ]\n  max_queue_delay_microseconds: 5000\n}\n\ninput [\n  {\n    name: \"input_ids\"\n    data_type: TYPE_INT64\n    dims: [ -1, 128 ]\n  }\n]\n\noutput [\n  {\n    name: \"logits\"\n    data_type: TYPE_FP32\n    dims: [ -1, 10 ]\n  }\n]\n\ninstance_group [\n  {\n    kind: KIND_GPU\n    count: 2\n  }\n]"
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Key Triton capabilities:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Multi-framework backends.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " TensorFlow SavedModel, PyTorch TorchScript, ONNX, TensorRT, OpenVINO, Python (custom), and FIL (forest models) all load in a single server."
+              }
+            ],
+            [
+              {
+                "text": "Concurrent model execution.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Multiple model instances can execute simultaneously on different GPU streams, maximizing hardware utilization."
+              }
+            ],
+            [
+              {
+                "text": "Model pipelines.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Ensemble models — a pre-processing model feeding a main model feeding a post-processing model — are defined declaratively and executed as a single end-to-end pipeline with no inter-process overhead."
+              }
+            ],
+            [
+              {
+                "text": "Shared memory transport.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Clients co-located on the same host can transfer tensors via CUDA shared memory, bypassing serialization entirely."
+              }
+            ]
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Triton is NVIDIA's production-grade model server. You drop a config.pbtxt file alongside your model artifact, declare inputs and outputs, enable dynamic batching, and Triton handles everything else — including running multiple models and multiple GPU instances simultaneously. It's the highest-performance option for GPU inference."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "mlo-ch08-c010",
+      "order": 10,
+      "title": "KServe — Kubernetes-Native Model Serving",
+      "teaser": "KServe (formerly KFServing) is not a model server — it is a Kubernetes-native abstraction that sits above model servers. It provides a unified InferenceService CRD, auto-scaling (including scale-to-zero), canary rollouts, and explainability hooks, while delegating inference to Triton, TF Serving, TorchServe, or other backends.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "KServe is part of the Kubeflow ecosystem, now a standalone CNCF project. Its core abstraction is the "
+            },
+            {
+              "text": "InferenceService",
+              "marks": ["bold"]
+            },
+            {
+              "text": " — a Kubernetes Custom Resource Definition (CRD) that describes a model's serving configuration. KServe translates this into the infrastructure objects required to run it (Deployments, Services, Knative Revisions, Istio VirtualServices)."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "What KServe adds above any underlying inference engine:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Auto-scaling and scale-to-zero.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Built on Knative Serving. Traffic-based auto-scaling that can scale a model deployment to zero replicas when idle, reducing infrastructure cost for infrequently used models."
+              }
+            ],
+            [
+              {
+                "text": "Canary and A/B rollouts.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Traffic can be split between model versions by percentage, with automatic promotion or rollback based on metrics."
+              }
+            ],
+            [
+              {
+                "text": "Transformer pipeline.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Pre-processing and post-processing are defined as separate Transformer components that KServe routes traffic through before and after the predictor."
+              }
+            ],
+            [
+              {
+                "text": "Explainer integration.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " KServe has a defined explainer component slot (SHAP, LIME, Alibi) that can be attached to any InferenceService."
+              }
+            ],
+            [
+              {
+                "text": "Supported predictors.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Triton, TF Serving, TorchServe, SKLearn (via MLServer), XGBoost (via MLServer), and custom containers."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "warning",
+          "runs": [
+            {
+              "text": "KServe requires Kubernetes, Knative, and (optionally) Istio — a significant operational dependency. It is the right choice for organizations already running Kubeflow or Kubernetes-centric MLOps platforms. For simpler deployments, the dependency weight is rarely justified."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "KServe is the control plane for model serving on Kubernetes. You declare what model you want served and how — KServe wires up the actual serving engine (Triton, TF Serving, etc.), auto-scaling, traffic splitting, and explainability for you. It's a platform layer, not a serving engine itself."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "mlo-ch08-c011",
+      "order": 11,
+      "title": "BentoML — Python-First Model Packaging and Serving",
+      "teaser": "BentoML takes a developer-experience-first approach to model serving: define a service in Python, BentoML handles containerization, HTTP/gRPC endpoints, adaptive batching, and deployment to cloud or Kubernetes. Its Bento artifact is a self-contained, reproducible bundle of model, dependencies, and serving code.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "BentoML's central innovation is the "
+            },
+            {
+              "text": "Bento",
+              "marks": ["bold"]
+            },
+            {
+              "text": " — an immutable artifact that bundles the model weights, serving code, Python environment, and any other dependencies into a single versioned package. A Bento is built once and deployed identically to any environment."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "A BentoML service is defined in Python. A minimal example for a text classification model:"
+            }
+          ]
+        },
+        {
+          "type": "code",
+          "language": "python",
+          "code": "import bentoml\nfrom bentoml.io import JSON\nfrom pydantic import BaseModel\n\nclass TextInput(BaseModel):\n    text: str\n\nclass PredictionOutput(BaseModel):\n    label: str\n    score: float\n\n# Load the saved model from the BentoML model store\nclassifier_runner = bentoml.transformers.get(\"text_classifier:latest\").to_runner()\n\nsvc = bentoml.Service(\"text_classifier_svc\", runners=[classifier_runner])\n\n@svc.api(input=JSON(pydantic_model=TextInput), output=JSON(pydantic_model=PredictionOutput))\nasync def classify(input_data: TextInput) -> PredictionOutput:\n    result = await classifier_runner.async_run(input_data.text)\n    return PredictionOutput(label=result[\"label\"], score=result[\"score\"])"
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Building and serving:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "bentoml build",
+                "marks": ["code"]
+              },
+              {
+                "text": " — creates a versioned Bento in the local store."
+              }
+            ],
+            [
+              {
+                "text": "bentoml containerize text_classifier_svc:latest",
+                "marks": ["code"]
+              },
+              {
+                "text": " — builds a Docker image automatically from the Bento."
+              }
+            ],
+            [
+              {
+                "text": "bentoml serve service:svc --production",
+                "marks": ["code"]
+              },
+              {
+                "text": " — runs with Gunicorn/Uvicorn workers, adaptive batching enabled."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "BentoML supports adaptive batching (server decides batch size and timeout dynamically based on queue depth), gRPC endpoints, streaming responses, and deployment to BentoCloud, AWS Lambda, SageMaker, and Kubernetes."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "BentoML lets you define a serving endpoint as a Python function, then packages everything — model, code, dependencies — into an immutable bundle called a Bento. Run bentoml containerize and you get a Docker image ready for production with batching, gRPC, and health checks included. It's the fastest path from trained model to deployed service."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "mlo-ch08-c012",
+      "order": 12,
+      "title": "Latency vs Throughput — The Serving Design Choice",
+      "teaser": "Latency and throughput are in fundamental tension in model serving. Optimizing one comes at the cost of the other. Understanding the tradeoff surface — and where your use case lives on it — is the most consequential design decision in serving architecture.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Latency (time per request) and throughput (requests per second) are linked by Little's Law: "
+            },
+            {
+              "text": "L = λW",
+              "marks": ["italic"]
+            },
+            {
+              "text": " (average items in system = arrival rate × average time in system). Increasing batch size increases throughput but increases per-request wait time. The serving design problem is choosing where on this curve to operate."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The levers that shift the latency/throughput curve:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Hardware.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " GPU shifts both latency and throughput favorably versus CPU, especially for large models. CPU is preferable for small models where PCIe transfer overhead exceeds inference time."
+              }
+            ],
+            [
+              {
+                "text": "Model optimization.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " TensorRT compilation, quantization (FP16, INT8), and pruning reduce both latency and the compute required per sample — shifting the entire tradeoff curve favorably."
+              }
+            ],
+            [
+              {
+                "text": "Batch size.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Larger batches increase throughput (GPU utilization rises) at the cost of latency (each request waits longer for its batch to fill). The optimal batch size for a latency SLA is the largest batch that satisfies the SLA at peak QPS."
+              }
+            ],
+            [
+              {
+                "text": "Concurrency.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Running multiple model instances (Triton instance_group count > 1) increases throughput by parallelizing across hardware, without changing per-instance batch behavior."
+              }
+            ],
+            [
+              {
+                "text": "Model size.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " A smaller, distilled model with lower accuracy may satisfy the latency SLA that a full model cannot. Knowledge distillation is a latency optimization technique."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Real-world latency SLA targets by use case:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Real-time bidding (RTB):",
+                "marks": ["bold"]
+              },
+              {
+                "text": " < 10 ms end-to-end"
+              }
+            ],
+            [
+              {
+                "text": "Fraud detection:",
+                "marks": ["bold"]
+              },
+              {
+                "text": " < 50 ms"
+              }
+            ],
+            [
+              {
+                "text": "Search ranking / recommendations:",
+                "marks": ["bold"]
+              },
+              {
+                "text": " < 100 ms"
+              }
+            ],
+            [
+              {
+                "text": "Conversational AI (LLM first token):",
+                "marks": ["bold"]
+              },
+              {
+                "text": " < 500 ms"
+              }
+            ],
+            [
+              {
+                "text": "Document classification pipeline:",
+                "marks": ["bold"]
+              },
+              {
+                "text": " seconds acceptable"
+              }
+            ]
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "info",
+          "runs": [
+            {
+              "text": "Measure p99 latency under peak load, not average latency under normal load. A system that has 5 ms average latency but 2-second p99 latency under load will violate SLAs in production. Tail latency is the design target."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Latency is how long one request takes; throughput is how many requests per second the system handles. Making batches bigger helps throughput (GPU is more efficient) but hurts latency (each request waits for the batch to fill). You optimize model speed, hardware, and batch size together to find the point that meets your latency SLA while serving as many requests as possible."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "mlo-ch08-c013",
+      "order": 13,
+      "title": "Model Server Comparison — TF Serving, TorchServe, Triton, KServe, BentoML",
+      "teaser": "No model server is universally best — each optimizes for a different axis. Choosing correctly requires matching the server's strengths to the team's framework, latency requirements, infrastructure maturity, and operational preferences.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "A comparison across the five dimensions that differentiate model servers in practice:"
+            }
+          ]
+        },
+        {
+          "type": "table",
+          "headers": ["Dimension", "TF Serving", "TorchServe", "Triton", "KServe", "BentoML"],
+          "rows": [
+            ["Framework support", "TF only", "PyTorch native; ONNX via export", "TF, PyTorch, ONNX, TensorRT, custom", "Delegates to backend (Triton, TF, TorchServe, etc.)", "Any Python framework + runners"],
+            ["Primary protocol", "REST + gRPC", "REST + gRPC", "REST + gRPC + shared memory", "REST + gRPC (via backend)", "REST + gRPC"],
+            ["Dynamic batching", "Yes (limited config)", "Yes (per-model config)", "Yes (advanced — preferred sizes, max delay)", "Via backend", "Yes (adaptive batching)"],
+            ["Multi-model serving", "Yes (model versions)", "Yes (management API)", "Yes (concurrent models + instances)", "Yes (InferenceService per model)", "Yes (multiple runners per service)"],
+            ["Kubernetes-native", "No (containerized)", "No (containerized)", "No (containerized)", "Yes (CRD, Knative, auto-scale-to-zero)", "Yes (via BentoCloud or Helm chart)"],
+            ["Developer experience", "Config-driven; minimal code", "Handler Python classes; moderate code", "Config-driven (pbtxt); low code", "YAML CRD; platform-oriented", "Python-first; lowest friction"],
+            ["Best for", "Pure TF workloads at scale", "PyTorch with custom pre/post logic", "Max GPU throughput, multi-framework GPU", "K8s-native MLOps platforms (Kubeflow)", "Rapid iteration, mixed Python ecosystems"],
+            ["Operational complexity", "Low", "Medium", "Medium-High", "High (Knative + Istio dep.)", "Low-Medium"]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Decision heuristics:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Maximizing GPU utilization with mixed frameworks?",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Choose Triton."
+              }
+            ],
+            [
+              {
+                "text": "Running on Kubernetes with a mature MLOps platform?",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Choose KServe with Triton or TorchServe as the backend."
+              }
+            ],
+            [
+              {
+                "text": "PyTorch-heavy team, complex pre/post-processing?",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Choose TorchServe."
+              }
+            ],
+            [
+              {
+                "text": "Fast iteration, Python-centric team, mixed frameworks?",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Choose BentoML."
+              }
+            ],
+            [
+              {
+                "text": "Pure TensorFlow, large existing TF Serving footprint?",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Stay on TF Serving."
+              }
+            ]
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "TF Serving is the TensorFlow specialist. TorchServe is the PyTorch option with programmable handlers. Triton is the high-performance GPU choice supporting any framework. KServe is the Kubernetes control plane that sits above all of them. BentoML is the fastest path from Python model to deployed container. Pick based on your framework, your team, and how much Kubernetes infrastructure you already run."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "mlo-ch08-c014",
+      "order": 14,
+      "title": "Edge Inference — On-Device Models",
+      "teaser": "Edge inference runs models directly on end-user devices — phones, embedded controllers, IoT sensors — without a network call. The tradeoff is severe: models must be compressed to fit in kilobytes or megabytes of memory and run on CPUs or NPUs with no internet dependency. CoreML, ONNX Runtime, and TFLite are the three dominant runtimes.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Edge inference inverts every constraint of cloud serving. Instead of optimizing for throughput on a GPU cluster, the goal is running a useful model on a CPU or Neural Processing Unit (NPU) with strict constraints:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Memory:",
+                "marks": ["bold"]
+              },
+              {
+                "text": " mobile devices have 6–12 GB RAM shared across all apps; a single model must fit in tens to hundreds of MB."
+              }
+            ],
+            [
+              {
+                "text": "Compute:",
+                "marks": ["bold"]
+              },
+              {
+                "text": " no data center GPU; inference runs on ARM CPU, a mobile GPU, or a dedicated NPU (Apple Neural Engine, Qualcomm Hexagon)."
+              }
+            ],
+            [
+              {
+                "text": "Battery:",
+                "marks": ["bold"]
+              },
+              {
+                "text": " inference must be energy-efficient; sustained GPU inference would drain a phone in minutes."
+              }
+            ],
+            [
+              {
+                "text": "Connectivity:",
+                "marks": ["bold"]
+              },
+              {
+                "text": " no network dependency — the use case (face unlock, voice command, real-time translation) requires offline operation."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The three dominant edge inference runtimes:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Apple CoreML.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Apple's on-device ML runtime for iOS and macOS. Models are compiled to the CoreML format (.mlpackage) and executed on the Apple Neural Engine (ANE) for maximum efficiency on Apple Silicon. Integrated into Vision, Natural Language, and Sound Analysis frameworks. Not portable beyond Apple platforms."
+              }
+            ],
+            [
+              {
+                "text": "TensorFlow Lite (TFLite).",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Google's mobile and embedded ML runtime. Converts TF SavedModels to a flat-buffer format (.tflite) optimized for mobile. Supports INT8 quantization, hardware delegates (GPU, NNAPI, Hexagon), and runs on Android, iOS, and embedded Linux. The largest ecosystem of pre-trained mobile models."
+              }
+            ],
+            [
+              {
+                "text": "ONNX Runtime.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Microsoft's cross-platform inference runtime. Accepts ONNX models from any framework (PyTorch, TF, scikit-learn via skl2onnx). Runs on Windows, Linux, macOS, Android, iOS, and WebAssembly. Execution providers (CPU, CUDA, DirectML, CoreML, TensorRT) select the optimal backend at runtime."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Model compression techniques required for edge deployment: "
+            },
+            {
+              "text": "quantization",
+              "marks": ["bold"]
+            },
+            {
+              "text": " (FP32 → INT8 reduces model size 4x with modest accuracy drop), "
+            },
+            {
+              "text": "pruning",
+              "marks": ["bold"]
+            },
+            {
+              "text": " (zeroing near-zero weights), and "
+            },
+            {
+              "text": "knowledge distillation",
+              "marks": ["bold"]
+            },
+            {
+              "text": " (training a small student model to mimic a large teacher)."
+            }
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "info",
+          "runs": [
+            {
+              "text": "The gap between cloud and edge is closing. Apple Silicon M-series chips run models that would have required a data center GPU five years ago. LLMs running locally on Apple Neural Engine (Core ML with LLaMA, Gemma, Mistral) in 2024-2025 represent a significant shift — the edge serving boundary is moving up the model size curve."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Edge inference means running the model on the device in your hand instead of sending data to a server. The model must be tiny enough to fit in phone memory, fast enough to run on a phone CPU or NPU without killing the battery, and correct enough to be useful. CoreML handles Apple devices, TFLite covers Android and embedded Linux, and ONNX Runtime works everywhere but needs a compatible model format."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "mlo-ch08-c015",
+      "order": 15,
+      "title": "Serving Infrastructure Patterns — Caching, Ensembles, and Shadow Mode",
+      "teaser": "Production model serving involves more than a single model endpoint. Caching pre-computed predictions, combining multiple models in ensembles, and validating new models in shadow mode are three infrastructure patterns that separate robust serving from naive deployment.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Three serving infrastructure patterns that production ML systems use extensively:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Prediction caching.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " For inputs that repeat frequently (popular products, common queries), pre-computing and caching the prediction in Redis or a CDN eliminates inference cost entirely for cache hits. Cache key is a hash of the feature vector or input. Effective for recommendation, search, and translation systems where a small fraction of inputs generate the majority of traffic. Cache invalidation must align with model update cadence."
+              }
+            ],
+            [
+              {
+                "text": "Ensemble serving.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Multiple models are called for each prediction, and their outputs are combined (averaging, voting, learned meta-learner). Triton supports this as a pipeline ensemble — multiple models wired together in a single config. The ensemble server handles fan-out, collects outputs, and runs the combiner without client-side orchestration."
+              }
+            ],
+            [
+              {
+                "text": "Shadow mode (dark launch).",
+                "marks": ["bold"]
+              },
+              {
+                "text": " A new model version receives a copy of live traffic but its predictions are not returned to users — they are logged and compared against the production model. Shadow mode validates that the new model performs correctly under real traffic distributions before any user-visible rollout. Essential for catching training-serving skew, latency regressions, and distribution shift before production exposure."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "A related pattern is "
+            },
+            {
+              "text": "champion/challenger testing",
+              "marks": ["bold"]
+            },
+            {
+              "text": ": the champion model handles the majority of traffic; a challenger handles a small percentage (1–5%). The serving infrastructure routes requests based on a configured split and logs both predictions and outcomes. When the challenger consistently outperforms the champion on business metrics, it is promoted."
+            }
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "info",
+          "runs": [
+            {
+              "text": "Shadow mode is distinct from A/B testing: in shadow mode, users always receive the production model's prediction. In A/B testing, users receive either the A or B prediction. Shadow mode is a validation gate; A/B testing is a business experiment. Run shadow mode first, A/B test after shadow validation passes."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Caching stores prediction results for repeated inputs so you skip inference entirely. Ensemble serving combines multiple models' predictions into one response. Shadow mode secretly runs a new model on live traffic without showing users its output — letting you validate it is correct before switching anyone over. These patterns turn a single endpoint into a robust production serving system."
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

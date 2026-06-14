@@ -1,0 +1,854 @@
+{
+  "stack": "ddd-advanced",
+  "words": [
+    {
+      "id": "ddd-adv-0010-0000-0000-0000-000000000001",
+      "word": "Aggregate Root",
+      "pronunciation": "AG-ruh-git ROOT",
+      "partOfSpeech": "noun",
+      "shortDefinition": "The single designated entity in an aggregate that all external references point to, the gatekeeper for all state changes.",
+      "simpleDefinition": "Every aggregate has exactly one root entity — the only object outsiders are allowed to hold a reference to. All commands to change anything inside the aggregate must go through the root. The root uses that control to check that every invariant still holds after each change. Think of it as the aggregate's bouncer: nothing gets in or out without its approval.",
+      "longDefinition": "Evans's rule is unambiguous: external objects may hold references to the aggregate root only. This is not a convention — it is the structural guarantee that makes the aggregate's consistency boundary meaningful. The root has three tightly related responsibilities: it is the single entry point for all mutations (no code outside the aggregate may modify an interior entity directly), it is the invariant enforcer (after any operation, before control leaves the boundary, all invariants must hold or a domain exception is raised), and it is the identity anchor (its ID is the aggregate's identity). In practice, violating this rule is the most common aggregate error: a service holds a direct reference to an interior entity and mutates it without going through the root, silently bypassing invariant checks. Strongly typed IDs (CustomerId, OrderId) help distinguish root references from interior entity navigation in the type system.",
+      "connector": "Think of an aggregate root like the CEO of a small company — all external requests must go through the CEO, who delegates internally and makes sure nothing the company does violates its core commitments.",
+      "techContext": "When we added a direct reference to OrderLine in a pricing service, bypassing the Order root, the order total invariant broke silently until a payment discrepancy was reported three months later.",
+      "exampleSentence": "Because all mutations flow through the aggregate root, adding a line item to an order always triggers the total-quantity invariant check before any change is persisted.",
+      "codeExample": {
+        "language": "python",
+        "code": "class Order:  # Aggregate Root\n    def __init__(self, order_id: OrderId, allocation: int):\n        self._id = order_id\n        self._lines: list[OrderLine] = []\n        self._allocation = allocation\n\n    def add_line(self, product_id: ProductId, qty: Quantity) -> None:\n        # All external code calls this — never OrderLine directly\n        new_total = sum(l.quantity for l in self._lines) + qty.value\n        if new_total > self._allocation:\n            raise AllocationExceededError()\n        self._lines.append(OrderLine(product_id, qty))\n\n    @property\n    def id(self) -> OrderId:\n        return self._id  # Only the root's ID is externally addressable"
+      },
+      "etymology": "Aggregate from Latin aggregare ('to add to a flock'); root in the tree-structure sense of the single entry node. Evans coined the compound term in Domain-Driven Design (2003).",
+      "unlockLevel": 16,
+      "tags": [
+        "ddd",
+        "tactical",
+        "aggregates",
+        "invariants"
+      ],
+      "category": "concepts",
+      "backingCard": {
+        "bookId": "domain-driven-design",
+        "chapterId": "ddd-ch07-aggregates",
+        "cardId": "ddd-ch07-c002"
+      }
+    },
+    {
+      "id": "ddd-adv-0020-0000-0000-0000-000000000002",
+      "word": "Invariant",
+      "pronunciation": "in-VAIR-ee-unt",
+      "partOfSpeech": "noun",
+      "shortDefinition": "A business rule that must always hold true within an aggregate boundary, enforced synchronously before persistence.",
+      "simpleDefinition": "An invariant is a promise the aggregate makes about itself — a rule that can never be broken, not even temporarily. Examples: an order must have at least one line before it can be confirmed; a bank account balance can never go below zero. The aggregate root checks every invariant on every mutation. If any invariant would be violated, the operation is rejected before any state changes or database writes occur.",
+      "longDefinition": "Invariants are the reason aggregates exist as a pattern. Without them, you have no principled way to decide what objects belong inside one consistency boundary. Evans identifies four levels of invariant: single-attribute invariants (a quantity must be positive — enforced in the value object constructor), cross-attribute invariants (a discount cannot exceed the margin — enforced by an entity method), cross-entity invariants within one aggregate (sum of line quantities cannot exceed warehouse allocation — enforced by the root), and cross-aggregate invariants (total inventory deducted across all orders cannot exceed warehouse stock — enforced eventually via domain events, never transactionally). The third category is the core use case for aggregate design: only objects whose joint consistency requires atomicity belong inside the same aggregate boundary. An invariant that cannot be enforced within a single aggregate is a design signal — either the boundary needs to move, or eventual consistency is the correct model.",
+      "connector": "Think of an invariant like a safety interlock on industrial machinery — the machine will not operate if any interlock condition is violated, regardless of what the operator requests.",
+      "techContext": "Identifying the three cross-entity invariants on our Invoice aggregate was the exercise that finally determined which objects belonged inside the boundary and which could be separate aggregates.",
+      "exampleSentence": "The confirmed-order invariant — at least one line must exist before confirmation — is checked synchronously in the Order root's confirm() method, making it impossible to persist an empty confirmed order.",
+      "codeExample": {
+        "language": "python",
+        "code": "class Order:  # Aggregate Root — enforces invariants\n    def confirm(self) -> None:\n        # Invariant: order must have at least one line\n        if not self._lines:\n            raise EmptyOrderError(\"Cannot confirm an order with no lines\")\n        # Invariant: all lines must have positive quantities (enforced in VO)\n        self._status = OrderStatus.CONFIRMED\n        self._raise_event(OrderConfirmed(self._id, datetime.utcnow()))"
+      },
+      "etymology": "From Latin invarians, 'not changing'; adopted into mathematics for conditions that remain constant through transformations; Evans applied it to domain model rules that must hold across all state transitions.",
+      "unlockLevel": 16,
+      "tags": [
+        "ddd",
+        "tactical",
+        "aggregates",
+        "invariants"
+      ],
+      "category": "concepts",
+      "backingCard": {
+        "bookId": "domain-driven-design",
+        "chapterId": "ddd-ch07-aggregates",
+        "cardId": "ddd-ch07-c003"
+      }
+    },
+    {
+      "id": "ddd-adv-0030-0000-0000-0000-000000000003",
+      "word": "Anticorruption Layer",
+      "pronunciation": "an-tee-kuh-RUP-shun LAY-er",
+      "partOfSpeech": "noun",
+      "shortDefinition": "A translation boundary a downstream context builds to isolate its model from an upstream or legacy context's model.",
+      "simpleDefinition": "An anticorruption layer (ACL) is a translation booth at the edge of a bounded context. The upstream model speaks one language; the downstream model speaks another. The ACL sits between them, converting every message so each side only ever hears its own vocabulary. Without an ACL, upstream concepts leak into the downstream model — corrupting it with foreign terms, structures, and assumptions that do not belong there.",
+      "longDefinition": "Evans introduced the anticorruption layer as the primary protective pattern for downstream contexts that must integrate with an upstream model they cannot control or improve. The ACL typically contains three types of components: translators or mappers (convert upstream DTOs or API responses into downstream domain objects, handling field renames, type conversions, and concept decompositions), facades (present a simplified interface to the downstream, hiding upstream complexity or inconsistency), and adapters (wrap the upstream transport — HTTP, gRPC, SOAP, message queue — so the downstream domain does not know how the upstream is physically reached). The ACL's value becomes clearest during upstream changes: when the upstream changes its schema, only the ACL needs updating, not the entire downstream domain. The pattern is equally important for legacy system integration, where it enables the strangler-fig migration strategy by preventing the legacy model from infecting the new bounded context from day one.",
+      "connector": "Think of an ACL like a diplomatic interpreter — upstream speaks one language, downstream speaks another, and the interpreter stands between them making sure neither has to learn the other's vocabulary.",
+      "techContext": "When our shipping context integrated with FedEx's SOAP API, the ACL translated FedEx's TrackingNumber and ServiceType into our own ShipmentId and DeliveryTier, so FedEx's idiosyncratic model never appeared in our domain code.",
+      "exampleSentence": "After wrapping the legacy ERP integration in an anticorruption layer, our new order context could evolve its domain model independently — ERP field renames only required updating the ACL, not refactoring domain objects.",
+      "codeExample": {
+        "language": "python",
+        "code": "# ACL translator — converts upstream FedEx model to downstream domain model\nclass FedExShippingAdapter:\n    def __init__(self, fedex_client: FedExClient):\n        self._client = fedex_client\n\n    def track_shipment(self, shipment_id: ShipmentId) -> ShipmentStatus:\n        # Downstream calls this — never FedEx types directly\n        raw = self._client.track(tracking_number=shipment_id.value)\n        return self._translate_status(raw[\"StatusDetail\"][\"Code\"])\n\n    def _translate_status(self, fedex_code: str) -> ShipmentStatus:\n        mapping = {\"DL\": ShipmentStatus.DELIVERED, \"IP\": ShipmentStatus.IN_TRANSIT}\n        return mapping.get(fedex_code, ShipmentStatus.UNKNOWN)"
+      },
+      "etymology": "Coined by Evans in Domain-Driven Design (2003); 'corruption' refers to the contamination of a clean domain model by foreign concepts leaking in from an external or legacy system.",
+      "unlockLevel": 16,
+      "tags": [
+        "ddd",
+        "strategic",
+        "context-map",
+        "integration"
+      ],
+      "category": "patterns",
+      "backingCard": {
+        "bookId": "domain-driven-design",
+        "chapterId": "ddd-ch03-context-map-patterns",
+        "cardId": "ddd-ch03-c008"
+      }
+    },
+    {
+      "id": "ddd-adv-0040-0000-0000-0000-000000000004",
+      "word": "Open Host Service",
+      "pronunciation": "OH-pen HOST SUR-vis",
+      "partOfSpeech": "noun",
+      "shortDefinition": "A context-map pattern where the upstream exposes a stable, versioned protocol for many downstream consumers.",
+      "simpleDefinition": "An Open Host Service (OHS) is the pattern an upstream bounded context adopts when it must serve many different downstream consumers without custom-negotiating an integration with each one. Instead of building N custom integrations, the upstream publishes one well-documented, versioned protocol that any consumer can use. The protocol becomes the product — it has explicit versioning, stability guarantees, and a deprecation policy.",
+      "longDefinition": "The OHS pattern shifts the integration burden: rather than the upstream team maintaining custom contracts for each downstream, they define a formal, general-purpose protocol and downstream teams adapt to it. What distinguishes a true OHS from merely having an API is the set of surrounding commitments: an explicit versioning policy so consumers know which version they depend on and how long it is supported, stability guarantees with additive-before-breaking change management, and a protocol designed for the general case rather than for a specific consumer's needs. In the context map, OHS is typically paired with Published Language — the OHS is the access mechanism, and the Published Language is the shared information model it uses. Salesforce's REST API is a canonical real-world example: versioned, stable, documented, and serving hundreds of thousands of downstream integrations without custom negotiation. Internal platform teams building shared services should aspire to the OHS pattern as their consumer count grows beyond two or three.",
+      "connector": "Think of an OHS like an airport — one set of gates, procedures, and rules serves thousands of different flights and passengers, instead of the airport building a custom terminal for every airline.",
+      "techContext": "As our data ingestion service grew to fifteen consumers, we formalized it as an Open Host Service with a versioning policy and deprecation timeline, eliminating the ad-hoc negotiation that had consumed half our sprint capacity.",
+      "exampleSentence": "Once the payments context adopted the Open Host Service pattern with a published v2 API and a twelve-month deprecation window, downstream teams could plan migrations without waiting on a custom handshake negotiation.",
+      "codeExample": {
+        "language": "yaml",
+        "code": "# OpenAPI spec excerpt — OHS versioning contract\nopenapi: '3.1.0'\ninfo:\n  title: Payments Context API\n  version: '2.0.0'\n  description: |\n    Open Host Service for the Payments bounded context.\n    Version policy: minor versions are backward-compatible;\n    major versions are supported for 12 months after successor release.\npaths:\n  /v2/payments:\n    post:\n      summary: Initiate a payment\n      # All consumers use this one versioned endpoint"
+      },
+      "etymology": "Named by Evans in Domain-Driven Design (2003); 'open' signals that access is public and formalized rather than privately negotiated; 'host' means the upstream is offering a service to be consumed.",
+      "unlockLevel": 16,
+      "tags": [
+        "ddd",
+        "strategic",
+        "context-map",
+        "integration"
+      ],
+      "category": "patterns",
+      "backingCard": {
+        "bookId": "domain-driven-design",
+        "chapterId": "ddd-ch03-context-map-patterns",
+        "cardId": "ddd-ch03-c009"
+      }
+    },
+    {
+      "id": "ddd-adv-0050-0000-0000-0000-000000000005",
+      "word": "Published Language",
+      "pronunciation": "PUB-lisht LANG-gwij",
+      "partOfSpeech": "noun",
+      "shortDefinition": "A well-documented shared schema or protocol (JSON-LD, Protobuf) that multiple contexts use to communicate without custom translation.",
+      "simpleDefinition": "A Published Language (PL) is the shared dictionary that multiple bounded contexts agree to use before integration starts. It is a well-documented, formally specified information model — Protobuf schemas, Avro schemas, an OpenAPI spec, or an industry standard like HL7 FHIR. Once the PL exists, every participant translates to it, removing the need for N-to-N point-to-point translators between every pair of communicating contexts.",
+      "longDefinition": "Evans defines Published Language as a context-map pattern typically paired with Open Host Service — where OHS describes the access mechanism, PL describes the shared information model. A PL is most powerful when it models the problem domain rather than an implementation artifact: HL7 FHIR works because it models clinical care concepts, not hospital software data structures. In event-driven systems, a company's internal Avro or Protobuf schemas for domain events published to Kafka constitute a PL — the schema registry is the authoritative publication point, and every producer and consumer agrees on the schema. Critically, the PL does not eliminate the need for translation inside consuming contexts; it reduces the translation surface to the gap between the PL and the downstream model. A downstream context that cannot fully map its domain to the PL still needs an ACL, but the ACL only has to bridge the PL-to-domain gap rather than the full upstream-to-domain gap. Schema governance — who may modify the PL, with what review process, and under what backward-compatibility guarantee — is as important as the schema itself.",
+      "connector": "Think of a Published Language like an international electrical standard — once there's a standard plug shape and voltage, every manufacturer builds to it, and no one needs a custom adapter for every country pairing.",
+      "techContext": "When we adopted Protobuf schemas in our internal schema registry as the Published Language for all cross-context events, the number of ad-hoc translation adapters in our microservices dropped from forty-two to nine.",
+      "exampleSentence": "The order context publishes OrderPlaced events using the company's Protobuf Published Language, allowing the inventory, shipping, and analytics contexts to consume them without knowing anything about the order context's internal model.",
+      "codeExample": {
+        "language": "protobuf",
+        "code": "// Published Language schema (stored in schema registry)\n// All contexts that consume OrderPlaced depend on this contract\nsyntax = \"proto3\";\npackage ecommerce.events.v2;\n\nmessage OrderPlaced {\n  string order_id = 1;\n  string customer_id = 2;\n  repeated OrderLine lines = 3;\n  google.protobuf.Timestamp occurred_at = 4;\n\n  message OrderLine {\n    string product_id = 1;\n    int32 quantity = 2;\n    MoneyAmount unit_price = 3;\n  }\n}"
+      },
+      "etymology": "Named by Evans in Domain-Driven Design (2003); 'published' signals formal documentation and governance rather than an informal agreement; 'language' emphasizes the shared vocabulary aspect rather than the technical transport.",
+      "unlockLevel": 16,
+      "tags": [
+        "ddd",
+        "strategic",
+        "context-map",
+        "integration"
+      ],
+      "category": "patterns",
+      "backingCard": {
+        "bookId": "domain-driven-design",
+        "chapterId": "ddd-ch03-context-map-patterns",
+        "cardId": "ddd-ch03-c010"
+      }
+    },
+    {
+      "id": "ddd-adv-0060-0000-0000-0000-000000000006",
+      "word": "Conformist",
+      "pronunciation": "kun-FOR-mist",
+      "partOfSpeech": "noun",
+      "shortDefinition": "A context-map pattern where the downstream adopts the upstream's model unchanged, accepting its terms and structure.",
+      "simpleDefinition": "The Conformist pattern exists when the downstream team decides — or is forced — to adopt the upstream model wholesale. No translation layer, no negotiation over the interface. The downstream uses the upstream's types, field names, and concepts directly inside its own bounded context. It is the pattern of no power: the upstream does not adapt to the downstream, the downstream simply conforms.",
+      "longDefinition": "Conformism is a deliberate context-map choice, not merely laziness. It makes sense in specific circumstances: when the upstream model is already the lingua franca of the domain and the downstream's conceptual domain maps closely to it (a startup building a checkout flow on top of Stripe and simply using Stripe's PaymentIntent model directly); when the downstream context is small and low-complexity, making the overhead of a translation layer disproportionate to the benefit; or when the upstream model is stable enough that the coupling risk is acceptable over the foreseeable future. The primary risk of conformism is conceptual contamination — upstream concepts, field names, and structures flow directly into the downstream domain. If the upstream changes, or if the downstream domain evolves away from the upstream's assumptions, the conformist context is tightly coupled and expensive to refactor. Evans and Vernon both stress making conformism an explicit, documented decision on the context map: teams that are implicitly conformist without knowing it are building in risk they cannot see or plan around. A conformist context that grows large is one of the costliest refactoring problems in DDD.",
+      "connector": "Think of conformism like franchising — you get the brand's system and procedures without customization, which is efficient at the start but means you can't deviate later without paying a significant cost.",
+      "techContext": "We made an explicit conformist decision on the authentication context — we adopted Auth0's user model directly, accepting coupling in exchange for never having to build or maintain an identity store.",
+      "exampleSentence": "The team made a deliberate conformist decision to adopt the ERP's customer model directly rather than build a translation layer, documenting the coupling risk and scheduling a review if ERP customization became necessary.",
+      "etymology": "From Latin conformare ('to shape in accordance with'); Evans used it as a context-map term in Domain-Driven Design (2003) to describe the absence of negotiating power in an integration relationship.",
+      "unlockLevel": 16,
+      "tags": [
+        "ddd",
+        "strategic",
+        "context-map",
+        "integration"
+      ],
+      "category": "patterns",
+      "backingCard": {
+        "bookId": "domain-driven-design",
+        "chapterId": "ddd-ch03-context-map-patterns",
+        "cardId": "ddd-ch03-c007"
+      }
+    },
+    {
+      "id": "ddd-adv-0070-0000-0000-0000-000000000007",
+      "word": "Shared Kernel",
+      "pronunciation": "SHAIRD KUR-nul",
+      "partOfSpeech": "noun",
+      "shortDefinition": "A small, explicitly agreed subset of the domain model co-owned by two contexts, requiring joint governance to change.",
+      "simpleDefinition": "A Shared Kernel is a deliberate, carefully bounded sharing of a small part of the domain model between two bounded contexts. Both contexts depend on the shared code — typically a set of value objects, domain events, or core identifiers — and neither team can change the kernel unilaterally. Every change requires coordination and must pass both teams' test suites before merging.",
+      "longDefinition": "The Shared Kernel pattern addresses scenarios where two bounded contexts share a set of concepts so fundamental that duplicating them would introduce subtle divergence bugs. A classic example: an Order context and an Invoice context sharing a Money value object (currency, amount, rounding rules). Sharing one canonical implementation prevents the two implementations from drifting apart. The discipline required to keep a Shared Kernel healthy is significant: the kernel must be explicitly named and versioned in a dedicated package, kept intentionally minimal (every type added increases the coordination surface), and any change must be reviewed and approved by both teams, passing both contexts' test suites before merging. The most common failure mode is kernel bloat — teams start adding convenience code, business logic, or context-specific types to the kernel, and it gradually transforms from a focused shared vocabulary into a poorly-governed shared monolith. Audit the kernel's size and contents at every sprint review. Evans contrasts Shared Kernel with Partnership: a Shared Kernel is the narrowest form of co-ownership, focused on a minimum shared vocabulary, whereas a Partnership co-evolves entire contexts together.",
+      "connector": "Think of a Shared Kernel like a shared utilities package in a monorepo — useful for truly common things like Money or EmailAddress, but dangerous the moment you start throwing in anything that's 'kind of shared.'",
+      "techContext": "Our Shared Kernel contains only four types: Money, EmailAddress, CountryCode, and the base DomainEvent envelope — any broader scope requires a separate proposal reviewed by both owning teams.",
+      "exampleSentence": "The shared Money value object in the kernel prevented a rounding discrepancy between the billing and accounting contexts that had cost the previous team three weeks of debugging to diagnose.",
+      "codeExample": {
+        "language": "python",
+        "code": "# shared_kernel/money.py — co-owned by Orders and Billing contexts\nfrom dataclasses import dataclass\nfrom decimal import Decimal, ROUND_HALF_UP\nfrom enum import Enum\n\nclass Currency(Enum):\n    USD = \"USD\"\n    EUR = \"EUR\"\n    GBP = \"GBP\"\n\n@dataclass(frozen=True)\nclass Money:\n    amount: Decimal\n    currency: Currency\n\n    def __post_init__(self):\n        if self.amount < Decimal(\"0\"):\n            raise ValueError(\"Money amount cannot be negative\")\n\n    def add(self, other: \"Money\") -> \"Money\":\n        if self.currency != other.currency:\n            raise CurrencyMismatchError()\n        return Money(self.amount + other.amount, self.currency)"
+      },
+      "etymology": "Kernel from Old Norse kjarni ('core, seed'); Evans adopted the term in Domain-Driven Design (2003) to describe the core shared concept at the center of a relationship between two bounded contexts.",
+      "unlockLevel": 16,
+      "tags": [
+        "ddd",
+        "strategic",
+        "context-map",
+        "integration"
+      ],
+      "category": "patterns",
+      "backingCard": {
+        "bookId": "domain-driven-design",
+        "chapterId": "ddd-ch03-context-map-patterns",
+        "cardId": "ddd-ch03-c005"
+      }
+    },
+    {
+      "id": "ddd-adv-0080-0000-0000-0000-000000000008",
+      "word": "Customer-Supplier",
+      "pronunciation": "KUS-tuh-mer suh-PLY-er",
+      "partOfSpeech": "noun",
+      "shortDefinition": "A context-map relationship where the upstream (supplier) negotiates with the downstream (customer) to meet its needs.",
+      "simpleDefinition": "In a Customer-Supplier relationship, the downstream team is the customer and the upstream team is the supplier. Unlike Conformist, the customer has a voice — they can raise bugs, request features, and negotiate the interface. Unlike Partnership, the supplier still controls the roadmap and has final say. It is the pattern of balanced power between teams with organizational support for the negotiation.",
+      "longDefinition": "The Customer-Supplier pattern requires organizational backing to function. The upstream team must have time allocated in their sprint for customer-supplier responsibilities: reviewing downstream requests, maintaining a versioning and deprecation policy, and providing migration guides for breaking changes. Management must reinforce the pattern — if the upstream team consistently ignores downstream requests without consequence, the relationship degenerates into Conformist in practice even if it is called Customer-Supplier on the map. A concrete implementation discipline: the downstream team writes acceptance tests that define their requirements against the upstream interface. These tests are the downstream's formal expression of needs, and the upstream team runs them as part of their own test suite to validate that their API continues to satisfy customer requirements. Customer-Supplier is the ideal pattern for internal platform teams serving product teams: it preserves the platform's architectural autonomy while giving product teams a structured channel to influence the platform's roadmap. Evans notes that the pattern breaks down when one side is understaffed or when the relationship lacks management visibility.",
+      "connector": "Think of Customer-Supplier like a business-to-business supplier relationship — the customer can request product changes and complain about service, but the supplier controls what they build and when they ship.",
+      "techContext": "After formalizing our data platform relationship as Customer-Supplier, the product teams gained a quarterly roadmap review and a bug SLA, while the platform team stopped fielding ad-hoc Slack interruptions for every schema question.",
+      "exampleSentence": "The Customer-Supplier contract between the identity platform and the product teams included acceptance tests that the platform ran on every release, catching one breaking change before it reached any downstream consumer.",
+      "etymology": "Named by Evans in Domain-Driven Design (2003); directly borrowed from business relationship terminology to capture the negotiated but asymmetric power dynamic between teams sharing a model boundary.",
+      "unlockLevel": 16,
+      "tags": [
+        "ddd",
+        "strategic",
+        "context-map",
+        "integration"
+      ],
+      "category": "patterns",
+      "backingCard": {
+        "bookId": "domain-driven-design",
+        "chapterId": "ddd-ch03-context-map-patterns",
+        "cardId": "ddd-ch03-c006"
+      }
+    },
+    {
+      "id": "ddd-adv-0090-0000-0000-0000-000000000009",
+      "word": "Partnership",
+      "pronunciation": "PART-ner-ship",
+      "partOfSpeech": "noun",
+      "shortDefinition": "A context-map pattern where two teams co-evolve their contexts in lockstep, succeeding or failing together.",
+      "simpleDefinition": "Partnership is the highest-trust, highest-cost context-map relationship. Two teams share a release and failure fate: neither can ship without coordinating with the other. There is no clear upstream or downstream — both teams plan interface changes together, review each other's work, and carry the coordination cost jointly. Evans recommends treating it as a temporary pattern: plan to evolve toward Customer-Supplier as team autonomy increases.",
+      "longDefinition": "Partnership exists when two bounded contexts are so tightly aligned — typically because of a major jointly-owned feature or a new product line — that one team genuinely cannot ship without the other. It is the formal acknowledgement that the two teams share a deployment fate in the near term. The costs are real and should not be romanticized: high coordination overhead (both teams must align on release windows, API changes, and schema migrations — neither can act unilaterally), shared failure mode (if one team falls behind, the other is blocked), and sustainability risk (partnerships tend to erode as teams grow, organizational priorities diverge, or one team is dissolved). Partnership is not the same as two teams sharing code in a monorepo — it requires an explicit mutual commitment to joint planning. Without that commitment, what looks like a partnership on the map is usually a conformist relationship where one team silently dominates. Evans and Vernon both recommend treating Partnership as a temporary holding pattern with a stated exit strategy toward Customer-Supplier or a model consolidation.",
+      "connector": "Think of Partnership like co-founders of a startup — they share everything and must agree on all major decisions, which is fine at the start but becomes a bottleneck as the organization grows.",
+      "techContext": "We named the Checkout and Payments contexts as Partners for the duration of the new payment-method launch, with a defined exit point: once the payment method was stable, Payments would become the Customer-Supplier upstream.",
+      "exampleSentence": "The Partnership between the checkout and fraud-detection contexts worked well during the initial integration sprint, but after six months the coordination overhead had become a bottleneck and both teams agreed to transition to Customer-Supplier.",
+      "etymology": "Standard English term for a business relationship involving shared ownership; Evans adopted it directly in Domain-Driven Design (2003) as the highest-alignment, highest-cost point on the context-map relationship spectrum.",
+      "unlockLevel": 16,
+      "tags": [
+        "ddd",
+        "strategic",
+        "context-map",
+        "integration"
+      ],
+      "category": "patterns",
+      "backingCard": {
+        "bookId": "domain-driven-design",
+        "chapterId": "ddd-ch03-context-map-patterns",
+        "cardId": "ddd-ch03-c004"
+      }
+    },
+    {
+      "id": "ddd-adv-0100-0000-0000-0000-000000000010",
+      "word": "Separate Ways",
+      "pronunciation": "SEP-uh-rit WAYZ",
+      "partOfSpeech": "noun",
+      "shortDefinition": "A context-map pattern declaring no integration between two contexts, each solving its problem independently.",
+      "simpleDefinition": "Separate Ways is the pattern of no integration at all. Two bounded contexts have no formal relationship, no shared model, and no ongoing coordination. If they ever need to exchange data, it happens via a batch export or manual file transfer — not a real-time integration. Explicitly choosing Separate Ways is a valid architectural decision that appears on the context map as two isolated boxes with no arrows between them.",
+      "longDefinition": "The Separate Ways pattern is often overlooked because it requires actively deciding not to integrate rather than building something. Yet Evans includes it in the context-map vocabulary precisely because the absence of a relationship must be intentional and explicit, not accidental. Separate Ways is correct when three conditions are met: the two contexts operate in genuinely different sub-domains with no shared entities (a legal document management context and a machine learning experimentation platform in the same company may have no meaningful domain overlap); the integration cost exceeds the integration value (some data could technically be shared but the volume, frequency, and criticality do not justify building and maintaining an integration); or the integration would force model pollution (connecting the contexts would require one or both to adopt concepts that corrupt their domain model). A context map with no Separate Ways relationships is a warning sign — in large organizations, not every bounded context needs to integrate with every other. If every box on the map has arrows to every other box, the map is showing accidental coupling, not deliberate architecture.",
+      "connector": "Think of Separate Ways like two departments in a company that operate entirely independently — HR and R&D both exist in the same organization but have nothing useful to say to each other in their daily work.",
+      "techContext": "We explicitly declared Separate Ways between the analytics sandbox and the production order context — any data the analytics team needed came via a nightly export, preventing any integration dependency from forming.",
+      "exampleSentence": "After mapping the full system, we discovered that three context pairs we thought needed integration were actually Separate Ways — the perceived need was based on organizational habit, not genuine domain overlap.",
+      "etymology": "Plain English phrase adopted by Evans in Domain-Driven Design (2003) as the explicit pattern name for the absence of an integration relationship — making the decision visible on the context map rather than leaving it as an unstated assumption.",
+      "unlockLevel": 16,
+      "tags": [
+        "ddd",
+        "strategic",
+        "context-map",
+        "integration"
+      ],
+      "category": "patterns",
+      "backingCard": {
+        "bookId": "domain-driven-design",
+        "chapterId": "ddd-ch03-context-map-patterns",
+        "cardId": "ddd-ch03-c011"
+      }
+    },
+    {
+      "id": "ddd-adv-0110-0000-0000-0000-000000000011",
+      "word": "Big Ball of Mud",
+      "pronunciation": "BIG BAWL UV MUD",
+      "partOfSpeech": "noun",
+      "shortDefinition": "The anti-pattern of an unstructured system with no clear boundaries, where any part can depend on any other part.",
+      "simpleDefinition": "A Big Ball of Mud is what you get when nobody ever drew a boundary. Everything depends on everything else; the same concept is named differently in different parts of the codebase; no team fully owns any piece. Evans includes it explicitly on the context map — not as something to accept, but as something to name honestly so you can plan to fix it.",
+      "longDefinition": "Brian Foote and Joseph Yoder named the pattern in their influential 1997 paper of the same name. Evans adopted it into DDD as the canonical anti-pattern — the outcome of a system that grew without bounded contexts, context maps, or deliberate integration patterns. The characteristic signs: the system cannot be decomposed into bounded contexts because every change requires touching multiple logical areas; responsibility is diffuse with no team able to authorize a change to a given piece of code with confidence; the same domain concept appears under different names in different modules with no reconciliation; integration points are undocumented because there are no contexts to integrate. On a context map, a Big Ball of Mud appears as a single amorphous region with no internal structure. Drawing it explicitly is the first step toward improvement: it makes visible which parts of the system are affected, allows teams to identify seams where bounded contexts could be carved out, and supports applying the strangler-fig pattern with ACLs to incrementally extract clean contexts. The most common mistake is pretending the Big Ball of Mud does not exist and drawing a map that shows only the clean parts — migration plans built on that incomplete map fail when they encounter the uncapped regions.",
+      "connector": "Think of a Big Ball of Mud like a city that grew without zoning laws — residential, industrial, and commercial buildings mixed together, no roads planned in advance, no address system, and no way to make a change without disrupting something unexpected.",
+      "techContext": "The context map revealed that what we thought were five microservices was actually one Big Ball of Mud with five deployment boundaries — the same Customer concept appeared in all five with incompatible definitions.",
+      "exampleSentence": "Naming the legacy monolith as a Big Ball of Mud on the context map was uncomfortable but gave us the explicit artifact we needed to plan an extraction roadmap rather than continuing to add services that coupled back to it.",
+      "etymology": "Coined by Brian Foote and Joseph Yoder in their 1997 paper 'Big Ball of Mud'; adopted by Evans in Domain-Driven Design (2003) as a context-map pattern to make the absence of boundaries visible and nameable.",
+      "unlockLevel": 16,
+      "tags": [
+        "ddd",
+        "strategic",
+        "context-map",
+        "anti-patterns"
+      ],
+      "category": "patterns",
+      "backingCard": {
+        "bookId": "domain-driven-design",
+        "chapterId": "ddd-ch03-context-map-patterns",
+        "cardId": "ddd-ch03-c012"
+      }
+    },
+    {
+      "id": "ddd-adv-0120-0000-0000-0000-000000000012",
+      "word": "Domain Event Publication",
+      "pronunciation": "doh-MAYN ih-VENT pub-lih-KAY-shun",
+      "partOfSpeech": "noun",
+      "shortDefinition": "The mechanism by which an aggregate signals that something meaningful happened, decoupling it from downstream reactions.",
+      "simpleDefinition": "Domain event publication is the two-phase process by which an aggregate announces that something significant occurred. Phase one: the aggregate collects events internally during the domain operation (it does not publish immediately — the state change has not yet persisted). Phase two: after the transaction commits successfully, the application service reads the collected events and dispatches them. This order is critical — publishing before the commit would broadcast an announcement for a change that may never persist.",
+      "longDefinition": "The collect-then-publish pattern is the standard implementation of domain event publication in DDD. Aggregates maintain a private list of domain events raised during their operations. The aggregate root exposes a method to read and clear this list. The application service (or unit of work) calls save() on the repository — committing the aggregate's state change — and only then iterates the collected events and dispatches them to the event bus or domain event dispatcher. This two-phase approach eliminates the race condition where an event is delivered before the state change is durable: handlers cannot react to an event for a change that did not persist. For cross-process publication reliability, the outbox pattern extends this further by writing events to the database in the same transaction as the aggregate state, so a process crash between commit and publication does not lose the events. The event publication mechanism is also the decoupling boundary: the aggregate does not know who handles its events or what they do with them, which keeps the aggregate's domain behavior clean of integration concerns.",
+      "connector": "Think of domain event publication like filing a legal notice — you complete the underlying action first (sign the contract), then file the notice with the registry (publish the event) so others can react. The notice only goes out once the action is legally complete.",
+      "techContext": "We moved from synchronous event publication inside the repository to post-commit publication in the application service, eliminating a class of phantom-event bugs where handlers reacted to state changes that the database had rolled back.",
+      "exampleSentence": "By collecting events on the aggregate during the domain operation and publishing them only after the repository's save() committed successfully, we guaranteed that no handler ever processed an event for a change that did not actually persist.",
+      "codeExample": {
+        "language": "python",
+        "code": "# Application service — post-commit publication pattern\nasync def place_order(cmd: PlaceOrderCommand) -> None:\n    order = Order.create(cmd.customer_id, cmd.lines)  # events collected internally\n    await order_repository.save(order)               # transaction commits\n    # Only publish AFTER the transaction succeeds\n    for event in order.domain_events:\n        await event_bus.publish(event)\n    order.clear_domain_events()"
+      },
+      "etymology": "Publication from Latin publicare ('to make public'); the compound term is DDD-specific, coined in Vaughn Vernon's Implementing Domain-Driven Design (2013) to describe the aggregate's role in broadcasting significant state transitions.",
+      "unlockLevel": 16,
+      "tags": [
+        "ddd",
+        "tactical",
+        "events",
+        "aggregates"
+      ],
+      "category": "concepts",
+      "backingCard": {
+        "bookId": "domain-driven-design",
+        "chapterId": "ddd-ch08-domain-events"
+      }
+    },
+    {
+      "id": "ddd-adv-0130-0000-0000-0000-000000000013",
+      "word": "Integration Event",
+      "pronunciation": "in-tuh-GRAY-shun ih-VENT",
+      "partOfSpeech": "noun",
+      "shortDefinition": "A domain event translated for cross-context communication, often published to a message broker for other bounded contexts.",
+      "simpleDefinition": "An integration event is a domain event that has been deliberately transformed for consumption outside its originating bounded context. Where domain events are internal signals using the context's rich internal model, integration events cross context boundaries and form part of the Published Language — they are public contracts that must be versioned and managed with the same discipline as a REST API.",
+      "longDefinition": "The distinction between domain events and integration events is one of the most practically important in event-driven DDD. Domain events are intra-context: they fire within the same bounded context, typically within the same process, use the context's full internal ubiquitous language, and may be ephemeral. Integration events cross context or process boundaries via a message broker (Kafka, RabbitMQ, Azure Service Bus), form part of the Published Language between contexts, must survive broker failures, and have schemas that function as public contracts subject to versioning. The typical flow: a domain event fires inside a bounded context; an event handler in that context translates it into an integration event using a stable, consumer-appropriate schema (stripping internal identifiers, reducing to the Published Language subset); and publishes it to the broker. Consuming contexts subscribe, translate the integration event through their ACL, and raise their own internal domain events in response. Never expose the full internal domain model in integration events — internal field names, internal status enums, and internally meaningful identifiers should be mapped to the Published Language equivalents before crossing the context boundary.",
+      "connector": "Think of an integration event like a press release translated from internal company memo format — the underlying fact is the same, but the language, level of detail, and framing are adjusted for a public audience.",
+      "techContext": "When the order context's internal OrderConfirmed domain event needed to trigger inventory reservation in a separate service, we translated it into an integration event with a stable Protobuf schema, stripping internal-only fields before publication.",
+      "exampleSentence": "The integration event schema was versioned independently from the internal domain event that triggered it, allowing the order context to refactor its internal model without breaking downstream inventory and shipping consumers.",
+      "codeExample": {
+        "language": "python",
+        "code": "# Event handler: translate domain event → integration event\nclass OrderConfirmedHandler:\n    def __init__(self, event_bus: IntegrationEventBus):\n        self._bus = event_bus\n\n    def handle(self, event: OrderConfirmed) -> None:\n        # Strip internal fields; map to Published Language schema\n        integration_event = OrderPlacedIntegrationEvent(\n            order_id=event.order_id.value,  # stable public ID\n            customer_id=event.customer_id.value,\n            total_amount=event.total.to_decimal(),\n            occurred_at=event.occurred_at.isoformat(),\n            schema_version=2\n        )\n        self._bus.publish(\"orders.placed.v2\", integration_event)"
+      },
+      "etymology": "Integration in the software sense of connecting separate systems; event from Latin eventus ('outcome'); the compound term was popularized by Vernon's Implementing Domain-Driven Design (2013) and the Microsoft CQRS/ES documentation patterns.",
+      "unlockLevel": 16,
+      "tags": [
+        "ddd",
+        "tactical",
+        "events",
+        "integration"
+      ],
+      "category": "concepts",
+      "backingCard": {
+        "bookId": "domain-driven-design",
+        "chapterId": "ddd-ch08-domain-events"
+      }
+    },
+    {
+      "id": "ddd-adv-0140-0000-0000-0000-000000000014",
+      "word": "Event-Driven Integration",
+      "pronunciation": "ih-VENT-driv-en in-tuh-GRAY-shun",
+      "partOfSpeech": "noun",
+      "shortDefinition": "A cross-context communication style where bounded contexts react to each other's published events rather than calling APIs.",
+      "simpleDefinition": "Event-driven integration connects bounded contexts through asynchronous event streams rather than synchronous API calls. One context publishes integration events to a broker when meaningful things happen; other contexts subscribe and react in their own transactions. This gives each context temporal independence — the publisher does not know who is listening, and consumers do not need the publisher to be running to process events.",
+      "longDefinition": "Event-driven integration aligns naturally with DDD's model of bounded context autonomy. When contexts communicate via events rather than direct API calls, each context is self-governing: it does not take a runtime dependency on other contexts' availability, does not need to know who is listening to its events, and can evolve its internal model without breaking integration as long as the integration event schema (Published Language) remains backward-compatible. The core trade-offs: loose coupling and temporal decoupling in exchange for eventual consistency and harder end-to-end debugging. Every significant business state transition in a context produces an integration event; the consuming context subscribes, applies its ACL to translate the event into its own model, and responds with its own domain events. Cross-context debugging requires distributed tracing with correlation IDs threaded through every event. Consumer idempotency is mandatory — message brokers typically guarantee at-least-once delivery, so every handler must be safe to execute more than once for the same event. Event-driven integration is not the right choice for every cross-context interaction: synchronous request-response is still appropriate when the caller needs an immediate answer (e.g., checking availability before confirming a reservation).",
+      "connector": "Think of event-driven integration like a newspaper — the publisher prints the news once, and any subscriber who picks it up reads it on their own schedule. The publisher never knows or controls who reads it or when.",
+      "techContext": "After switching the inventory-to-shipping integration from REST calls to event-driven, the shipping context continued processing during a planned inventory maintenance window — two hours of API downtime became invisible to the downstream.",
+      "exampleSentence": "Migrating the inter-context integrations to event-driven communication meant that a twelve-hour incident in the payments context produced delayed notifications in downstream contexts rather than cascading failures across the entire system.",
+      "codeExample": {
+        "language": "python",
+        "code": "# Inventory context — consumer of OrderPlaced integration event\nclass OrderPlacedConsumer:\n    def __init__(self, inventory_repo: InventoryRepository):\n        self._repo = inventory_repo\n\n    def handle(self, event: OrderPlacedIntegrationEvent) -> None:\n        # Idempotency check: skip if already processed\n        if self._repo.is_event_processed(event.event_id):\n            return\n        for line in event.lines:\n            inventory = self._repo.find_by_product(ProductId(line.product_id))\n            inventory.reserve(Quantity(line.quantity))  # own domain operation\n            self._repo.save(inventory)\n        self._repo.mark_event_processed(event.event_id)"
+      },
+      "etymology": "Event-driven as an architectural style term popularized in the 1980s for systems that respond to events rather than polling; integration in the context of connecting bounded contexts via published events rather than direct coupling.",
+      "unlockLevel": 16,
+      "tags": [
+        "ddd",
+        "strategic",
+        "events",
+        "integration"
+      ],
+      "category": "concepts",
+      "backingCard": {
+        "bookId": "domain-driven-design",
+        "chapterId": "ddd-ch08-domain-events"
+      }
+    },
+    {
+      "id": "ddd-adv-0150-0000-0000-0000-000000000015",
+      "word": "Aggregate-per-Repository Rule",
+      "pronunciation": "AG-ruh-git pur reh-POZ-ih-tor-ee ROOL",
+      "partOfSpeech": "noun",
+      "shortDefinition": "The DDD rule that each repository corresponds to exactly one aggregate root, preventing cross-aggregate storage coupling.",
+      "simpleDefinition": "The Aggregate-per-Repository rule states that every repository is responsible for exactly one aggregate root — and every aggregate root gets exactly one repository. No repository spans two aggregates, and no aggregate root shares a repository with another. This correspondence enforces the aggregate's consistency boundary at the persistence layer: the repository loads and saves the entire aggregate as an indivisible unit.",
+      "longDefinition": "Evans's original formulation is clear: a repository exists for each aggregate root type, and repositories reconstitute aggregates — not individual entities or rows. Vernon codified the same principle in three rules for aggregate design: Rule 1 (model true invariants in aggregates), Rule 2 (modify one aggregate per transaction), Rule 3 (reference other aggregates by identity only), Rule 4 (use eventual consistency outside the aggregate boundary). The one-repository-per-root rule is the persistence expression of Rule 2 and Rule 3. An interior entity like OrderLine has no repository of its own — it has no meaningful existence outside the Order aggregate, so loading and saving it as an independent unit would violate the consistency boundary. A repository for an interior entity is a design smell: it signals either that the boundary was drawn incorrectly (the entity should be a separate aggregate root) or that the persistence model has leaked into the domain model. Conversely, wanting two repositories that both access the same aggregate is a signal that the aggregate needs to be split. The rule also governs query design: repositories return complete, valid aggregates — never partial projections or half-hydrated objects. Query projections belong in a separate read model, not in the repository.",
+      "connector": "Think of the aggregate-per-repository rule like passport control at a border — each country (aggregate) has its own checkpoint (repository), and you cannot use one country's checkpoint to enter another.",
+      "techContext": "When a new engineer created a LineItemRepository for performance reasons, we found three invariant violations the following week — restoring the Aggregate-per-Repository rule and moving line-item queries to a read model fixed both the design and the performance problem.",
+      "exampleSentence": "The proliferation of fine-grained repositories — one per database table — was the clearest symptom that the persistence model had leaked into our domain layer, with the aggregate-per-repository rule as the diagnostic test.",
+      "codeExample": {
+        "language": "python",
+        "code": "# Correct: one repository for the Order aggregate root\nclass OrderRepository(ABC):\n    @abstractmethod\n    def find_by_id(self, order_id: OrderId) -> Order: ...\n    @abstractmethod\n    def save(self, order: Order) -> None: ...\n\n# Wrong: a repository for an interior entity\n# class OrderLineRepository:  # <-- design smell\n#     def find_by_order(self, order_id: OrderId): ..."
+      },
+      "etymology": "A compound rule term from DDD literature; codified in Vaughn Vernon's Effective Aggregate Design series (2012) as the persistence corollary to the one-aggregate-per-transaction rule.",
+      "unlockLevel": 16,
+      "tags": [
+        "ddd",
+        "tactical",
+        "aggregates",
+        "repositories"
+      ],
+      "category": "concepts",
+      "backingCard": {
+        "bookId": "domain-driven-design",
+        "chapterId": "ddd-ch09-repositories"
+      }
+    },
+    {
+      "id": "ddd-adv-0160-0000-0000-0000-000000000016",
+      "word": "Domain Service vs Application Service",
+      "pronunciation": "doh-MAYN SUR-vis vur-sus ap-lih-KAY-shun SUR-vis",
+      "partOfSpeech": "noun",
+      "shortDefinition": "Domain services contain business logic; application services orchestrate use cases without owning domain rules.",
+      "simpleDefinition": "The domain service/application service distinction is about who owns business logic. A domain service is a stateless operation that expresses a domain concept but cannot naturally live on any single entity — it enforces rules, performs calculations, and speaks the ubiquitous language. An application service is a thin coordinator that sequences operations to fulfill a use case — it calls domain objects and repositories but contains no business logic itself.",
+      "longDefinition": "Evans defines three criteria for a domain service: the operation is domain-significant (it expresses a concept domain experts name and discuss), it is stateless (all information needed is passed as arguments), and it does not fit naturally on any single entity or value object (placing it there would bloat the entity or give it an awkward responsibility). The classic example is a fund transfer between two accounts: neither the source account nor the destination account is the natural home for the transfer logic, because it spans both and requires coordination. A FundsTransferService in the domain layer owns that logic. An application service is structurally different: it loads aggregates via repositories, calls domain methods or domain services, and persists results — but it contains no business logic. PlaceOrderApplicationService loads the Customer and Inventory aggregates, calls order.place() (domain behavior), and saves. All the business decisions happen in domain objects; the application service just choreographs the sequence. Confusing the two leads to the most common DDD pathology: business logic accumulating in application services, producing a de facto anemic domain model where entities are data holders and services do all the work.",
+      "connector": "Think of domain service vs application service like a chef vs a maître d' — the chef (domain service) knows how to cook and makes all culinary decisions; the maître d' (application service) coordinates the sequence of courses and communicates with the kitchen but does not cook.",
+      "techContext": "When we found pricing logic scattered across three application services, we extracted a PricingCalculationService domain service, and the application services collapsed to a handful of lines each.",
+      "exampleSentence": "Moving the eligibility calculation out of the application service and into a domain service made the business rule testable in isolation and visible to domain experts in the same conversation as the entity that used it.",
+      "codeExample": {
+        "language": "python",
+        "code": "# Domain service — owns business logic\nclass FundsTransferService:\n    def transfer(self, source: Account, target: Account, amount: Money) -> None:\n        # Business logic: both accounts must be active, sufficient funds\n        source.debit(amount)       # enforces overdraft invariant\n        target.credit(amount)\n\n# Application service — orchestrates, owns no logic\nclass TransferFundsHandler:\n    def handle(self, cmd: TransferFundsCommand) -> None:\n        source = self._accounts.find_by_id(cmd.source_id)\n        target = self._accounts.find_by_id(cmd.target_id)\n        self._transfer_service.transfer(source, target, cmd.amount)\n        self._accounts.save(source)\n        self._accounts.save(target)"
+      },
+      "etymology": "Service in the software sense of a stateless operation provider; the domain/application distinction introduced by Evans in Domain-Driven Design (2003) to separate domain logic from use-case orchestration.",
+      "unlockLevel": 16,
+      "tags": [
+        "ddd",
+        "tactical",
+        "services",
+        "architecture"
+      ],
+      "category": "concepts",
+      "backingCard": {
+        "bookId": "domain-driven-design",
+        "chapterId": "ddd-ch10-domain-services",
+        "cardId": "ddd-ch10-c003"
+      }
+    },
+    {
+      "id": "ddd-adv-0170-0000-0000-0000-000000000017",
+      "word": "Infrastructure Service",
+      "pronunciation": "in-fruh-STRUK-chur SUR-vis",
+      "partOfSpeech": "noun",
+      "shortDefinition": "A service implementing technical capabilities (email, persistence, messaging) that the domain model depends on via interfaces.",
+      "simpleDefinition": "An infrastructure service is a technical capability — sending email, writing to a database, publishing to a message queue, calling an external API — that the domain needs but should not depend on directly. The domain defines the interface (what it needs), and the infrastructure layer provides the implementation (how it is done). This keeps the domain model independent of technology choices and makes it easy to test with fakes.",
+      "longDefinition": "Infrastructure services are the third layer in DDD's service taxonomy, below domain services (pure business logic) and application services (use-case orchestration). They implement technical capabilities required by the domain: persistence (repositories are the most prominent infrastructure service), messaging (publishing domain events to a broker), email delivery (sending confirmation messages), external API clients (payment gateways, shipping providers), and caching. The key design discipline is the Dependency Inversion Principle: the domain layer defines interfaces (ports in hexagonal architecture terminology) that describe what technical capability it needs, expressed in domain language. The infrastructure layer provides concrete implementations (adapters) of those interfaces. This means the domain can be built and tested without any infrastructure dependencies — an in-memory repository replaces the JPA one, a stub email sender replaces SendGrid. Infrastructure services differ from domain services in that they have no domain knowledge: an email sender knows how to deliver a message but not when it is appropriate to send one; a message broker client knows how to publish but not what the event means. Domain services, by contrast, express domain rules and speak the ubiquitous language.",
+      "connector": "Think of infrastructure services like the plumbing in a building — the building's occupants define what they need (water, heat, electricity) without knowing how the pipes and wires are routed; the infrastructure layer handles the routing.",
+      "techContext": "By defining our email delivery as an EmailSender interface in the domain layer and injecting a SendGrid implementation in production and a spy in tests, the notification domain service tests ran without network calls and without mocking third-party SDKs.",
+      "exampleSentence": "Replacing the SMTP infrastructure service with a SendGrid adapter required changing only the infrastructure layer — no domain logic changed because the domain depended only on the EmailSender interface.",
+      "codeExample": {
+        "language": "python",
+        "code": "# Domain layer — defines what it needs (interface/port)\nfrom abc import ABC, abstractmethod\n\nclass EmailSender(ABC):\n    @abstractmethod\n    def send(self, to: EmailAddress, subject: str, body: str) -> None: ...\n\n# Infrastructure layer — provides how it is done (adapter)\nclass SendGridEmailSender(EmailSender):\n    def __init__(self, api_key: str):\n        self._client = SendGridAPIClient(api_key)\n\n    def send(self, to: EmailAddress, subject: str, body: str) -> None:\n        message = Mail(to_emails=to.value, subject=subject, plain_text_content=body)\n        self._client.send(message)"
+      },
+      "etymology": "Infrastructure from Latin infra ('below') + struere ('to build') — the technical foundation beneath the domain; service in the sense of a capability provider; Evans's three-layer service taxonomy in Domain-Driven Design (2003) established this level.",
+      "unlockLevel": 16,
+      "tags": [
+        "ddd",
+        "tactical",
+        "services",
+        "architecture"
+      ],
+      "category": "concepts",
+      "backingCard": {
+        "bookId": "domain-driven-design",
+        "chapterId": "ddd-ch10-domain-services",
+        "cardId": "ddd-ch10-c004"
+      }
+    },
+    {
+      "id": "ddd-adv-0180-0000-0000-0000-000000000018",
+      "word": "Domain Service Over-use",
+      "pronunciation": "doh-MAYN SUR-vis OH-ver-yoos",
+      "partOfSpeech": "noun",
+      "shortDefinition": "The anti-pattern of putting all domain logic in services rather than on entities, which reverts to an anemic domain model.",
+      "simpleDefinition": "Domain service over-use occurs when engineers treat domain services as the default home for all business logic, leaving entities as hollow data containers. The result is functionally identical to an anemic domain model — all the rules live in services, none in the objects. Entities become structs; services become procedural scripts. The symptom is entities with only getters and setters, and services that reach inside entity state to perform operations that should be the entity's own responsibility.",
+      "longDefinition": "Evans's warning is explicit: domain services should be used sparingly. The default home for domain behavior is the entity or value object that owns the state the behavior operates on. When an operation manipulates a single entity's state and enforces rules about that entity's consistency, it belongs on the entity, not in a service. Domain service over-use typically arises from one of three causes: developers from a procedural background defaulting to service-centric thinking rather than object-centric; architects defining an overly strict anemic-entity convention in the name of separation of concerns; or teams treating 'service' as an escape hatch whenever placing logic on an entity feels difficult. The diagnostic test: if a domain service method takes a single entity as its primary input and calls getters to read state before calling setters to change it, that logic belongs on the entity. Only logic that genuinely spans multiple entities without a natural home on any of them belongs in a domain service. Over-used domain services are also harder to test in isolation: they depend on multiple entity arguments and often on infrastructure interfaces, whereas entity methods can be tested with a simple unit test that constructs the entity in isolation.",
+      "connector": "Think of domain service over-use like outsourcing all of an employee's responsibilities to a manager — the employee becomes a passive record-holder while the manager does all the thinking, which defeats the purpose of having a capable team.",
+      "techContext": "The code review revealed that our CustomerService had seventy methods, most of which took a single Customer argument and called its getters before calling setters — clear evidence that all the logic belonged on the Customer entity itself.",
+      "exampleSentence": "After recognizing domain service over-use in the billing module, we moved fourteen methods from BillingService back onto the Invoice entity, reducing the service to three genuinely cross-entity operations.",
+      "etymology": "A compound DDD anti-pattern term; over-use in the software sense of applying a pattern beyond its appropriate scope; named implicitly in Evans's Domain-Driven Design (2003) and made explicit in Vernon's Implementing Domain-Driven Design (2013).",
+      "unlockLevel": 16,
+      "tags": [
+        "ddd",
+        "tactical",
+        "anti-patterns",
+        "services"
+      ],
+      "category": "concepts",
+      "backingCard": {
+        "bookId": "domain-driven-design",
+        "chapterId": "ddd-ch10-domain-services"
+      }
+    },
+    {
+      "id": "ddd-adv-0190-0000-0000-0000-000000000019",
+      "word": "Optimistic Locking",
+      "pronunciation": "op-tih-MIS-tik LOK-ing",
+      "partOfSpeech": "noun",
+      "shortDefinition": "A concurrency strategy that detects conflicting aggregate updates at commit time using a version field rather than locks.",
+      "simpleDefinition": "Optimistic locking assumes that concurrent aggregate updates will rarely conflict — so it does not hold a database lock during the transaction. Instead, every aggregate has a version number. When you save an aggregate, the repository checks that the version in the database still matches the version you read. If another process updated the aggregate between your read and your write, the version has incremented, the check fails, and your transaction is rejected with a conflict error. The operation must be retried from a fresh read.",
+      "longDefinition": "Optimistic locking is the standard concurrency control strategy for DDD aggregates in high-read, low-conflict domains. It avoids holding database locks (which cause contention and deadlocks under load) by detecting conflicts at commit time through version comparison. The implementation is straightforward: add a version integer column to the aggregate's database table; increment it on every write; include the version in the UPDATE WHERE clause alongside the primary key. If the row count returned is zero, another writer incremented the version between your read and your write — your commit fails. In JPA this is implemented with the @Version annotation; in other persistence frameworks it is a manual condition in the repository's save implementation. Optimistic locking is appropriate when conflicts are rare (most reads are not immediately followed by writes that race with other writes). When conflicts are common, pessimistic locking (a SELECT FOR UPDATE that holds a row lock for the transaction duration) reduces retry overhead. Optimistic locking is closely related to aggregate design: small, focused aggregates with low contention are the designed-for scenario. Large aggregates with many concurrent writers are a symptom of incorrectly drawn boundaries, and optimistic locking's retry loop becomes a performance problem rather than a solution.",
+      "connector": "Think of optimistic locking like collaborative document editing without real-time conflict detection — you make your changes assuming no one else modified the same paragraph, and you find out at save time if someone did.",
+      "techContext": "After adding optimistic locking to the inventory aggregate, concurrent reservation requests no longer produced silent overwrites — lost-update bugs that had caused stock discrepancies became explicit OptimisticLockException retries.",
+      "exampleSentence": "Optimistic locking on the Reservation aggregate caught a race condition during a flash sale where two checkout sessions were simultaneously trying to decrement the same SKU's available quantity to below zero.",
+      "codeExample": {
+        "language": "python",
+        "code": "# Manual optimistic locking in repository\nclass SqlInventoryRepository(InventoryRepository):\n    def save(self, inventory: Inventory) -> None:\n        rows_updated = self._db.execute(\n            \"UPDATE inventory SET quantity = ?, version = ? \"\n            \"WHERE product_id = ? AND version = ?\",\n            (inventory.quantity, inventory.version + 1,\n             inventory.product_id.value, inventory.version)\n        )\n        if rows_updated == 0:\n            raise OptimisticLockException(\n                f\"Inventory for {inventory.product_id} was modified concurrently\")"
+      },
+      "etymology": "Optimistic from the assumption that conflicts are rare and therefore need not be prevented in advance; locking from the concurrency control concept; the term was established in database literature and adopted into DDD practice for aggregate concurrency control.",
+      "unlockLevel": 16,
+      "tags": [
+        "ddd",
+        "tactical",
+        "aggregates",
+        "concurrency"
+      ],
+      "category": "concepts",
+      "backingCard": {
+        "bookId": "domain-driven-design",
+        "chapterId": "ddd-ch07-aggregates"
+      }
+    },
+    {
+      "id": "ddd-adv-0200-0000-0000-0000-000000000020",
+      "word": "Reference by ID",
+      "pronunciation": "REF-er-ence BY eye-DEE",
+      "partOfSpeech": "noun",
+      "shortDefinition": "The rule that aggregates reference each other only by identity, never by direct object reference, to preserve boundaries.",
+      "simpleDefinition": "When one aggregate needs to refer to another, it holds only the other aggregate's identity — an ID value object — not a direct object reference. An Order holds a CustomerId, not a Customer. This single rule has profound consequences: it prevents accidental mutation across aggregate boundaries, makes loading explicit and intentional, keeps aggregate graphs serializable, and makes cross-aggregate dependencies legible in the type system.",
+      "longDefinition": "Vernon's Rule 3 for aggregate design: 'Reference other aggregates by identity.' If Order needs to refer to the Customer who placed it, Order holds a CustomerId — a strongly-typed value object — not a Customer object. The consequences of this rule are extensive. Load isolation: loading an Order does not drag Customer into memory; when you need customer data, you load it explicitly and deliberately via the CustomerRepository. Mutation safety: holding only an ID makes it impossible to accidentally mutate the Customer through the Order reference. Explicit coupling: an ID signals to the reader that this is a cross-aggregate reference, not an owned entity. Serialization simplicity: IDs serialize trivially; object graphs do not. Strongly typed IDs (CustomerId rather than raw UUID or int) make cross-aggregate references legible in the type system and prevent ID confusion errors (passing an OrderId where a CustomerId is expected). In ORM-heavy codebases, this rule is routinely violated via bidirectional navigation properties — e.g., a Customer entity with an orders collection that loads all Orders for the customer. This is the ORM's relational model leaking through the aggregate boundary. The fix is to remove the reverse navigation property and replace it with an explicit repository query when you need to find orders by customer.",
+      "connector": "Think of reference by ID like citing a book by ISBN rather than attaching the whole book — you record the identifier so you can find the book later, without having to carry the entire book around with you everywhere.",
+      "techContext": "Replacing the Customer object reference on Order with a CustomerId value object eliminated a class of lazy-loading exceptions and made it impossible to accidentally call customer.suspend() while processing order events.",
+      "exampleSentence": "After enforcing reference-by-ID across all aggregates, the ORM bidirectional relationship that had been silently loading entire customer order histories on every login check was discovered and removed.",
+      "codeExample": {
+        "language": "python",
+        "code": "# Correct: reference other aggregates by strongly-typed ID only\n@dataclass\nclass Order:\n    id: OrderId\n    customer_id: CustomerId   # ID only — never a Customer object\n    lines: list[OrderLine]\n\n# Wrong: object reference across aggregate boundary\n# @dataclass\n# class Order:\n#     id: OrderId\n#     customer: Customer       # Pulls Customer into Order's loading context"
+      },
+      "etymology": "Reference-by-identity is a DDD-specific rule named in Vaughn Vernon's Implementing Domain-Driven Design (2013) and codified as Rule 3 in his Effective Aggregate Design series (2012); it formalizes Evans's original intent that aggregate boundaries must be hard.",
+      "unlockLevel": 16,
+      "tags": [
+        "ddd",
+        "tactical",
+        "aggregates",
+        "design-rules"
+      ],
+      "category": "concepts",
+      "backingCard": {
+        "bookId": "domain-driven-design",
+        "chapterId": "ddd-ch07-aggregates"
+      }
+    },
+    {
+      "id": "ddd-adv-0210-0000-0000-0000-000000000021",
+      "word": "Consistency Boundary",
+      "pronunciation": "kun-SIS-ten-see BOWN-duh-ree",
+      "partOfSpeech": "noun",
+      "shortDefinition": "The scope within which all invariants must hold atomically — defined by the aggregate, not the database transaction.",
+      "simpleDefinition": "A consistency boundary is the perimeter inside which all domain invariants must always hold. It is defined by the aggregate: everything inside the aggregate boundary is consistent after every operation; everything outside is consistent eventually. The boundary is a business modeling decision, not a database transaction choice — the transaction follows the boundary, not the other way around.",
+      "longDefinition": "The consistency boundary is one of the most conceptually important ideas in DDD aggregate design, and the one most frequently confused with the transaction boundary. Evans's model is explicit: the aggregate is the consistency boundary. Everything inside must satisfy all invariants simultaneously, atomically, before any persistence occurs. Everything outside is not required to be consistent at the same moment — cross-aggregate consistency is achieved eventually through domain events and sagas. The practical implication: the database transaction scope should match the aggregate boundary, not exceed it. One transaction, one aggregate. When you find yourself writing a transaction that saves two aggregates together — 'we need both to succeed or both to fail' — you are blurring two separate consistency boundaries. The correct response is almost never to merge them into one aggregate; it is to design the eventual consistency and compensation logic. Understanding consistency boundaries also clarifies the aggregate size decision: an aggregate should contain exactly the objects whose consistency with each other must be atomic (cross-entity invariants within one transaction), and nothing more. Objects whose consistency can be eventual (cross-aggregate invariants) should be separated, reducing lock scope and loading cost.",
+      "connector": "Think of a consistency boundary like the hull of a ship — everything inside the hull must be watertight (consistent) for the ship to float; what happens outside the hull is a different concern that doesn't affect the ship's integrity.",
+      "techContext": "Mapping our invariants to their consistency level revealed that five of the seven rules we were enforcing in one large transaction were cross-aggregate invariants that could be eventual — splitting the aggregate reduced lock contention by 60% under load.",
+      "exampleSentence": "The consistency boundary analysis showed that the payment and order invariants crossed aggregate lines, so we replaced the two-aggregate transaction with an OrderConfirmed event that triggered payment processing in a separate transaction.",
+      "etymology": "Consistency from Latin consistere ('to stand together, be stable'); boundary from Old French bounder ('to set limits'); Evans used the compound term in Domain-Driven Design (2003) to distinguish the aggregate's role from the database transaction's role.",
+      "unlockLevel": 16,
+      "tags": [
+        "ddd",
+        "tactical",
+        "aggregates",
+        "invariants"
+      ],
+      "category": "concepts",
+      "backingCard": {
+        "bookId": "domain-driven-design",
+        "chapterId": "ddd-ch07-aggregates"
+      }
+    },
+    {
+      "id": "ddd-adv-0220-0000-0000-0000-000000000022",
+      "word": "ORM-Repository Tension",
+      "pronunciation": "OH-AR-EM reh-POZ-ih-tor-ee TEN-shun",
+      "partOfSpeech": "noun",
+      "shortDefinition": "The conflict between ORM's row-mapping model and the repository's aggregate-centric collection abstraction.",
+      "simpleDefinition": "ORM-Repository tension is the friction that arises when you try to use an ORM (Hibernate, SQLAlchemy, ActiveRecord) as the implementation behind a DDD repository. ORMs are designed around the relational model — rows, lazy loading, identity maps, session lifecycle — while repositories are designed around aggregates. Every place where ORM concepts leak through the repository interface is a point of tension.",
+      "longDefinition": "The tension manifests in several concrete ways: lazy loading (ORMs default to lazily loading associations, but a DDD repository must return a fully materialized aggregate to safely enforce invariants — lazy loading inside an aggregate can produce silent invariant violations when the session closes before all collections are accessed); findAll() exposure (ORM-generated repository interfaces like JpaRepository expose findAll(), findAll(Sort), flush(), and saveAndFlush() — all persistence concepts that pollute the domain interface); identity map conflicts (ORM sessions maintain a first-level cache that may return cached instances rather than freshly loaded aggregates, potentially hiding concurrent modifications); query capability leakage (extending JpaRepository gives application services access to Criteria API, JPQL, and Sort parameters, bypassing domain-named finder methods and embedding persistence concepts in the service layer). The standard resolution is the anti-corruption layer approach: define a clean domain interface in the domain layer with domain-named methods and no ORM imports, then implement it in the infrastructure layer using the ORM as a delegate. The domain stays clean; the ORM stays productive. Active Record (Rails, Eloquent, Django ORM) is the most severe case — the domain object is also the persistence object, coupling the domain to the database framework entirely.",
+      "connector": "Think of ORM-Repository tension like fitting a power tool into a precision craft — the tool is powerful and efficient, but using it directly exposes all its industrial edges to the delicate work; you need an adapter to keep the craft clean.",
+      "techContext": "We resolved ORM-Repository tension by defining domain interfaces in the domain package and wrapping Spring Data JpaRepository behind a thin adapter in the infrastructure package — application services lost access to flush() and findAll(Sort) without noticing.",
+      "exampleSentence": "The ORM-Repository tension became acute when SQLAlchemy's lazy loading caused a silent invariant violation — the session had closed before the order line collection was loaded, so the total-quantity check ran against an empty list.",
+      "codeExample": {
+        "language": "java",
+        "code": "// Resolving tension: clean domain interface + ORM adapter in infrastructure\n// Domain layer (no ORM imports)\npublic interface OrderRepository {\n    Optional<Order> findById(OrderId id);\n    List<Order> findPendingShipment();\n    void save(Order order);\n}\n\n// Infrastructure layer (wraps JpaRepository)\n@Repository\npublic class JpaOrderRepository implements OrderRepository {\n    private final OrderJpaRepo jpa;  // extends JpaRepository\n\n    @Override\n    public Optional<Order> findById(OrderId id) {\n        return jpa.findById(id.value()).map(OrderMapper::toDomain);\n    }\n}"
+      },
+      "etymology": "Tension in the engineering sense of opposing forces; ORM (Object-Relational Mapper) from the 1990s pattern; Repository from Evans's DDD (2003); the tension was named and analyzed systematically in Vernon's Implementing Domain-Driven Design (2013).",
+      "unlockLevel": 16,
+      "tags": [
+        "ddd",
+        "tactical",
+        "repositories",
+        "persistence"
+      ],
+      "category": "concepts",
+      "backingCard": {
+        "bookId": "domain-driven-design",
+        "chapterId": "ddd-ch09-repositories",
+        "cardId": "ddd-ch09-c007"
+      }
+    },
+    {
+      "id": "ddd-adv-0230-0000-0000-0000-000000000023",
+      "word": "Downstream Translator",
+      "pronunciation": "DOHN-streem TRANZ-lay-ter",
+      "partOfSpeech": "noun",
+      "shortDefinition": "The component inside an ACL that converts upstream model objects into the downstream context's own vocabulary.",
+      "simpleDefinition": "A downstream translator is the mapping component inside an anticorruption layer that converts incoming upstream objects — DTOs, API responses, event payloads — into the downstream context's own domain objects. It is the implementation heart of the ACL: all field renames, type conversions, semantic translations, and concept decompositions happen here. When the upstream changes, only the translator needs updating.",
+      "longDefinition": "Evans describes the ACL as containing translators, facades, and adapters. The downstream translator is the translator component — the mapper that converts upstream model artifacts into downstream domain objects. Its design determines how well the ACL protects the downstream model. A well-designed translator uses the downstream's ubiquitous language for all output types (the downstream's domain objects), is the only place in the codebase that imports or references upstream types, and handles every conversion explicitly rather than using reflection-based mapping frameworks that can create implicit coupling. The translator is also the right place to handle upstream semantics that have no downstream equivalent: upstream null fields, missing enum values, or ambiguous status codes are all resolved in the translator to concrete downstream domain objects with clear semantics. Testing the translator in isolation is a valuable practice — unit tests that provide upstream payloads and assert on downstream objects document the mapping contract and serve as regression tests when the upstream schema changes. When the upstream publishes integration events via a message broker, the translator is invoked by the event consumer before any domain logic runs; when the upstream is a synchronous API, the translator is invoked by the facade before returning to the domain service.",
+      "connector": "Think of a downstream translator like a literary translator — they read the original text (upstream model), understand its meaning in context, and produce an equivalent expression in the target language (downstream domain) rather than a word-for-word substitution.",
+      "techContext": "The FedEx downstream translator unit test suite had 47 test cases covering edge-case status codes and optional fields — when FedEx changed three field names in their v2 API, only the translator tests failed, and we updated the translator without touching any domain logic.",
+      "exampleSentence": "The downstream translator for the Stripe webhook ACL converted Stripe's payment_intent.status enum into the domain's PaymentStatus value object, making the upstream API's idiosyncratic terminology invisible to the rest of the payments context.",
+      "codeExample": {
+        "language": "python",
+        "code": "# Downstream translator inside the Stripe ACL\nclass StripePaymentTranslator:\n    def translate(self, stripe_payload: dict) -> PaymentResult:\n        status_map = {\n            \"succeeded\": PaymentStatus.CAPTURED,\n            \"requires_action\": PaymentStatus.PENDING_AUTHENTICATION,\n            \"canceled\": PaymentStatus.FAILED,\n        }\n        return PaymentResult(\n            payment_id=PaymentId(stripe_payload[\"id\"]),\n            status=status_map.get(stripe_payload[\"status\"], PaymentStatus.UNKNOWN),\n            amount=Money(\n                Decimal(str(stripe_payload[\"amount\"])) / 100,\n                Currency(stripe_payload[\"currency\"].upper())\n            )\n        )"
+      },
+      "etymology": "Downstream from the direction of information flow in a context map (away from the upstream source); translator from Latin translatus ('carried across'); the term is implicit in Evans's ACL description and made explicit in integration pattern literature.",
+      "unlockLevel": 16,
+      "tags": [
+        "ddd",
+        "strategic",
+        "integration",
+        "patterns"
+      ],
+      "category": "components",
+      "backingCard": {
+        "bookId": "domain-driven-design",
+        "chapterId": "ddd-ch03-context-map-patterns"
+      }
+    },
+    {
+      "id": "ddd-adv-0240-0000-0000-0000-000000000024",
+      "word": "Context Boundary Enforcement",
+      "pronunciation": "KON-tekst BOWN-duh-ree en-FORS-ment",
+      "partOfSpeech": "noun",
+      "shortDefinition": "The architectural and organizational practices that prevent models from leaking across bounded context lines.",
+      "simpleDefinition": "Context boundary enforcement is the set of technical and organizational measures that ensure a bounded context's model stays inside its boundary. Models leak when teams import domain objects from other contexts directly, share databases without translation layers, or access internal APIs without a formal integration contract. Enforcement turns the bounded context from an intention on a whiteboard into a constraint that compiles.",
+      "longDefinition": "Evans observed that bounded contexts tend to erode without active enforcement. The erosion is gradual: a developer needs a field from another context's model and imports the class directly rather than defining a translation; two teams share a database table to avoid an API call; a seemingly minor coupling accumulates until the boundary exists in name only. Technical enforcement mechanisms include: separate Maven/Gradle/npm modules or Python packages for each bounded context, with explicit dependency declarations that make cross-context imports visible and reviewable; static analysis tools (ArchUnit in Java, dependency-cruiser in TypeScript, pylint import rules in Python) that fail the build when a domain package imports from another context's domain package without going through an integration layer; separate databases (or at minimum separate schemas) per context, enforcing data access through APIs or events rather than shared SQL joins; and API contract testing (Pact, Prism) that makes integration contracts executable. Organizational enforcement is equally important: team ownership aligned to bounded contexts (Conway's Law inverse maneuver), code review policies that require a second context owner's approval for cross-boundary changes, and explicit context-map documentation that makes boundary violations visible in architecture review. Enforcement is not a one-time setup but an ongoing discipline — context boundaries degrade under deadline pressure without automatic tooling to catch violations.",
+      "connector": "Think of context boundary enforcement like building fire compartments in a building — the compartments stop a fire in one room from spreading, but only if the fire doors are actually kept closed and not propped open for convenience.",
+      "techContext": "After adding ArchUnit rules that failed the build when any class in the orders module imported from the inventory module without going through the defined integration interface, cross-context coupling incidents dropped to zero in six months.",
+      "exampleSentence": "Context boundary enforcement via module-level import rules caught fourteen silent violations in the codebase — each was a domain class imported from another context rather than translated through the ACL.",
+      "codeExample": {
+        "language": "java",
+        "code": "// ArchUnit rule: enforce context boundary — orders may not import inventory domain\n@Test\nvoid orders_must_not_import_inventory_domain() {\n    noClasses()\n        .that().resideInAPackage(\"com.example.orders.domain..\")\n        .should().dependOnClassesThat()\n        .resideInAPackage(\"com.example.inventory.domain..\")\n        .check(importedClasses);\n}"
+      },
+      "etymology": "Context boundary from Evans's bounded context definition; enforcement in the software sense of making a rule technically verifiable rather than merely advisory; the concept emerged from practical DDD experience reported by practitioners like Vernon and Sam Newman in microservices literature.",
+      "unlockLevel": 16,
+      "tags": [
+        "ddd",
+        "strategic",
+        "context-map",
+        "architecture"
+      ],
+      "category": "concepts",
+      "backingCard": {
+        "bookId": "domain-driven-design",
+        "chapterId": "ddd-ch02-strategic-design"
+      }
+    },
+    {
+      "id": "ddd-adv-0250-0000-0000-0000-000000000025",
+      "word": "Domain Event Storming (preview)",
+      "pronunciation": "doh-MAYN ih-VENT STOR-ming",
+      "partOfSpeech": "noun",
+      "shortDefinition": "A collaborative modeling technique that discovers domain events first, then traces back to commands and aggregates.",
+      "simpleDefinition": "Event Storming is a large-group collaborative workshop where participants place sticky notes on a timeline to model domain events (orange), the commands that trigger them (blue), the aggregates that handle those commands (yellow), and the policies that react to events (lilac). By starting with events — what happened — rather than data models or processes, it surfaces business behavior quickly and reveals bounded context candidates from natural clusters of events.",
+      "longDefinition": "Alberto Brandolini invented Event Storming in 2012 as a reaction against the inadequacy of traditional requirements workshops for complex domains. The DDD advanced tier encounters Event Storming as a preview because it is the primary tool for discovering aggregate candidates, context boundaries, and domain event vocabularies before tactical design begins. The format covered at this level — sometimes called Design-Level Event Storming — focuses on a specific subdomain and produces the raw material for aggregate design: a timeline of orange event stickies (OrderPlaced, PaymentFailed), blue command stickies (PlaceOrder, AuthorizePayment) that caused each event, yellow aggregate stickies (Order, Payment) that processed each command, and lilac policy stickies (reactive rules: 'whenever OrderPlaced, send confirmation email'). Hotspots (red stickies) mark areas of ambiguity or disagreement that require deeper domain expert input. The output is not a formal model — it is a shared vocabulary and a set of candidate aggregates and bounded contexts that feed the tactical design phase. Chapter 12 of the DDD book covers the full Event Storming format; this preview establishes the concept before the deep-dive in the advanced-2 tier.",
+      "connector": "Think of Event Storming like reverse-engineering a mystery from its outcomes — you start by listing every significant thing that happened (events), then work backward to figure out what caused each one and who was responsible.",
+      "techContext": "A three-hour Event Storming session with domain experts and engineers produced forty-two orange event stickies, seven hotspots, and five candidate aggregate boundaries that became the foundation for a three-month domain redesign.",
+      "exampleSentence": "The Event Storming workshop revealed that what we modeled as a single Order aggregate actually contained two independent consistency boundaries — a discovery that would have taken months of code review to surface from the existing codebase.",
+      "etymology": "Event from Latin eventus ('outcome'); Storming from the creative brainstorming tradition; coined by Alberto Brandolini in 2012 and documented in his book EventStorming (2021); adopted into DDD practice as the primary collaborative modeling technique.",
+      "unlockLevel": 16,
+      "tags": [
+        "ddd",
+        "strategic",
+        "modeling",
+        "discovery"
+      ],
+      "category": "techniques",
+      "backingCard": {
+        "bookId": "domain-driven-design",
+        "chapterId": "ddd-ch12-event-storming"
+      }
+    },
+    {
+      "id": "ddd-adv-0260-0000-0000-0000-000000000026",
+      "word": "Past-Tense Event Naming",
+      "pronunciation": "PAST-TENS ih-VENT NAY-ming",
+      "partOfSpeech": "noun",
+      "shortDefinition": "The convention that domain events are named in past tense (OrderPlaced, PaymentFailed) to signal they record facts.",
+      "simpleDefinition": "Past-tense event naming is the practice of giving domain events past-tense names — OrderPlaced not PlaceOrder, PaymentFailed not PaymentFailure, ShipmentDispatched not ShipmentDispatch. The past tense encodes the fundamental semantic of domain events: they record something that already happened, not a request for something to happen. A past-tense name tells any reader that the event cannot be rejected — the business fact is already established.",
+      "longDefinition": "Evans identified naming discipline as one of the most visible expressions of ubiquitous language in a domain model. For domain events, this discipline takes a specific form: the past tense. The convention carries semantic weight that goes beyond style. A command — PlaceOrder, AuthorizePayment — is a request that can be rejected: validation fails, preconditions are not met, the aggregate's invariants would be violated. An event — OrderPlaced, PaymentAuthorized — is a record of something that succeeded. The past tense makes this distinction immediately apparent in code: when you see an OrderPlaced in an event handler, you know the order definitely exists in the domain, not that someone is asking to create one. This naming convention also aligns with Event Storming's orange sticky note vocabulary: domain experts describe business scenarios in past tense when recounting what happened, so naming events in past tense keeps code legible to non-developers reviewing event catalogs. Event names should also be specific enough to be unambiguous — OrderStatusUpdated is a weak name (it is a database description); OrderShipped is a strong name (it is a domain description). And they should use the same noun the domain uses for the aggregate: if the context calls it a Subscription, the event is SubscriptionActivated, not AccountActivated, even if both reference the same underlying record.",
+      "connector": "Think of past-tense event naming like newspaper headlines — headlines report what happened ('Stock Market Falls') rather than what someone wants to happen ('Stock Market: Please Fall') because headlines are facts, not requests.",
+      "techContext": "When the code review caught a PaymentProcessing event (present progressive tense), we renamed it to PaymentAuthorized — the name change surfaced a deeper modeling error where the event was being raised before the authorization was confirmed rather than after.",
+      "exampleSentence": "Renaming all events from present-tense (CreateInvoice, ProcessPayment) to past-tense (InvoiceCreated, PaymentProcessed) revealed three cases where events were being raised before the underlying operation had succeeded.",
+      "codeExample": {
+        "language": "python",
+        "code": "# Past-tense event naming — facts, not intentions\n@dataclass(frozen=True)\nclass OrderPlaced:  # Not: PlaceOrder, OrderCreated, OrderCreate\n    order_id: OrderId\n    customer_id: CustomerId\n    occurred_at: datetime\n\n@dataclass(frozen=True)\nclass PaymentFailed:  # Not: PaymentFailure, FailedPayment, PaymentError\n    payment_id: PaymentId\n    reason: str\n    occurred_at: datetime"
+      },
+      "etymology": "Past tense from grammatical tense classification; the naming convention is implicit in Evans's Domain-Driven Design (2003) and made explicit in Brandolini's Event Storming (2012) where orange stickies are described as past-tense facts.",
+      "unlockLevel": 16,
+      "tags": [
+        "ddd",
+        "tactical",
+        "events",
+        "ubiquitous-language"
+      ],
+      "category": "concepts",
+      "backingCard": {
+        "bookId": "domain-driven-design",
+        "chapterId": "ddd-ch08-domain-events"
+      }
+    },
+    {
+      "id": "ddd-adv-0270-0000-0000-0000-000000000027",
+      "word": "Outbox Pattern",
+      "pronunciation": "OWT-boks PAT-ern",
+      "partOfSpeech": "noun",
+      "shortDefinition": "A technique for reliably publishing domain events by writing them to a local outbox table in the same transaction as the aggregate.",
+      "simpleDefinition": "The Outbox Pattern solves a fundamental reliability gap: after an aggregate's state change commits to the database, the process could crash before the events are published to the message broker, leaving the state changed but no one notified. The fix is to write events into an outbox table in the same database transaction as the state change. A separate relay process polls the outbox and forwards events to the broker, guaranteeing at-least-once delivery even across crashes.",
+      "longDefinition": "The collect-then-publish pattern ensures events are not published before the transaction commits, but it leaves a window between the commit and the broker publication where a process crash loses events. The Outbox Pattern closes this window using local atomicity: the aggregate's state changes and the domain events are both written to the same database in a single transaction (the events go into an outbox table as rows). Because both writes are atomic, it is impossible for the state to change without a corresponding event row, and vice versa. A separate relay process (sometimes called the CDC relay or message relay) reads unprocessed rows from the outbox table and publishes them to the message broker. When the broker acknowledges delivery, the relay marks the row as processed. If the relay crashes between publication and acknowledgement, it restarts and republishes — which may deliver the event twice. This makes at-least-once delivery the guarantee, not exactly-once. Consumers must therefore be idempotent. Implementations include polling-based relays (the relay queries the outbox table on a timer) and change-data-capture relays (the relay reads the database's transaction log directly via Debezium, eliminating the polling overhead). The outbox pattern is the production-grade solution for reliable event publication in systems where event loss is unacceptable.",
+      "connector": "Think of the Outbox Pattern like a physical outbox tray on a desk — you put the letter in the tray at the same time you file the record; even if you step away, the letter stays in the tray until a mail runner picks it up and sends it.",
+      "techContext": "After implementing the outbox pattern with Debezium CDC, we eliminated the class of 'silent failures' where the service crashed between database commit and Kafka publish, causing downstream contexts to miss integration events without any error being logged.",
+      "exampleSentence": "The outbox pattern guaranteed that every OrderPlaced event reached the Kafka topic even if the order service pod was killed immediately after the database commit — the relay republished from the outbox table on restart.",
+      "codeExample": {
+        "language": "python",
+        "code": "# Outbox pattern — write event to outbox in same transaction as aggregate\nasync def place_order(cmd: PlaceOrderCommand, db: Transaction) -> None:\n    order = Order.create(cmd.customer_id, cmd.lines)\n    # Both writes in a single atomic transaction\n    await db.execute(\"INSERT INTO orders ...\", order.to_row())\n    for event in order.domain_events:\n        await db.execute(\n            \"INSERT INTO outbox (event_type, payload, status) VALUES (?, ?, 'PENDING')\",\n            (event.__class__.__name__, event.to_json())\n        )\n    await db.commit()  # both committed atomically\n    # Relay process publishes from outbox asynchronously"
+      },
+      "etymology": "Outbox from the physical office outbox tray for outgoing correspondence; the software pattern was documented in microservices literature (Chris Richardson's microservices.io) and gained prominence in DDD circles through Vernon's IDDD (2013) and later distributed systems texts.",
+      "unlockLevel": 16,
+      "tags": [
+        "ddd",
+        "tactical",
+        "events",
+        "reliability"
+      ],
+      "category": "patterns",
+      "backingCard": {
+        "bookId": "domain-driven-design",
+        "chapterId": "ddd-ch08-domain-events",
+        "cardId": "ddd-ch08-c009"
+      }
+    },
+    {
+      "id": "ddd-adv-0280-0000-0000-0000-000000000028",
+      "word": "Identity Allocation Strategy",
+      "pronunciation": "eye-DEN-tih-tee al-oh-KAY-shun STRAT-uh-jee",
+      "partOfSpeech": "noun",
+      "shortDefinition": "The decision of whether to generate entity IDs in the database, application, or from an external service.",
+      "simpleDefinition": "Identity allocation strategy is the decision about who assigns an entity's ID and when. Three approaches exist: let the database generate the ID on insert (simple but means the domain cannot form a complete entity before saving); let the application generate the ID before any persistence occurs (UUID, ULID — gives the domain full ownership of identity); or request an ID from an external identity service. Each approach has different implications for aggregate completeness, testing, and distributed systems.",
+      "longDefinition": "Evans devotes attention to identity allocation in the Entities chapter because the choice has significant implications for domain model integrity. Database-generated IDs (auto-increment, sequences) mean the aggregate root does not have its identity until after the first database write. This creates a tension with DDD's principle that the aggregate should be a fully valid, invariant-satisfying object before any persistence occurs — you cannot construct a complete Order without an OrderId, and if the ID comes from the database, the aggregate is incomplete in memory. Application-generated IDs (UUID v4, ULID) solve this: the application creates the ID before creating the aggregate, so the aggregate is complete from construction. This also makes aggregates trivially testable in isolation — no database connection needed to generate a valid ID. External ID services (a dedicated ID allocation service or partition-based ID generators like Twitter Snowflake) are used when IDs must encode additional semantics (time, shard, region) or when multiple write replicas need to generate unique IDs without coordination. Strongly typed IDs — wrapping a UUID in a CustomerId value object — are the recommended practice regardless of allocation strategy: they make cross-aggregate references type-safe and prevent ID confusion errors. The choice of allocation strategy should also account for event sourcing: if the aggregate's events include its ID (as they must for reconstitution), the ID must exist before the first event is created, which rules out database-generated IDs in event-sourced systems.",
+      "connector": "Think of identity allocation strategy like deciding whether a new employee gets their ID badge from HR before their first day, on their first day at the door, or after completing paperwork — the timing changes what the employee can do on day one.",
+      "techContext": "Switching from database auto-increment IDs to application-generated ULIDs let us write unit tests for aggregate construction without any database interaction, and gave us sortable IDs that preserved insertion order in our event log.",
+      "exampleSentence": "The switch to application-generated ULIDs as the identity allocation strategy meant that Order objects were complete and fully valid in memory before any database write, eliminating a class of pre-save validation bugs.",
+      "codeExample": {
+        "language": "python",
+        "code": "import uuid\nfrom dataclasses import dataclass\n\n@dataclass(frozen=True)\nclass OrderId:\n    value: str\n\n    @classmethod\n    def generate(cls) -> \"OrderId\":\n        return cls(str(uuid.uuid4()))  # Application-generated ID\n\n# Aggregate is complete before any persistence\norder = Order(\n    id=OrderId.generate(),  # ID exists before save\n    customer_id=CustomerId(\"cust-123\"),\n    lines=[]\n)"
+      },
+      "etymology": "Identity from Latin identitas ('the same'); allocation from Latin allocare ('to assign a place'); strategy from Greek strategia ('generalship, planning'); Evans discussed the concept in Domain-Driven Design (2003) under Entity identity; formalized as a design decision in Vernon's IDDD (2013).",
+      "unlockLevel": 16,
+      "tags": [
+        "ddd",
+        "tactical",
+        "entities",
+        "identity"
+      ],
+      "category": "concepts",
+      "backingCard": {
+        "bookId": "domain-driven-design",
+        "chapterId": "ddd-ch05-entities"
+      }
+    },
+    {
+      "id": "ddd-adv-0290-0000-0000-0000-000000000029",
+      "word": "Specification Composition",
+      "pronunciation": "speh-sih-fih-KAY-shun kom-puh-ZIH-shun",
+      "partOfSpeech": "noun",
+      "shortDefinition": "Combining specification objects with AND, OR, and NOT to build complex business rules from simple reusable predicates.",
+      "simpleDefinition": "Specification composition is the practice of combining simple, named business predicates into complex rules using logical operators. An EligibleForRenewal specification might be composed from an ActiveSubscription AND a ExpiresWithin30Days specification using the AND combinator. Each primitive specification is independently testable and named after a domain concept; composition builds arbitrarily complex rules without writing new repository query methods for every combination.",
+      "longDefinition": "Evans and Fowler described the Specification pattern as a way to encode business criteria in reusable, composable predicate objects. Specification composition is the practice of building complex predicates by combining simpler ones with AND, OR, and NOT operators defined on the Specification interface. Each concrete specification encodes a single business concept — ActiveCustomerSpec, PremiumTierSpec, HasUnpaidInvoiceSpec — and the composition operators produce new specifications that express compound rules: ActiveCustomerSpec.and(PremiumTierSpec) produces a specification for active premium customers. This approach provides several advantages: each primitive specification is independently unit-testable; the composition reflects domain expert vocabulary directly (domain experts talk about 'active premium customers', not 'customers where status equals active AND tier equals premium'); and new query combinations can be expressed by composing existing specifications without writing new repository methods. The key implementation challenge is translating specifications to database predicates: in-memory evaluation works correctly but requires loading all aggregates before filtering. Production implementations must translate specifications to JPA Criteria predicates, SQL WHERE clauses, or Elasticsearch queries. Spring Data JPA's JpaSpecificationExecutor provides findAll(Specification<T>) that handles this translation. The pattern is most valuable for complex eligibility rules, reporting filters, and validation logic that would otherwise produce a proliferation of narrowly named repository methods.",
+      "connector": "Think of specification composition like LEGO — each brick (primitive specification) is a stable, self-contained piece; combining bricks produces structures (compound rules) of arbitrary complexity without needing a new mold for every shape.",
+      "techContext": "Replacing twenty-seven findByX repository methods with a composable specification layer reduced our repository interface from 340 lines to 80, and the product team could express new customer eligibility rules in a configuration file without code changes.",
+      "exampleSentence": "The promotional eligibility rule was expressed by composing four existing specifications — ActiveCustomer, PremiumTier, NoOpenDisputes, and PurchasedInLast90Days — rather than writing a new repository method and SQL query from scratch.",
+      "codeExample": {
+        "language": "python",
+        "code": "# Composable specifications\nclass Specification:\n    def is_satisfied_by(self, customer: Customer) -> bool:\n        raise NotImplementedError\n    def and_(self, other: \"Specification\") -> \"Specification\":\n        return AndSpec(self, other)\n    def or_(self, other: \"Specification\") -> \"Specification\":\n        return OrSpec(self, other)\n    def not_(self) -> \"Specification\":\n        return NotSpec(self)\n\nclass ActiveCustomerSpec(Specification):\n    def is_satisfied_by(self, c: Customer) -> bool:\n        return c.is_active and not c.is_blacklisted\n\nclass PremiumTierSpec(Specification):\n    def is_satisfied_by(self, c: Customer) -> bool:\n        return c.tier == CustomerTier.PREMIUM\n\n# Composition\neligible = ActiveCustomerSpec().and_(PremiumTierSpec())\ntargets = [c for c in customers if eligible.is_satisfied_by(c)]"
+      },
+      "etymology": "Specification from Latin specificatio ('detailed statement'); composition from Latin compositio ('putting together'); the Specification pattern was introduced by Evans and Fowler in a 1999 whitepaper and extended into composition by Evans in Domain-Driven Design (2003).",
+      "unlockLevel": 16,
+      "tags": [
+        "ddd",
+        "tactical",
+        "patterns",
+        "repositories"
+      ],
+      "category": "patterns",
+      "backingCard": {
+        "bookId": "domain-driven-design",
+        "chapterId": "ddd-ch09-repositories"
+      }
+    },
+    {
+      "id": "ddd-adv-0300-0000-0000-0000-000000000030",
+      "word": "Model Integrity",
+      "pronunciation": "MOD-el in-TEG-rih-tee",
+      "partOfSpeech": "noun",
+      "shortDefinition": "The property of a bounded context where the model remains internally consistent and free of contradictory meanings.",
+      "simpleDefinition": "Model integrity is the state of a bounded context in which every term has exactly one meaning, every concept maps to exactly one model element, and no contradictions exist between parts of the domain model. It is what Evans is trying to preserve when he advocates for bounded contexts and ubiquitous language. When model integrity is lost, the same concept means different things to different parts of the codebase, and cross-cutting changes produce unpredictable results.",
+      "longDefinition": "Evans introduced the term model integrity to describe what bounded contexts are designed to protect. A bounded context with high model integrity has a single, internally consistent ubiquitous language: 'Customer' means one thing and only one thing within that context; an 'Order' has a single well-defined lifecycle and a consistent set of invariants; domain events use the same vocabulary as domain experts. Model integrity erodes through several mechanisms: model fragmentation (a bounded context grows so large that multiple teams work in it independently, producing competing definitions of the same terms); integration without translation (a context absorbs another context's model via a conformist relationship and the two models contaminate each other); and accreted complexity (business rules are added to the domain model without governance, producing contradictions that are reconciled through special-case code rather than model refinement). Preserving model integrity requires ongoing discipline: a governance process for adding new concepts to the ubiquitous language, context boundary enforcement tooling that prevents foreign concepts from entering, regular model review sessions with domain experts, and the willingness to refactor toward a cleaner model even under delivery pressure. The context map is the tool that makes model integrity visible at the system level — each bounded context should have one coherent model, and every relationship between contexts should be an explicit integration pattern rather than an implicit coupling.",
+      "connector": "Think of model integrity like the internal consistency of a legal code — every term must be defined once and used consistently throughout; if 'person' means one thing in one statute and something different in another, the entire legal system produces contradictory outcomes.",
+      "techContext": "The model integrity audit found that 'Account' had four distinct meanings across the system — fixing it required splitting one large context into three, each with its own internally consistent account concept named correctly for its subdomain.",
+      "exampleSentence": "After eighteen months of rapid feature development without model governance, model integrity had degraded to the point where the same OrderStatus enum was being tested for twelve different conditions in different services, each with a different interpretation.",
+      "etymology": "Model from Latin modulus ('small measure, standard'); integrity from Latin integritas ('wholeness, soundness'); Evans used model integrity as a core goal in Domain-Driven Design (2003), contrasting it with the fragmentation that occurs when bounded contexts are not maintained.",
+      "unlockLevel": 16,
+      "tags": [
+        "ddd",
+        "strategic",
+        "modeling",
+        "bounded-context"
+      ],
+      "category": "concepts",
+      "backingCard": {
+        "bookId": "domain-driven-design",
+        "chapterId": "ddd-ch02-strategic-design"
+      }
+    }
+  ]
+}

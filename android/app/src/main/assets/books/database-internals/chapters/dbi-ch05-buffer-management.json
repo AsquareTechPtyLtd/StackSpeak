@@ -1,0 +1,1411 @@
+{
+  "chapterId": "dbi-ch05-buffer-management",
+  "shardIndex": 5,
+  "cards": [
+    {
+      "id": "dbi-ch05-c001",
+      "order": 1,
+      "title": "The Buffer Pool — RAM as a Page Cache",
+      "teaser": "Every database keeps a large pool of memory frames loaded with disk pages. This pool — the buffer pool — is usually the single largest consumer of memory in a database process, and almost every I/O decision flows through it.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "A disk page is the unit of I/O: typically 4 KB, 8 KB, or 16 KB depending on the engine (PostgreSQL defaults to 8 KB; InnoDB to 16 KB). Reading or writing a single record means loading its entire page from disk. Doing that for every access would be catastrophically slow — a magnetic disk seek takes ~5 ms; even an NVMe read is ~100 µs. The buffer pool absorbs this latency by keeping recently used pages in memory."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Architecturally, the buffer pool is a flat array of fixed-size "
+            },
+            {
+              "text": "buffer frames",
+              "marks": ["bold"]
+            },
+            {
+              "text": " in heap memory. Each frame is exactly one page wide. The engine manages a "
+            },
+            {
+              "text": "page table",
+              "marks": ["bold"]
+            },
+            {
+              "text": " — a hash map from page_id to frame number — for O(1) lookup. A frame also carries metadata: a dirty flag, a pin counter, and replacement-policy state (e.g., a reference bit for the Clock algorithm)."
+            }
+          ]
+        },
+        {
+          "type": "code",
+          "language": "plaintext",
+          "text": "Buffer Pool — conceptual layout:\n\n  Page Table (hash map)\n  ┌──────────────────┬───────┐\n  │ page_id          │ frame │\n  ├──────────────────┼───────┤\n  │ (file=t1, pg=4)  │   2   │\n  │ (file=t1, pg=7)  │   5   │\n  │ (file=idx, pg=0) │   0   │\n  └──────────────────┴───────┘\n\n  Buffer Frames (flat array in heap memory)\n  ┌──────┬─────────────────┬───────┬──────┬─────┐\n  │Frame │ page_id         │ dirty │ pins │ ref │\n  ├──────┼─────────────────┼───────┼──────┼─────┤\n  │  0   │ (idx, pg=0)     │  no   │  0   │  1  │\n  │  1   │ (free)          │   -   │  -   │  -  │\n  │  2   │ (t1, pg=4)      │  yes  │  1   │  1  │\n  │  3   │ (free)          │   -   │  -   │  -  │\n  │  4   │ (t1, pg=12)     │  no   │  0   │  0  │\n  │  5   │ (t1, pg=7)      │  no   │  0   │  1  │\n  └──────┴─────────────────┴───────┴──────┴─────┘"
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "In PostgreSQL, the buffer pool is configured with "
+            },
+            {
+              "text": "shared_buffers",
+              "marks": ["code"]
+            },
+            {
+              "text": " (default 128 MB; recommended 25–40% of RAM for dedicated servers). In MySQL/InnoDB, the equivalent is "
+            },
+            {
+              "text": "innodb_buffer_pool_size",
+              "marks": ["code"]
+            },
+            {
+              "text": " (default 128 MB). In SQL Server it is configured through the "
+            },
+            {
+              "text": "max server memory",
+              "marks": ["code"]
+            },
+            {
+              "text": " setting which governs the "
+            },
+            {
+              "text": "BUFFER POOL",
+              "marks": ["code"]
+            },
+            {
+              "text": " component of the memory manager. In all three engines the buffer pool typically dominates the process's RSS."
+            }
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "info",
+          "runs": [
+            {
+              "text": "Alex Petrov (Database Internals, O'Reilly, 2019) describes the buffer pool as the centrepiece of any disk-based storage engine: every page read and every page write passes through it. Understanding buffer management is understanding how a database interacts with hardware."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The buffer pool is a big chunk of RAM divided into page-sized slots. When the engine needs a page it checks the pool first — if it's there, no disk I/O. If not, it loads the page into a free slot and remembers where it put it."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "dbi-ch05-c002",
+      "order": 2,
+      "title": "Buffer Pool Sizing — The 70–80% Rule",
+      "teaser": "Sizing the buffer pool is the single highest-impact tuning knob in any disk-based database. Too small and you thrash on I/O; too large and you starve the OS, the connection stack, and sort/hash work areas.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The conventional rule of thumb for a "
+            },
+            {
+              "text": "dedicated database host",
+              "marks": ["bold"]
+            },
+            {
+              "text": " is to allocate 70–80% of total RAM to the buffer pool. On a 64 GB host that means 45–51 GB for the pool. The remaining 20–30% is reserved for:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "OS kernel and page cache.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Even when using Direct I/O (see a later card), the OS needs memory for its own structures. Without Direct I/O, a portion of this space holds the OS page cache — which leads to the double-buffering problem."
+              }
+            ],
+            [
+              {
+                "text": "Connection and thread stacks.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " PostgreSQL spawns a process per connection; 500 connections at 8 MB stack each consume 4 GB."
+              }
+            ],
+            [
+              {
+                "text": "Sort and hash work areas.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " In-memory sort buffers ("
+              },
+              {
+                "text": "work_mem",
+                "marks": ["code"]
+              },
+              {
+                "text": " in PostgreSQL, "
+              },
+              {
+                "text": "sort_buffer_size",
+                "marks": ["code"]
+              },
+              {
+                "text": " in MySQL) are allocated per-query, not from the buffer pool."
+              }
+            ],
+            [
+              {
+                "text": "WAL and redo log buffers.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " The write-ahead log has its own ring buffer (PostgreSQL "
+              },
+              {
+                "text": "wal_buffers",
+                "marks": ["code"]
+              },
+              {
+                "text": ") outside the shared buffer pool."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The 70–80% rule breaks down on shared or container-based deployments. In Kubernetes, setting "
+            },
+            {
+              "text": "innodb_buffer_pool_size",
+              "marks": ["code"]
+            },
+            {
+              "text": " to 80% of the container's memory limit typically causes OOM kills, because the container's cgroup limit includes all process memory — not just the pool. A safer heuristic for containers is 50–60% of the memory limit, leaving headroom for shared libraries, system processes, and connection overhead."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "InnoDB supports partitioning the buffer pool into multiple instances ("
+            },
+            {
+              "text": "innodb_buffer_pool_instances",
+              "marks": ["code"]
+            },
+            {
+              "text": ") to reduce mutex contention on highly concurrent workloads. Each instance has its own LRU list, hash table, and mutex. PostgreSQL takes a different approach: all backends share a single pool protected by per-buffer spinlocks rather than a global lock."
+            }
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "warning",
+          "runs": [
+            {
+              "text": "A common misconfiguration: setting shared_buffers to 75% of RAM on a PostgreSQL host that also runs without Direct I/O. PostgreSQL reads via the OS page cache, so actively-used pages end up stored twice — once in shared_buffers, once in the OS cache. This wastes memory and does not improve hit rate. The PostgreSQL project recommends 25% of RAM for shared_buffers and leaving the rest for the OS cache to act as a second-level buffer."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "On a dedicated DB server, give the buffer pool 70–80% of RAM. On a shared host or container, use less — maybe 50–60% — because the process needs extra memory for connections, sort buffers, and OS overhead."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "dbi-ch05-c003",
+      "order": 3,
+      "title": "Hash Table for Page Lookup — O(1) Frame Resolution",
+      "teaser": "The buffer pool manages thousands to millions of frames. Finding which frame holds a given page must be O(1) — a hash table keyed on page_id provides exactly that, with careful collision and concurrency handling.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "When the engine needs page "
+            },
+            {
+              "text": "(relation_id, page_number)",
+              "marks": ["code"]
+            },
+            {
+              "text": ", the first question is: is it already in memory? Scanning all frames would be O(N) — useless at scale. The buffer pool maintains a "
+            },
+            {
+              "text": "page table",
+              "marks": ["bold"]
+            },
+            {
+              "text": " — a hash map from page_id to frame index — that answers this in O(1) amortized time."
+            }
+          ]
+        },
+        {
+          "type": "code",
+          "language": "plaintext",
+          "text": "Page lookup flow:\n\n  1. Hash page_id → bucket index\n  2. Walk the bucket's chain to find (page_id, frame_no) entry\n  3a. HIT:  return frame_no, increment pin counter\n  3b. MISS: choose a victim frame (eviction), load page from\n            disk into victim frame, insert new entry in hash\n            table, return frame_no\n\n  Hash table entry:\n  ┌────────────────────┬──────────┬──────────────┐\n  │ page_id            │ frame_no │ next (chain) │\n  ├────────────────────┼──────────┼──────────────┤\n  │ (rel=t1, pg=4)     │    2     │     null     │\n  │ (rel=idx1, pg=0)   │    0     │     null     │\n  │ (rel=t1, pg=12)    │    4     │     null     │\n  └────────────────────┴──────────┴──────────────┘"
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "In PostgreSQL, this structure is called "
+            },
+            {
+              "text": "BufferTag",
+              "marks": ["code"]
+            },
+            {
+              "text": " → "
+            },
+            {
+              "text": "buf_id",
+              "marks": ["code"]
+            },
+            {
+              "text": " and lives in shared memory. The hash is a linear probing table sized at "
+            },
+            {
+              "text": "NBuffers * 2",
+              "marks": ["code"]
+            },
+            {
+              "text": " entries to keep the load factor below 50%, minimising collision chains. Access to the hash table is protected by a partition-level spinlock — the table is divided into 128 partitions (NUM_BUFFER_PARTITIONS) each with its own lock, allowing concurrent lookups in different partitions."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "InnoDB uses a similar structure: the "
+            },
+            {
+              "text": "buf_pool.page_hash",
+              "marks": ["code"]
+            },
+            {
+              "text": " hash table, sharded by "
+            },
+            {
+              "text": "innodb_buffer_pool_instances",
+              "marks": ["code"]
+            },
+            {
+              "text": ". Each buffer pool instance owns a separate hash table, completely eliminating cross-instance contention."
+            }
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "info",
+          "runs": [
+            {
+              "text": "The page table is not the same as the buffer frames themselves. The frames hold actual page data; the page table is a pure index structure that tells you which frame holds which page. This separation allows the eviction policy to manipulate the LRU/Clock list without touching the page data."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The hash table is the directory of the buffer pool — it maps \"I want page 42 of table T\" to \"it's sitting in frame 17.\" Without it you'd have to scan every frame to find your page."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "dbi-ch05-c004",
+      "order": 4,
+      "title": "Page Replacement — Why the Choice Matters",
+      "teaser": "When every frame is occupied and a new page must be loaded, the buffer pool must evict something. The eviction policy determines which pages stay warm in cache — and a poor choice can turn a buffer pool hit rate of 99% into 80%, adding orders of magnitude of disk I/O.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Page replacement is the buffer management policy question: given a full pool, which frame's resident page should be written back to disk (if dirty) and replaced with the incoming page? The goal is "
+            },
+            {
+              "text": "Bélády's optimal algorithm",
+              "marks": ["bold"]
+            },
+            {
+              "text": ": evict the page that will not be accessed for the longest time in the future. This is provably optimal but requires knowledge of the future access stream — so it is used only as a theoretical benchmark."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "In practice, engines approximate Bélády using recency or frequency of past access as a proxy for future access. The quality of this approximation directly determines hit rate. Consider a 1 GB buffer pool on a system with a 10 GB working set: a policy that keeps the 1 GB most-recently-used pages warm can achieve a 40–60% hit rate on a typical OLTP workload; a random eviction policy might achieve 10%."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The stakes are concrete: every additional 1% of buffer pool misses on a system serving 100,000 reads/sec means 1,000 additional disk reads per second. At 100 µs per NVMe read, that is 100 ms of additional I/O per second — for a single percentage point of policy quality."
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "LRU (Least Recently Used).",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Evict the page that was least recently accessed. Works well for working sets that fit in the pool; breaks badly on sequential scans (see LRU card)."
+              }
+            ],
+            [
+              {
+                "text": "Clock / Second Chance.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " A hardware-friendly LRU approximation using one reference bit per frame. Much cheaper to maintain than a true LRU linked list."
+              }
+            ],
+            [
+              {
+                "text": "LRU-K.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Evict the page whose K-th most recent access is the oldest. K=2 gives significantly better hit rates than LRU=LRU-1 for workloads with repeated access bursts. Used in PostgreSQL's clock-sweep variant and in SQL Server's buffer manager."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "info",
+          "runs": [
+            {
+              "text": "Bélády's algorithm (László Bélády, IBM Systems Journal, 1966) is the theoretical foundation for all page replacement research. Every real algorithm is measured by how close its hit rate comes to Bélády's optimum on representative workloads."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "When the buffer pool is full and you need to load a new page, something has to go. The choice of what to throw out is the eviction policy — and it matters enormously for how often you have to go back to disk."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "dbi-ch05-c005",
+      "order": 5,
+      "title": "LRU — Least Recently Used",
+      "teaser": "LRU is the textbook replacement policy: keep the most recently used pages in the pool; evict the one that has gone unused the longest. It is simple to reason about, handles hot-data workloads well, and falls apart badly on sequential scans.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The classical LRU implementation maintains a doubly linked list of frames ordered by recency of access. On every page access, the corresponding frame is moved to the head (Most Recently Used end). Eviction removes the tail (Least Recently Used end). Combined with the page hash table, this gives O(1) access to any frame and O(1) eviction."
+            }
+          ]
+        },
+        {
+          "type": "code",
+          "language": "plaintext",
+          "text": "LRU list (most recent → least recent):\n\n  [pg=7] ←→ [pg=4] ←→ [pg=0] ←→ [pg=12]\n   MRU                              LRU\n\n  Access pg=0:\n  [pg=0] ←→ [pg=7] ←→ [pg=4] ←→ [pg=12]\n   MRU                              LRU\n\n  Eviction target: pg=12 (moved off the tail)"
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "LRU excels when the working set fits in the buffer pool: hot pages naturally accumulate at the MRU end; cold pages drift toward the LRU end and are evicted. For mixed OLTP workloads — random reads on a small hot table — LRU is highly effective."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "LRU's critical failure mode is the "
+            },
+            {
+              "text": "sequential scan problem",
+              "marks": ["bold"]
+            },
+            {
+              "text": " (also called \"LRU pollution\" or \"cache flooding\"): a full-table scan reads every page exactly once in sequence, promoting each freshly read page to the MRU head, evicting previously-hot pages. After the scan, the entire buffer pool is filled with pages that will likely never be read again. PostgreSQL mitigates this with its ring buffer strategy for large sequential scans — scans above a threshold use a private 256 KB ring that does not pollute shared_buffers."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "InnoDB addresses the same problem with a two-sublist variant: the buffer pool is split into a "
+            },
+            {
+              "text": "young sublist",
+              "marks": ["bold"]
+            },
+            {
+              "text": " (hot pages, the top 37/8 of the pool) and an "
+            },
+            {
+              "text": "old sublist",
+              "marks": ["bold"]
+            },
+            {
+              "text": " (newly read pages, the bottom portion). A page freshly read from disk enters the head of the old sublist, not the young sublist. It is promoted to the young sublist only if it is accessed again within "
+            },
+            {
+              "text": "innodb_old_blocks_time",
+              "marks": ["code"]
+            },
+            {
+              "text": " milliseconds (default 1000 ms). Sequential scan pages are read and discarded from the old sublist without contaminating the young sublist."
+            }
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "warning",
+          "runs": [
+            {
+              "text": "Pure LRU tracking requires updating the linked list on every page access — even reads. Under high concurrency this causes significant contention on the list head mutex. Most production engines use the Clock algorithm (an LRU approximation) to avoid this overhead."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "LRU evicts the page you used least recently on the assumption you're unlikely to need it soon. It works well for hot-data workloads and breaks badly when a sequential scan blasts through every page once, evicting all the actually-hot pages."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "dbi-ch05-c006",
+      "order": 6,
+      "title": "Clock Algorithm — LRU Approximation with a Reference Bit",
+      "teaser": "The Clock algorithm (also called Second Chance) approximates LRU without maintaining an ordered list. A single reference bit per frame and a sweeping clock hand make eviction cheap enough to run without a global lock on every access.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The Clock algorithm was described by Fernando Corbató and colleagues in the context of the Compatible Time-Sharing System (CTSS) at MIT, with reference-bit concepts appearing as early as 1968 in hardware MMU designs. The key insight: maintaining a precise LRU order requires modifying a global data structure on "
+            },
+            {
+              "text": "every",
+              "marks": ["bold"]
+            },
+            {
+              "text": " access. On a buffer pool with thousands of concurrent reads, this global list becomes a contention bottleneck. The Clock algorithm avoids this by requiring only a single bit set per access — no pointer surgery, no list reordering."
+            }
+          ]
+        },
+        {
+          "type": "code",
+          "language": "plaintext",
+          "text": "Clock algorithm:\n\n  Frames arranged in a circular ring. A 'clock hand' sweeps.\n  Each frame has a reference bit (ref_bit).\n\n  On page access:\n    frame.ref_bit = 1   ← set it; no list manipulation\n\n  On eviction (clock hand advances):\n    while true:\n      frame = frames[clock_hand]\n      if frame.pins > 0:\n        clock_hand = (clock_hand + 1) % N   ← skip pinned\n      elif frame.ref_bit == 1:\n        frame.ref_bit = 0                   ← give a second chance\n        clock_hand = (clock_hand + 1) % N\n      else:                                 ← ref_bit == 0: evict\n        evict frame\n        break\n\n  Example ring (→ = clock hand position):\n  [ref=1] [ref=0] [ref=1] [ref=1] → [ref=0] [ref=1]\n                                     ^ evict this one"
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "PostgreSQL uses a Clock-Sweep variant of this algorithm as its primary replacement policy. The clock hand position is stored in "
+            },
+            {
+              "text": "ClockSweepTick",
+              "marks": ["code"]
+            },
+            {
+              "text": " in shared memory. Each buffer has a "
+            },
+            {
+              "text": "buf_hdr.usage_count",
+              "marks": ["code"]
+            },
+            {
+              "text": " (not just 1 bit, but a small integer up to 5), giving pages that are accessed frequently more chances before eviction — an approximation of LRU-K. The clock hand decrements usage_count on each pass and evicts only when usage_count reaches zero."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The Clock algorithm's cost model: setting the reference bit is a single atomic write — no CAS, no mutex needed on modern architectures. The clock hand sweep cost is paid only when eviction is needed, not on every access. This makes Clock dramatically cheaper than LRU under high concurrency."
+            }
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "info",
+          "runs": [
+            {
+              "text": "The Clock algorithm is also used in operating system VM managers (Linux's LRU lists, macOS's pageout daemon) for the same reason: setting a hardware reference bit on every MMU page access is cheap; updating a software linked list is not. The concept flows bidirectionally between OS and database design."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The Clock algorithm gives each page a second chance: if its reference bit is set when the clock hand sweeps past, clear the bit and move on. Only evict a page whose bit is already cleared. It approximates LRU without the expensive bookkeeping of updating a sorted list on every access."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "dbi-ch05-c007",
+      "order": 7,
+      "title": "Pinning — Preventing Eviction During Active Use",
+      "teaser": "A page in active use — being read, modified, or traversed as part of a B-tree cursor — must not be evicted mid-operation. Pinning is the mechanism that marks a frame as temporarily ineligible for replacement.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Every buffer frame carries a "
+            },
+            {
+              "text": "pin counter",
+              "marks": ["bold"]
+            },
+            {
+              "text": " (also called a reference count or fix count). Before any code uses the data in a frame, it must "
+            },
+            {
+              "text": "pin",
+              "marks": ["bold"]
+            },
+            {
+              "text": " it — atomically incrementing the counter. When done, it "
+            },
+            {
+              "text": "unpins",
+              "marks": ["bold"]
+            },
+            {
+              "text": " it by decrementing. The eviction algorithm skips any frame with pin_count > 0."
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Why pins, not just latches?",
+                "marks": ["bold"]
+              },
+              {
+                "text": " A latch guards the page's content from concurrent modification. A pin guards the frame's existence — preventing the buffer manager from recycling the memory underneath a concurrent reader. They address different threats. A page can be pinned but not latched (you are holding a reference to the frame but not currently reading or writing its bytes)."
+              }
+            ],
+            [
+              {
+                "text": "Pin-latch ordering.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " The correct protocol is always: (1) request the frame from the buffer manager (this pins it), (2) acquire the appropriate latch (shared or exclusive), (3) perform the operation, (4) release the latch, (5) unpin. Never acquire a latch before the buffer manager has fixed the frame — the page might be evicted and reloaded between the hash lookup and the latch acquisition."
+              }
+            ],
+            [
+              {
+                "text": "B-tree traversal.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " When descending a B-tree, the engine typically pins a parent page while acquiring a latch on the child. Once the child is safely latched, the parent is unlatched and unpinned. This \"crabbing\" (latch coupling) protocol ensures at most two pages are simultaneously pinned per traversal step."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "code",
+          "language": "plaintext",
+          "text": "Pin counter lifecycle:\n\n  Buffer manager fetch (e.g., ReadBuffer in PostgreSQL):\n    pin_count++   // frame is now protected from eviction\n    return frame\n\n  Caller:\n    AcquireSharedLatch(frame)\n    ... read page data ...\n    ReleaseSharedLatch(frame)\n    ReleaseBuffer(frame)   // pin_count--\n\n  Eviction candidate check:\n    if frame.pin_count > 0: skip  // cannot evict"
+        },
+        {
+          "type": "callout",
+          "variant": "warning",
+          "runs": [
+            {
+              "text": "Pin leaks — code paths that pin a buffer frame but fail to unpin it on error — are a category of buffer pool bug that causes gradual starvation. Every frame that leaks its pin permanently removes it from the eviction candidate pool. Over time, the effective pool size shrinks. PostgreSQL uses resource-owner tracking to detect and report leaked pins in debug builds."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Pinning is like putting a 'do not disturb' sign on a buffer frame — the eviction algorithm will skip any pinned frame. You pin before using a page, unpin when done. Forgetting to unpin is a bug that slowly shrinks the usable pool."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "dbi-ch05-c008",
+      "order": 8,
+      "title": "Dirty Pages — Modified but Not Yet Flushed",
+      "teaser": "A page modified in the buffer pool but not yet written to disk is dirty. Dirty pages represent in-flight durability risk: if the process crashes before they are flushed, those modifications are lost (unless protected by WAL).",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "When any transaction modifies a page — inserts a row, updates a value, splits a B-tree node — the change is made in the buffer pool frame, and the frame's "
+            },
+            {
+              "text": "dirty bit",
+              "marks": ["bold"]
+            },
+            {
+              "text": " is set. The page is not immediately written back to its disk location. This is intentional: disk writes are expensive, and many modifications to the same page may occur within milliseconds of each other."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The dirty bit creates a two-phase eviction cost: evicting a clean frame is free (just reclaim the memory); evicting a dirty frame requires first flushing it to disk. This asymmetry is why the background writer exists — to convert dirty frames to clean ones proactively, so that eviction on the hot path can be fast."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The relationship between dirty pages and WAL is critical: in a WAL-based engine (PostgreSQL, InnoDB), the "
+            },
+            {
+              "text": "write-ahead rule",
+              "marks": ["bold"]
+            },
+            {
+              "text": " requires that the WAL record describing a page modification must be durably written to the WAL file "
+            },
+            {
+              "text": "before",
+              "marks": ["italic"]
+            },
+            {
+              "text": " the corresponding dirty page is flushed to disk. This ordering guarantee (enforced by tracking the LSN — Log Sequence Number — embedded in each dirty page) is what enables crash recovery: if a dirty page reaches disk without its WAL record, recovery cannot reconstruct the modification."
+            }
+          ]
+        },
+        {
+          "type": "code",
+          "language": "plaintext",
+          "text": "WAL and dirty page relationship:\n\n  Transaction T modifies page P:\n    1. Append WAL record to WAL buffer   (LSN = 5042)\n    2. Modify page P in buffer pool\n    3. Set P.dirty = true, P.lsn = 5042\n\n  Before flushing page P to disk:\n    Ensure WAL has been fsynced through LSN 5042\n    (\"No dirty page may reach disk before its WAL record\")\n\n  On crash recovery:\n    If page P.lsn > last_checkpointed_lsn:\n      Replay WAL from checkpoint to recover P"
+        },
+        {
+          "type": "callout",
+          "variant": "info",
+          "runs": [
+            {
+              "text": "PostgreSQL tracks dirty pages in per-backend private lists and a shared bgwriter list. InnoDB tracks them in a separate flush_list ordered by LSN, ensuring the oldest dirty pages are flushed first — a property called 'fuzzy checkpoint' that bounds recovery time."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "A dirty page has been changed in RAM but not yet saved to disk. The engine can batch up many changes to the same page before writing it, which is efficient — but if the machine crashes before the flush, those changes would be lost without the WAL to replay them."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "dbi-ch05-c009",
+      "order": 9,
+      "title": "Background Writer — Proactive Dirty Page Flushing",
+      "teaser": "The background writer (bgwriter) is a dedicated process that continuously scans the buffer pool and flushes dirty pages to disk between checkpoints, so that eviction on the hot path can always find a clean frame to reclaim without waiting for a write.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Without a background writer, flushing a dirty page is done lazily: only when the eviction algorithm selects that frame as a victim. On a write-heavy workload this creates "
+            },
+            {
+              "text": "eviction stalls",
+              "marks": ["bold"]
+            },
+            {
+              "text": " — the requesting session must wait for a disk write to complete before the new page can be loaded. The background writer eliminates this by converting dirty frames to clean ones in advance."
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "PostgreSQL bgwriter.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Runs as a separate process ("
+              },
+              {
+                "text": "postgres: background writer",
+                "marks": ["code"]
+              },
+              {
+                "text": "). Wakes on a configurable schedule ("
+              },
+              {
+                "text": "bgwriter_delay",
+                "marks": ["code"]
+              },
+              {
+                "text": ", default 200 ms), scans the clock-sweep ring from the current hand position, and flushes up to "
+              },
+              {
+                "text": "bgwriter_lru_maxpages",
+                "marks": ["code"]
+              },
+              {
+                "text": " dirty buffers per round (default 100). A separate "
+              },
+              {
+                "text": "checkpointer",
+                "marks": ["code"]
+              },
+              {
+                "text": " process handles the full checkpoint flush."
+              }
+            ],
+            [
+              {
+                "text": "InnoDB page cleaner.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " InnoDB's equivalent is the "
+              },
+              {
+                "text": "page cleaner thread",
+                "marks": ["code"]
+              },
+              {
+                "text": " (configurable to multiple threads via "
+              },
+              {
+                "text": "innodb_page_cleaners",
+                "marks": ["code"]
+              },
+              {
+                "text": "). It uses an adaptive flushing algorithm that rates flushing speed to write workload intensity and the distance from the checkpoint LSN to the current LSN — flushing faster as the redo log approaches capacity."
+              }
+            ],
+            [
+              {
+                "text": "SQL Server lazy writer.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " SQL Server's equivalent is the "
+              },
+              {
+                "text": "lazy writer",
+                "marks": ["code"]
+              },
+              {
+                "text": " and "
+              },
+              {
+                "text": "checkpoint",
+                "marks": ["code"]
+              },
+              {
+                "text": " processes. The lazy writer is triggered when free buffer pages fall below a low-water threshold."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The background writer also helps bound crash recovery time. At a checkpoint, all dirty pages at or before the checkpoint LSN are guaranteed to be on disk. Recovery only needs to replay WAL from the last checkpoint, not from the beginning of time. The more aggressively the background writer flushes, the smaller the gap between the last checkpoint and the crash point, and the faster recovery completes."
+            }
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "warning",
+          "runs": [
+            {
+              "text": "Tuning the background writer is a balancing act. Flush too aggressively and you saturate I/O with background writes, competing with user queries. Flush too lazily and eviction stalls accumulate. In InnoDB, adaptive flushing (innodb_adaptive_flushing = ON) is recommended for production — it dynamically adjusts flush rate rather than using a fixed schedule."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The background writer quietly flushes dirty pages to disk while the database is idle, so that when the engine urgently needs to free a frame, it can grab a clean one without stopping to wait for a disk write."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "dbi-ch05-c010",
+      "order": 10,
+      "title": "Direct I/O — Bypassing the OS Page Cache",
+      "teaser": "With Direct I/O, the database reads and writes disk pages directly, bypassing the kernel's page cache entirely. This eliminates double-buffering, gives the engine full control over caching decisions, and avoids unpredictable OS eviction behavior.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "By default, most database I/O goes through the "
+            },
+            {
+              "text": "OS page cache",
+              "marks": ["bold"]
+            },
+            {
+              "text": ": the kernel intercepts every "
+            },
+            {
+              "text": "read()/write()",
+              "marks": ["code"]
+            },
+            {
+              "text": " call, caches the pages in kernel memory, and serves subsequent reads from that cache. For general-purpose file access this is efficient. For a database with its own buffer pool, it creates a conflict: the same data page is now buffered "
+            },
+            {
+              "text": "twice",
+              "marks": ["bold"]
+            },
+            {
+              "text": " — once in the database buffer pool and once in the OS page cache."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Direct I/O (enabled with "
+            },
+            {
+              "text": "O_DIRECT",
+              "marks": ["code"]
+            },
+            {
+              "text": " on Linux, "
+            },
+            {
+              "text": "FILE_FLAG_NO_BUFFERING",
+              "marks": ["code"]
+            },
+            {
+              "text": " on Windows) bypasses the OS cache. The database's read/write requests go directly to the storage device (via the kernel I/O scheduler). The database buffer pool is the only in-memory copy."
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Who uses Direct I/O?",
+                "marks": ["bold"]
+              },
+              {
+                "text": " InnoDB uses O_DIRECT when "
+              },
+              {
+                "text": "innodb_flush_method = O_DIRECT",
+                "marks": ["code"]
+              },
+              {
+                "text": " (strongly recommended for dedicated DB servers). Oracle Database uses it by default. SQL Server uses scatter/gather I/O that implicitly bypasses the OS cache on Windows."
+              }
+            ],
+            [
+              {
+                "text": "Who does not?",
+                "marks": ["bold"]
+              },
+              {
+                "text": " PostgreSQL does "
+              },
+              {
+                "text": "not",
+                "marks": ["italic"]
+              },
+              {
+                "text": " use Direct I/O by default. It relies on the OS page cache as a second-level cache beyond shared_buffers. This is why PostgreSQL recommends "
+              },
+              {
+                "text": "shared_buffers",
+                "marks": ["code"]
+              },
+              {
+                "text": " at only 25% of RAM rather than 75% — the OS cache fills the rest. PostgreSQL 16+ includes experimental Direct I/O support via "
+              },
+              {
+                "text": "io_method = io_uring",
+                "marks": ["code"]
+              },
+              {
+                "text": ", but production use remains limited."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Direct I/O has alignment requirements: buffer addresses and transfer sizes must be aligned to the storage device's logical sector size (typically 512 bytes or 4 KB). The database buffer pool allocates frames with this alignment. Failure to align produces "
+            },
+            {
+              "text": "EINVAL",
+              "marks": ["code"]
+            },
+            {
+              "text": " errors or silent data corruption on some platforms."
+            }
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "info",
+          "runs": [
+            {
+              "text": "With Direct I/O, crash safety relies entirely on the engine's own WAL flushing (fsync of WAL records). With buffered I/O, the OS page cache provides an additional layer — a crash that does not corrupt OS state may preserve unfsynced data. Direct I/O removes this implicit safety net, making correct WAL implementation non-negotiable."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Direct I/O tells the OS 'don't cache this — I'll manage it myself.' The database talks directly to storage. The trade-off: you eliminate wasteful double-caching, but you also eliminate the OS as an implicit safety net. Your WAL must be perfect."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "dbi-ch05-c011",
+      "order": 11,
+      "title": "Double-Buffering Pitfalls — The OS Cache and DB Cache in Conflict",
+      "teaser": "Running a database engine without Direct I/O means the same page is cached in two places simultaneously: the DB buffer pool and the OS page cache. This is double-buffering — it wastes RAM, confuses eviction policies, and can produce worse performance than either cache alone.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Without Direct I/O, the I/O path looks like this: when the database issues a "
+            },
+            {
+              "text": "read()",
+              "marks": ["code"]
+            },
+            {
+              "text": " to load page P from disk, the OS reads the page into its own page cache, then copies it to the database's buffer frame. Now page P lives in two places in memory. When the database evicts the frame, the OS page cache may still hold a copy. This double-copy provides no benefit: if the database misses in its pool, it hits in the OS cache — but the database did not know this, so it doesn't get credit for the semantic access, and its replacement policy makes a decision based on incomplete information."
+            }
+          ]
+        },
+        {
+          "type": "code",
+          "language": "plaintext",
+          "text": "Without Direct I/O (double-buffering):\n\n  DB buffer pool          OS page cache\n  ┌──────────────┐        ┌──────────────┐\n  │ page P (8KB) │        │ page P (8KB) │  ← duplicate!\n  │ page Q (8KB) │        │ page R (8KB) │\n  │ page R (8KB) │        │ page S (8KB) │\n  └──────────────┘        └──────────────┘\n  Memory used: 2 × page_size for page P\n\nWith Direct I/O:\n\n  DB buffer pool          OS page cache\n  ┌──────────────┐        ┌──────────────┐\n  │ page P (8KB) │        │   (empty)    │  ← no duplicate\n  │ page Q (8KB) │        │              │\n  │ page R (8KB) │        │              │\n  └──────────────┘        └──────────────┘"
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "RAM waste.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " On a server where the active working set is 20 GB, double-buffering consumes up to 40 GB of RAM for the same effective cache coverage."
+              }
+            ],
+            [
+              {
+                "text": "Eviction interference.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " The OS may evict a page from the OS cache while the DB still holds it in its pool — or vice versa. The two eviction policies operate independently with no coordination."
+              }
+            ],
+            [
+              {
+                "text": "fsync complexity.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " When flushing a dirty page, the database must ensure both the OS cache and the storage device see the write. Without Direct I/O, "
+              },
+              {
+                "text": "fsync()",
+                "marks": ["code"]
+              },
+              {
+                "text": " flushes OS cache to storage. The double-layer makes reasoning about durability harder."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "warning",
+          "runs": [
+            {
+              "text": "On cloud VMs with limited RAM, double-buffering is particularly damaging. A PostgreSQL instance configured with shared_buffers at 75% of available RAM will leave only 25% for the OS page cache — meaning the OS will aggressively evict DB pages as the OS cache fills up, undermining the intent of the large shared_buffers. The canonical PostgreSQL advice is 25% shared_buffers + allow OS to own the rest, not 75% shared_buffers + starve the OS."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Double-buffering is when both the database and the OS each keep their own copy of the same disk page in memory. It halves your effective cache — you're paying for two caches but getting the benefit of one. Direct I/O is the fix: tell the OS to stay out of it."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "dbi-ch05-c012",
+      "order": 12,
+      "title": "Latching — Page-Level Synchronisation",
+      "teaser": "Latches are short-duration in-memory locks that protect the physical consistency of a page's bytes during a concurrent read or write. They are distinct from the logical transaction locks that enforce isolation — latches are held for microseconds, not milliseconds.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "In database literature, "
+            },
+            {
+              "text": "locks",
+              "marks": ["bold"]
+            },
+            {
+              "text": " and "
+            },
+            {
+              "text": "latches",
+              "marks": ["bold"]
+            },
+            {
+              "text": " are distinct concepts that are frequently confused because both use the word \"lock\" in casual speech. The distinction is fundamental:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Lock (logical).",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Governs access to a logical database object — a row, a table, a page (in a table scan). Held for the duration of a transaction (sometimes longer with explicit LOCK TABLE). Participates in deadlock detection. Managed by the lock manager. Used to enforce isolation levels (READ COMMITTED, SERIALIZABLE, etc.)."
+              }
+            ],
+            [
+              {
+                "text": "Latch (physical).",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Governs access to a physical in-memory structure — a buffer frame, a node in the free list, an entry in the page hash table. Held only while the operation on that structure is in progress — typically microseconds. No deadlock detection (a deadlock in latch acquisition is a bug, not a design consideration). Implemented as mutexes, spinlocks, or reader-writer locks in shared memory."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "code",
+          "language": "plaintext",
+          "text": "Buffer frame latch types:\n\n  Shared (S) latch:     Multiple readers hold concurrently.\n                        No writer can hold simultaneously.\n                        Used for: read-only page traversal.\n\n  Exclusive (X) latch:  Single holder, no concurrent S or X.\n                        Used for: page modification (insert,\n                        update, split, merge).\n\n  Upgrade (U) latch:    Initially shared; can be promoted to X\n                        without releasing. Prevents upgrade\n                        deadlocks in B-tree traversal."
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "In PostgreSQL, buffer frame latches are implemented as "
+            },
+            {
+              "text": "LWLocks",
+              "marks": ["code"]
+            },
+            {
+              "text": " (lightweight locks) — reader-writer locks in shared memory. In InnoDB, page latches are "
+            },
+            {
+              "text": "rw_lock_t",
+              "marks": ["code"]
+            },
+            {
+              "text": " structures embedded in each buffer block header. InnoDB also has SX (shared-exclusive) latches for B-tree structural modifications that affect many pages."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Latch contention is a first-class performance metric. A hot root page of a B-tree can have thousands of concurrent latch requests. Production monitoring tools expose latch wait statistics ("
+            },
+            {
+              "text": "pg_stat_activity",
+              "marks": ["code"]
+            },
+            {
+              "text": " wait events in PostgreSQL; "
+            },
+            {
+              "text": "SHOW ENGINE INNODB STATUS",
+              "marks": ["code"]
+            },
+            {
+              "text": " mutex contention in MySQL) that reveal whether latch contention is the bottleneck."
+            }
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "warning",
+          "runs": [
+            {
+              "text": "Never hold a latch while performing I/O. The canonical error in B-tree implementation is to acquire a page latch, discover the page is not in the buffer pool, and then wait for disk I/O to complete while holding the latch. This blocks every other thread that needs that page. The correct pattern: request the page (which may block on I/O), receive the frame (pinned, no latch held), then acquire the latch."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "A latch is a short-lived physical lock on a memory structure — held for microseconds to prevent two threads from corrupting a page simultaneously. A transaction lock is a logical lock held for the duration of the transaction to enforce isolation. They protect different things and must not be confused."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "dbi-ch05-c013",
+      "order": 13,
+      "title": "Locks vs Latches — The Distinction in Practice",
+      "teaser": "The lock/latch distinction is subtle enough that it trips up experienced engineers. Understanding when to use which — and what can go wrong when they are conflated — is essential for both implementing and tuning database internals.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Jim Gray and Andreas Reuter formalized the lock/latch distinction in "
+            },
+            {
+              "text": "Transaction Processing: Concepts and Techniques",
+              "marks": ["italic"]
+            },
+            {
+              "text": " (1992). The key property that separates them:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Locks are held across I/O.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " A transaction that reads a row and holds an S-lock on it may wait for a network round-trip, a disk read, or arbitrary application logic before releasing. This is by design — it prevents concurrent modification during the transaction."
+              }
+            ],
+            [
+              {
+                "text": "Latches must never be held across I/O.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " A latch held while waiting for disk blocks every thread that needs that buffer frame. Latches are designed for in-memory operations that complete in nanoseconds to microseconds."
+              }
+            ],
+            [
+              {
+                "text": "Locks participate in deadlock detection.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " The lock manager builds a wait-for graph and detects cycles. Deadlocked transactions are rolled back. This is acceptable because locks are logical objects with transaction context."
+              }
+            ],
+            [
+              {
+                "text": "Latch deadlocks are bugs, not features.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " If two threads deadlock on latches, the database stalls indefinitely — there is no deadlock detector for latches. B-tree implementations use strict latch acquisition ordering (always top-down, never acquire a parent latch while holding a child latch) to make latch deadlocks impossible by construction."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "comparison",
+          "left": {
+            "label": "Locks (Logical)",
+            "runs": [
+              { "text": "Held for: transaction duration\n" },
+              { "text": "Granularity: row, page, table\n" },
+              { "text": "I/O safe: yes — by design\n" },
+              { "text": "Deadlock handling: detect + rollback\n" },
+              { "text": "Manager: lock table in shared memory" }
+            ]
+          },
+          "right": {
+            "label": "Latches (Physical)",
+            "runs": [
+              { "text": "Held for: microseconds (one operation)\n" },
+              { "text": "Granularity: buffer frame, list, hash slot\n" },
+              { "text": "I/O safe: NO — never hold across I/O\n" },
+              { "text": "Deadlock handling: ordering prevents it\n" },
+              { "text": "Manager: embedded in the protected structure" }
+            ]
+          }
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "In PostgreSQL, "
+            },
+            {
+              "text": "LWLocks",
+              "marks": ["code"]
+            },
+            {
+              "text": " are latches. Regular locks are managed by the heavyweight lock manager in "
+            },
+            {
+              "text": "lock.c",
+              "marks": ["code"]
+            },
+            {
+              "text": ". In InnoDB, "
+            },
+            {
+              "text": "rw_lock_t",
+              "marks": ["code"]
+            },
+            {
+              "text": " is a latch; "
+            },
+            {
+              "text": "lock_t",
+              "marks": ["code"]
+            },
+            {
+              "text": " is a lock. The source code respects this naming convention consistently."
+            }
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "info",
+          "runs": [
+            {
+              "text": "The practical implication: when you see 'buffer latch wait' in pg_stat_activity (wait_event = 'BufferIO' or 'BufferPin'), you are seeing latch contention — a hot buffer frame is being accessed by many threads simultaneously. The fix is typically indexing (fewer pages touched per query), connection pooling (fewer concurrent accessors), or partitioning (distribute the hot pages across more frames). Adding more locks would not help."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Locks protect logical data for the lifetime of a transaction — they can wait across disk reads and network calls. Latches protect physical memory structures for the duration of a single operation — they must complete in microseconds and must never block on I/O. Mix them up and you either stall the entire database or corrupt shared memory."
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

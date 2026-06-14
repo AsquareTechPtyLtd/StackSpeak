@@ -1,0 +1,1578 @@
+{
+  "chapterId": "mlo-ch09-model-monitoring",
+  "shardIndex": 9,
+  "cards": [
+    {
+      "id": "mlo-ch09-c001",
+      "order": 1,
+      "title": "Why ML Monitoring Is Different",
+      "teaser": "A traditional service can fail loudly — exceptions, error rates, timeouts. A machine learning model can fail silently: the pipeline stays green, the API returns 200, and the predictions are quietly wrong. Software monitoring cannot catch this.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "When you monitor a web service you watch for operational signals: HTTP 5xx rates, latency percentiles, process crashes. These are binary or measurable against a stable ground truth. A request either succeeded or it did not."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "A machine learning model adds a third failure mode that operational monitoring cannot see: "
+            },
+            {
+              "text": "model degradation",
+              "marks": ["bold"]
+            },
+            {
+              "text": ". The model is deployed, the infrastructure is healthy, but the quality of predictions is declining. This happens because:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "The world changed.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " User behavior, product prices, traffic patterns, and language all drift over time. The model was trained on historical data that no longer reflects current reality."
+              }
+            ],
+            [
+              {
+                "text": "Upstream data changed.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " A feature engineering pipeline was updated. A data source switched encoding. A column was silently dropped. The model's inputs shifted without any deployment event."
+              }
+            ],
+            [
+              {
+                "text": "The relationship changed.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " The statistical relationship between inputs and the target variable has shifted — what used to predict churn no longer does, because the product or market changed."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The critical asymmetry: software failures tend to produce immediate, observable error signals. Model degradation often produces no error at all — just gradually worse business outcomes. A fraud detection model that silently drops 10% in recall looks fine in your APM dashboard while millions flow through undetected."
+            }
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "warning",
+          "runs": [
+            {
+              "text": "ML monitoring requires a layer that does not exist in traditional observability stacks: statistical checks on the quality and distribution of data flowing through the model. Infrastructure health is necessary but not sufficient."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "A classic service crashes when it breaks; an ML model quietly gives wrong answers. You need a completely different monitoring strategy — one that watches the data and predictions, not just the infrastructure."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "mlo-ch09-c002",
+      "order": 2,
+      "title": "Four Drift Types — A Map",
+      "teaser": "Drift is the family name for all the ways the world changes out from under a trained model. There are four distinct kinds, each with a different cause, detection approach, and consequence.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Before diving into each type, it helps to see them together. The following diagram shows how they relate to the model and each other:"
+            }
+          ]
+        },
+        {
+          "type": "code",
+          "lang": "text",
+          "text": "  REAL WORLD\n      |\n      v\n  [Feature X]  <-- INPUT DRIFT: X distribution changes\n      |\n      |   (learned mapping: X --> Y)\n      |   <-- CONCEPT DRIFT: the mapping itself changes\n      |\n      v\n  [Prediction Y_hat]  <-- PREDICTION DRIFT: Y_hat distribution changes\n\n  [True Label Y]  <-- LABEL DRIFT: Y distribution changes\n\n  Key:\n    Input Drift     = P(X) changes\n    Concept Drift   = P(Y|X) changes\n    Prediction Drift = P(Y_hat) changes  (proxy for concept drift)\n    Label Drift     = P(Y) changes  (ground truth shifts)"
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "These four drift types can occur independently or together, and they interact. Input drift often causes prediction drift. Label drift combined with unchanged input distribution is a strong signal of concept drift."
+            }
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "info",
+          "runs": [
+            {
+              "text": "Evidently AI's taxonomy formalizes these four categories and provides statistical tests for each. Their open-source library (evidentlyai.com) operationalizes the taxonomy into ready-made drift reports."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "There are four drift types: the inputs change, the relationship between inputs and outputs changes, the model's output distribution changes, or the true labels change. Each requires a different detection strategy."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "mlo-ch09-c003",
+      "order": 3,
+      "title": "Input Drift (Data Drift)",
+      "teaser": "Input drift — also called data drift or covariate shift — is the most common drift type and the most directly measurable: the distribution of one or more input features in production no longer matches the distribution the model was trained on.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Formally: input drift occurs when "
+            },
+            {
+              "text": "P_train(X) ≠ P_prod(X)",
+              "marks": ["code"]
+            },
+            {
+              "text": ". The conditional distribution P(Y|X) may be unchanged — the model would still make good predictions if it saw training-like data — but it is not seeing training-like data anymore."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Common causes of input drift:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Seasonality.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " A model trained in Q2 sees different traffic patterns, prices, or user behavior in Q4."
+              }
+            ],
+            [
+              {
+                "text": "Product changes.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " A new sign-up flow attracts a different user demographic. Age, device type, or geographic distribution of users shifts."
+              }
+            ],
+            [
+              {
+                "text": "Data pipeline changes.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " An upstream ETL job is modified, changing how a feature is computed. The values look plausible but differ systematically from the training distribution."
+              }
+            ],
+            [
+              {
+                "text": "Macroeconomic or world events.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " COVID-19 famously broke models trained on pre-2020 data in retail, travel, and finance."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Detection: compare the distribution of each feature in a recent production window against the training reference distribution. Statistical tests (KS test, PSI, Jensen-Shannon divergence) quantify how much the distribution has shifted. Evidently AI generates per-feature drift reports comparing a reference dataset against a production dataset on this exact basis."
+            }
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "info",
+          "runs": [
+            {
+              "text": "Input drift is necessary but not sufficient for performance degradation — the model may be robust to the observed shift. But input drift that is large enough should always trigger a retraining review."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Input drift means the data coming into your model today looks statistically different from what it was trained on — like a student who studied suburban traffic but now has to grade highway driving."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "mlo-ch09-c004",
+      "order": 4,
+      "title": "Concept Drift",
+      "teaser": "Concept drift is the most insidious drift type — not the data but the underlying relationship that the model learned has changed. The same inputs now map to different outputs in the real world.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Formally: concept drift occurs when "
+            },
+            {
+              "text": "P(Y|X)",
+              "marks": ["code"]
+            },
+            {
+              "text": " changes. The features are the same; the ground truth for those features has shifted. The model's learned mapping is now wrong."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Examples:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Spam detection.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Spammers evolve their language and tactics. The same feature vectors (email word counts) now indicate spam where they previously indicated legitimate mail."
+              }
+            ],
+            [
+              {
+                "text": "Credit scoring.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " During a recession, the income-to-default relationship changes. Applicants who would have repaid loans in 2019 default in 2020 given the same income profile."
+              }
+            ],
+            [
+              {
+                "text": "Recommendation systems.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " User tastes shift. The same user profile (age, past views) predicts different content preferences after a major cultural event or platform change."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Concept drift comes in several flavors:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Sudden drift",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — abrupt shift, often from an external event. Performance drops sharply."
+              }
+            ],
+            [
+              {
+                "text": "Gradual drift",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — the new concept slowly replaces the old one. Performance decays slowly."
+              }
+            ],
+            [
+              {
+                "text": "Recurring drift",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — concept alternates, often seasonally. The old concept returns periodically."
+              }
+            ],
+            [
+              {
+                "text": "Incremental drift",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — slow, continuous change with no clear breakpoint."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "warning",
+          "runs": [
+            {
+              "text": "Concept drift cannot be detected by looking at inputs alone — you need labels or a strong proxy. This is what makes it the hardest drift type to catch before it causes real damage."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Concept drift means the rules of the game changed. The model learned 'X predicts Y' but in today's world that relationship no longer holds — not because the data looks different, but because the world works differently now."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "mlo-ch09-c005",
+      "order": 5,
+      "title": "Prediction Drift",
+      "teaser": "Prediction drift is a shift in the distribution of the model's outputs — what the model is outputting today looks statistically different from what it was outputting at training time. It is often the first observable signal of underlying concept or input drift.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Formally: prediction drift occurs when "
+            },
+            {
+              "text": "P(Y_hat)",
+              "marks": ["code"]
+            },
+            {
+              "text": " changes. A model that was outputting a roughly 50/50 class split now outputs 80% class 0. A regression model whose outputs clustered around 100 now clusters around 60."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Prediction drift matters for two reasons:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "It is always measurable.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Unlike concept drift, which requires labels, you always have the model's predictions. Prediction drift can be detected in real time, without waiting for ground truth."
+              }
+            ],
+            [
+              {
+                "text": "It is a downstream proxy.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " If input drift is significant enough to change what the model produces, prediction drift will reflect it. Monitoring prediction drift is a lower-cost early warning system."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "However, prediction drift has false positives. A model might output a different distribution because the real world genuinely shifted that way — which is the correct behavior, not a fault. For example, if a disease becomes more prevalent, a prevalence model should predict higher probabilities. The shift in predictions is correct."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Best practice: monitor prediction drift as a first-order alert, then use input drift and (when available) label drift to determine whether the shift represents correct adaptation or model degradation."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Prediction drift means the model is producing a different spread of outputs than it used to. It is cheap to detect because you always have the predictions, and it is often the first warning sign before you can measure whether performance has actually gotten worse."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "mlo-ch09-c006",
+      "order": 6,
+      "title": "Label Drift",
+      "teaser": "Label drift is a change in the distribution of the true labels — P(Y) changes. It is both a monitoring signal and a model evaluation complication: when the ground truth itself shifts, historical performance benchmarks become unreliable baselines.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Label drift occurs when the real-world frequency of outcomes changes. In a binary fraud detection setting, if the fraud rate in your population rises from 2% to 5%, "
+            },
+            {
+              "text": "P(Y=fraud)",
+              "marks": ["code"]
+            },
+            {
+              "text": " has changed. This has cascading effects:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Class imbalance shifts.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " A model calibrated for 2% fraud prevalence has its decision thresholds misaligned at 5%."
+              }
+            ],
+            [
+              {
+                "text": "Accuracy becomes misleading.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " A naive classifier that always predicts the majority class achieves higher accuracy at 2% fraud than at 5%, but neither model is doing useful work."
+              }
+            ],
+            [
+              {
+                "text": "Training–serving skew intensifies.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " If training data was sampled to balance classes at 50/50, but production is now 5% fraud, the model's probability outputs are systematically miscalibrated."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Label drift is detected by comparing the distribution of labels in a recent labeled window against the training distribution. The challenge: labels often arrive with latency (see the ground-truth-arrives-late problem). Detecting label drift may lag real-world changes by days or weeks."
+            }
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "info",
+          "runs": [
+            {
+              "text": "When label drift accompanies concept drift, retraining on fresh data is usually required — not just recalibrating thresholds. The combination means both the input-output relationship and the base rate have changed."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Label drift means the thing you are trying to predict has become more or less common. Your model was calibrated for the old world frequency and may be systematically over- or under-predicting now."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "mlo-ch09-c007",
+      "order": 7,
+      "title": "Drift Detection Methods",
+      "teaser": "Detecting drift statistically requires choosing a test that matches your data type and answers the right question. The three workhorses are the KS test for continuous distributions, PSI for binned distributions, and KL divergence for comparing probability distributions.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The statistical toolkit for drift detection:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Kolmogorov-Smirnov (KS) test.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " A non-parametric test comparing two continuous distributions. It measures the maximum distance between cumulative distribution functions. Outputs a p-value: low p-value (< 0.05) means the distributions are unlikely to be the same. Good for numeric features with continuous distributions."
+              }
+            ],
+            [
+              {
+                "text": "Population Stability Index (PSI).",
+                "marks": ["bold"]
+              },
+              {
+                "text": " A widely used industry metric that compares two binned distributions. PSI < 0.1: stable; 0.1–0.2: moderate shift (investigate); > 0.2: major shift (action required). PSI was popularized in credit risk modeling and is broadly applicable to any numeric or categorical feature."
+              }
+            ],
+            [
+              {
+                "text": "KL Divergence (Kullback-Leibler).",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Measures the information lost when using distribution Q to approximate distribution P. Asymmetric: KL(P||Q) ≠ KL(Q||P). Jensen-Shannon (JS) divergence is the symmetric variant often preferred in practice. Used for comparing full probability distributions, especially model output score distributions."
+              }
+            ],
+            [
+              {
+                "text": "Chi-squared test.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " For categorical features. Tests whether observed category frequencies in production differ significantly from expected (training) frequencies."
+              }
+            ],
+            [
+              {
+                "text": "Wasserstein distance (Earth Mover's Distance).",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Measures the \"cost\" of transforming one distribution into another. More intuitive than KL divergence and better-behaved when distributions have non-overlapping support."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Evidently AI implements all of these tests and exposes them through a unified drift detection API. By default, it selects the appropriate test based on feature type (KS for numeric, chi-squared for categorical) and outputs drift scores with interpretable thresholds. Teams can override defaults to match their domain conventions."
+            }
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "info",
+          "runs": [
+            {
+              "text": "No single test is universally best. Use PSI when you need a business-interpretable threshold. Use KS when you want a hypothesis test with a p-value. Use Wasserstein when you want to reason about the magnitude of shift, not just whether shift is present."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "You detect drift by statistically comparing 'what the data looked like at training' against 'what it looks like in production today.' The KS test gives you a yes/no hypothesis test; PSI gives you a business-interpretable score; KL divergence measures how far one probability distribution is from another."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "mlo-ch09-c008",
+      "order": 8,
+      "title": "Performance Decay",
+      "teaser": "Performance decay is the direct measure of model quality worsening over time — accuracy, F1, RMSE, AUC degrading as the gap between the model's learned world and the actual world widens. It is the effect; drift is usually the cause.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "While drift detection operates on inputs and outputs, performance monitoring operates on outcomes: comparing predictions against ground truth when labels become available. The metrics are the same as at training time — accuracy, precision, recall, F1, AUC for classification; MAE, RMSE, MAPE for regression — but now measured on a rolling window of production data."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "A useful operational pattern is to plot performance metrics over time, segmented by:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Time window",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — rolling 7-day, 30-day windows reveal trend vs. point-in-time noise."
+              }
+            ],
+            [
+              {
+                "text": "Cohort",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — slicing by geography, device type, or user segment reveals partial degradation hidden in aggregate numbers."
+              }
+            ],
+            [
+              {
+                "text": "Feature slice",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — performance for samples where feature X is in range A may be fine while performance for feature X in range B has collapsed."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The challenge with performance monitoring is latency: performance cannot be measured until ground truth labels arrive. A real-time prediction system might not receive labels for days, weeks, or never. This is the ground-truth-arrives-late problem, covered in the next card."
+            }
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "warning",
+          "runs": [
+            {
+              "text": "Performance monitoring is the most honest signal but often the slowest to arrive. Do not wait for performance decay to trigger action — use drift signals as leading indicators and treat arriving performance data as confirmation."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Performance decay is simply your model's accuracy, F1, or RMSE getting worse over time. It is the most truthful signal you have, but also the slowest — because it requires actual outcomes to measure against the predictions."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "mlo-ch09-c009",
+      "order": 9,
+      "title": "The Ground-Truth-Arrives-Late Problem",
+      "teaser": "In many production ML systems, ground truth labels do not arrive instantly — they can lag predictions by days, weeks, or months. In some cases they never arrive at all. This is one of the hardest structural problems in ML monitoring.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Consider the label latency profile of real systems:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Fraud detection.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " A transaction is scored in milliseconds. Whether it was fraudulent may not be confirmed by the bank for 30–90 days when chargebacks arrive."
+              }
+            ],
+            [
+              {
+                "text": "Loan default prediction.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " The label (did this person default?) takes months to years to materialize."
+              }
+            ],
+            [
+              {
+                "text": "Medical prognosis.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " A predicted outcome (e.g., 5-year survival) may not resolve for years — if ever."
+              }
+            ],
+            [
+              {
+                "text": "Ad click prediction.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Labels arrive within hours to days, which is manageable but still creates a monitoring gap."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The consequences for monitoring are significant:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "You cannot compute real-time performance metrics.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Accuracy, F1, and RMSE all require the label. Without it, you are flying blind on the most important signal."
+              }
+            ],
+            [
+              {
+                "text": "Retraining pipelines are delayed.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " If the training data requires confirmed labels, the retraining cycle lags reality by the full label latency window."
+              }
+            ],
+            [
+              {
+                "text": "Evaluation windows become complicated.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " You may need to track label arrival rates as a data quality metric in their own right."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Mitigations: proxy metrics (next card), sampling strategies (get labels for a random sample of predictions even if you cannot label all), business-outcome proxies (refunds, complaints, cancellations as surrogate labels), and architectures that distinguish between prediction time and label time explicitly."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "In many real systems, you do not find out whether your prediction was right until much later — sometimes months, sometimes never. That means you cannot just watch accuracy; you need other signals to know whether your model is still working while you wait for the truth to arrive."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "mlo-ch09-c010",
+      "order": 10,
+      "title": "Proxy Metrics — Monitoring Without Labels",
+      "teaser": "When ground-truth labels are delayed or absent, proxy metrics fill the gap — signals that correlate with model quality without requiring the true outcome. The art is choosing proxies that are reliable leading indicators, not just easier-to-measure distractions.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Proxy metrics are observable signals that serve as stand-ins for performance metrics that require labels. The most useful ones:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Prediction confidence / entropy.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " A well-calibrated classifier's output probabilities reflect actual likelihood. If the average confidence of high-confidence predictions drops — the model increasingly hedges — this suggests it is seeing out-of-distribution data. Entropy of the output distribution is a compact measure of this."
+              }
+            ],
+            [
+              {
+                "text": "Prediction distribution shift.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Even without labels, a significant change in the distribution of model outputs (prediction drift) is a signal worth investigating."
+              }
+            ],
+            [
+              {
+                "text": "Business outcome proxies.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " For recommendation systems: click-through rate, dwell time. For fraud detection: customer complaints about declined transactions or missed fraud. These are noisier but often available faster than confirmed labels."
+              }
+            ],
+            [
+              {
+                "text": "Rejection rates.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " If a model-driven system (loan approval, content moderation) shows an unusual spike in rejection rates, it is worth investigating even before labels confirm whether those rejections were correct."
+              }
+            ],
+            [
+              {
+                "text": "Human-in-the-loop feedback.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " In systems where humans review model-flagged items (moderation queues, fraud analyst workflows), the rate at which human reviewers overturn the model's decision is a labeled signal on a subset of predictions."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "warning",
+          "runs": [
+            {
+              "text": "Proxy metrics can decouple from the underlying model quality. Confidence scores are unreliable proxies for miscalibrated models. Business proxies are confounded by changes in user behavior unrelated to model quality. Always validate proxies against actual performance metrics when labels do arrive."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Proxy metrics are indirect signals you can observe right now — like model confidence, output spread, or downstream user behavior — that give you a rough sense of whether the model is still working, even when you cannot yet compute actual accuracy."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "mlo-ch09-c011",
+      "order": 11,
+      "title": "Shadow Models",
+      "teaser": "A shadow model runs in parallel with the production model, receiving the same inputs and generating predictions — but those predictions are logged, not served to users. Shadow deployment is the safest way to evaluate a new model against live traffic before committing to it.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Shadow deployment (also called \"dark launch\" or \"mirror mode\") works as follows:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "The serving infrastructure forks the incoming request.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " The production model's prediction is returned to the user; the shadow model's prediction is logged but discarded."
+              }
+            ],
+            [
+              {
+                "text": "Both prediction logs are stored.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " When labels eventually arrive, both can be evaluated against ground truth."
+              }
+            ],
+            [
+              {
+                "text": "The shadow model sees real distribution.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Unlike offline evaluation on a held-out test set, the shadow model is evaluated on actual production data, including all the quirks of real traffic distribution."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Shadow deployment is most valuable when:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "The new model introduces architectural changes",
+                "marks": ["bold"]
+              },
+              {
+                "text": " that make offline evaluation unreliable."
+              }
+            ],
+            [
+              {
+                "text": "The cost of a bad model in production is high",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — financial, reputational, or regulatory."
+              }
+            ],
+            [
+              {
+                "text": "You need to validate latency and infrastructure behavior",
+                "marks": ["bold"]
+              },
+              {
+                "text": " under production load, not just predictive quality."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "info",
+          "runs": [
+            {
+              "text": "Shadow deployment adds serving-side cost — the shadow model must run for every request. For very high-throughput systems, this cost can be significant. Sampling strategies (run the shadow model on 10% of traffic) reduce cost at the expense of evaluation speed."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "A shadow model is a candidate model that silently watches real traffic and logs what it would have predicted, without ever influencing users. When labels arrive, you can compare it to the production model using real data, without any user-facing risk."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "mlo-ch09-c012",
+      "order": 12,
+      "title": "Champion vs Challenger",
+      "teaser": "Champion vs challenger is the recurring evaluation pattern in production ML: the current best model (champion) is continuously compared against one or more contenders (challengers). It operationalizes the question: is there a better model available?",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The champion is the model currently serving production traffic. Challengers are candidate models that have passed offline evaluation and are ready to be compared against the champion on live or near-live data."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The comparison pattern:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Shadow testing (pre-promotion).",
+                "marks": ["bold"]
+              },
+              {
+                "text": " The challenger runs as a shadow model. Both models log predictions; when labels arrive both are scored. No user exposure to challenger."
+              }
+            ],
+            [
+              {
+                "text": "A/B testing (traffic split).",
+                "marks": ["bold"]
+              },
+              {
+                "text": " A fraction of traffic (5%, 10%) is routed to the challenger; the majority goes to the champion. Users are exposed to the challenger. Statistical significance testing determines if challenger performance is meaningfully different."
+              }
+            ],
+            [
+              {
+                "text": "Canary promotion.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " If the challenger wins the A/B test, traffic is gradually shifted: 10% → 25% → 50% → 100%. The champion is demoted; the former challenger becomes the new champion."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The champion vs challenger loop is also the correct response to model degradation. When monitoring signals suggest the champion is decaying, the retraining pipeline produces a challenger (retrained on recent data) which enters the evaluation pipeline. If the challenger beats the champion, promotion is automated or triggered by a human."
+            }
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "info",
+          "runs": [
+            {
+              "text": "Healthy MLOps organizations run challenger evaluation continuously, not only when there is a known problem. If no challenger is ready when the champion degrades, the response time is the sum of retraining time plus evaluation time — which can be days."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Champion vs challenger is the pattern where you keep the current best model running in production while testing a newer one alongside it. If the newer model wins on real data, it takes the champion slot. It is how production models evolve safely."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "mlo-ch09-c013",
+      "order": 13,
+      "title": "ML Monitoring Tools",
+      "teaser": "A small set of platforms has emerged specifically for ML monitoring — they share a common capability set but differ in deployment model, depth of integration, and pricing. The four most widely deployed are Arize, Fiddler, WhyLabs, and Evidently AI.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The monitoring capability set that each platform must cover:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Feature drift detection",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — statistical comparison of training vs. production feature distributions."
+              }
+            ],
+            [
+              {
+                "text": "Prediction drift detection",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — tracking shifts in output score distributions."
+              }
+            ],
+            [
+              {
+                "text": "Performance tracking",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — accuracy, F1, RMSE over time when labels arrive."
+              }
+            ],
+            [
+              {
+                "text": "Alerting",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — threshold-based and anomaly-based alerts."
+              }
+            ],
+            [
+              {
+                "text": "Explainability",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — feature importance drift; which features are driving shifts."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Tool comparison:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Arize AI.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " SaaS platform, strong on LLM and embedding monitoring, real-time ingestion via SDK. Enterprise-focused; deep integration with major ML platforms."
+              }
+            ],
+            [
+              {
+                "text": "Fiddler AI.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Enterprise SaaS and on-prem deployment. Emphasizes explainability and fairness monitoring alongside drift. Strong in regulated industries."
+              }
+            ],
+            [
+              {
+                "text": "WhyLabs.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Built around Apache whylogs, an open-source profiling library. Lightweight SDK; low data egress (sends statistical profiles, not raw data). Cloud-agnostic."
+              }
+            ],
+            [
+              {
+                "text": "Evidently AI.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Open-source Python library + optional cloud platform. Produces HTML drift reports and metrics dashboards. Easiest to self-host. Especially popular in the ML engineer community for its transparent, configurable tests. Supports KS, PSI, Wasserstein, Jensen-Shannon, and chi-squared tests natively."
+              }
+            ]
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Arize, Fiddler, WhyLabs, and Evidently AI are the leading ML monitoring platforms. They all detect drift and track performance — they differ mainly in deployment model (SaaS vs. open-source), depth of explainability, and what kind of models they specialize in."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "mlo-ch09-c014",
+      "order": 14,
+      "title": "Alerts and SLOs for ML",
+      "teaser": "ML systems need Service Level Objectives just like APIs do — but the metrics are different. Drift score thresholds, performance floors, and data freshness targets are the ML-native SLO dimensions. Getting the alert cadence right is as important as setting the right threshold.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "An ML SLO defines what \"acceptable\" looks like for a model in production, stated as a measurable target with a defined time window. Examples:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "\"PSI for feature X must remain below 0.2 over any 7-day rolling window.\"",
+                "marks": ["bold"]
+              }
+            ],
+            [
+              {
+                "text": "\"Model F1 must remain above 0.85, measured on labeled batches within 30 days of prediction.\"",
+                "marks": ["bold"]
+              }
+            ],
+            [
+              {
+                "text": "\"Prediction confidence (average probability of top class) must not drop below 0.65 sustained over 24 hours.\"",
+                "marks": ["bold"]
+              }
+            ],
+            [
+              {
+                "text": "\"Feature data must arrive within 2 hours of the event timestamp (data freshness SLO).\"",
+                "marks": ["bold"]
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Alert cadence matters as much as threshold. ML systems are noisy — day-to-day variance is normal. Alert design principles:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Use rolling windows, not point-in-time checks.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " A single anomalous day should not page anyone; a sustained shift should."
+              }
+            ],
+            [
+              {
+                "text": "Tier alerts by severity.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Low drift (PSI 0.1–0.2): log, create ticket, investigate at next review. High drift (PSI > 0.2): page on-call, trigger retraining evaluation."
+              }
+            ],
+            [
+              {
+                "text": "Separate alerting from logging.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Log all drift scores continuously; alert only on threshold violations. This keeps the signal-to-noise ratio high."
+              }
+            ],
+            [
+              {
+                "text": "Alert on missing data, not just drift.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " If a feature pipeline goes silent, an absence of data is as alarming as a distribution shift."
+              }
+            ]
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "ML SLOs set explicit thresholds on drift scores, model performance, and data freshness. Alert cadence matters: alert on sustained violations over a rolling window, not every noisy fluctuation, so your on-call team does not get desensitized."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "mlo-ch09-c015",
+      "order": 15,
+      "title": "Data Quality Monitoring",
+      "teaser": "Not all model degradation is drift — sometimes the upstream data is simply broken. Missing values, schema changes, out-of-range values, and sudden null spikes look similar to drift in their effects but have completely different remedies.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Data quality issues are distinct from distributional drift, but they manifest similarly in monitoring dashboards. The distinction matters because the response is different: drift may require retraining; a data quality issue requires fixing the pipeline."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Data quality dimensions to monitor continuously:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Completeness.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Null rates and missing value rates per feature. A feature that was 2% null at training time and is now 30% null in production is a pipeline failure, not a concept drift event."
+              }
+            ],
+            [
+              {
+                "text": "Range and schema validity.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Values outside the expected range (e.g., age = -5, price = 0 for a paid product). Categorical features containing values not seen in training."
+              }
+            ],
+            [
+              {
+                "text": "Data freshness.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Feature values that are stale — when the timestamp of the upstream source is much earlier than the prediction timestamp, the model is predicting on out-of-date signals."
+              }
+            ],
+            [
+              {
+                "text": "Volume anomalies.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " A sudden 80% drop in daily prediction volume often indicates an upstream ingestion failure, not a model problem."
+              }
+            ],
+            [
+              {
+                "text": "Schema drift.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " A column renamed, a feature re-encoded, or a new join producing duplicates. Schema drift in a feature store is one of the leading causes of production model failures."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Great Expectations, dbt tests, and Soda Core are commonly used upstream of the model serving layer to catch data quality issues before they reach the model. Evidently AI's data quality reports complement these by checking production serving traffic specifically, not just the pipeline output."
+            }
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "info",
+          "runs": [
+            {
+              "text": "A common triage protocol: when an alert fires, check data quality first. If a feature has suddenly gone 40% null, that is almost certainly the cause. Resolve data quality before investigating statistical drift or model performance."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Data quality problems — null spikes, out-of-range values, stale features, schema changes — can break a model just as badly as drift but need a completely different fix. Always rule out a broken upstream pipeline before diagnosing the model itself."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "mlo-ch09-c016",
+      "order": 16,
+      "title": "Building a Monitoring Strategy",
+      "teaser": "Effective ML monitoring is not a collection of independent checks — it is a layered strategy that progresses from fast leading indicators to slow ground-truth confirmations, with clear escalation paths at each layer.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "A complete monitoring strategy has four layers, from fastest to slowest signal:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Layer 1 — Data quality (real-time).",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Check every inference request: schema validity, null rates, range checks. Alert immediately on violations. Block or flag predictions when input quality is below threshold."
+              }
+            ],
+            [
+              {
+                "text": "Layer 2 — Drift detection (near real-time, hourly/daily windows).",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Run statistical tests on feature distributions and prediction distributions against reference baselines. Alert when PSI or KS p-value exceeds thresholds. These are leading indicators."
+              }
+            ],
+            [
+              {
+                "text": "Layer 3 — Proxy metrics (daily).",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Track confidence scores, output entropy, and business proxy metrics. Look for sustained trends, not one-day anomalies."
+              }
+            ],
+            [
+              {
+                "text": "Layer 4 — Performance metrics (when labels arrive).",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Compute accuracy, F1, RMSE on labeled batches. This is the ground truth but the slowest layer. Used to confirm what layers 2 and 3 suggested."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Escalation path:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Layer 1 violation",
+                "marks": ["bold"]
+              },
+              {
+                "text": " → investigate data pipeline immediately."
+              }
+            ],
+            [
+              {
+                "text": "Layer 2 alert",
+                "marks": ["bold"]
+              },
+              {
+                "text": " → investigate root cause; trigger challenger evaluation."
+              }
+            ],
+            [
+              {
+                "text": "Layer 3 sustained degradation",
+                "marks": ["bold"]
+              },
+              {
+                "text": " → escalate to ML team; begin retraining pipeline."
+              }
+            ],
+            [
+              {
+                "text": "Layer 4 performance drop",
+                "marks": ["bold"]
+              },
+              {
+                "text": " → confirm retraining, promote challenger if ready."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "info",
+          "runs": [
+            {
+              "text": "Define what triggers a retraining run before there is a crisis. The decision tree — which drift score at which level over which window triggers retraining — should be documented, version-controlled, and tested, not improvised during an incident."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Layer your monitoring from fast-and-indirect (data quality, drift) to slow-and-definitive (actual performance). Each layer is a progressively more expensive but more honest signal. When a fast layer fires, it tells you where to look; when the slow layer confirms, it tells you what to do."
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

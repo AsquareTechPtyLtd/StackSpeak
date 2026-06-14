@@ -1,0 +1,1291 @@
+{
+  "chapterId": "dds-ch08-trouble-with-distributed-systems",
+  "shardIndex": 8,
+  "cards": [
+    {
+      "id": "dds-ch08-c001",
+      "order": 1,
+      "title": "Partial Failure",
+      "teaser": "In a single computer, a component either works or it fails in a way you can detect. In a distributed system, parts of the system can fail in unpredictable ways — and the rest of the system cannot tell which parts have failed.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "A single computer is built with a fundamental assumption: if anything goes wrong (a RAM fault, a CPU bug, a power failure), the machine fails as a whole and stops. This is "
+            },
+            {
+              "text": "fail-stop",
+              "marks": ["italic"]
+            },
+            {
+              "text": " behavior. The failure is obvious. You know what happened. You restart and move on."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Distributed systems do not have this luxury. A network partition can leave node A unable to reach node B, while B can still reach node C. Some requests to the database succeed; others silently time out. A packet is dropped, a server is overloaded, a process is paused by the garbage collector — and none of these conditions announces itself clearly. This is "
+            },
+            {
+              "text": "partial failure",
+              "marks": ["bold"]
+            },
+            {
+              "text": ": some parts of the system are broken and some parts are working, and it is difficult or impossible to know which is which."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Partial failure is the defining characteristic of distributed systems. It is what makes them fundamentally harder to reason about than single-node systems. Everything in this chapter — unreliable networks, clock drift, process pauses — is a specific flavor of partial failure. Understanding the vocabulary is the first step toward building systems that tolerate it."
+            }
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "warning",
+          "runs": [
+            {
+              "text": "The nondeterminism of partial failures is what makes distributed systems hard. You cannot simply \"handle errors\" — you must reason about whether an operation completed, partially completed, or never started, and you may never get a definitive answer."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "In a single machine, a failure is obvious — the machine stops. In a distributed system, parts can break silently while other parts keep running, and the system can't tell which parts have failed. That uncertainty is what makes distributed systems fundamentally hard."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "dds-ch08-c002",
+      "order": 2,
+      "title": "Unreliable Networks",
+      "teaser": "The internet and most datacenter networks are asynchronous packet networks. A packet you send may be lost, delayed by seconds, duplicated, or reordered — and you have no way to distinguish \"the packet was lost\" from \"the reply was lost\" from \"the other node is just slow\".",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "When you send a request over a network and don't get a reply, there are at least three possible explanations:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "The request was lost.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " A switch buffer overflowed. The packet was silently dropped. The remote node never saw it."
+              }
+            ],
+            [
+              {
+                "text": "The request is waiting in a queue.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " The remote node is overloaded. The packet arrived but hasn't been processed yet. It will be processed — eventually."
+              }
+            ],
+            [
+              {
+                "text": "The remote node is down.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " It crashed, it's in a garbage collection pause, it was taken offline for maintenance. The request was delivered or not — you don't know."
+              }
+            ],
+            [
+              {
+                "text": "The remote node processed the request but the reply was lost.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " This is the most dangerous case. The operation completed. You have no confirmation. If you retry, you may duplicate the operation."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "This is the core property of an "
+            },
+            {
+              "text": "asynchronous network",
+              "marks": ["bold"]
+            },
+            {
+              "text": ": there is no upper bound on how long a message takes to arrive. This is not a bug — it is the fundamental design of TCP/IP. The internet was designed to route around failures, not to provide timing guarantees."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Even within a single datacenter, dedicated leased lines, or purpose-built networks, packet delays vary enormously under load. Kleppmann's characterization is apt: if you want reliable, bounded latency, you need a "
+            },
+            {
+              "text": "synchronous network",
+              "marks": ["italic"]
+            },
+            {
+              "text": " like the telephone network's circuit-switched ISDN — where bandwidth is reserved end-to-end, and latency is bounded by physics. Most distributed systems run on networks that are nothing like that."
+            }
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "warning",
+          "runs": [
+            {
+              "text": "A partial list of things that can go wrong: network congestion, a misconfigured network device, a full receive buffer, a BGP routing change, a failing network cable causing packet corruption, a virtual machine migration mid-request, a kernel bug causing a NIC to drop every Nth packet. All of these are real; all of them are observed in production datacenters."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "When you send a message over a network and get no reply, you have no idea why. The message may have been lost, the other node may have failed, or the node processed the request fine but its reply got lost. On an asynchronous network, you simply cannot tell."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "dds-ch08-c003",
+      "order": 3,
+      "title": "Detecting Faults — Timeouts",
+      "teaser": "If you cannot tell whether a remote node has failed, the only tool you have is a timeout: wait long enough that a response \"should\" have arrived, then assume the worst. But choosing that timeout is harder than it looks.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "On an asynchronous network with no upper bound on message delay, there is no reliable way to detect that a remote node has failed. If you send a message and receive no reply, you cannot distinguish \"node is dead\" from \"node is alive but slow\" from \"node processed the request but the reply is still in transit.\" The only mechanism available is a "
+            },
+            {
+              "text": "timeout",
+              "marks": ["bold"]
+            },
+            {
+              "text": ": if no response arrives within time T, assume failure."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "But timeouts introduce their own problems. Set the timeout too short and you declare nodes dead that are merely slow — leading to spurious failovers, duplicate operations, and cascading load. Set it too long and the system is slow to detect real failures, leaving clients waiting and downstream systems degraded."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The "
+            },
+            {
+              "text": "unbounded-delay problem",
+              "marks": ["bold"]
+            },
+            {
+              "text": " makes this decision impossible to get right in theory. If network delay has no upper bound, any timeout you choose will occasionally be wrong in both directions: too short (firing during a legitimate slow response) and too long (not firing fast enough on a real failure). Phi Accrual failure detectors and adaptive timeouts based on measured network RTT are attempts to navigate this, but they are heuristics — not solutions."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Even if you could reliably detect that a node has failed, acting on that signal safely is a separate problem. A node declared dead may have actually processed your request. Before failing over, you need to answer: did the operation complete? Answering that question reliably is what consensus algorithms (see Chapter 9) are for."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Timeouts are the only tool for detecting remote failures on an asynchronous network. Set them too short and you declare healthy nodes dead; too long and you're slow to notice real failures. Because network delay is unbounded, you can never pick a timeout that is always right."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "dds-ch08-c004",
+      "order": 4,
+      "title": "Network Congestion and Queueing",
+      "teaser": "Packets don't just disappear — they queue. TCP backoff, switch buffers, kernel scheduler queues, and VM hypervisor scheduling all add unbounded delay to messages that will eventually arrive. Queuing is the dominant source of network latency variance.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Consider the path a packet takes from a sender to a receiver and all the places it can queue:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Network switch buffers.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " If a switch is forwarding traffic faster than the outgoing link can drain it, incoming packets are queued in the switch's buffer. If the buffer fills, packets are dropped. This is the \"congestion drop\" that TCP's backoff mechanism is designed to handle."
+              }
+            ],
+            [
+              {
+                "text": "TCP retransmission.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " TCP detects dropped packets and retransmits them automatically. This hides loss from the application — but the retransmission takes time. TCP's congestion window reduction after a dropped packet adds additional delay. The application sees neither the drop nor the retransmission; it just sees a higher latency."
+              }
+            ],
+            [
+              {
+                "text": "Kernel receive queue.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " When a packet arrives at the destination machine, it sits in the kernel's receive buffer until the application calls "
+              },
+              {
+                "text": "recv()",
+                "marks": ["code"]
+              },
+              {
+                "text": ". If the application is busy — processing another request, paused for GC, scheduled out by the kernel — the packet waits. This queue is invisible to network-level monitoring."
+              }
+            ],
+            [
+              {
+                "text": "Hypervisor scheduler.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " In a virtualized environment, the physical CPU is shared among VMs. If another VM is using the CPU, your VM's vCPU is paused. The kernel receive queue fills. Network latency, from your VM's perspective, spikes — even though the physical network is fine."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "These queuing sources stack. A packet that takes 1 ms on an unloaded network may take 100 ms when a switch buffer is near capacity, the receiver is under CPU load, and a GC pause fires at the wrong moment. The network is not slow — the "
+            },
+            {
+              "text": "system as a whole",
+              "marks": ["italic"]
+            },
+            {
+              "text": " is slow, for reasons that are invisible to any single component."
+            }
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "info",
+          "runs": [
+            {
+              "text": "This is why network latency distributions are heavy-tailed, not normal. The median latency may be 0.5 ms; the 99th percentile may be 100 ms; the 99.9th may be 1 second. When you set a timeout based on \"typical\" latency, you are setting it too low for the tail — which is precisely where a struggling system will land."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Network delay is mostly queue delay. Packets queue in switches, in TCP retransmission buffers, in the kernel's receive buffer, and in the VM hypervisor scheduler. Each source is invisible to the others, and they stack — turning a 1 ms network into a 100 ms experience when the system is under load."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "dds-ch08-c005",
+      "order": 5,
+      "title": "TCP vs UDP",
+      "teaser": "TCP retransmits lost packets, hiding loss from the application at the cost of higher and more variable latency. UDP exposes loss directly to the application, trading reliability for predictability. Understanding this tradeoff determines which protocol a distributed system should use.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "TCP and UDP are both transport-layer protocols, but they make opposite tradeoffs:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "TCP",
+                "marks": ["bold"]
+              },
+              {
+                "text": " guarantees ordered, reliable delivery. It retransmits lost packets, reorders out-of-order segments, and applies congestion control. The application sees a stream of bytes that arrives intact — but the latency of that stream varies widely based on retransmission and backoff. Under congestion, TCP can pause for seconds, then burst. Timeouts on TCP connections are measured in seconds to minutes."
+              }
+            ],
+            [
+              {
+                "text": "UDP",
+                "marks": ["bold"]
+              },
+              {
+                "text": " does none of that. A UDP datagram is sent and either arrives or doesn't. There is no retransmission, no ordering, no congestion control. The application must handle loss, duplication, and reordering itself. But the latency is what the network provides — no amplification from retransmit cycles."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "For most distributed databases and coordination services, TCP is the right choice: occasional retransmission overhead is acceptable, and correctness properties (ordering, no duplication) simplify the protocol. But for latency-sensitive applications — real-time video, game state synchronization, DNS — UDP is preferred precisely "
+            },
+            {
+              "text": "because",
+              "marks": ["italic"]
+            },
+            {
+              "text": " it exposes loss. A dropped video frame is better shown as a glitch than a 500 ms freeze. A retransmitted DNS query arrives after the application has already timed out."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The key insight: TCP's reliability is not free. It trades loss for latency variance. For distributed systems that already implement application-level retries and idempotency, TCP's transport-level retransmission can create confusion — the application retries a request that TCP already retransmitted successfully, causing duplicates. This is why understanding the protocol stack below your application matters."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "TCP hides packet loss by retransmitting automatically, which means your application sees higher and more variable latency instead of dropped messages. UDP exposes loss directly. Neither is universally better — it depends on whether you'd rather deal with occasional delays or occasional missing messages."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "dds-ch08-c006",
+      "order": 6,
+      "title": "Monotonic vs Time-of-Day Clocks",
+      "teaser": "Every computer has two kinds of clocks, and they serve completely different purposes. Confusing them is one of the most common sources of subtle bugs in distributed systems.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Modern operating systems expose two distinct clock abstractions:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Time-of-day clock",
+                "marks": ["bold"]
+              },
+              {
+                "text": " (also called wall-clock time). Returns the current date and time — seconds since the Unix epoch. In Java, this is "
+              },
+              {
+                "text": "System.currentTimeMillis()",
+                "marks": ["code"]
+              },
+              {
+                "text": "; in Python, "
+              },
+              {
+                "text": "time.time()",
+                "marks": ["code"]
+              },
+              {
+                "text": ". This clock is synchronized with NTP and can "
+              },
+              {
+                "text": "jump",
+                "marks": ["italic"]
+              },
+              {
+                "text": " — forward or backward — when NTP adjusts the system clock. A time-of-day clock is suitable for timestamping events, but unreliable for measuring elapsed time or ordering events across nodes."
+              }
+            ],
+            [
+              {
+                "text": "Monotonic clock",
+                "marks": ["bold"]
+              },
+              {
+                "text": " (also called steady clock). Returns a counter that only ever moves forward — guaranteed never to decrease. In Java, this is "
+              },
+              {
+                "text": "System.nanoTime()",
+                "marks": ["code"]
+              },
+              {
+                "text": "; in Python, "
+              },
+              {
+                "text": "time.monotonic()",
+                "marks": ["code"]
+              },
+              {
+                "text": ". This clock is "
+              },
+              {
+                "text": "not",
+                "marks": ["italic"]
+              },
+              {
+                "text": " synchronized with NTP and has no relationship to wall-clock time. It is suitable for measuring durations (\"how long did this operation take?\") but meaningless as an absolute timestamp or for comparing times across nodes — different machines' monotonic clocks start from arbitrary origins."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The rule: use the "
+            },
+            {
+              "text": "monotonic clock",
+              "marks": ["bold"]
+            },
+            {
+              "text": " for measuring elapsed time (timeouts, durations, performance). Use the "
+            },
+            {
+              "text": "time-of-day clock",
+              "marks": ["bold"]
+            },
+            {
+              "text": " for human-readable timestamps and event logging. Never use the time-of-day clock to measure elapsed time or to order events across nodes."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Using "
+            },
+            {
+              "text": "System.currentTimeMillis()",
+              "marks": ["code"]
+            },
+            {
+              "text": " to measure how long an operation took is a common Java bug. If an NTP sync fires during the measurement window and adjusts the clock backward, the reported duration is negative. This has caused real production incidents."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Every machine has two clocks. The wall clock tells you what time it is — but it can jump when NTP corrects it. The monotonic clock only moves forward — it's good for measuring how long something took, but useless for comparing times across machines. Use the right one for the job."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "dds-ch08-c007",
+      "order": 7,
+      "title": "NTP and Clock Drift",
+      "teaser": "Network Time Protocol keeps machines' clocks synchronized with time servers, but the synchronization is imperfect. In ideal conditions, NTP achieves sub-millisecond accuracy; in practice, clocks drift, NTP servers disagree, and a misconfigured or unreachable time server can leave a node's clock off by minutes.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Computer clocks are based on quartz crystal oscillators, which drift by tens of milliseconds per day under normal conditions. "
+            },
+            {
+              "text": "Network Time Protocol (NTP)",
+              "marks": ["bold"]
+            },
+            {
+              "text": " corrects this drift by periodically synchronizing each machine's clock with a hierarchy of time servers (stratum 0 is atomic clocks; stratum 1 connects to them; stratum 2 syncs from stratum 1, and so on)."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Under good conditions — stable network, reliable upstream servers, not too much congestion — NTP achieves accuracy within 1–50 ms. The Google Public NTP servers (time.google.com) use the \"smeared leap second\" approach to achieve high accuracy. Atomic clocks on GPS-disciplined receivers can achieve sub-microsecond accuracy."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "But NTP is only as good as its network path and upstream servers. Real failure modes include:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Unreachable NTP server.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " A machine that can't reach any time server will drift freely. A server in a corporate network behind a restrictive firewall can drift by seconds per day without anyone noticing."
+              }
+            ],
+            [
+              {
+                "text": "Wrong upstream server.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " A misconfigured NTP server that itself has a bad clock will propagate the error to all its clients. This has caused incidents where entire clusters of machines had clocks that were consistently offset by minutes from the correct time."
+              }
+            ],
+            [
+              {
+                "text": "Leap second handling.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " When the International Earth Rotation and Reference Systems Service (IERS) inserts a leap second into UTC, some NTP clients apply it with a 1-second backward jump. Cloudflare's 2017 leap-second incident caused DNS failures across their infrastructure for 90 minutes. Linux's "
+              },
+              {
+                "text": "adjtime()",
+                "marks": ["code"]
+              },
+              {
+                "text": " smearing avoids the jump by spreading the second over 1,000 seconds — but not all systems implement it."
+              }
+            ],
+            [
+              {
+                "text": "Virtualization drift.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " When a VM is paused and resumed (for live migration or host maintenance), its clock can fall behind by the duration of the pause. On resumption, NTP applies a corrective step-change — which the time-of-day clock reflects as a jump."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "warning",
+          "runs": [
+            {
+              "text": "GitHub experienced a 24-day clock skew incident in 2012 in which a MySQL cluster's clocks drifted significantly due to a network partition isolating them from their NTP servers. Rows were written with timestamps in the future relative to other nodes — causing subtle data ordering bugs that took hours to diagnose."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "NTP corrects clock drift by periodically syncing against time servers. In good conditions it's accurate to within a few milliseconds. But if the NTP server is wrong, unreachable, or a leap second fires, a machine's clock can jump — forward or backward — by a surprising amount."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "dds-ch08-c008",
+      "order": 8,
+      "title": "Clock Skew and Causal Ordering",
+      "teaser": "Clock skew — the difference between two machines' clocks at any given moment — means you cannot use wall-clock timestamps to determine the order of events across nodes. An event with a later timestamp may have actually happened first.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Even with NTP, two machines' clocks are never perfectly synchronized. The difference between them at any given moment is called "
+            },
+            {
+              "text": "clock skew",
+              "marks": ["bold"]
+            },
+            {
+              "text": ". Typical skew in a datacenter with good NTP is 1–50 ms. In a cloud environment with shared virtualized hardware, it can be hundreds of milliseconds. In a geographically distributed system, it can be seconds."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The consequence: if node A writes a record at T=100 and node B writes a conflicting record at T=99, and B's clock is 2 ms slow relative to A's, then B's record actually happened "
+            },
+            {
+              "text": "after",
+              "marks": ["italic"]
+            },
+            {
+              "text": " A's — despite having the lower timestamp. Using \"last write wins\" with wall-clock timestamps will silently discard A's write in favor of the earlier-timestamped but actually-later write from B."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "This is not a hypothetical. Cassandra's "
+            },
+            {
+              "text": "last write wins",
+              "marks": ["italic"]
+            },
+            {
+              "text": " conflict resolution uses client-provided timestamps for exactly this reason — and Cassandra's documentation warns explicitly that if clocks are not synchronized, data loss or incorrect ordering will result silently."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The correct tools for cross-node ordering are:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Logical clocks (Lamport timestamps)",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — track causal relationships between events without reference to physical time. If A happened before B (A's message caused B's action), Lamport timestamps capture that relationship."
+              }
+            ],
+            [
+              {
+                "text": "Vector clocks",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — track causal histories across multiple nodes, enabling detection of concurrent writes that have no causal relationship."
+              }
+            ],
+            [
+              {
+                "text": "TrueTime (Google Spanner)",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — uses GPS receivers and atomic clocks to provide an explicit uncertainty interval. Instead of claiming \"the time is T,\" it claims \"the time is somewhere in [T-ε, T+ε].\" Spanner's external consistency guarantee requires waiting for ε to pass before reading — but the guarantee is then mathematically sound."
+              }
+            ]
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Clock skew means different machines' clocks disagree on what time it is. A record with a later timestamp might actually have been written first. You cannot rely on wall-clock time to order events across nodes — you need logical clocks that track causality instead."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "dds-ch08-c009",
+      "order": 9,
+      "title": "Process Pauses",
+      "teaser": "A running process can be paused for an extended period without its knowledge — by the garbage collector, the OS kernel, or a hypervisor. During the pause, the process is unaware that time is passing. When it resumes, it may act on stale assumptions about the state of the world.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Distributed systems literature tends to focus on network failures, but process-level pauses are equally dangerous. A process is paused when it cannot make progress — even though the node it runs on is still up and the network is still reachable. The process is simply not executing. Common causes:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Garbage collection (GC) pauses.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " The JVM's stop-the-world GC pauses all application threads — sometimes for tens of milliseconds, sometimes for multiple seconds in pathological cases with large heaps and high object allocation rates. Go's GC is designed to minimize pause length, but long pauses still occur. During a GC pause, the process cannot respond to heartbeats, renew leases, or process incoming messages."
+              }
+            ],
+            [
+              {
+                "text": "Kernel scheduler preemption.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " The OS kernel can deschedule a thread at any point — even in the middle of a critical section if it's not a kernel-mode operation. A thread running on a heavily loaded machine may not be scheduled for 100 ms or more at a time."
+              }
+            ],
+            [
+              {
+                "text": "Swapping (paging).",
+                "marks": ["bold"]
+              },
+              {
+                "text": " If a process's working set exceeds available RAM, the OS pages memory to disk. Accessing a swapped-out page triggers a disk read — stalling the thread for milliseconds to seconds. Well-configured production systems typically disable swap, but it is still a risk in environments where other workloads compete for memory."
+              }
+            ],
+            [
+              {
+                "text": "SIGSTOP / debugger attach.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Sending SIGSTOP to a process pauses it indefinitely. A developer attaching a debugger, a profiling agent running at the wrong moment, or a container runtime pausing a container for inspection can cause arbitrary-length pauses."
+              }
+            ],
+            [
+              {
+                "text": "VM live migration.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Cloud providers migrate VMs between physical hosts for maintenance. The VM is paused during the final memory-copy phase of migration. This pause is typically milliseconds but can be seconds for memory-intensive workloads."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Kleppmann's canonical example: a Java process holds a distributed lock, then a GC pause fires for 15 seconds. During those 15 seconds, the lock lease expires and another node acquires it. When the GC pause ends, the original process resumes — it still believes it holds the lock. It does not. Any actions it takes under the assumption of holding the lock are now unsafe."
+            }
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "warning",
+          "runs": [
+            {
+              "text": "A process cannot detect how long it was paused. It experiences the pause as instantaneous — it executes one instruction, and then (from its perspective) it executes the next. In between, 15 seconds may have elapsed. The world may have moved on."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "A running process can be silently paused for seconds — by GC, the kernel, or the hypervisor — without any awareness that time passed. When it resumes, it acts on whatever beliefs it had before the pause. If those beliefs were only valid for 5 seconds and the pause was 15, the process is now acting on stale information."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "dds-ch08-c010",
+      "order": 10,
+      "title": "The Stop-the-World Problem",
+      "teaser": "A process that was the leader before a pause may not be the leader after it. The process doesn't know this — it just resumes. Without an external check, it will act as leader on a cluster that has already elected a new one.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Consider a distributed database with a single leader. The leader sends periodic heartbeats to followers to assert its liveness. If followers receive no heartbeat for timeout T, they elect a new leader."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Now the current leader experiences a GC pause of 30 seconds. It sends no heartbeats. After T seconds, the followers time out and elect a new leader. The new leader starts accepting writes. At second 30, the old leader's GC pause ends. It resumes — and from its perspective, nothing happened. It still believes it is the leader. It still has an open connection to the storage layer. It will attempt to continue serving writes."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "At this point, two nodes believe they are the leader. Both will attempt to write to storage. This is "
+            },
+            {
+              "text": "split brain",
+              "marks": ["bold"]
+            },
+            {
+              "text": ", and it is dangerous: writes from two \"leaders\" can interleave in ways that corrupt data, violate consistency invariants, and are extremely difficult to detect and recover from."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The stop-the-world problem is specifically the problem that a leader node cannot detect that time has passed during its pause — and therefore cannot self-demote. The node's internal state says \"I am leader\"; the cluster's external state says \"you were dethroned 25 seconds ago.\""
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The solution is not to prevent pauses (impossible) but to ensure that the "
+            },
+            {
+              "text": "storage layer rejects writes from stale leaders",
+              "marks": ["italic"]
+            },
+            {
+              "text": " regardless of what the leader believes about its own status. This is exactly what fencing tokens provide."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "After a long pause, a node resumes believing it's the leader — but the cluster may have elected a new one while it was frozen. The node has no way to know time passed. Without a mechanism to reject its stale writes, you have two leaders writing simultaneously."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "dds-ch08-c011",
+      "order": 11,
+      "title": "Fencing Tokens",
+      "teaser": "A fencing token is a monotonically increasing number issued by the lock service when a node acquires a lock. The storage layer is responsible for rejecting any write from a token smaller than the highest it has seen — making stale leader writes safe to ignore.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The core problem with distributed locks and leases is that a node holding a lock can be paused, causing the lock to expire. When the node resumes, it still attempts to act under the (now-expired) lock. A fencing token makes the storage layer the enforcer, rather than relying on the lock holder's self-awareness."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The mechanism:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "numbered",
+          "items": [
+            [
+              {
+                "text": "When a node acquires a lock from the lock service (e.g., ZooKeeper, Chubby), the lock service issues a "
+              },
+              {
+                "text": "fencing token",
+                "marks": ["bold"]
+              },
+              {
+                "text": " — a monotonically increasing integer. Each new acquisition gets a higher number than the previous one."
+              }
+            ],
+            [
+              {
+                "text": "The node includes the fencing token in every write request to the storage system."
+              }
+            ],
+            [
+              {
+                "text": "The storage system tracks the highest fencing token it has seen. If it receives a write with a token lower than or equal to the highest seen, it "
+              },
+              {
+                "text": "rejects",
+                "marks": ["bold"]
+              },
+              {
+                "text": " the write. The stale node's writes are silently blocked at the storage layer."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "code",
+          "language": "text",
+          "text": "Time →\n\nClient 1 acquires lock, receives token=33\n  Client 1 pauses (GC, 30 seconds)\n\n  Lock expires (timeout reached)\n\n  Client 2 acquires lock, receives token=34\n  Client 2 writes to storage: { token=34, data=\"new\" }\n    Storage accepts. Highest seen token = 34.\n\nClient 1 resumes (GC pause ends)\nClient 1 writes to storage: { token=33, data=\"old\" }\n  Storage REJECTS. token=33 < highest=34.\n\n✓ Client 1's stale write is silently blocked."
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "This pattern is described by Kleppmann as the correct implementation of distributed locks. It is used in Google's GFS/Chubby system: the master issues leases with monotonically increasing sequence numbers, and the chunkservers use those numbers to fence out stale masters after failover."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The critical insight: "
+            },
+            {
+              "text": "fencing does not require the lock holder to cooperate",
+              "marks": ["italic"]
+            },
+            {
+              "text": ". A paused, confused, or buggy client cannot override the storage layer's token check. The storage layer is the last line of defense — and crucially, it does not need to know anything about the lock service. It just needs to track the highest token it has accepted."
+            }
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "info",
+          "runs": [
+            {
+              "text": "ZooKeeper's zxid (ZooKeeper transaction ID) is a fencing token: a monotonically increasing counter that can be passed to storage systems as proof of lock recency. Systems that use ZooKeeper for distributed locking but do not propagate and check zxids at write time are implementing half the solution."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "A fencing token is a number that goes up every time a lock is granted. Every write includes the token; the storage layer rejects any write with a lower number than it's already seen. This way, even if an old lock holder wakes up from a pause and tries to write, the storage layer blocks it — without needing to ask the lock service."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "dds-ch08-c012",
+      "order": 12,
+      "title": "Split Brain",
+      "teaser": "Split brain occurs when two nodes simultaneously believe they are the primary. Without fencing, both nodes write freely — and the resulting data corruption can be silent, severe, and extraordinarily difficult to recover from.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The term \"split brain\" comes from neuroscience: patients whose corpus callosum (the connection between brain hemispheres) was severed exhibited two independent decision-making processes. In distributed systems, split brain is the equivalent: two nodes that have lost connectivity to each other both continue operating as the primary, each making decisions the other cannot see."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "A common scenario: a leader-follower database pair is connected by a network link. The link fails (but both nodes remain up). The follower, receiving no heartbeats, elects itself leader. The original leader, unable to reach the follower, continues as leader. Now both accept writes. When the network link is restored, the two nodes have diverged — each has accepted writes the other does not know about."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The cost of split brain is severe:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "Data loss.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Some writes accepted by the old primary may not exist on the new primary and vice versa. Reconciliation requires knowing which writes were \"correct\" — which may be impossible without application-level conflict resolution."
+              }
+            ],
+            [
+              {
+                "text": "Constraint violations.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " Uniqueness constraints, foreign keys, and other invariants enforced by a single primary are now enforced by two independent primaries. The same email address or account ID may be assigned twice."
+              }
+            ],
+            [
+              {
+                "text": "Silent corruption.",
+                "marks": ["bold"]
+              },
+              {
+                "text": " The damage may not be immediately apparent. Clients received success responses for all their writes. The inconsistency only surfaces days later when two users discover their accounts have the same ID."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Fencing is the primary defense against split brain: the storage layer's token check ensures only the most recently elected primary's writes are accepted. The secondary defense is quorum: requiring a write to be acknowledged by a majority of nodes before confirming success ensures that no single isolated node can proceed unilaterally."
+            }
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "warning",
+          "runs": [
+            {
+              "text": "The naive \"STONITH\" (Shoot The Other Node In The Head) approach to split brain — configure each node to power-cycle the other on timeout — works only if the power-cycling mechanism itself is reliable. If both nodes try to STONITH each other simultaneously, and both succeed, you have no nodes at all."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Split brain is when two nodes both think they're the leader and both write freely. When the network reconnects, the two copies have diverged. Without fencing, you have no way to prevent this — and the resulting data corruption can be subtle enough that you don't notice it for days."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "dds-ch08-c013",
+      "order": 13,
+      "title": "Truth Defined by Majority",
+      "teaser": "A node cannot trust its own judgment about whether it is the leader. \"I think I'm alive\" is not authoritative. \"A majority of the cluster thinks I'm alive\" is. Quorum is the mechanism that turns unreliable individual nodes into a reliable collective decision.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "One of the deepest insights in distributed systems: a node cannot unilaterally determine its own status. A node that has been partitioned from the rest of the cluster is, from its own perspective, fine — it can still execute code, its memory is intact, its local clock is ticking. It just cannot communicate with anyone. It has no way to know whether it has been declared dead and replaced."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "This is why distributed consensus protocols require a "
+            },
+            {
+              "text": "quorum",
+              "marks": ["bold"]
+            },
+            {
+              "text": " — a majority of nodes agreeing on a decision — rather than trusting any single node's self-assessment. In a 5-node cluster, any 3 nodes constitute a quorum. A decision made by 3 nodes is authoritative; a decision made by 1 node is not."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The intuition behind quorum is pigeonhole: if writes require acknowledgment from at least N/2+1 nodes, and reads also query at least N/2+1 nodes, then any read and any write will overlap in at least one node. That overlap is the guarantee that a successful read will see the most recent successful write. This is the foundation of both Raft and Paxos."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Applied to leader election: a node can only declare itself leader if a quorum of nodes have voted for it. A node that believes it is leader but cannot reach a quorum cannot confirm its leadership — it should step down (or refuse to serve writes) rather than act unilaterally. The Raft paper's key contribution is making this behavior explicit and correct: a leader that cannot maintain contact with a majority of the cluster must stop accepting writes."
+            }
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "info",
+          "runs": [
+            {
+              "text": "Kleppmann summarizes this principle concisely: \"The truth is defined by the majority.\" If the majority of nodes declare you dead, you are — for all practical purposes — dead, regardless of what you yourself believe. Systems designed around this principle, rather than around individual nodes' self-assessment, are far more resilient to partial failures."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "A node can't trust its own opinion about whether it's the leader — it might be partitioned and not know it. Quorum means a majority of nodes have to agree on something before it counts. If you can't reach a majority, you're not authorized to act, no matter what you believe."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "dds-ch08-c014",
+      "order": 14,
+      "title": "Byzantine Faults",
+      "teaser": "All the failure modes discussed so far assume nodes crash or go silent. Byzantine faults are worse: a node that lies, sends contradictory messages to different peers, or behaves in arbitrary ways. Most backend distributed systems assume Byzantine faults won't occur — and for most use cases, that assumption is correct.",
+      "explanation": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "The term comes from the \"Byzantine Generals Problem\" (Lamport, Shostak, and Pease, 1982): a group of generals must agree on a battle plan by messenger, but some generals may be traitors sending contradictory orders. The challenge is to reach agreement in the presence of arbitrary (not just crash) failures."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "A Byzantine fault is any failure mode other than crash-stop or crash-silence. Examples:"
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "style": "bulleted",
+          "items": [
+            [
+              {
+                "text": "A node sends different values to different peers in the same protocol round — perhaps due to memory corruption, a bug, or deliberate malice."
+              }
+            ],
+            [
+              {
+                "text": "A node acknowledges receipt of a message it never actually received, due to a software bug."
+              }
+            ],
+            [
+              {
+                "text": "A node is controlled by an attacker who is deliberately trying to subvert the consensus process."
+              }
+            ],
+            [
+              {
+                "text": "A hardware fault (cosmic ray, memory corruption) causes a node to compute an incorrect result and propagate it as if it were correct."
+              }
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Byzantine-fault-tolerant (BFT) consensus algorithms — particularly "
+            },
+            {
+              "text": "Practical Byzantine Fault Tolerance (PBFT)",
+              "marks": ["bold"]
+            },
+            {
+              "text": " (Castro and Liskov, 1999) — can tolerate up to f Byzantine nodes in a 3f+1 node cluster. They achieve this by requiring nodes to exchange messages about what they received from other nodes — revealing inconsistencies in what different nodes claim to have heard."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "BFT consensus is the basis of "
+            },
+            {
+              "text": "blockchain consensus",
+              "marks": ["bold"]
+            },
+            {
+              "text": " — Bitcoin's proof-of-work, Ethereum's proof-of-stake, and Tendermint's BFT consensus are all mechanisms for reaching agreement among participants who may be adversarial. The blockchain context makes BFT essential: the participants are explicitly untrusted, anonymous, and incentivized to cheat."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "For most backend distributed systems — a database cluster, a service mesh, a Kafka cluster — Byzantine fault tolerance is out of scope. The nodes are controlled by the same organization, run the same software, and operate in the same datacenter. The threat model is hardware failures and software bugs — not malicious actors. Raft, Paxos, and ZooKeeper's ZAB all assume crash-stop failures, not Byzantine ones, and are significantly simpler and faster as a result."
+            }
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "info",
+          "runs": [
+            {
+              "text": "The cost of BFT is high: PBFT requires O(n²) message exchanges per consensus round. For a 100-node cluster, this is 10,000 messages per decision. Non-Byzantine consensus algorithms like Raft require O(n) messages. This is why no mainstream relational database or distributed data store uses BFT consensus — the performance cost is not justified unless the nodes are genuinely untrusted."
+            }
+          ]
+        }
+      ],
+      "feynman": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "A Byzantine fault is a node that doesn't just crash — it lies, sends contradictory messages, or behaves maliciously. Tolerating Byzantine faults requires much more complex and expensive consensus protocols. For most backend systems, nodes are trusted to fail honestly (crash-stop), and you can use simpler, faster algorithms like Raft."
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
