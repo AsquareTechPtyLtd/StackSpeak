@@ -72,7 +72,7 @@ struct ThemedTextEditor: View {
                 RoundedRectangle(cornerRadius: RadiusTokens.inline)
                     .strokeBorder(
                         focus.wrappedValue ? theme.colors.accent : theme.colors.lineStrong,
-                        lineWidth: focus.wrappedValue ? 2 : 1
+                        lineWidth: focus.wrappedValue ? BorderTokens.focus : BorderTokens.regular
                     )
             )
             .animation(.easeInOut(duration: 0.15), value: focus.wrappedValue)

@@ -27,12 +27,18 @@ extension WordService {
     /// the user's stacks share categories), backfill from other words so the daily
     /// set always has `count` words.
     ///
+    /// `excludeIds` are skipped entirely (e.g. words already in today's set when
+    /// growing/reconciling) — without this, a near-exhausted pool returns
+    /// already-served words that the caller then dedups away, yet the cursor would
+    /// still have advanced past them, mis-seeding tomorrow's set.
+    ///
     /// Internal access for unit testing.
     func selectQualifyingWords(
         from shuffled: [Word],
         startingAt startIndex: Int,
         userProgress: UserProgress,
-        count: Int
+        count: Int,
+        excludeIds: Set<UUID> = []
     ) -> (words: [Word], nextCursor: Int) {
         guard !shuffled.isEmpty else { return ([], 0) }
 
@@ -56,7 +62,8 @@ extension WordService {
             cursor = (cursor + 1) % shuffled.count
             seen += 1
 
-            guard qualifies(word: word, for: userProgress, activeStacks: activeStacks) else { continue }
+            guard !excludeIds.contains(word.id),
+                  qualifies(word: word, for: userProgress, activeStacks: activeStacks) else { continue }
 
             if firstPerCategory[word.category] == nil {
                 firstPerCategory[word.category] = word
@@ -87,7 +94,10 @@ extension WordService {
         return (Array(result.prefix(count)), nextCursor)
     }
 
-    private func qualifies(word: Word, for userProgress: UserProgress, activeStacks: Set<String>) -> Bool {
+    /// The single qualifier for daily-set membership: not mastered, unlocked at
+    /// the user's level, and in an active stack. Internal (not private) so both
+    /// selection and `reconcileTodaysSetWithSelection` share one definition.
+    func qualifies(word: Word, for userProgress: UserProgress, activeStacks: Set<String>) -> Bool {
         !userProgress.masteredWordIds.contains(word.id) &&
         word.unlockLevel <= userProgress.level &&
         activeStacks.contains(word.stack)

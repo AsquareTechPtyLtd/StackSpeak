@@ -128,7 +128,7 @@ extension SupabaseBackendService {
 
     func signInWithGoogle(present: any WebAuthPresenting) async throws -> BackendUserID {
         // PKCE: keep the verifier on-device; only its hash travels in the URL.
-        let verifier = PKCE.codeVerifier()
+        let verifier = try PKCE.codeVerifier()
         var components = URLComponents(
             url: config.url.appendingPathComponent("/auth/v1/authorize"),
             resolvingAgainstBaseURL: false)

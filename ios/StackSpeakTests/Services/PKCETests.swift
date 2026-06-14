@@ -5,8 +5,8 @@ import Foundation
 @Suite("PKCE — RFC 7636 (Google web OAuth)")
 struct PKCETests {
     @Test("codeVerifier is URL-safe and within the 43–128 length bounds")
-    func verifierShape() {
-        let verifier = PKCE.codeVerifier()
+    func verifierShape() throws {
+        let verifier = try PKCE.codeVerifier()
         #expect((43...128).contains(verifier.count))
         // base64url alphabet only — never the base64 +,/ or = padding.
         #expect(!verifier.contains("+"))
@@ -18,8 +18,8 @@ struct PKCETests {
     }
 
     @Test("codeVerifier is random per call")
-    func verifierIsRandom() {
-        #expect(PKCE.codeVerifier() != PKCE.codeVerifier())
+    func verifierIsRandom() throws {
+        #expect(try PKCE.codeVerifier() != PKCE.codeVerifier())
     }
 
     @Test("S256 challenge matches the RFC 7636 Appendix B test vector")
@@ -31,8 +31,8 @@ struct PKCETests {
     }
 
     @Test("S256 challenge is itself URL-safe and unpadded")
-    func challengeShape() {
-        let challenge = PKCE.codeChallenge(for: PKCE.codeVerifier())
+    func challengeShape() throws {
+        let challenge = try PKCE.codeChallenge(for: PKCE.codeVerifier())
         #expect(!challenge.contains("+"))
         #expect(!challenge.contains("/"))
         #expect(!challenge.contains("="))

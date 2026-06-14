@@ -84,8 +84,12 @@ struct DailyWordGoalSheet: View {
                 .clipShape(.rect(cornerRadius: RadiusTokens.inline))
                 .overlay(
                     RoundedRectangle(cornerRadius: RadiusTokens.inline)
-                        .strokeBorder(theme.colors.accent, lineWidth: 2)
+                        .strokeBorder(
+                            fieldFocused ? theme.colors.accent : theme.colors.lineStrong,
+                            lineWidth: fieldFocused ? BorderTokens.focus : BorderTokens.regular
+                        )
                 )
+                .animation(MotionTokens.standard, value: fieldFocused)
                 .accessibilityLabel(String(localized: "home.wordGoal.title"))
 
             adjustButton(systemImage: "plus", delta: 1)
@@ -103,6 +107,9 @@ struct DailyWordGoalSheet: View {
                 .background(theme.colors.surfaceAlt)
                 .clipShape(.rect(cornerRadius: RadiusTokens.inline))
         }
+        .accessibilityLabel(String(localized: delta > 0
+            ? "home.wordGoal.stepper.increment"
+            : "home.wordGoal.stepper.decrement"))
     }
 }
 

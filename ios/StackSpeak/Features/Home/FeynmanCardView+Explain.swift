@@ -40,7 +40,7 @@ extension FeynmanCardView {
                             .foregroundColor(theme.colors.warn)
                     }
                 }
-                .animation(reduceMotion ? nil : .easeInOut(duration: 0.2),
+                .animation(reduceMotion ? nil : MotionTokens.standard,
                            value: explanationFocused)
             }
             .scrollDismissesKeyboard(.interactively)
@@ -48,7 +48,7 @@ extension FeynmanCardView {
             // scroll area so the entire box is visible above the keyboard.
             .onChange(of: explanationFocused) { _, focused in
                 guard focused else { return }
-                withAnimation(reduceMotion ? nil : .easeInOut(duration: 0.25)) {
+                withAnimation(reduceMotion ? nil : MotionTokens.standard) {
                     proxy.scrollTo(Self.explainEditorID, anchor: .top)
                 }
             }

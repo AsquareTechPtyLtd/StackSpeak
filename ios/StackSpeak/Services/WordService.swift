@@ -6,7 +6,9 @@ private let logger = Logger(category: "WordService")
 
 @MainActor
 final class WordService: WordRepository {
-    private let modelContext: ModelContext
+    // Internal (not private) so the WordService+DailySet extension in its own
+    // file can fetch/save through the same context.
+    let modelContext: ModelContext
 
     init(modelContext: ModelContext) {
         self.modelContext = modelContext
@@ -165,101 +167,6 @@ final class WordService: WordRepository {
     /// The clamped daily goal used for selection.
     static func effectiveDailyGoal(_ userProgress: UserProgress) -> Int {
         max(minDailyWordGoal, userProgress.dailyWordGoal)
-    }
-
-    /// Sets the daily word goal and reshapes today's set in place so the change
-    /// takes effect immediately: growing appends fresh qualifying words from the
-    /// queue, shrinking trims trailing words. The `DailySet`'s completion set is
-    /// preserved, so already-practiced words stay done.
-    @discardableResult
-    func setDailyWordGoal(_ goal: Int, userProgress: UserProgress) throws -> DailySet {
-        let clamped = max(Self.minDailyWordGoal, goal)
-        userProgress.dailyWordGoal = clamped
-
-        let dayString = DailySet.todayString()
-        let descriptor = FetchDescriptor<DailySet>(predicate: #Predicate { $0.dayString == dayString })
-        guard let set = try modelContext.fetch(descriptor).first, !set.wordIds.isEmpty else {
-            // Nothing generated yet today — produce a fresh set at the new goal.
-            return try generateDailySet(for: Date(), userProgress: userProgress)
-        }
-
-        let current = set.wordIds
-        if clamped > current.count {
-            let allWords = try modelContext.fetch(FetchDescriptor<Word>())
-            let shuffled = deterministicShuffle(allWords, seed: userProgress.shuffleSeed)
-            let (more, newCursor) = selectQualifyingWords(
-                from: shuffled,
-                startingAt: userProgress.wordQueueCursor,
-                userProgress: userProgress,
-                count: clamped - current.count
-            )
-            let existing = Set(current)
-            set.wordIds = current + more.map(\.id).filter { !existing.contains($0) }
-            userProgress.wordQueueCursor = newCursor
-        } else if clamped < current.count {
-            set.wordIds = Array(current.prefix(clamped))
-        }
-
-        try modelContext.save()
-        return set
-    }
-
-    /// Reconciles today's set with the current stack selection (call right after
-    /// the user changes stacks). Completed words are always kept — never disturb
-    /// finished work — but incomplete words that no longer qualify (deselected
-    /// stack, now mastered/locked) are dropped and backfilled with fresh
-    /// qualifying words so the set stays at the daily goal. Returns the updated
-    /// set, or nil when there's nothing to reconcile.
-    @discardableResult
-    func reconcileTodaysSetWithSelection(userProgress: UserProgress) throws -> DailySet? {
-        let dayString = DailySet.todayString()
-        let descriptor = FetchDescriptor<DailySet>(predicate: #Predicate { $0.dayString == dayString })
-        guard let set = try modelContext.fetch(descriptor).first, !set.wordIds.isEmpty else { return nil }
-
-        let allWords = try modelContext.fetch(FetchDescriptor<Word>())
-        guard !allWords.isEmpty else { return nil }
-        let wordsById = Dictionary(allWords.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
-        let completed = set.completedWordIds
-        let activeStacks = userProgress.effectiveSelectedStacks
-
-        // Mirrors `qualifies(word:for:activeStacks:)` in WordService+Selection.
-        func incompleteStillQualifies(_ id: UUID) -> Bool {
-            guard let w = wordsById[id] else { return false }
-            return !userProgress.masteredWordIds.contains(w.id)
-                && w.unlockLevel <= userProgress.level
-                && activeStacks.contains(w.stack)
-        }
-
-        // Keep completed words and incomplete words that still qualify (preserve
-        // order); drop incomplete words that fell out of the new selection.
-        var kept: [UUID] = []
-        for id in set.wordIds where completed.contains(id) || incompleteStillQualifies(id) {
-            kept.append(id)
-        }
-
-        var changed = kept.count != set.wordIds.count
-        let goal = Self.effectiveDailyGoal(userProgress)
-        if kept.count < goal {
-            let shuffled = deterministicShuffle(allWords, seed: userProgress.shuffleSeed)
-            let (more, newCursor) = selectQualifyingWords(
-                from: shuffled,
-                startingAt: userProgress.wordQueueCursor,
-                userProgress: userProgress,
-                count: goal - kept.count
-            )
-            let existing = Set(kept)
-            let fresh = more.map(\.id).filter { !existing.contains($0) }
-            if !fresh.isEmpty {
-                kept += fresh
-                userProgress.wordQueueCursor = newCursor
-                changed = true
-            }
-        }
-
-        guard changed else { return set }
-        set.wordIds = kept
-        try modelContext.save()
-        return set
     }
 
     func fetchWord(byId id: UUID) throws -> Word? {

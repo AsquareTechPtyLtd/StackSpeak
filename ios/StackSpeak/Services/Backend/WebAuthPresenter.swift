@@ -10,11 +10,19 @@ import UIKit
 /// `@MainActor` class is implicitly `Sendable`, satisfying the seam.
 @MainActor
 final class WebAuthPresenter: NSObject, WebAuthPresenting {
+    /// Strong reference held *while the auth flow is underway* — Apple's docs
+    /// require this, otherwise ARC can release the session once `authenticate`'s
+    /// closure returns and the completion handler (which resumes the
+    /// continuation) never fires, hanging sign-in silently. Cleared in the
+    /// completion handler so a finished/cancelled session is released.
+    private var currentSession: ASWebAuthenticationSession?
+
     func authenticate(url: URL, callbackScheme: String) async throws -> URL {
         try await withCheckedThrowingContinuation { continuation in
             let session = ASWebAuthenticationSession(
                 url: url, callbackURLScheme: callbackScheme
-            ) { callbackURL, error in
+            ) { [weak self] callbackURL, error in
+                self?.currentSession = nil
                 if let callbackURL {
                     continuation.resume(returning: callbackURL)
                 } else {
@@ -23,7 +31,9 @@ final class WebAuthPresenter: NSObject, WebAuthPresenting {
             }
             session.presentationContextProvider = self
             session.prefersEphemeralWebBrowserSession = false
+            currentSession = session
             if !session.start() {
+                currentSession = nil
                 continuation.resume(throwing: BackendError.transport)
             }
         }

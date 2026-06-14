@@ -8,10 +8,14 @@ import CryptoKit
 /// framework (no SPM dependency — CLAUDE.md → "Backend & Sync").
 enum PKCE {
     /// A high-entropy code verifier: 48 random bytes → 64 URL-safe chars
-    /// (RFC 7636 permits 43–128).
-    static func codeVerifier() -> String {
+    /// (RFC 7636 permits 43–128). Throws if the system RNG fails rather than
+    /// returning a zero-entropy verifier (RFC 7636 §7.1) — the caller surfaces
+    /// a retryable sign-in error.
+    static func codeVerifier() throws -> String {
         var bytes = [UInt8](repeating: 0, count: 48)
-        _ = SecRandomCopyBytes(kSecRandomDefault, bytes.count, &bytes)
+        guard SecRandomCopyBytes(kSecRandomDefault, bytes.count, &bytes) == errSecSuccess else {
+            throw BackendError.transport
+        }
         return base64URL(Data(bytes))
     }
 

@@ -32,7 +32,7 @@ extension HomeView {
         }
         .buttonStyle(.plain)
         .accessibilityLabel(String(format: String(localized: "a11y.dayCounter.format"), done, total))
-        .accessibilityHint(Text(isPro ? "a11y.dayCounter.hint.pro" : "a11y.dayCounter.hint.free"))
+        .accessibilityHint(isPro ? Text("a11y.dayCounter.hint.pro") : Text("a11y.dayCounter.hint.free"))
     }
 
     /// Returns the last 10 calendar days (oldest → today) with the day's
