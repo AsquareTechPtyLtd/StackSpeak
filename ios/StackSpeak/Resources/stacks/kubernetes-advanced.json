@@ -466,26 +466,25 @@
     },
     {
       "id": "k8s-adv-0150-0000-0000-0000-000000000015",
-      "word": "Leader Election",
-      "pronunciation": "LEE-der ih-LEK-shun",
+      "word": "Server-Side Apply",
+      "pronunciation": "SUR-ver-syd uh-PLY",
       "partOfSpeech": "noun",
-      "shortDefinition": "Pattern where multiple controller replicas compete for a Kubernetes Lease object; only the holder acts as the active controller, enabling high-availability without split-brain.",
-      "simpleDefinition": "Running a single replica of a Kubernetes controller is a reliability anti-pattern — one crash means downtime. But running multiple replicas that all act simultaneously risks duplicate reconciliations and conflicting mutations. Leader election solves this: all replicas run, but only the one holding the Lease object is active; others stand by watching. If the leader crashes or fails to renew its lease within leaseDurationSeconds, a standby takes over by successfully updating the Lease's holderIdentity. The failover window is the lease duration — typically 15 seconds.",
-      "longDefinition": "Kubernetes uses the coordination.k8s.io/v1 Lease object as a distributed lock for leader election. A Lease stores the current holder's identity (a unique string, typically the pod name), the time the lease was last renewed (renewTime), the time it was acquired (acquireTime), and how many transitions have occurred (leaseTransitions). Active candidates call the Kubernetes API to update renewTime before leaseDurationSeconds expires; if a candidate misses its renewal window (due to crash, network partition, or GC pause), other candidates detect the stale lease and compete to acquire it via an optimistic-concurrency API update (using resourceVersion — only the first update wins). The controller-runtime library (used by Kubebuilder and Operator SDK) provides leader election via the --leader-elect flag, wiring it to the manager's lifecycle automatically. Core Kubernetes components — kube-controller-manager and kube-scheduler — use the same lease-based mechanism with leases in kube-system. The practical effect: you can run three replicas of your operator for HA, and a node draining the leader pod causes a <15-second gap in reconciliation (not a full outage). During the gap, Kubernetes state remains consistent — nothing is corrupted — the operator just isn't responding to events.",
-      "connector": "Think of leader election like a relay race baton: all runners (replicas) are warmed up and ready; only the one holding the baton (Lease) runs at full speed. If the baton-holder stumbles, they pass it in an orderly hand-off, and another runner continues the race within seconds.",
-      "techContext": "Our cert-manager operator runs three replicas; during a planned node drain, the leader election lease transitions in under 10 seconds, and certificate renewal processing resumes without any certificate expiry.",
-      "exampleSentence": "The operator entered a split-brain state because two pods simultaneously believed they held the lease — investigation revealed a Kubernetes API server latency spike had caused the renewal to time out on the leader's side while still processing.",
+      "shortDefinition": "Kubernetes declarative update mechanism where the API server tracks per-field ownership across managers, raising explicit conflicts instead of silently overwriting fields.",
+      "simpleDefinition": "Server-Side Apply (SSA) is a way to apply Kubernetes manifests where the API server computes the diff and tracks which manager owns each field. When you apply a manifest, the API server records a managed-fields entry for your manager identity. Multiple controllers can manage different fields on the same object without conflict. If two managers try to own the same field, SSA raises a conflict error rather than silently overwriting, forcing explicit ownership resolution.",
+      "longDefinition": "Before Server-Side Apply, kubectl apply used a client-side three-way merge stored in the last-applied-configuration annotation. Fields managed by other controllers (HPA setting replicas, a webhook injecting a sidecar) were sometimes stripped on the next apply. Server-Side Apply (alpha in 1.14, beta in 1.16, GA in 1.22) moves merge logic into the API server and adds field ownership. Each manager identifies itself; the API server tracks which manager owns which field in a metadata.managedFields map. On a conflict where two managers claim the same field, SSA returns a 409 Conflict error. The applying client must pass --force-conflicts to take ownership, making the conflict visible and intentional rather than silent. SSA uses a structured merge strategy based on the OpenAPI schema, which understands lists keyed by a merge key: containers are merged by name, not by index. Removing an item from a list in your manifest correctly removes only that item rather than replacing the whole list. Controller patterns benefit most: a controller declares exactly the fields it manages and can be confident that other actors will not accidentally overwrite them.",
+      "connector": "Think of Server-Side Apply like a shared document where each collaborator has edit rights only to their own highlighted sections: two people can work simultaneously, and the document system prevents them from overwriting each other, flagging any overlap for explicit resolution.",
+      "techContext": "After migrating our CI pipeline to Server-Side Apply, the Horizontal Pod Autoscaler stopped being reset to its default replica count on every deploy: CI now owns only the image tag field while HPA retains exclusive ownership of spec.replicas.",
+      "exampleSentence": "Server-Side Apply conflict detection caught a bug in our operator where it was inadvertently claiming ownership of podAnnotations managed by the secrets-injector webhook, preventing a silent annotation wipe on every reconcile.",
       "codeExample": {
-        "language": "go",
-        "code": "// controller-runtime leader election (Go operator)\nmgr, err := ctrl.NewManager(ctrl.GetConfigOrDie(), ctrl.Options{\n    Scheme:                 scheme,\n    LeaderElection:         true,\n    LeaderElectionID:       \"my-operator-leader\",\n    LeaseDuration:          lo.ToPtr(15 * time.Second),\n    RenewDeadline:          lo.ToPtr(10 * time.Second),\n    RetryPeriod:            lo.ToPtr(2 * time.Second),\n})\n// Only the leader's controllers and webhooks are started;\n// standbys block on the lease acquisition call."
+        "language": "bash",
+        "code": "# Apply with Server-Side Apply; --field-manager names your actor\nkubectl apply --server-side \\\n  --field-manager=my-ci-pipeline \\\n  -f deployment.yaml\n\n# Force-take ownership of a conflicting field (explicit resolution)\nkubectl apply --server-side \\\n  --field-manager=my-ci-pipeline \\\n  --force-conflicts \\\n  -f deployment.yaml\n\n# Inspect which manager owns which fields\nkubectl get deployment my-app -o jsonpath='{.metadata.managedFields[*].manager}'"
       },
-      "etymology": "Leader from Old English lǣdan ('to guide') + election from Latin electio ('a choosing'). The compound describes the process by which a distributed group of replicas chooses one to lead — borrowed from distributed systems research (Paxos, Raft) and adapted for the Kubernetes Lease API.",
+      "etymology": "Server-Side distinguishes where merge logic runs from the client-side approach used by classic kubectl apply. Apply from Latin applicare ('to attach, bring into contact') meaning to make desired state match reality. Introduced under this name in Kubernetes 1.14.",
       "unlockLevel": 16,
       "tags": [
         "kubernetes",
-        "architecture",
-        "availability",
-        "patterns"
+        "api",
+        "controller-patterns"
       ],
       "category": "patterns",
       "backingCard": {
@@ -697,26 +696,25 @@
     },
     {
       "id": "k8s-adv-0230-0000-0000-0000-000000000023",
-      "word": "containerd",
-      "pronunciation": "kun-TAYN-er-dee",
+      "word": "Descheduler",
+      "pronunciation": "dee-SHED-yoo-ler",
       "partOfSpeech": "noun",
-      "shortDefinition": "The CNCF-graduated container runtime that kubelet communicates with via CRI to manage image pulls, overlay snapshots, and container process lifecycle.",
-      "simpleDefinition": "containerd is the container runtime that actually runs containers on every Kubernetes node. kubelet does not talk to Docker (Docker was removed in Kubernetes 1.24); it talks to containerd via the Container Runtime Interface (CRI). containerd handles image pulling from registries, unpacking OCI image layers into overlay filesystems (snapshots), starting and stopping container processes (via runc as the default OCI runtime), and managing container logs. It is the default runtime on GKE, EKS, AKS, and most production Kubernetes distributions.",
-      "longDefinition": "containerd was extracted from Docker (as the lower-level runtime) in 2017 and donated to the CNCF, graduating in 2019. It follows a layered architecture: containerd itself manages the high-level lifecycle (image management, container metadata, task scheduling); it delegates actual process execution to a shimv2-based OCI runtime (default: runc, alternatives: kata-agent for Kata Containers, runsc for gVisor). The shim layer decouples containerd's lifecycle from the container process — if containerd restarts, the shim keeps the container running and re-attaches. The CRI plugin built into containerd (since 1.1) allows kubelet to communicate via the CRI gRPC interface without an intermediate adapter. containerd uses a plugin architecture: you can enable or disable features (CRI, snapshotter, garbage collector) and configure them independently. The snapshotter manages the layered filesystem: for each container, containerd creates a read-write overlay layer on top of the image's read-only layers (using overlayfs, zfs, or other backends). containerd also hosts the nerdctl CLI (Docker-compatible command-line tool) and is increasingly used directly in serverless runtimes (AWS Lambda, Fargate) for its lightweight footprint.",
-      "connector": "Think of containerd like the logistics engine of a shipping company — it manages the warehouse (image storage), coordinates the loading dock (image pulls from registry), and dispatches delivery drivers (runc processes) to move containers to their destinations, all without being the truck driver itself.",
-      "techContext": "After the Docker shim deprecation, we updated our CI/CD pipelines to use nerdctl (the containerd-native CLI) for local image builds and debugged a cni plugin issue by inspecting containerd's snapshot metadata directly.",
-      "exampleSentence": "The node was failing to pull large images because the containerd snapshot store was full — clearing the dangling snapshots with ctr snapshot rm freed 40 GB and restored scheduling capacity.",
+      "shortDefinition": "Kubernetes component that evicts pods violating scheduling policies or causing node imbalance, triggering the scheduler to reassign them under current cluster conditions.",
+      "simpleDefinition": "The Kubernetes scheduler places pods at creation time but does not revisit decisions afterward. Over time, cluster conditions change: nodes are added, taints are updated, load becomes uneven. The Descheduler (a Kubernetes SIG-Scheduling project) periodically audits running pod placements and evicts pods that now violate policies or could be placed more optimally. Evicted pods are recreated by their controller and re-scheduled from scratch against current cluster state.",
+      "longDefinition": "The Descheduler runs as a CronJob or Deployment and implements pluggable policies called strategies. RemoveDuplicates evicts redundant pods when two from the same ReplicaSet land on the same node. LowNodeUtilization identifies underutilized nodes (below configured CPU and memory thresholds) and evicts pods from overloaded nodes so they reschedule onto the underutilized ones. RemovePodsViolatingNodeTaints and RemovePodsViolatingNodeAffinity evict pods whose current node no longer satisfies the constraints that existed at scheduling time. RemovePodsHavingTooManyRestarts evicts crash-looping pods so their controller can reschedule them, useful when a fresh node may break the loop. PodLifeTime evicts long-running pods to enforce maximum lifetimes, useful for pods that accumulate memory leaks or stale state. The Descheduler always respects PodDisruptionBudgets and will not evict a pod if doing so would violate a budget, so Descheduler activity cannot cause availability incidents. It is not part of the core Kubernetes distribution and must be deployed separately from the kubernetes-sigs/descheduler repository.",
+      "connector": "Think of the Descheduler like a seating rearrangement manager at a concert venue: the original usher seated everyone at the door, but once the hall fills unevenly, the manager walks the rows and moves people from overcrowded sections to empty ones, always respecting reserved seats.",
+      "techContext": "After adding three new nodes to a hot cluster, pods remained concentrated on original nodes until we deployed the Descheduler with LowNodeUtilization strategy: within two runs it redistributed roughly 40% of workloads, cutting p99 latency on the busy nodes by a third.",
+      "exampleSentence": "Without the Descheduler, pods evicted during a brief node outage were all rescheduled onto the next available node, creating a hotspot; the Descheduler rebalanced the cluster within minutes of the node returning.",
       "codeExample": {
-        "language": "bash",
-        "code": "# List running containers via containerd's CLI\nsudo ctr containers list\n\n# List images cached by containerd\nsudo ctr images list\n\n# Pull an image directly through containerd\nsudo ctr images pull docker.io/library/nginx:1.25\n\n# Inspect containerd config and CRI plugin status\nsudo crictl info | jq '.config.containerdEndpoint'"
+        "language": "yaml",
+        "code": "# Descheduler policy ConfigMap (v0.28+ profile format)\napiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: descheduler-policy\n  namespace: kube-system\ndata:\n  policy.yaml: |\n    apiVersion: descheduler/v1alpha2\n    kind: DeschedulerPolicy\n    profiles:\n    - name: default\n      plugins:\n        balance:\n          enabled:\n          - LowNodeUtilization\n        deschedule:\n          enabled:\n          - RemovePodsViolatingNodeAffinity\n          - RemovePodsViolatingNodeTaints\n      pluginConfig:\n      - name: LowNodeUtilization\n        args:\n          thresholds:\n            cpu: 20\n            memory: 20\n          targetThresholds:\n            cpu: 50\n            memory: 50"
       },
-      "etymology": "A portmanteau of 'container' + 'd' (Unix daemon suffix). The name signals its role as the background daemon service managing container lifecycle, analogous to systemd or Docker's dockerd.",
+      "etymology": "De- (Latin prefix 'undo, reverse') plus Scheduler from Late Latin schedulare ('to assign to a list'). The name reflects its function: revisiting and undoing suboptimal placement decisions made by the original scheduler.",
       "unlockLevel": 16,
       "tags": [
         "kubernetes",
-        "containers",
-        "infrastructure",
-        "internals"
+        "scheduling",
+        "cluster-management"
       ],
       "category": "components",
       "backingCard": {

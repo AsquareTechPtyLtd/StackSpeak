@@ -135,7 +135,13 @@ struct HomeView: View {
             statusLine(progress: progress)
                 .padding(.horizontal, theme.spacing.lg)
 
-            if viewModel.todaysWords.isEmpty && viewModel.errorMessage == nil {
+            if !viewModel.hasLoaded {
+                // Still computing today's set — show a spinner rather than
+                // briefly flashing the all-mastered state on the empty list.
+                ProgressView()
+                    .frame(maxWidth: .infinity)
+                    .padding(.top, theme.spacing.xxl)
+            } else if viewModel.todaysWords.isEmpty && viewModel.errorMessage == nil {
                 // The most engaged users land here — give them somewhere to go.
                 EmptyStateView(
                     icon: "checkmark.seal.fill",

@@ -153,101 +153,101 @@
     },
     {
       "id": "de-adv-0070-0000-0000-0000-000000000007",
-      "word": "Backpressure",
-      "pronunciation": "BAK-presh-er",
+      "word": "broadcast join",
+      "pronunciation": "BRAWT-kast JOIN",
       "partOfSpeech": "noun",
-      "shortDefinition": "A flow-control mechanism in stream processing that slows producers when downstream consumers cannot keep pace, preventing buffer overflow and data loss.",
-      "simpleDefinition": "Backpressure is the signal a slow consumer sends upstream to tell producers to slow down. Without it, a fast producer overwhelms a slow consumer, causing memory exhaustion, dropped messages, or cascading failures. With it, the system degrades gracefully at the bottleneck instead of crashing.",
-      "longDefinition": "In streaming pipelines, data arrives faster than downstream operators can process it during load spikes. Without backpressure, intermediate buffers fill, then overflow — causing either memory exhaustion (the job crashes) or message drops (data is lost). Backpressure is a feedback loop: the slow downstream operator signals congestion upstream, which throttles the source. Apache Flink implements credit-based backpressure natively: each downstream task grants a 'credit' for how many buffers it can accept; upstream tasks only send when credit is available. This propagates automatically through the operator graph — if a sink is slow, the Kafka source consumer slows down automatically. Reactive Streams (the Java specification) formalizes the same pattern for library-level stream processing. In data ingestion contexts, backpressure prevents a slow warehouse write from causing the Kafka consumer to fall behind and trigger rebalancing.",
-      "techContext": "Flink's web UI exposes backpressure metrics per task: a task showing HIGH backpressure is the bottleneck. The diagnostic pattern is to start from the sink and trace backward — the first operator showing HIGH backpressure in the output direction is the source of the slowdown. Scaling that operator (adding parallelism) or optimizing its logic (reducing per-record processing time) resolves it.",
-      "exampleSentence": "When the Iceberg write sink slowed during compaction, Flink's backpressure propagated upstream and automatically throttled the Kafka consumer, keeping consumer lag stable instead of exploding.",
-      "etymology": "From fluid dynamics: 'backpressure' is the resistance a fluid encounters when moving through a pipe — the slower outlet exerts pressure back toward the source. Applied metaphorically to data flow systems.",
-      "connector": "Like traffic lights on a freeway on-ramp — when the highway is full, the signal slows the cars entering rather than letting them pile up at the merge.",
+      "shortDefinition": "A distributed query optimization that replicates a small table to every worker node, eliminating expensive cross-partition shuffle for large-table joins.",
+      "simpleDefinition": "When joining a large partitioned table to a small lookup table, a broadcast join copies the entire small table to every worker rather than shuffling both sides. Workers process their partition of the large table locally against the in-memory copy of the small table, so no data moves across the network for the join itself.",
+      "longDefinition": "In distributed query engines (Spark, Flink, Trino, BigQuery), a standard hash join on two large tables requires a shuffle: all rows with the same join key must be moved to the same partition before the join executes. Shuffle is expensive — it involves serialization, network transfer, and deserialization across potentially hundreds of nodes. A broadcast join eliminates the shuffle on one side: the optimizer identifies that one relation is small enough to fit in memory on every worker (typically below a configurable threshold — Spark's default is 10 MB, often raised to 50–200 MB in production). The query planner broadcasts the small table to all workers once; each worker then performs a local hash lookup against its shard of the large table. The result is that the large table is never moved — only the small table crosses the network, and it does so once per worker. Broadcast joins are the primary optimization technique for star-schema queries where a large fact table joins to small dimension tables: broadcasting `dim_customer` (a few million rows) against a billion-row `fact_orders` table eliminates the shuffle entirely. The risk is over-broadcasting: if the small table estimate is wrong and the table is larger than worker memory, the executor crashes with an OOM error. Explicit hints (`/*+ BROADCAST(dim) */` in Spark SQL, `BROADCAST JOIN` in BigQuery) override the optimizer's automatic decision when the planner misestimates table size.",
+      "techContext": "In Spark, set `spark.sql.autoBroadcastJoinThreshold` to control the automatic broadcast threshold. The Spark UI's SQL plan shows 'BroadcastHashJoin' versus 'SortMergeJoin' — seeing SortMergeJoin on a known-small dimension table means the planner lacks accurate statistics. Running `ANALYZE TABLE dim_customer COMPUTE STATISTICS FOR ALL COLUMNS` in Hive-metastore catalogs (or equivalents in Iceberg and Delta) provides the statistics the planner needs to choose broadcast automatically.",
+      "exampleSentence": "Adding a broadcast hint on the 50 MB customer dimension table converted a 4-minute sort-merge join to a 12-second broadcast join against the 2 billion row fact table.",
+      "etymology": "From 'broadcast' (to transmit to all receivers simultaneously, from radio broadcasting) and 'join' (a relational algebra operation combining two relations) — the small table is transmitted to all workers simultaneously rather than directed to specific partitions.",
+      "connector": "Like a teacher handing out a single reference sheet to every student before an exam — instead of students passing one shared copy around, everyone has it locally and can work independently.",
       "codeExample": {
-        "language": "text",
-        "code": "Flink backpressure propagation\n\nKafka Source  →  Transform  →  Iceberg Sink\n   (fast)         (fast)       (SLOW: compacting)\n\nBackpressure signal propagates upstream:\n\nKafka Source  ←  Transform  ←  Iceberg Sink\n  (throttled)    (throttled)   (bottleneck)\n\nResult: consumer lag stays constant;\n        no memory overflow;\n        no dropped messages"
+        "language": "python",
+        "code": "from pyspark.sql import SparkSession\nfrom pyspark.sql.functions import broadcast\n\nspark = SparkSession.builder.getOrCreate()\n\nfact_orders = spark.table(\"fact_orders\")       # 2 billion rows\ndim_customer = spark.table(\"dim_customer\")     # 5 million rows\n\n# Explicit broadcast hint: dim_customer is replicated to every worker\nresult = fact_orders.join(\n    broadcast(dim_customer),\n    on=\"customer_id\",\n    how=\"left\",\n)\n\n# Equivalent SQL hint\nspark.sql(\"\"\"\n    SELECT /*+ BROADCAST(c) */ f.order_id, c.tier, f.amount_usd\n    FROM fact_orders f\n    JOIN dim_customer c ON f.customer_id = c.customer_id\n\"\"\")"
       },
       "unlockLevel": 16,
       "tags": [
         "data-engineering",
         "advanced",
-        "streaming",
-        "reliability"
+        "performance",
+        "distributed"
       ],
-      "category": "concepts"
+      "category": "patterns"
     },
     {
       "id": "de-adv-0080-0000-0000-0000-000000000008",
-      "word": "Feature Store",
-      "pronunciation": "FEE-cher STOR",
+      "word": "query federation",
+      "pronunciation": "KWEER-ee fed-er-AY-shun",
       "partOfSpeech": "noun",
-      "shortDefinition": "A centralized system that manages ML feature computation, storage, versioning, and serving for both training and real-time inference.",
-      "simpleDefinition": "A feature store gives ML models a shared, reliable source of input features. It writes the same feature values to a slow offline store (for batch training) and a fast online store (for real-time serving), so training and inference use identical computation logic and eliminate training-serving skew.",
-      "longDefinition": "Without a feature store, ML teams compute training features in a notebook using pandas and serving features in application code using SQL — two implementations of the same logic that inevitably diverge. The feature store solves this structurally: one feature definition powers both paths. The offline store (typically a data warehouse table or S3 Parquet) holds historical feature values for every entity at every point in time — used for point-in-time correct training dataset assembly. The online store (Redis, DynamoDB, or Cassandra) holds the latest feature values per entity for sub-10ms inference retrieval. Feature stores also handle versioning (a model can pin to a specific feature version), monitoring (track distribution drift between training and serving), and sharing (team A's user engagement feature is reused by team B without recomputation). Open-source options: Feast, Hopsworks. Managed: Tecton, Databricks Feature Store, Vertex AI Feature Store.",
-      "techContext": "The feature store's dual-write pattern is its core guarantee: the same feature pipeline writes to both the offline and online stores simultaneously. A point-in-time query like `feature_store.get_historical_features(entity_df, features, timestamp_col)` handles the temporal join automatically, returning features as they existed at each label timestamp — eliminating the most common source of feature leakage.",
-      "exampleSentence": "After deploying Feast as their feature store, the recommendation team saw training accuracy hold in production for the first time — previously, a pandas/SQL split had caused silent skew.",
-      "etymology": "A compound of 'feature' (an individual input variable to a machine learning model) and 'store' (a system that persists and retrieves data) — the warehouse specifically for ML input signals.",
-      "connector": "Like a shared library that both the test suite and the production server import — the logic is guaranteed identical because there is only one copy.",
+      "shortDefinition": "Executing a single SQL query transparently across multiple independent data stores or catalogs without first moving data into one system.",
+      "simpleDefinition": "Query federation lets you write one SQL statement that spans a Postgres database, a Snowflake warehouse, and an S3 data lake simultaneously. A federation engine rewrites and routes the query fragments to each source, then assembles the result — so analysts never need to know which data lives where.",
+      "longDefinition": "Query federation addresses the reality that organizations rarely centralize all data in one store. Data lives in operational databases (Postgres, MySQL), cloud warehouses (Snowflake, BigQuery, Redshift), data lakes (S3 Parquet, Iceberg tables), SaaS APIs, and streaming stores — each optimized for its own workload. Federation engines intercept a SQL query, parse it into a logical plan, split that plan into fragments executable by each source system, push each fragment down to the appropriate engine (leveraging predicate pushdown and projection pushdown to minimize data transfer), and assemble the partial results into a unified answer. The canonical architecture separates the query planner (the federation engine) from the execution engines (each source system runs its own fragment). Trino (formerly PrestoSQL) is the dominant open-source federation engine: connectors for Hive, Iceberg, Delta Lake, Postgres, MySQL, Elasticsearch, Kafka, and dozens more allow a single Trino cluster to query all of them from one SQL statement. AWS Athena Federated Query uses Lambda connectors to extend the same pattern into serverless execution. Apache Arrow Flight SQL and the Iceberg REST Catalog are emerging standards that further reduce connector complexity. The primary performance challenge is cross-source joins: when two tables from different systems must be joined, one side must be transferred to the other. Federation planners use cost-based optimizers to choose which side to broadcast, but large cross-source joins remain expensive and should be avoided in latency-sensitive paths.",
+      "techContext": "Trino federation connectors allow the data platform team to expose a single logical schema to analysts that spans Iceberg tables in S3, transactional tables in Postgres, and real-time aggregates in Pinot — enabling cross-domain queries without an ETL pipeline to consolidate data first.",
+      "exampleSentence": "After deploying Trino for query federation, analysts could join the operational Postgres customer table to the Iceberg warehouse orders table in a single SELECT statement, eliminating the overnight ETL job that had been the only path to that cross-domain query.",
+      "etymology": "Federation from Latin foedus ('treaty, compact') — the engine forms a cooperative agreement between independent data stores, each retaining sovereignty over its own data while participating in a unified query surface.",
+      "connector": "Like a translator at a multilingual summit — each diplomat speaks their own language, the translator routes each message to the right interpreter, and everyone hears a coherent conversation.",
       "codeExample": {
-        "language": "python",
-        "code": "from feast import FeatureStore\n\nstore = FeatureStore(repo_path=\".\")\n\n# Training: point-in-time correct historical features\ntraining_df = store.get_historical_features(\n    entity_df=labels_df,   # has user_id + label_timestamp\n    features=[\n        \"user_stats:total_purchases\",\n        \"user_stats:days_since_last_order\",\n    ],\n).to_df()\n\n# Serving: sub-10ms online feature retrieval\nonline_features = store.get_online_features(\n    features=[\"user_stats:total_purchases\"],\n    entity_rows=[{\"user_id\": 1234}],\n).to_dict()"
+        "language": "sql",
+        "code": "-- Trino federated query: join Postgres (operational) with Iceberg (warehouse)\n-- Both sources queried in one statement; Trino routes fragments to each\nSELECT\n    c.customer_id,\n    c.email,\n    o.order_total,\n    o.order_date\nFROM postgresql.app_db.customers AS c          -- Postgres connector\nJOIN iceberg.analytics.fact_orders AS o        -- Iceberg / S3 connector\n  ON c.customer_id = o.customer_id\nWHERE o.order_date >= DATE '2026-01-01'\n  AND c.account_status = 'active'\nORDER BY o.order_total DESC\nLIMIT 1000;"
       },
       "unlockLevel": 16,
       "tags": [
         "data-engineering",
         "advanced",
-        "ml",
-        "infrastructure"
+        "distributed",
+        "query"
       ],
-      "category": "components"
+      "category": "patterns"
     },
     {
       "id": "de-adv-0090-0000-0000-0000-000000000009",
-      "word": "Point-in-Time Correctness",
-      "pronunciation": "POYNT-in-TYM kuh-REKT-nes",
+      "word": "surrogate key",
+      "pronunciation": "SUR-uh-git KEE",
       "partOfSpeech": "noun",
-      "shortDefinition": "The guarantee that features in a training dataset reflect the state of the world at the label's timestamp, not the state when the dataset was assembled.",
-      "simpleDefinition": "Point-in-time correctness means every training row joins feature values as they existed when the prediction should have been made — not today's values. Using current feature values for historical labels is feature leakage, and it causes models that evaluate well but fail in production.",
-      "longDefinition": "The canonical leakage scenario: you train a churn model. The label is 'did the customer churn in month 3?' The feature includes 'customer tier.' If the customer upgraded their tier in month 2 — after churning — the training data shows the post-churn tier against the pre-churn label. The model learns a correlation that will not exist at inference time. Point-in-time correctness fixes this by joining each training row to the feature table snapshot valid at the label timestamp. This requires SCD Type 2 history (or daily snapshots) in feature tables, not just the current state. Feature stores automate point-in-time joins as a first-class operation: `get_historical_features(entity_df, feature_list, timestamp_col)` handles the temporal join automatically. The diagnostic signal: a model that achieves unusually high training accuracy but underperforms in production almost always has leakage — audit the training features before investigating the model architecture.",
-      "techContext": "Implementing point-in-time joins in raw SQL requires BETWEEN joins on validity ranges from SCD Type 2 dimension tables. At scale with millions of training examples and hundreds of features, this becomes expensive — feature stores optimize it by partitioning the offline store by timestamp and executing the join with efficient range scans. Tecton and Feast both expose `as_of_timestamp` parameters natively.",
-      "exampleSentence": "After enforcing point-in-time correctness, the fraud model's production AUC matched its offline evaluation metric for the first time — previous versions had silently leaked post-fraud features into training.",
-      "etymology": "A compound of 'point in time' (a specific moment in the past) and 'correctness' (accuracy relative to a specification) — the feature value must be the value that was true at that specific moment, not later.",
-      "connector": "Like a detective who may only use clues available before the crime — any future information in the training set contaminates the evidence.",
+      "shortDefinition": "A system-generated synthetic identifier that uniquely identifies a dimension row independently of any natural business attribute.",
+      "simpleDefinition": "A surrogate key is a meaningless integer or UUID that the warehouse assigns to each row in a dimension table. It replaces the business key (order number, customer email, product SKU) as the join column used inside the warehouse. Because it is generated by the data platform and carries no business semantics, it never changes when the source system changes its keys.",
+      "longDefinition": "In the Kimball dimensional modeling methodology, every dimension table gets a surrogate key as its primary key, and fact tables reference dimensions exclusively via these surrogate keys. The business key (the natural key from the source system) is also stored in the dimension, but is not used as the join column. This separation provides three guarantees. First, source-system key changes do not break warehouse joins — if a CRM migrates from integer customer IDs to UUIDs, only the dimension ETL changes; fact table joins continue unchanged. Second, slowly changing dimensions (SCD Type 2) become trivially implementable: each historical version of a dimension row gets its own surrogate key, so fact rows are permanently tied to the version of the entity that existed when the fact occurred. Third, cross-source integration is clean: two source systems with overlapping natural keys (both have a customer with ID 101) can coexist in the same dimension with distinct surrogate keys and a source-system discriminator column. Surrogate keys are typically generated via a sequence (integer identity columns) in SQL warehouses, or via a deterministic hash of the business key plus source system identifier (MD5 or SHA-256 truncated) to enable idempotent dimension loads without a sequence.",
+      "techContext": "The deterministic hash approach to surrogate key generation — MD5 or SHA-256 of the natural key concatenated with a source-system constant — is preferable to identity sequences for warehouse dimension loads because it makes the load idempotent: the same source row always generates the same surrogate key, so re-running a dimension ETL does not produce duplicate keys. The natural key must include the source system discriminator to avoid collisions across systems.",
+      "exampleSentence": "After introducing surrogate keys into the customer dimension, the migration from the legacy integer customer IDs to UUIDs in the source CRM required changes only in the dimension ETL — every fact table join continued working without modification.",
+      "etymology": "From Latin 'surrogatus' (substituted); 'surrogate' in general English means a substitute. In dimensional modeling, the surrogate key stands in as a substitute for the natural business identifier inside the analytical system.",
+      "connector": "Like an employee badge number — it is assigned by the company, carries no meaning outside the building, and never changes even if the employee's name or department does.",
       "codeExample": {
         "language": "sql",
-        "code": "-- Point-in-time correct join: customer tier as-of the label date\nSELECT\n  t.customer_id,\n  t.label_date,\n  t.churned,\n  c.tier          AS tier_at_label_time\nFROM training_labels t\nJOIN customer_history c\n  ON  t.customer_id = c.customer_id\n  AND t.label_date BETWEEN c.valid_from AND COALESCE(c.valid_to, CURRENT_DATE)\n-- customer_history is SCD Type 2; each row covers a validity window"
+        "code": "-- Dimension table with surrogate key generated from business key\nCREATE TABLE dim_customer (\n    customer_sk       BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,  -- surrogate key\n    customer_id       VARCHAR(64)  NOT NULL,  -- natural key from source CRM\n    source_system     VARCHAR(32)  NOT NULL,  -- discriminator for multi-source\n    customer_name     VARCHAR(255) NOT NULL,\n    email             VARCHAR(255),\n    tier              VARCHAR(32),\n    valid_from        DATE NOT NULL,\n    valid_to          DATE,          -- NULL = current row (SCD Type 2)\n    is_current        BOOLEAN NOT NULL DEFAULT TRUE,\n    UNIQUE (customer_id, source_system, valid_from)\n);\n\n-- Fact table references dimension via surrogate key only\nCREATE TABLE fact_orders (\n    order_id       VARCHAR(64) PRIMARY KEY,\n    customer_sk    BIGINT REFERENCES dim_customer(customer_sk),  -- surrogate\n    order_date     DATE NOT NULL,\n    order_total    NUMERIC(12, 2)\n);"
       },
       "unlockLevel": 16,
       "tags": [
         "data-engineering",
         "advanced",
-        "ml",
-        "data-quality"
+        "dimensional-modeling",
+        "warehouse"
       ],
       "category": "concepts"
     },
     {
       "id": "de-adv-0100-0000-0000-0000-000000000010",
-      "word": "Training-Serving Skew",
-      "pronunciation": "TRAY-ning SER-ving SKYOO",
+      "word": "data skew",
+      "pronunciation": "DAY-tuh SKYOO",
       "partOfSpeech": "noun",
-      "shortDefinition": "The degradation in ML model performance caused by differences between how features are computed at training time versus inference time.",
-      "simpleDefinition": "Training-serving skew occurs when the feature transformations used to build a training dataset differ from those applied at inference. The model trains on data it will never see in production, leading to evaluation metrics that overstate real-world performance.",
-      "longDefinition": "Training-serving skew is one of the most common and least visible causes of ML production failures. Common causes: different code paths (training uses a pandas transform in a notebook; serving uses SQL in an API — same logic, different implementations, different edge-case behavior); missing value handling (training imputes null with the mean; serving returns 0 — the model never saw 0 in training); normalization scale mismatch (training normalizes using training-set statistics; serving uses hardcoded constants from months ago); timezone discrepancies (day-of-week computed in UTC during training, in local time at serving). Prevention strategies: define all feature transformations in a single function callable from both the training pipeline and the serving pipeline; log actual feature values used at inference and compare their distribution to the training distribution weekly; use a feature store where training and serving share the same registered feature computation. Detection signal: model performance degrades gradually after deployment without any change to the model or labels.",
-      "techContext": "The most reliable detection mechanism is logging serving feature values and comparing their distribution (mean, variance, histogram) to the training feature distributions. A feature whose serving distribution shifts beyond a threshold (e.g., KL divergence > 0.1) is a candidate for skew investigation. Tools like Evidently AI and WhyLogs automate this monitoring for production ML systems.",
-      "exampleSentence": "The lead scoring model's production performance was 15% below offline evaluation — investigation revealed serving computed 'days_since_signup' in Pacific Time while training had used UTC.",
-      "etymology": "A compound of 'training' (the batch process of fitting a model), 'serving' (the real-time process of using the model), and 'skew' (statistical divergence between distributions) — the gap between what the model learned and what it sees.",
-      "connector": "Like a recipe where the test kitchen uses butter and the production kitchen uses margarine — similar in theory, different in result, and the taste test exposes the gap.",
+      "shortDefinition": "Uneven distribution of records across partitions or workers, causing a small number of tasks to process far more data than the others.",
+      "simpleDefinition": "Data skew happens when a distributed join or aggregation sends a disproportionate share of records to one partition. In practice this means one Spark executor or Flink subtask processes millions of rows while its siblings process thousands. The slow task bottlenecks the entire stage — the job cannot finish until the last task finishes.",
+      "longDefinition": "In a distributed system, parallelism works by splitting data into roughly equal partitions. Data skew breaks that assumption. The classic trigger is a join on a key whose values are not uniformly distributed: joining orders to customers where a handful of large accounts have millions of order rows. All rows with customer_id = 'MEGA_CORP' hash to the same partition, producing a 'hot partition' that one worker must process alone while all others sit idle waiting for it. The symptom: a Spark stage that reaches 99% complete and stalls for ten minutes — the last task is the skewed one. Skew also manifests in GROUP BY aggregations when a few key values hold most of the data, and in streaming systems when a hot Kafka partition overloads one consumer. Solutions fall into two categories. Mitigation at data time: use salting (append a random integer to the hot key before the join, multiply the smaller side to match all salt values, join, then strip the salt and re-aggregate). Mitigation at query time: use the engine's AQE (Adaptive Query Execution in Spark 3+, which detects hot partitions at runtime and splits them automatically), or broadcast joins for small dimensions (avoids the shuffle entirely for one side). Diagnosing skew: in the Spark UI, compare min/max/median task durations in a stage — a large spread between median and max task duration signals skew on the long-tail partition.",
+      "techContext": "Spark 3.0 introduced Adaptive Query Execution (AQE) with `spark.sql.adaptive.skewJoin.enabled = true` (default true) which detects and automatically splits skewed partitions during a shuffle join without requiring application code changes. For streaming skew, Kafka consumer-group partition rebalancing and per-partition consumer lag monitoring are the primary tools.",
+      "exampleSentence": "The nightly orders-to-customers join was completing in 45 minutes until the team discovered that one enterprise account represented 40% of all order rows — after salting the hot key, the same join finished in four minutes.",
+      "etymology": "From 'skew' (statistical asymmetry in a distribution); in distributed computing, 'skew' describes the asymmetry in partition sizes or workloads rather than the classical statistical distribution shape.",
+      "connector": "Like a road where all trucks are routed down one lane while the other lanes are empty — the traffic jam is not a capacity problem, it is a distribution problem.",
       "codeExample": {
         "language": "python",
-        "code": "# Define features in ONE shared function\ndef compute_user_features(df):\n    df[\"days_since_signup\"] = (\n        pd.Timestamp.utcnow() - pd.to_datetime(df[\"signup_date\"], utc=True)\n    ).dt.days\n    df[\"purchase_rate_30d\"] = df[\"purchases_30d\"] / 30.0\n    df[\"purchase_rate_30d\"] = df[\"purchase_rate_30d\"].fillna(0.0)\n    return df\n\n# Training pipeline\ntrain_df = compute_user_features(raw_train_df)\n\n# Serving pipeline — identical function, zero skew\nserving_df = compute_user_features(raw_serving_df)"
+        "code": "from pyspark.sql import functions as F\n\n# Fix skew: salt the hot key before joining\nSALT_BUCKETS = 20\n\n# Add a random salt to the large (skewed) table\norders_salted = orders.withColumn(\n    \"salt\",\n    (F.rand() * SALT_BUCKETS).cast(\"int\")\n).withColumn(\"customer_id_salted\", F.concat_ws(\"_\", \"customer_id\", \"salt\"))\n\n# Explode the small (customers) table to match all salt values\ncustomers_salted = customers.withColumn(\n    \"salt\",\n    F.explode(F.array([F.lit(i) for i in range(SALT_BUCKETS)]))\n).withColumn(\"customer_id_salted\", F.concat_ws(\"_\", \"customer_id\", \"salt\"))\n\n# Join on the salted key — partition load is now uniform\nresult = orders_salted.join(\n    customers_salted, on=\"customer_id_salted\"\n).drop(\"salt\", \"customer_id_salted\")"
       },
       "unlockLevel": 16,
       "tags": [
         "data-engineering",
         "advanced",
-        "ml",
-        "data-quality"
+        "distributed",
+        "performance"
       ],
       "category": "concepts"
     },
@@ -278,26 +278,26 @@
     },
     {
       "id": "de-adv-0120-0000-0000-0000-000000000012",
-      "word": "Vector Database",
-      "pronunciation": "VEK-ter DAY-tuh-bays",
+      "word": "data governance",
+      "pronunciation": "DAY-tuh GUV-ern-uns",
       "partOfSpeech": "noun",
-      "shortDefinition": "A database optimized for storing and querying high-dimensional vector embeddings using approximate nearest-neighbor search algorithms.",
-      "simpleDefinition": "A vector database stores dense numerical vectors (embeddings) and answers queries of the form 'find the N most similar vectors to this query vector.' It enables semantic search, recommendation, and retrieval-augmented generation — tasks that keyword search cannot handle well.",
-      "longDefinition": "Traditional databases return exact matches on equality or range predicates. Vector databases return approximate nearest neighbors in a high-dimensional space (typically 768–3072 dimensions). The core algorithm is approximate nearest neighbor (ANN) search, implemented via indexing structures: HNSW (Hierarchical Navigable Small World graphs, the dominant algorithm) or IVF (Inverted File Index, faster to build, slower to query). Purpose-built options include Pinecone, Weaviate, Qdrant, Milvus, and Chroma; existing databases with vector extensions include pgvector (PostgreSQL), Redis with the vector module, and warehouse-native options (Snowflake Cortex Search, BigQuery Vector Search). As of 2026, pgvector with HNSW indexing handles 5–10 million vectors competently; beyond that scale, dedicated stores have a measurable performance advantage. The decision framework: use pgvector if you already run Postgres and volume is under 10M vectors; use a dedicated store for production RAG or search at larger scale; use warehouse-native vector search if the workload combines structured SQL filters with similarity queries and you are already on that warehouse.",
-      "techContext": "Vector databases support pre-filtering (apply metadata filters before ANN search) and post-filtering (search broadly, then filter results). Pre-filtering is more accurate but requires more index design; post-filtering is simpler but can reduce recall if the filter is highly selective. Metadata stored alongside vectors (source document ID, date, content type) enables hybrid queries: 'find documents similar to X that were published after 2025.'",
-      "exampleSentence": "The support team deployed Qdrant as their vector database, enabling semantic search over 2 million knowledge-base articles in under 50ms per query.",
-      "etymology": "From 'vector' (a mathematical object with magnitude and direction, here a fixed-length array of floating-point numbers representing semantic content) and 'database' (a system for storing and querying data).",
-      "connector": "Like a full-text search index, but for meaning rather than keywords — 'similar question' instead of 'matching words.'",
+      "shortDefinition": "The set of policies, processes, roles, and standards that ensure data is accurate, secure, discoverable, and used responsibly across an organization.",
+      "simpleDefinition": "Data governance defines who owns data, who can access it, how it must be classified, how long it is retained, and what quality standards it must meet. Without it, the same metric means different things to different teams, sensitive data sits in unsecured tables, and regulatory audits become fire drills.",
+      "longDefinition": "Data governance addresses the organizational and operational dimensions of data management that pure engineering cannot solve. It answers questions such as: who is the authoritative owner of the revenue definition — Finance or Data Engineering? Which tables contain PII and who is permitted to query them? How long must order records be retained for tax compliance, and how do we certify deletion for GDPR right-to-erasure requests? What quality thresholds must a table meet before it can be designated 'trusted' on the data catalog? The governance framework typically comprises four pillars. Data ownership assigns a named business owner and engineering steward to every domain dataset, establishing accountability for quality and access. Data classification labels assets by sensitivity (public, internal, confidential, PII) to drive automated access controls and handling requirements. Data quality standards define explicit SLAs for freshness, completeness, and accuracy per table tier, with monitoring and alerting. Data lineage and cataloging provide discoverability — engineers and analysts should be able to find what data exists, understand what it means, and trace its origin. The tooling ecosystem (DataHub, Collibra, Alation, Atlan, Apache Atlas) provides catalog interfaces, lineage graphs, policy enforcement, and access management. Governance is most expensive when retrofitted into an existing data platform — embedding ownership, classification, and quality checks at ingestion time is the architectural pattern that makes the cost manageable.",
+      "techContext": "Column-level access control is the technical enforcement layer for data governance: masking PII columns for non-authorized roles in Snowflake (Dynamic Data Masking), BigQuery (column-level security policies), or Databricks Unity Catalog. Unity Catalog as of 2026 is the most comprehensive implementation, combining table-level ACLs, column masking, row-level filters, audit logs, and lineage in a single governance layer for Databricks workspaces.",
+      "exampleSentence": "After implementing data governance with Unity Catalog, the security audit that previously took three weeks was completed in two days — column-level PII classifications and access logs were queryable directly from the catalog.",
+      "etymology": "From 'governance' (from Latin 'gubernare', to steer or govern); 'data governance' emerged as a formal discipline in enterprise data management during the early 2000s, formalized in frameworks like DAMA-DMBOK.",
+      "connector": "Like a building's fire code — invisible when everything is working, indispensable when something goes wrong, and far cheaper to comply with from the start than to retrofit later.",
       "codeExample": {
-        "language": "python",
-        "code": "from qdrant_client import QdrantClient\nfrom qdrant_client.models import Distance, VectorParams, PointStruct\n\nclient = QdrantClient(url=\"http://localhost:6333\")\n\n# Create collection\nclient.create_collection(\n    collection_name=\"knowledge_base\",\n    vectors_config=VectorParams(size=1536, distance=Distance.COSINE),\n)\n\n# Insert vectors with metadata\nclient.upsert(\n    collection_name=\"knowledge_base\",\n    points=[PointStruct(id=doc_id, vector=embedding, payload={\"source\": \"docs\", \"date\": \"2026-05-01\"})],\n)\n\n# Semantic search with metadata filter\nresults = client.search(\n    collection_name=\"knowledge_base\",\n    query_vector=query_embedding,\n    query_filter={\"must\": [{\"key\": \"source\", \"match\": {\"value\": \"docs\"}}]},\n    limit=5,\n)"
+        "language": "sql",
+        "code": "-- Snowflake: Dynamic Data Masking policy to protect PII\n-- Analysts see 'XXXX-XXXX', data engineers see the real value\nCREATE OR REPLACE MASKING POLICY pii_email_mask\n  AS (val STRING) RETURNS STRING ->\n    CASE\n      WHEN CURRENT_ROLE() IN ('DATA_ENGINEER', 'DBA') THEN val\n      ELSE '****@****.***'\n    END;\n\n-- Apply masking policy to the sensitive column\nALTER TABLE dim_customer\n  MODIFY COLUMN email\n  SET MASKING POLICY pii_email_mask;\n\n-- Governance metadata: tag the column as PII\nALTER TABLE dim_customer\n  MODIFY COLUMN email\n  SET TAG governance.pii_classification = 'email';"
       },
       "unlockLevel": 16,
       "tags": [
         "data-engineering",
         "advanced",
-        "vector",
-        "ml"
+        "governance",
+        "compliance"
       ],
       "category": "components"
     },

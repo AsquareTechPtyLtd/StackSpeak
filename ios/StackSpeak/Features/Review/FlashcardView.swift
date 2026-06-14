@@ -15,11 +15,12 @@ struct FlashcardView: View {
     let word: Word
     let onAgain: () -> Void
     let onGood: () -> Void
+    let onEasy: () -> Void
 
     /// One haptic channel for all card events (mirrors AssessmentView's
     /// enum-trigger pattern); the counter makes repeats of the same kind fire.
     private struct FeedbackEvent: Equatable {
-        enum Kind { case flip, again, good }
+        enum Kind { case flip, again, good, easy }
         var count = 0
         var kind: Kind?
 
@@ -58,7 +59,7 @@ struct FlashcardView: View {
         .sensoryFeedback(trigger: feedback) { _, new in
             switch new.kind {
             case .flip, .again: return .impact(weight: .light)
-            case .good: return .success
+            case .good, .easy: return .success
             case nil: return nil
             }
         }
@@ -129,41 +130,39 @@ struct FlashcardView: View {
         .transition(.opacity)
     }
 
+    /// Again (lapse) → Got it (clean recall) → Easy (effortless), worst-to-best
+    /// left-to-right. Easy is the only grade that raises the SM-2 easiness
+    /// factor, letting a well-known card stretch out faster.
     private var actionButtons: some View {
-        HStack(spacing: theme.spacing.lg) {
-            Button {
-                feedback.fire(.again)
-                onAgain()
-                reset()
-            } label: {
-                Text("review.flashcard.again")
-                    .font(TypographyTokens.headline)
-                    .foregroundColor(theme.colors.bad)
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, theme.spacing.lg)
-                    .background(theme.colors.bad.opacity(0.10))
-                    .clipShape(.rect(cornerRadius: RadiusTokens.card))
-            }
-            .buttonStyle(.plain)
-            .accessibilityHint(Text("a11y.flashcard.again.hint"))
-
-            Button {
-                feedback.fire(.good)
-                onGood()
-                reset()
-            } label: {
-                Text("review.flashcard.gotIt")
-                    .font(TypographyTokens.headline)
-                    .foregroundColor(theme.colors.good)
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, theme.spacing.lg)
-                    .background(theme.colors.good.opacity(0.10))
-                    .clipShape(.rect(cornerRadius: RadiusTokens.card))
-            }
-            .buttonStyle(.plain)
-            .accessibilityHint(Text("a11y.flashcard.gotIt.hint"))
+        HStack(spacing: theme.spacing.md) {
+            gradeButton(titleKey: "review.flashcard.again", hintKey: "a11y.flashcard.again.hint",
+                        color: theme.colors.bad, kind: .again, action: onAgain)
+            gradeButton(titleKey: "review.flashcard.gotIt", hintKey: "a11y.flashcard.gotIt.hint",
+                        color: theme.colors.good, kind: .good, action: onGood)
+            gradeButton(titleKey: "review.flashcard.easy", hintKey: "a11y.flashcard.easy.hint",
+                        color: theme.colors.accent, kind: .easy, action: onEasy)
         }
         .padding(.horizontal, theme.spacing.xl)
+    }
+
+    private func gradeButton(titleKey: LocalizedStringKey, hintKey: LocalizedStringKey,
+                             color: Color, kind: FeedbackEvent.Kind,
+                             action: @escaping () -> Void) -> some View {
+        Button {
+            feedback.fire(kind)
+            action()
+            reset()
+        } label: {
+            Text(titleKey)
+                .font(TypographyTokens.headline)
+                .foregroundColor(color)
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, theme.spacing.lg)
+                .background(color.opacity(0.10))
+                .clipShape(.rect(cornerRadius: RadiusTokens.card))
+        }
+        .buttonStyle(.plain)
+        .accessibilityHint(Text(hintKey))
     }
 
     private func reset() {
@@ -203,7 +202,8 @@ private func previewWord() -> Word {
     FlashcardView(
         word: previewWord(),
         onAgain: {},
-        onGood: {}
+        onGood: {},
+        onEasy: {}
     )
     .withTheme(ThemeManager())
 }
@@ -212,7 +212,8 @@ private func previewWord() -> Word {
     FlashcardView(
         word: previewWord(),
         onAgain: {},
-        onGood: {}
+        onGood: {},
+        onEasy: {}
     )
     .withTheme(ThemeManager())
     .preferredColorScheme(.dark)

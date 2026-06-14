@@ -13,6 +13,9 @@ final class ReviewState {
         static let qualityFailThreshold = 3
         static let firstInterval = 1
         static let secondInterval = 6
+        /// Maximum ± fraction the due-date offset is jittered by. Spreads cards
+        /// that share an interval ladder so they don't all resurface together.
+        static let intervalFuzz = 0.1
     }
 
     var wordId: UUID
@@ -36,23 +39,47 @@ final class ReviewState {
     func updateAfterReview(quality: Int, now: Date = Date(), calendar: Calendar = .current) {
         lastReviewedAt = now
 
+        // SM-2 adjusts the easiness factor on EVERY review, including lapses —
+        // this is what makes the schedule adapt to a card's difficulty. The
+        // update must NOT live only in the pass branch: with the Again=2 /
+        // Good=4 grades this app uses, Good yields ΔEF = 0, so an EF update
+        // gated on success alone never moves and every card collapses to a
+        // fixed interval ladder. Applying it here lets a lapse (q<3) dock EF
+        // and permanently slow a struggled card.
+        let qDelta = Double(5 - quality)
+        let efAdjustment = SM2.easinessIncrement - qDelta * (SM2.easinessQualityCoeff + qDelta * SM2.easinessQualitySquaredCoeff)
+        easinessFactor = max(SM2.minEasiness, easinessFactor + efAdjustment)
+
         if quality < SM2.qualityFailThreshold {
             repetitions = 0
             interval = SM2.firstInterval
         } else {
-            let qDelta = Double(5 - quality)
-            let efAdjustment = SM2.easinessIncrement - qDelta * (SM2.easinessQualityCoeff + qDelta * SM2.easinessQualitySquaredCoeff)
-            easinessFactor = max(SM2.minEasiness, easinessFactor + efAdjustment)
-
             switch repetitions {
             case 0: interval = SM2.firstInterval
             case 1: interval = SM2.secondInterval
             default: interval = Int(Double(interval) * easinessFactor)
             }
-
             repetitions += 1
         }
 
-        dueDate = calendar.date(byAdding: .day, value: interval, to: now) ?? now
+        // Jitter only the scheduled due date, never the stored `interval`, so
+        // the SM-2 ladder stays clean (no compounding drift) while two cards
+        // sharing an interval land on different days.
+        let offset = max(1, Int((Double(interval) * intervalJitter).rounded()))
+        dueDate = calendar.date(byAdding: .day, value: offset, to: now) ?? now
+    }
+
+    /// Stable multiplier in `[1 - intervalFuzz, 1 + intervalFuzz]` derived from
+    /// `wordId`, so the schedule stays deterministic and reproducible (no RNG)
+    /// while different cards get different offsets.
+    private var intervalJitter: Double {
+        var hash: UInt64 = 14695981039346656037  // FNV-1a 64-bit offset basis
+        withUnsafeBytes(of: wordId.uuid) { bytes in
+            for byte in bytes {
+                hash = (hash ^ UInt64(byte)) &* 1099511628211
+            }
+        }
+        let fraction = Double(hash % 1000) / 999.0          // 0...1
+        return (1 - SM2.intervalFuzz) + fraction * (SM2.intervalFuzz * 2)
     }
 }

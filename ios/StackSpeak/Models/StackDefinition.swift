@@ -3,6 +3,9 @@ import Foundation
 struct StackDefinition: Codable, Identifiable {
     let id: String
     let name: String
+    /// Short, level-free topic label for chips (e.g. "Web Security", "Git").
+    /// Tolerant: falls back to `name` when absent in the data.
+    let shortName: String
     let file: String
     let wordCount: Int
     let description: String
@@ -13,13 +16,15 @@ struct StackDefinition: Codable, Identifiable {
     let category: StackTopic
 
     private enum CodingKeys: String, CodingKey {
-        case id, name, file, wordCount, description, icon, minimumLevel, isMandatory, category
+        case id, name, shortName, file, wordCount, description, icon, minimumLevel, isMandatory, category
     }
 
-    init(id: String, name: String, file: String, wordCount: Int, description: String,
-         icon: String, minimumLevel: Int, isMandatory: Bool, category: StackTopic = .other) {
+    init(id: String, name: String, shortName: String? = nil, file: String, wordCount: Int,
+         description: String, icon: String, minimumLevel: Int, isMandatory: Bool,
+         category: StackTopic = .other) {
         self.id = id
         self.name = name
+        self.shortName = shortName ?? name
         self.file = file
         self.wordCount = wordCount
         self.description = description
@@ -33,6 +38,7 @@ struct StackDefinition: Codable, Identifiable {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         id = try c.decode(String.self, forKey: .id)
         name = try c.decode(String.self, forKey: .name)
+        shortName = try c.decodeIfPresent(String.self, forKey: .shortName) ?? name
         file = try c.decode(String.self, forKey: .file)
         wordCount = try c.decode(Int.self, forKey: .wordCount)
         description = try c.decode(String.self, forKey: .description)
@@ -47,6 +53,7 @@ struct StackDefinition: Codable, Identifiable {
         var c = encoder.container(keyedBy: CodingKeys.self)
         try c.encode(id, forKey: .id)
         try c.encode(name, forKey: .name)
+        try c.encode(shortName, forKey: .shortName)
         try c.encode(file, forKey: .file)
         try c.encode(wordCount, forKey: .wordCount)
         try c.encode(description, forKey: .description)

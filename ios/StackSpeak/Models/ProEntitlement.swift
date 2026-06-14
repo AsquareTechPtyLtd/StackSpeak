@@ -6,9 +6,20 @@ import Foundation
 enum ProEntitlement {
     static let monthlyProductId = "com.stackspeak.ios.pro.monthly"
     static let yearlyProductId = "com.stackspeak.ios.pro.yearly"
+    static let lifetimeProductId = "com.stackspeak.ios.pro.lifetime"
+
+    /// Auto-renewing subscriptions — these carry an expiry.
+    static let subscriptionProductIds: Set<String> = [monthlyProductId, yearlyProductId]
+    /// One-time non-consumable that grants Pro permanently (no expiry).
+    static let lifetimeProductIds: Set<String> = [lifetimeProductId]
 
     /// All product IDs that grant Pro.
-    static let productIds: Set<String> = [monthlyProductId, yearlyProductId]
+    static let productIds: Set<String> = subscriptionProductIds.union(lifetimeProductIds)
+
+    /// Whether `productID` is the one-time lifetime purchase rather than a subscription.
+    static func isLifetime(_ productID: String) -> Bool {
+        lifetimeProductIds.contains(productID)
+    }
 
     /// The expiry to persist given the latest verified transaction expiries.
     /// Returns nil when there is nothing to apply.
@@ -33,6 +44,19 @@ enum ProEntitlement {
         }
         progress.isPro = true
         progress.proExpiryDate = max(progress.proExpiryDate ?? .distantPast, expiry)
+        return true
+    }
+
+    /// Grants permanent Pro from a verified lifetime (non-consumable) purchase.
+    /// Sets the lifetime flag, which `isProActive` honours regardless of any
+    /// subscription expiry. Idempotent — never downgrades.
+    ///
+    /// - Returns: true when the progress record was modified.
+    @discardableResult
+    static func applyLifetime(to progress: UserProgress) -> Bool {
+        guard !progress.isLifetimePro else { return false }
+        progress.isLifetimePro = true
+        progress.isPro = true
         return true
     }
 }

@@ -46,8 +46,15 @@ final class PurchaseService: PurchaseRepository {
         isLoadingProducts = true
         defer { isLoadingProducts = false }
         do {
+            // Subscriptions first (cheapest → priciest), then the one-time
+            // lifetime option last, so the paywall reads monthly → yearly → lifetime.
             proProducts = try await Product.products(for: ProEntitlement.productIds)
-                .sorted { $0.price < $1.price }
+                .sorted { lhs, rhs in
+                    let lLifetime = ProEntitlement.isLifetime(lhs.id)
+                    let rLifetime = ProEntitlement.isLifetime(rhs.id)
+                    if lLifetime != rLifetime { return !lLifetime }
+                    return lhs.price < rhs.price
+                }
         } catch {
             logger.error("Product load failed: \(error.localizedDescription, privacy: .public)")
         }
@@ -84,13 +91,19 @@ final class PurchaseService: PurchaseRepository {
     /// extend the stored expiry.
     func refreshEntitlement() async {
         var expirations: [Date] = []
+        var hasLifetime = false
         for await result in Transaction.currentEntitlements {
             guard case .verified(let transaction) = result,
-                  ProEntitlement.productIds.contains(transaction.productID),
-                  let expiry = transaction.expirationDate else { continue }
-            expirations.append(expiry)
+                  transaction.revocationDate == nil,
+                  ProEntitlement.productIds.contains(transaction.productID) else { continue }
+            if ProEntitlement.isLifetime(transaction.productID) {
+                hasLifetime = true
+            } else if let expiry = transaction.expirationDate {
+                expirations.append(expiry)
+            }
         }
         guard let progress = fetchUserProgress() else { return }
+        if hasLifetime { persistLifetime(to: progress) }
         persist(expiry: ProEntitlement.latestExpiry(from: expirations), to: progress)
     }
 
@@ -100,7 +113,11 @@ final class PurchaseService: PurchaseRepository {
         guard ProEntitlement.productIds.contains(transaction.productID),
               transaction.revocationDate == nil,
               let progress = fetchUserProgress() else { return }
-        persist(expiry: transaction.expirationDate, to: progress)
+        if ProEntitlement.isLifetime(transaction.productID) {
+            persistLifetime(to: progress)
+        } else {
+            persist(expiry: transaction.expirationDate, to: progress)
+        }
     }
 
     private func persist(expiry: Date?, to progress: UserProgress) {
@@ -110,6 +127,16 @@ final class PurchaseService: PurchaseRepository {
             logger.info("Pro entitlement updated, expires \(expiry?.description ?? "never", privacy: .public)")
         } catch {
             logger.error("Failed to persist Pro entitlement: \(error.localizedDescription, privacy: .public)")
+        }
+    }
+
+    private func persistLifetime(to progress: UserProgress) {
+        guard ProEntitlement.applyLifetime(to: progress) else { return }
+        do {
+            try modelContext.save()
+            logger.info("Pro lifetime entitlement granted")
+        } catch {
+            logger.error("Failed to persist lifetime entitlement: \(error.localizedDescription, privacy: .public)")
         }
     }
 
