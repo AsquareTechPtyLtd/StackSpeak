@@ -142,5 +142,3 @@ python3 scripts/check-words-content.py
 - Modify anything outside this project folder.
 - Add analytics or tracking.
 - Generate placeholder / lorem-ipsum content — real tech words only.
-
-(No SPM deps, no custom server, no committed secrets, design tokens over hardcoding, always write previews, and "don't duplicate PRD/code here" are covered by the rules above.)
