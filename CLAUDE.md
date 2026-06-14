@@ -1,185 +1,145 @@
 # CLAUDE.md
 
-Guidance for Claude Code (claude.ai/code) when working in this repository. **Rules and conventions only** — product spec lives in `docs/PRD.md`, and code is authoritative for implementation details.
+Rules and conventions for Claude Code in this repo. The product spec (the *what*) lives in `docs/PRD.md`; the code is authoritative for *how*. Don't duplicate either here.
 
 ## Where to look
 
-- **Product spec** (features, algorithms, level/stack system, notifications, onboarding, UX behavior) → `docs/PRD.md`
-- **Design tokens** (colors, typography, spacing, density) → `ios/StackSpeak/DesignSystem/Tokens.swift`
+- **Product spec** (features, algorithms, level/stack system, notifications, onboarding, UX) → `docs/PRD.md`
+- **Design tokens** (colors, typography, spacing, density) → `ios/StackSpeak/DesignSystem/Tokens.swift` + `Theme.swift`
 - **Data models** (Word schema, UserProgress, DailySet, ReviewState, WordStack enum, Level definitions) → `ios/StackSpeak/Models/`
-- **Services** (word rotation, progress, SRS scheduling, notifications, speech) → `ios/StackSpeak/Services/`
-- **Word data** — source of truth is `shared/words-index.json` (master index) and `shared/stacks/*.json` (one file per stack); iOS bundle copy at `ios/StackSpeak/Resources/` is synced via `scripts/sync-words.sh`
+- **Services** (word rotation, progress, SRS, notifications, speech, sync) → `ios/StackSpeak/Services/`
+- **Words** — source of truth is `shared/stacks/*.json` (one file per stack) + `shared/words-index.json`; bundle copy at `ios/StackSpeak/Resources/` is generated (see Content data).
+- **Books / learning content** — authored in `content/books/`, compiled to `shared/books/` + `shared/books-catalog.json`; app code in `ios/StackSpeak/Features/Books/`.
 
-If you need to know *what* a feature does, read the PRD. If you need to know *how* it's implemented, read the code. Do not duplicate either into this file.
-
-## StackSpeak — one-liner
+## One-liner
 
 Native iOS vocabulary app for developers. Delivers 5 technical words daily. MVP: iOS only (iPhone + iPad). Android is Phase 2.
 
 ## Tech Stack
 
 - **Language:** Swift 6.0 (strict concurrency enabled)
-- **UI:** SwiftUI
-- **Data:** SwiftData
-- **Notifications:** UserNotifications
-- **Speech:** Speech framework (voice input on sentence practice)
-- **Architecture:** MVVM
-- **Minimum Target:** iOS 18, iPadOS 18
-- **Bundle ID:** `com.stackspeak.ios`
-- **App Display Name:** `StackSpeak`
+- **UI:** SwiftUI · **Data:** SwiftData · **Architecture:** MVVM
+- **Notifications:** UserNotifications · **Speech:** Speech framework (voice input via `SpeechService`) · **Purchases:** StoreKit
+- **Minimum target:** iOS / iPadOS 18
 
 ## Repository Layout
 
+Top-level only (run `ls ios/StackSpeak/` for the app tree — it's feature-first and drifts):
+
 ```
 StackSpeak/
-├── CLAUDE.md               # This file — rules for Claude
-├── docs/
-│   └── PRD.md              # Product spec
-├── ios/
-│   ├── project.yml         # XcodeGen config → generates StackSpeak.xcodeproj
-│   ├── StackSpeak/         # iOS app source (feature-first, see below)
-│   └── StackSpeakTests/    # Unit tests (Swift Testing)
-├── shared/
-│   ├── words-index.json    # Master index listing all stacks
-│   └── stacks/             # One JSON file per stack (basic-web, backend, etc.)
-└── scripts/
-    ├── sync-words.sh
-    ├── check-words-sync.sh
-    └── download-fonts.sh
+├── docs/PRD.md          # product spec (the "what")
+├── ios/                 # XcodeGen project: project.yml → StackSpeak.xcodeproj (git-ignored)
+│   └── StackSpeak/       # app source (Features/, Models/, Services/, DesignSystem/, App/, …)
+├── shared/              # generated content the app bundles: stacks/, words-index.json, books/
+├── content/books/       # book authoring source → compiled into shared/books/
+├── supabase/migrations/ # SQL schema + RLS policies
+└── scripts/             # content sync + lint tooling
 ```
-
-iOS source is organized **feature-first** under `ios/StackSpeak/Features/` (Onboarding, Home, WordDetail, Practice, Review, Library, Profile). Shared infrastructure lives in `Models/`, `Services/`, `DesignSystem/`, `Extensions/`, `Resources/`. Run `ls ios/StackSpeak/` to see the current tree.
 
 ## One-Time Setup (new clone)
 
 ```bash
 brew install xcodegen
 ./scripts/download-fonts.sh       # Inter, JetBrains Mono, Instrument Serif
-cd ios && xcodegen generate       # generates StackSpeak.xcodeproj
-open StackSpeak.xcodeproj         # set Development Team in Signing & Capabilities
+cd ios && xcodegen generate       # generates StackSpeak.xcodeproj (git-ignored)
+open StackSpeak.xcodeproj          # set Development Team in Signing & Capabilities
 ```
 
-The generated `.xcodeproj` is git-ignored. Re-run `xcodegen generate` after pulling if project structure changes.
+Re-run `xcodegen generate` after pulling if project structure changes.
 
 ## Coding Rules
 
-### Core Principles
-- Follow MVVM strictly — no business logic in Views.
-- Support light and dark mode via `theme.colors` tokens. **Never hardcode colors, fonts, or spacing.**
-- All user-facing strings in `Localizable.strings` (English only for MVP).
-- One type per file, file name must match type name exactly. **Exception:** large SwiftUI views with shared `@State` may be split across multiple files using extensions, named `<TypeName>+<Concern>.swift` (e.g. `FeynmanCardView+Stages.swift`, `FeynmanCardView+Actions.swift`). Keep all stored properties + `init` + `body` in the primary file.
-- No files longer than 300 lines — split if needed.
+These are the canonical rules — the Definition of Done checks completion, it doesn't restate them.
+
+### Core principles
+- MVVM — no business logic in Views.
+- Light + dark via `theme.colors` tokens; **never hardcode colors, fonts, or spacing.**
+- User-facing strings in `Localizable.strings` (English only for MVP).
+- One type per file, filename = type name. **Exception:** large SwiftUI views with shared `@State` split via `<TypeName>+<Concern>.swift` extensions (e.g. `FeynmanCardView+Stages.swift`); keep stored properties + `init` + `body` in the primary file.
+- No file over 300 lines — split if needed.
 
 ### Swift / SwiftUI
-- SwiftUI for ALL UI — no UIKit unless absolutely unavoidable (e.g., `SFSpeechRecognizer` bridging).
-- Every view must support both iPhone and iPad layouts.
-- Every model must be `Codable`.
-- Every view has preview providers with light + dark variants (compact + roomy where relevant).
-- Use Swift concurrency (`async/await`) — no callbacks or completion handlers.
-- Use `@Observable` (Swift 6 Observation framework) for ViewModels, not `ObservableObject`.
-- Do not use `@ObservedObject` where `@StateObject` is correct.
+- SwiftUI for all UI; UIKit only when unavoidable (e.g. `SFSpeechRecognizer` bridging).
+- Every view supports iPhone + iPad and ships preview providers with light + dark variants (compact + roomy where relevant).
+- Every model is `Codable` (content ships as JSON).
+- `async/await` only — no completion handlers.
+- `@Observable` (Observation framework) for ViewModels — not `ObservableObject`.
 
 ### Dependencies
-Apple frameworks only. **No Swift Package Manager dependencies.**
+Apple frameworks only — **no Swift Package Manager dependencies** (incl. the Supabase Swift SDK; see Backend & Sync). Allowed: SwiftUI, SwiftData, Foundation, UserNotifications, Speech, StoreKit. If something feels like it needs a library, discuss first.
 
-**Allowed:** SwiftUI, SwiftData, Foundation, UserNotifications, Speech, Combine, StoreKit.
+### Backend & Sync (Supabase)
+Cross-platform progress sync (iPhone ↔ iPad ↔ Android) uses **Supabase** over its **REST API** (PostgREST + GoTrue Auth) with plain **`URLSession`** — *not* the Supabase Swift SDK (it's SPM). No other backend, and never a custom server.
 
-**Not allowed:** Any third-party package (Alamofire, SnapKit, Lottie, etc.). If something feels like it needs a library, discuss first.
+- **All backend access goes behind the `BackendService` protocol.** Only `SupabaseBackendService` (the one production conformer; `NoOpBackendService` is the null object) knows it's Supabase — never call vendor endpoints from ViewModels/services/views. Switching backends = one new conformer.
+- The synced record is a **platform-neutral `ProgressSnapshot`** (compact, versioned JSON blob, one row per user) so iOS and Android serialize the *identical* shape. Entitlement fields (`isPro`/`proExpiryDate`/`isLifetimePro`) are **not** synced — each device derives Pro from its own store.
+- **Tiering:** within-ecosystem backup is free; **cross-platform sync is Pro-gated** (`isProActive`) and is the only path that touches the backend. Sync runs only once a real account is linked (Apple, email, or Google).
+- **Sign-in providers — all SDK-free.** Apple (native `ASAuthorization` id-token grant), email/password (GoTrue), and Google (**GoTrue web OAuth + PKCE via `ASWebAuthenticationSession`** — *not* Google's SDK). New providers follow the same rule: Apple frameworks or a web-OAuth flow behind the `WebAuthPresenting` seam, never a vendor SDK. Adding a social login obliges offering Sign in with Apple too (App Store 4.8 — already shipped).
+- **No anonymous sessions.** A backend session is created *only* on a real sign-in. There is no anonymous bootstrap — `ensureSession` resumes a stored session or throws (`.notAuthenticated`, or `.sessionExpired` on a permanently-revoked refresh token → clears the link + prompts re-auth). (An anonymous user could never sync — it's account-linked + Pro-gated — and would just litter the DB.) "Allow anonymous sign-ins" is **disabled** in the Supabase project; keep it off, and don't reintroduce anonymous sign-in on either platform.
+- **Login is optional — never a startup wall.** The app is fully usable signed-out (local-only); sign-in is offered in Profile, not required (a mandatory login risks App Store rejection under 5.1.1). Identity (login) and entitlement (Pro) are independent: show sign-in regardless of Pro, gate *syncing* on Pro. Sign-in does, however, refresh StoreKit entitlements so an existing same-Apple-ID purchase auto-restores (no extra "Get Pro" tap) — surfacing an existing purchase, never granting Pro for free.
+- `DailySet` (today's word set + completion) is **per-day and intentionally NOT synced** — it regenerates each day/device, so "0/5" after a restore is expected, not data loss. The daily *count* defaults to 5 but is **Pro-configurable** (`dailyWordGoal`, min 3, no max) and **is** synced as a preference; changing stacks or the goal reshapes today's incomplete words in place (completed words are preserved).
+- **Secrets:** the anon/publishable key + project URL may ship in the client (safe only because Row Level Security restricts each user to their own row); they load from a **git-ignored config**, never hardcoded. The service_role key and DB password never touch the app, repo, or any commit.
+- SQL schema + RLS policies live in `supabase/migrations/`.
+
+## Content data (words & books)
+
+Two pipelines feed the iOS bundle. **Never edit `ios/StackSpeak/Resources/` directly** — it's generated. Commit `shared/` + `Resources/` together.
+
+- **Words** — edit `shared/stacks/*.json` (source of truth, named `<domain>-<tier>`, e.g. `api-basic.json`, `gcp-basic.json`) and `shared/words-index.json`, then `./scripts/sync-words.sh`. Stacks are split per-file for token efficiency.
+- **Books** — author in `content/books/` (custom `@chapter`/`@card`/`@explanation`/`@feynman` format), compile with `node scripts/build-books.js` → `shared/books/` + `shared/books-catalog.json`, then `./scripts/sync-books.sh`.
 
 ## Testing
 
-- **Framework:** Swift Testing (not XCTest).
-- **Scope:** ViewModels and Services. Skip UI tests for MVP — rely on SwiftUI Previews for visual verification.
-- **Test files** live in `ios/StackSpeakTests/` mirroring the source structure (e.g., `Features/Home/HomeViewModelTests.swift`).
-
-**Critical paths that MUST have tests:**
-- Word rotation (deterministic shuffle, mastered/locked exclusion, stack filtering)
-- Streak calculation (consecutive days, broken streaks, timezone/date edges)
-- Daily set completion (all 5 words practiced before marking complete)
-- Level progression (threshold met before advancing; streak break does not drop level)
-- SRS scheduling (SM-2 formulas produce expected intervals)
-- UserProgress persistence (survives app relaunch)
+- **Framework:** Swift Testing (not XCTest). Tests live in `ios/StackSpeakTests/` mirroring source (e.g. `Features/Home/HomeViewModelTests.swift`).
+- **Scope:** ViewModels and Services. Skip UI tests for MVP — rely on SwiftUI Previews.
+- **Critical paths that MUST have tests:** word rotation (deterministic shuffle, mastered/locked exclusion, stack filtering); streak calculation (consecutive/broken streaks, timezone edges); daily-set completion (all 5 practiced before complete); level progression (threshold before advancing; streak break doesn't drop level); SRS scheduling (SM-2 intervals); UserProgress persistence (survives relaunch).
 
 ## Definition of Done
 
-A feature is complete when:
-- Compiles without warnings
-- Works on iPhone and iPad simulators in light + dark mode, both density modes
-- Has SwiftUI preview providers with light + dark variants
-- Follows MVVM — no business logic in Views
-- New ViewModels and Services have unit tests per Testing rules above
-- All user-facing strings in `Localizable.strings`
-- Uses design tokens (no hardcoded colors, fonts, or spacing)
-- Accessibility verified: Dynamic Type scales correctly; VoiceOver labels on all interactive elements
-- No orphaned TODO comments or commented-out code
+Beyond the Coding Rules above, a feature is done when:
+- Compiles without warnings; verified on iPhone + iPad simulators, light + dark, both density modes.
+- New ViewModels/Services have unit tests (see Testing).
+- Accessibility: Dynamic Type scales correctly; VoiceOver labels on all interactive elements.
+- No orphaned TODOs or commented-out code.
+- Word-data changes pass `scripts/check-words-content.py` — no stubs, no index drift, no unintended cross-stack duplicate terms, and a `shortDefinition` never contains its own term (it's the multiple-choice quiz answer).
 
 ## Development Commands
 
 ```bash
-# Generate Xcode project (run after adding/removing files)
+# Generate Xcode project (after adding/removing files)
 cd ios && xcodegen generate && cd ..
 
-# Build (any available iOS Simulator)
+# Build (any available simulator)
 xcodebuild -project ios/StackSpeak.xcodeproj -scheme StackSpeak -destination 'generic/platform=iOS Simulator'
+
+# Compile-check fast (no booted simulator — useful headless/CI)
+xcodebuild build-for-testing -project ios/StackSpeak.xcodeproj -scheme StackSpeak -destination 'generic/platform=iOS Simulator' -quiet
 
 # Run tests
 xcodebuild test -project ios/StackSpeak.xcodeproj -scheme StackSpeak -destination 'generic/platform=iOS Simulator'
 
-# Build for a specific simulator
-xcodebuild -project ios/StackSpeak.xcodeproj -scheme StackSpeak -destination 'platform=iOS Simulator,name=iPhone 17'
-
-# List available simulators
-xcrun simctl list devices available
-
-# Open in Xcode
-open ios/StackSpeak.xcodeproj
-
-# Sync word data from shared/ to iOS bundle (index + stack files)
+# Sync content to the iOS bundle (after editing shared/ or content/books/)
 ./scripts/sync-words.sh
+node scripts/build-books.js && ./scripts/sync-books.sh
 
-# Verify word data is in sync
+# Verify sync + lint content
 ./scripts/check-words-sync.sh
+./scripts/check-books-sync.sh
+python3 scripts/check-words-content.py
 ```
 
-## Data Synchronization
+## Workflow Conventions
 
-**Word data is split by stack to reduce token usage.** The source of truth lives in `shared/`:
-- `shared/words-index.json` — master index listing all available stacks
-- `shared/stacks/*.json` — one file per stack (e.g., `basic-web.json`, `backend.json`)
+- **Git cadence:** batch pushes after ~5 file-changing commits, not per-fix. Commit/push only when asked; if on `main`, branch first.
+- **Feature branches:** major multi-commit work lands on a feature branch, merged with `--no-ff`. Open a PR when ready; if a branch is *stacked* on another open PR, merge the base PR first so the new PR diffs cleanly against `main`.
+- **Planning docs:** plans, roadmaps, review write-ups go in `.planning/` as dated files (e.g. `feature-x-2026-06-13.md`). `.planning/` is **git-ignored** (local scratch) — durable cross-session state also belongs in auto-memory.
+- **Confirm scope before building:** a screenshot or hint is not approval — confirm placement/scope first.
+- **Verify before claiming done:** compile with `build-for-testing`; cross-file SourceKit "cannot find type" errors are usually a missing build index, not real — trust a clean build over the editor.
+- **Delegating to subagents:** point them at the minimal context they need (the relevant file/dir + the related `docs/PRD.md` section), not this whole file.
 
-**Never edit files in `ios/StackSpeak/Resources/` directly** — they are synced from `shared/`.
+## What Claude should NOT do
 
-**Workflow:**
-1. Edit stack files in `shared/stacks/` or add new ones.
-2. Update `shared/words-index.json` if adding/removing stacks.
-3. Run `./scripts/sync-words.sh` to copy everything to the iOS bundle.
-4. Commit both `shared/` and `ios/StackSpeak/Resources/` together.
-
-Run `./scripts/check-words-sync.sh` to verify sync. Suitable for CI or a pre-commit hook.
-
-**Why split by stack?**
-- Only loads relevant words for active stacks (token efficiency)
-- Easier to maintain (work on one domain at a time)
-- Scales to 500+ words without bloating context
-
-## Agent Task Routing
-
-When delegating work to subagents, point them at the minimal context they need rather than dumping this file:
-
-- **UI / theming tasks** → read `ios/StackSpeak/DesignSystem/Tokens.swift` and `Theme.swift`
-- **Data model / schema tasks** → read `ios/StackSpeak/Models/`
-- **Business logic (rotation, progression, SRS)** → read the relevant service in `ios/StackSpeak/Services/` + related section in `docs/PRD.md`
-- **Feature behavior / product questions** → read `docs/PRD.md`
-- **New feature work** → read `docs/PRD.md` for intent, then relevant files under `Features/` for patterns
-
-## What Claude Should NOT Do
-
-- Do not modify anything outside this project folder
-- Do not add Swift Package Manager dependencies
-- Do not create a backend or server
-- Do not add analytics or tracking
-- Do not generate placeholder / lorem ipsum content — use real tech words only
-- Do not skip writing preview providers
-- Do not hardcode colors, fonts, or spacing — always use design tokens
-- Do not start Android work — it's deferred to Phase 2
-- Do not duplicate product spec or implementation details into this file — link to `docs/PRD.md` or the relevant code
+- Modify anything outside this project folder.
+- Add analytics or tracking.
+- Generate placeholder / lorem-ipsum content — real tech words only.

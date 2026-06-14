@@ -4,33 +4,35 @@ import SwiftData
 // Section builders for HomeView — split out per the <TypeName>+<Concern>.swift
 // convention. Stored properties + body remain in HomeView.swift.
 extension HomeView {
-    /// Compact badge showing today's completion (e.g., "0/5").
+    /// Compact "done / total" counter. Tappable: Pro users open the daily-word
+    /// goal editor; free users get the Pro upsell. No bubble — just the numbers.
     var dayCounterBadge: some View {
         let total = viewModel.dailySet?.wordIds.count ?? 0
         let done = (viewModel.dailySet?.wordIds ?? [])
             .filter { viewModel.isWordCompleted($0) }
             .count
+        let isPro = userProgress?.isProActive ?? false
 
-        return HStack(spacing: theme.spacing.xs) {
-            Text("\(done)")
-                .font(TypographyTokens.mono.weight(.semibold))
-                .foregroundColor(done == total && total > 0 ? theme.colors.good : theme.colors.ink)
-                .contentTransition(.numericText())
-            Text("/")
-                .font(TypographyTokens.mono)
-                .foregroundColor(theme.colors.inkFaint)
-            Text("\(total)")
-                .font(TypographyTokens.mono)
-                .foregroundColor(theme.colors.inkMuted)
+        return Button {
+            if isPro { showWordGoalEditor = true } else { showProSheet = true }
+        } label: {
+            HStack(spacing: theme.spacing.xs) {
+                Text("\(done)")
+                    .font(TypographyTokens.mono.weight(.semibold))
+                    .foregroundColor(done == total && total > 0 ? theme.colors.good : theme.colors.ink)
+                    .contentTransition(.numericText())
+                Text("/")
+                    .font(TypographyTokens.mono)
+                    .foregroundColor(theme.colors.inkFaint)
+                Text("\(total)")
+                    .font(TypographyTokens.mono)
+                    .foregroundColor(theme.colors.inkMuted)
+            }
+            .contentShape(Rectangle())
         }
-        .padding(.horizontal, theme.spacing.sm)
-        .padding(.vertical, theme.spacing.xs)
-        .background(theme.colors.surfaceAlt)
-        .clipShape(.rect(cornerRadius: RadiusTokens.inline))
-        .overlay(
-            RoundedRectangle(cornerRadius: RadiusTokens.inline)
-                .stroke(theme.colors.line, lineWidth: BorderTokens.hairline)
-        )
+        .buttonStyle(.plain)
+        .accessibilityLabel(String(format: String(localized: "a11y.dayCounter.format"), done, total))
+        .accessibilityHint(isPro ? Text("a11y.dayCounter.hint.pro") : Text("a11y.dayCounter.hint.free"))
     }
 
     /// Returns the last 10 calendar days (oldest → today) with the day's
@@ -39,7 +41,7 @@ extension HomeView {
     func lastTenDays() -> [CompletionDay] {
         let cal = Calendar.current
         let today = cal.startOfDay(for: Date())
-        let setsByDay = Dictionary(uniqueKeysWithValues: dailySets.map { ($0.dayString, $0) })
+        let setsByDay = Dictionary(dailySets.map { ($0.dayString, $0) }, uniquingKeysWith: { _, new in new })
         return (0..<10).reversed().map { offset in
             let date = cal.date(byAdding: .day, value: -offset, to: today) ?? today
             let key = DailySet.dayString(from: date)

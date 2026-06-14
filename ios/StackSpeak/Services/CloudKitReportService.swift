@@ -19,7 +19,6 @@ final class CloudKitReportService: Sendable {
         wordTerm: String,
         stack: String,
         reason: String,
-        additionalNotes: String,
         userLevel: Int,
         reportedAt: Date
     ) async {
@@ -28,7 +27,6 @@ final class CloudKitReportService: Sendable {
         record["wordTerm"] = wordTerm
         record["stack"] = stack
         record["reason"] = reason
-        record["additionalNotes"] = additionalNotes
         record["userLevel"] = userLevel
         record["reportedAt"] = reportedAt
         record["appVersion"] = (Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String) ?? "unknown"

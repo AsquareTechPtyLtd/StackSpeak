@@ -13,15 +13,34 @@ struct HomeView: View {
     @Environment(\.theme) var theme
     @Environment(\.services) var services
     @Environment(\.userProgress) var userProgress
-    @Environment(\.tabRouter) private var tabRouter
+    @Environment(\.tabRouter) var tabRouter
 
+    // Restrict to the last 10 days — `lastTenDays()` never looks further back, so
+    // there is no value in loading every historical row on every body eval.
     @Query var dailySets: [DailySet]
     @State var viewModel = HomeViewModel()
+
+    init() {
+        let cal = Calendar.current
+        // Compute the oldest day-string we could ever need (9 days ago).
+        let nineAgo = cal.date(byAdding: .day, value: -9, to: cal.startOfDay(for: Date())) ?? Date()
+        let cutoff = DailySet.dayString(from: nineAgo)
+        _dailySets = Query(filter: #Predicate<DailySet> { $0.dayString >= cutoff })
+    }
     @State var notificationAuthStatus: UNAuthorizationStatus = .notDetermined
     @State var showNotificationBanner = false
     @State var showNotificationPrompt = false
     @State private var showStackManagement = false
+    @State var showWordGoalEditor = false
+    @State var showProSheet = false
     @State var path: [UUID] = []
+
+    // Fresh-install / reinstall restore nudge: shown on Home only while there's
+    // no local progress and no linked account, so a returning user can find
+    // the sign-in path. Dismissal persists; the prompt also self-hides once any
+    // word is practiced or an account is linked.
+    @AppStorage("home.restorePromptDismissed") var restorePromptDismissed = false
+    @AppStorage(SyncDefaults.accountLinkedKey) var accountLinked = false
 
     var body: some View {
         NavigationStack(path: $path) {
@@ -56,6 +75,11 @@ struct HomeView: View {
             .onChange(of: userProgress?.masteredWordIds) { _, _ in
                 Task { await reloadIfNeeded() }
             }
+            // Changing stacks (here or in Profile) should refresh today's
+            // incomplete words immediately, not wait for the next day.
+            .onChange(of: userProgress?.selectedStacks) { _, _ in
+                Task { await reconcileForStackChange() }
+            }
             .onChange(of: services?.catalogStatus) { _, newStatus in
                 if case .loaded = newStatus, viewModel.todaysWords.isEmpty {
                     Task { await reloadIfNeeded() }
@@ -74,6 +98,29 @@ struct HomeView: View {
                     StackManagementView()
                 }
             }
+            .sheet(isPresented: $showWordGoalEditor) {
+                DailyWordGoalSheet(
+                    current: userProgress?.dailyWordGoal ?? 5,
+                    onApply: applyWordGoal
+                )
+                .presentationDetents([.medium])
+            }
+            .sheet(isPresented: $showProSheet) {
+                ProGateSheet()
+            }
+    }
+
+    /// Applies a new daily word goal (Pro): reshapes today's set immediately and
+    /// reloads. The synced preference propagates on the next sync cycle.
+    private func applyWordGoal(_ goal: Int) {
+        guard let progress = userProgress, let services else { return }
+        do {
+            try services.word.setDailyWordGoal(goal, userProgress: progress)
+        } catch {
+            viewModel.errorMessage = error.localizedDescription
+            return
+        }
+        Task { await viewModel.loadTodaysWords(wordService: services.word, userProgress: progress) }
     }
 
     private var mainZStack: some View {
@@ -122,11 +169,28 @@ struct HomeView: View {
         }
     }
 
+    /// Swap out today's now-unqualified incomplete words for ones from the new
+    /// stack selection, then reload. Completed words are preserved.
+    private func reconcileForStackChange() async {
+        guard let progress = userProgress, let services else { return }
+        do {
+            try services.word.reconcileTodaysSetWithSelection(userProgress: progress)
+        } catch {
+            viewModel.errorMessage = error.localizedDescription
+        }
+        await viewModel.loadTodaysWords(wordService: services.word, userProgress: progress)
+    }
+
     // MARK: - Main content
 
     @ViewBuilder
     private func content(progress: UserProgress) -> some View {
         VStack(spacing: theme.spacing.md) {
+            if shouldShowRestorePrompt(progress) {
+                restorePrompt
+                    .padding(.horizontal, theme.spacing.lg)
+            }
+
             if showNotificationBanner && notificationAuthStatus == .denied && !progress.wordsPracticedIds.isEmpty {
                 notificationBanner
                     .padding(.horizontal, theme.spacing.lg)

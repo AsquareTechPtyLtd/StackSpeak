@@ -232,11 +232,6 @@ struct ReviewView: View {
 
 // MARK: - Supporting types
 
-enum ReviewTab: Hashable {
-    case assessment
-    case flashcards
-}
-
 private struct LevelUpItem: Identifiable {
     let level: Int
     var id: Int { level }

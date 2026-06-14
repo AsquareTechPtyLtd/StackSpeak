@@ -99,25 +99,25 @@
     },
     {
       "id": "syst0050-0000-0000-0000-000000000005",
-      "word": "load balancer",
-      "pronunciation": "LOHD BAL-un-ser",
+      "word": "Sticky Session",
+      "pronunciation": "STIK-ee SESH-un",
       "partOfSpeech": "noun",
-      "shortDefinition": "A system that distributes incoming network traffic across multiple servers.",
-      "simpleDefinition": "System distributing incoming network traffic across a pool of servers — ensuring no single machine becomes overwhelmed. It performs regular health checks and uses specific algorithms to route traffic, maximizing application availability and responsiveness during traffic spikes.",
-      "longDefinition": "Load balancers improve availability and scalability by spreading requests across a pool of servers. They perform health checks, route traffic based on algorithms (round-robin, least connections), and provide failover. Operate at Layer 4 (TCP) or Layer 7 (HTTP).",
-      "connector": "Think of a load balancer like the person at a busy bank pointing you to the next free teller — they split the queue evenly.",
-      "techContext": "Fundamental to horizontal scaling. Load balancers enable zero-downtime deploys, A/B testing, and geographic routing.",
-      "exampleSentence": "We put an Application Load Balancer in front of our EC2 instances to distribute traffic and handle SSL termination.",
-      "etymology": "load from Old English lad (\"course, way\"); balance from Latin bilanx (\"having two scales\").",
+      "shortDefinition": "A load-balancing configuration that routes every request from a given client to the same backend server for the duration of that client's session.",
+      "simpleDefinition": "Sticky sessions (also called session affinity) tell the load balancer to remember which server handled a client's first request and to send all subsequent requests from that client to the same server. This is needed when server-side session state is stored in memory on a single machine — if the load balancer routed a request to a different server, that server would not have the session data.",
+      "longDefinition": "Sticky sessions are a load-balancing feature that binds a client to a specific backend server, typically identified by a cookie (AWSALB, JSESSIONID) or by the client's IP address. The load balancer reads the cookie on each request and routes to the designated server rather than choosing based on load. The primary motivation is stateful server-side session storage: frameworks that store session data in the server's memory (PHP's default session, some Java EE configurations) break if a subsequent request lands on a different server that does not have that session in memory. Sticky sessions are a pragmatic workaround for this architecture rather than a solution. They introduce a significant operational problem: if the designated server fails, all sessions bound to it are lost, and users are routed to other servers with no session data — effectively logging them out. Sticky sessions also undermine load balancing accuracy: a small number of very active sessions can concentrate load on one server regardless of the balancing algorithm. The preferred architectural alternative is to externalize session state to a shared store (Redis, Memcached, a database) so that any backend server can handle any request. With stateless backends, sticky sessions are unnecessary and horizontal scaling becomes fully elastic. Sticky sessions remain common in legacy enterprise applications, SAP GUI-based web sessions, and some WebSocket-heavy applications where the connection must persist to the same server for protocol reasons.",
+      "connector": "Sticky sessions are like always going to the same checkout cashier at a supermarket because your partially filled loyalty stamp card is sitting on their counter — it works fine until that cashier takes their break, at which point your progress is stranded.",
+      "techContext": "Enabling sticky sessions on the ALB masked the stateful session bug for six months; disabling them after migrating session state to Redis instantly revealed that two of the five backend servers had been handling 80% of the traffic.",
+      "exampleSentence": "After disabling sticky sessions and moving session data to Redis, the load balancer distributed requests evenly across all backend instances, and the intermittent '404 - session not found' errors users had been reporting disappeared.",
       "codeExample": {
         "language": "yaml",
-        "code": "# ALB configuration:\nload_balancer:\n  algorithm: round_robin\n  targets:\n    - server1:8080\n    - server2:8080\n    - server3:8080\n  health_check: /health"
+        "code": "# AWS ALB target group with sticky sessions enabled\nTargetGroupAttributes:\n  - Key: stickiness.enabled\n    Value: 'true'\n  - Key: stickiness.type\n    Value: lb_cookie\n  - Key: stickiness.lb_cookie.duration_seconds\n    Value: '86400'   # 24 hours\n\n# Better alternative: stateless backends + shared session store\n# redis:\n#   host: session-store.internal\n#   ttl: 86400"
       },
+      "etymology": "Sticky from Old English stician (to pierce, to adhere) in the sense of adhering to one server; session from Latin sessio (a sitting) — a period of interaction between a client and a server.",
       "unlockLevel": 1,
       "tags": [
         "infrastructure",
-        "scalability",
-        "availability"
+        "load-balancing",
+        "session-management"
       ],
       "category": "concepts"
     },
@@ -143,24 +143,27 @@
     },
     {
       "id": "syst0070-0000-0000-0000-000000000007",
-      "word": "Sharding",
-      "pronunciation": "SHARD-ing",
+      "word": "Distributed Lock",
+      "pronunciation": "dis-TRIB-yoo-tid LOK",
       "partOfSpeech": "noun",
-      "shortDefinition": "Horizontal scaling strategy partitioning datasets across multiple independent database servers.",
-      "simpleDefinition": "A horizontal scaling strategy that partitions a massive dataset across multiple separate database servers — known as shards. It allows systems to handle much larger traffic volumes and data sizes than any single physical server could support.",
-      "longDefinition": "Sharding is an architectural pattern that involves breaking a large database into smaller, faster, and more manageable parts called shards. Each shard is a separate database instance that contains a subset of the total data. By distributing the load across many servers, sharding enables applications to scale horizontally beyond the vertical limits of a single machine. However, it introduces significant complexity in query routing, data rebalancing, and cross-shard joining.",
-      "connector": "Think of sharding like splitting a giant library into several different buildings — you need more space, so you move sections of books to new locations.",
-      "techContext": "A complex architectural move that is usually only necessary for massive scale (like Facebook or Twitter).",
-      "exampleSentence": "To handle our rapidly growing global traffic, we implemented database sharding, partitioning our user data geographically to improve local latency and system resilience.",
-      "etymology": "from 'shard' (a fragment, especially of pottery).",
+      "shortDefinition": "A coordination primitive that ensures only one process across a cluster can hold exclusive access to a shared resource at a time.",
+      "simpleDefinition": "A distributed lock is the multi-process equivalent of a mutex. When multiple servers in a cluster might try to perform the same operation simultaneously — sending a scheduled email, processing a payment, updating a shared counter — a distributed lock ensures only one server proceeds at a time. The lock is stored in a shared external system (Redis, ZooKeeper, a database) so all servers can see it.",
+      "longDefinition": "In a single-process system, a mutex or semaphore prevents concurrent access to shared state. In a distributed system where multiple processes run across multiple machines with no shared memory, a distributed lock provides the same guarantee by using an external shared store. The most widely used distributed lock implementation is the Redlock algorithm over Redis: a server acquires the lock by attempting to SET a key with a unique value and a short TTL using the SET NX PX command. If the set succeeds, the lock is held; the holder performs its work; then it releases the lock by checking that the stored value matches and then deleting the key. The TTL ensures the lock is automatically released if the holder crashes before releasing it — preventing indefinite lock-out. The distributed lock pattern has several correctness challenges. Clock skew between servers can cause a lock to appear expired on one machine while still valid on another. Network partitions can cause a server to believe it holds a lock while the lock store has already expired and re-issued it to another holder (the fencing token pattern addresses this). Race conditions during release — checking the value, then deleting it — must be an atomic operation (achieved with a Lua script in Redis). Common use cases: scheduled jobs (prevent the same cron job running twice across multiple servers), idempotency enforcement (ensure a payment is processed exactly once), and leader election in clusters that lack a higher-level consensus service.",
+      "connector": "A distributed lock is like a physical key kept at a shared reception desk — whichever team member checks out the key owns the room; anyone else who wants in must wait at the desk until the key is returned. If the borrower leaves and forgets to return it, the key automatically reappears after a set time.",
+      "techContext": "The nightly report job ran twice on two servers simultaneously, corrupting the output file; adding a distributed lock on the job key in Redis ensured only the first server to acquire the lock ran the job, with the second one skipping gracefully.",
+      "exampleSentence": "Without a distributed lock, the payment service occasionally processed the same webhook twice when two pods received the event within milliseconds of each other; with the lock, the second pod saw the key already set and exited early.",
+      "codeExample": {
+        "language": "javascript",
+        "code": "// Distributed lock with Redis SET NX PX\nasync function withDistributedLock(redis, lockKey, ttlMs, fn) {\n  const lockValue = crypto.randomUUID();  // unique to this holder\n\n  // Acquire: SET lockKey lockValue NX PX ttlMs\n  const acquired = await redis.set(lockKey, lockValue, {\n    nx: true,       // only set if not exists\n    px: ttlMs       // auto-expire if holder crashes\n  });\n\n  if (!acquired) {\n    throw new Error(`Lock '${lockKey}' already held`);\n  }\n\n  try {\n    return await fn();\n  } finally {\n    // Release only if we still hold it (atomic Lua script)\n    const releaseLua = `\n      if redis.call('get', KEYS[1]) == ARGV[1] then\n        return redis.call('del', KEYS[1])\n      else return 0 end`;\n    await redis.eval(releaseLua, 1, lockKey, lockValue);\n  }\n}"
+      },
+      "etymology": "Distributed from Latin distributus (spread out, divided); lock from Old English loc (bolt, fastening); the compound names a fastening mechanism that spans distributed processes rather than threads within a single process.",
       "unlockLevel": 1,
       "tags": [
-        "sql",
-        "scaling",
-        "architecture",
-        "advanced"
+        "distributed-systems",
+        "concurrency",
+        "redis"
       ],
-      "category": "processes"
+      "category": "patterns"
     },
     {
       "id": "syst0080-0000-0000-0000-000000000008",
@@ -188,51 +191,51 @@
     },
     {
       "id": "syst0090-0000-0000-0000-000000000009",
-      "word": "CAP Theorem",
-      "pronunciation": "KAP THEE-uh-rum",
+      "word": "Connection Pool",
+      "pronunciation": "kuh-NEK-shun POOL",
       "partOfSpeech": "noun",
-      "shortDefinition": "Principle stating distributed systems can only provide two of three specific data guarantees.",
-      "simpleDefinition": "Foundational principle stating distributed systems can only simultaneously provide two of three guarantees — Consistency, Availability, and Partition Tolerance. Since network failures are inevitable, architects must choose between immediate data consistency or constant system availability.",
-      "longDefinition": "Formulated by Eric Brewer, this theorem forces architects to make critical trade-offs in distributed database design. In the presence of a network partition, a system must either drop availability to maintain strict consistency (CP) or continue serving requests while allowing temporary data divergence (AP). This choice fundamentally dictates how the database handles split-brain scenarios and cross-region replication latency.",
-      "connector": "Think of CAP like a restaurant — you can have high-quality food and fast service, but you cannot realistically expect it to be cheap simultaneously.",
-      "techContext": "Used to categorize databases. For example, MongoDB is often CP, while Cassandra is AP.",
-      "exampleSentence": "According to the CAP theorem, since we need high availability across regions, we must sacrifice strict consistency during network partitions.",
+      "shortDefinition": "A cache of pre-established database connections that are reused across requests, eliminating the per-request cost of creating and tearing down connections.",
+      "simpleDefinition": "A connection pool is a set of open database connections held ready for use. When a request needs to query the database, it borrows a connection from the pool rather than opening a new one. Opening a database connection involves a TCP handshake, authentication, and session setup — all of which take 5–50ms. With a pool, the borrowing takes microseconds. When the query finishes, the connection is returned to the pool instead of being closed.",
+      "longDefinition": "Creating a new database connection for every query is expensive in both time (10–50ms for TCP + TLS + auth handshake) and resources (each connection consumes memory on both the application server and the database server). Connection pooling solves this by maintaining a pool of open, authenticated connections that are lent out on demand and returned after use. The pool manager handles the lifecycle: it creates connections at startup up to a minimum pool size, grows the pool on demand up to a maximum, checks connections for health before lending them, recycles connections that have been idle too long, and queues requests when all connections are in use rather than rejecting them. Key pool parameters are pool minimum (connections always kept open), pool maximum (the ceiling, which limits concurrent database load), connection timeout (how long a borrower waits if the pool is exhausted before giving up), and idle timeout (how long an unused connection is kept before being closed). Pool exhaustion — all connections in use and incoming requests queued waiting — is a common failure mode in high-traffic systems. It manifests as latency spikes and timeouts that look like database slowness but are actually application-side queuing. Solutions include increasing the pool max (limited by database connection limits), reducing query time to return connections faster, or introducing a connection proxy like PgBouncer (Postgres) or ProxySQL (MySQL) that multiplexes thousands of application connections onto a smaller number of real database connections. Cloud-hosted databases often have much lower connection limits than self-hosted ones, making PgBouncer or RDS Proxy effectively mandatory for serverless or high-concurrency applications.",
+      "connector": "A connection pool is like a tool library — instead of every worker buying their own drill (creating a new connection), tools are shared from a common rack. Workers borrow a drill, use it, and return it for the next person. Buying a drill per task would be absurd at scale.",
+      "techContext": "After deploying the new serverless functions, the RDS connection limit was hit within minutes; adding PgBouncer in transaction-mode pooling reduced the connection count from 3,000 to 15 real connections while handling the same throughput.",
+      "exampleSentence": "The latency spike at 5 PM every day was not a database problem — it was connection pool exhaustion; increasing maxPoolSize from 10 to 50 eliminated the queuing and the spikes disappeared.",
       "codeExample": {
-        "language": "json",
-        "code": "{\n  \"system_type\": \"AP\",\n  \"strategy\": \"availability_over_consistency\",\n  \"on_partition\": \"serve_stale_data\"\n}"
+        "language": "javascript",
+        "code": "// Connection pool configuration (pg/node-postgres)\nconst { Pool } = require('pg');\n\nconst pool = new Pool({\n  host: process.env.DB_HOST,\n  database: 'myapp',\n  user: process.env.DB_USER,\n  password: process.env.DB_PASSWORD,\n  min: 2,          // always keep 2 connections open\n  max: 20,         // never exceed 20 concurrent connections\n  idleTimeoutMillis: 30000,   // close idle connections after 30s\n  connectionTimeoutMillis: 5000  // fail if no connection available in 5s\n});\n\n// Request borrows a connection automatically, returns it on release\nasync function getUser(userId) {\n  const result = await pool.query(\n    'SELECT * FROM users WHERE id = $1', [userId]\n  );\n  return result.rows[0];  // connection returned to pool here\n}"
       },
-      "etymology": "Acronym for Consistency, Availability, Partition Tolerance. Formulated by Eric Brewer.",
+      "etymology": "Connection from Latin connexio (a binding together); pool from Old English pol (a still body of water) — the metaphor of a shared reservoir of ready resources, each drawn from and returned as needed.",
       "unlockLevel": 1,
       "tags": [
-        "nosql",
-        "distributed-systems",
-        "theory"
+        "databases",
+        "performance",
+        "infrastructure"
       ],
       "category": "concepts"
     },
     {
       "id": "syst0100-0000-0000-0000-000000000010",
-      "word": "Eventual Consistency",
-      "pronunciation": "ee-VEN-choo-ul kun-SIS-tun-see",
+      "word": "Geographic Redundancy",
+      "pronunciation": "jee-oh-GRAF-ik reh-DUN-dan-see",
       "partOfSpeech": "noun",
-      "shortDefinition": "Consistency model where all data replicas converge to the same value over time.",
-      "simpleDefinition": "Consistency model where all data replicas converge to the same value given time — rather than guaranteeing instant synchronization. It prioritizes performance and availability, allowing temporary data staleness that corrects itself as updates propagate through the cluster.",
-      "longDefinition": "Unlike strict consistency, eventual consistency allows for higher availability and lower latency by not requiring all nodes to agree before confirming a write. While this creates a window of 'inconsistency' where different users might see different data versions, the system guarantees that all replicas will eventually match if no further updates occur. This is the standard model for social media feeds and DNS.",
-      "connector": "Think of eventual consistency like a group chat — some people see a message slightly before others, but everyone eventually views the same final conversation.",
-      "techContext": "Common in distributed systems like DNS or social media feeds, where seeing a slightly outdated post is acceptable.",
-      "exampleSentence": "Because of eventual consistency, the user might not see their new profile picture immediately, but it will sync across all servers within seconds.",
+      "shortDefinition": "The practice of deploying infrastructure in multiple geographically separated regions so that the failure of one region has no impact on service availability.",
+      "simpleDefinition": "Geographic redundancy means running your system in more than one physical location — separate data centres or cloud regions. If one location burns down, loses power, or suffers a network outage, the other locations continue serving users. Traffic is automatically rerouted to healthy regions, and users experience no outage.",
+      "longDefinition": "Geographic redundancy (also called multi-region or active-active/active-passive geo-distribution) is a high-availability strategy that protects against the category of failure that no amount of on-site redundancy can prevent: a data centre or cloud region becoming entirely unavailable. Natural disasters, power grid failures, fibre cuts, and large-scale provider outages are all events that can affect an entire facility, region, or availability zone cluster regardless of how many servers, load balancers, or replicas are running within it. Geographic redundancy addresses this by replicating the application stack and data across regions separated by hundreds or thousands of kilometres. Active-active configurations run live traffic in all regions simultaneously; a global load balancer (Route 53 latency routing, Cloudflare Load Balancing, GCP Global Load Balancer) directs each user to the nearest healthy region. Active-passive configurations run the primary in one region and keep a warm standby in another; failover requires a DNS change or traffic switch. The operational challenges of geographic redundancy include data replication lag (writes to the primary region must propagate to secondary regions before being visible), consistency during cross-region failover (the secondary may not have the last few seconds of writes), and cost (running full application stacks in multiple regions roughly doubles infrastructure spend). DNS-level failover, database cross-region replication (Aurora Global, CockroachDB, Spanner), and global CDN distribution are the common implementation patterns. Regulatory constraints add complexity: GDPR data-residency requirements can prohibit certain data from leaving EU regions, complicating global active-active designs.",
+      "connector": "Geographic redundancy is like having a backup generator in a separate building across town — a fire or power cut in your main building does not affect the backup, because physical separation is what provides the protection.",
+      "techContext": "After the us-east-1 availability event took down the primary region, the Route 53 health check detected the failure within 30 seconds and shifted all DNS records to us-west-2, which had been receiving replicated writes via Aurora Global Database — total user-visible outage was under 90 seconds.",
+      "exampleSentence": "The legal requirement for 99.99% uptime drove the decision to deploy in three geographic regions, because a single-region setup — even with multiple availability zones — could not survive a regional cloud provider outage.",
       "codeExample": {
-        "language": "js",
-        "code": "// Client reads after write might return old value temporarily\ndb.collection('posts').updateOne({ id: 1 }, { $set: { title: 'New' } });\nconst post = db.collection('posts').findOne({ id: 1 }); // might be 'Old'"
+        "language": "yaml",
+        "code": "# Route 53 latency-based routing with health checks\nRecordSets:\n  - Name: api.example.com\n    Type: A\n    SetIdentifier: us-east-1\n    Region: us-east-1\n    AliasTarget: alb-us-east-1.amazonaws.com\n    HealthCheck: /health\n\n  - Name: api.example.com\n    Type: A\n    SetIdentifier: eu-west-1\n    Region: eu-west-1\n    AliasTarget: alb-eu-west-1.amazonaws.com\n    HealthCheck: /health\n\n# Users routed to nearest healthy region\n# If us-east-1 health check fails, all traffic goes to eu-west-1"
       },
-      "etymology": "from 'eventual' (happening in the end) + 'consistency'.",
+      "etymology": "Geographic from Greek geographikos (relating to the description of the earth), from ge (earth) + graphein (to write); redundancy from Latin redundantia (an overflowing, surplus) — keeping more infrastructure than strictly necessary so that the surplus absorbs failures.",
       "unlockLevel": 1,
       "tags": [
-        "nosql",
-        "distributed-systems",
-        "scaling"
+        "infrastructure",
+        "availability",
+        "disaster-recovery"
       ],
-      "category": "qualities"
+      "category": "concepts"
     },
     {
       "id": "syst0110-0000-0000-0000-000000000011",
@@ -284,27 +287,27 @@
     },
     {
       "id": "syst0130-0000-0000-0000-000000000013",
-      "word": "message queue",
-      "pronunciation": "MES-ij KYOO",
+      "word": "Request Batching",
+      "pronunciation": "reh-KWEST BACH-ing",
       "partOfSpeech": "noun",
-      "shortDefinition": "A communication pattern where messages are stored in a queue until processed asynchronously.",
-      "simpleDefinition": "Communication pattern storing messages in a queue for asynchronous processing — effectively decoupling producers from consumers. Provides essential buffering and retry capabilities, allowing systems to handle load spikes by processing tasks at a sustainable, steady pace.",
-      "longDefinition": "Message queues decouple producers from consumers, enabling asynchronous processing. Producers send messages to the queue; consumers pull and process them independently. Provides buffering, retry logic, and resilience to load spikes.",
-      "connector": "Think of a message queue like a restaurant ticket rail — waiters clip orders, and cooks work through them at their own pace.",
-      "techContext": "Essential for background jobs, event-driven architectures, and microservices communication. Common tools: RabbitMQ, Kafka, SQS.",
-      "exampleSentence": "We use RabbitMQ to queue email sends so the API returns immediately instead of blocking while SMTP completes.",
-      "etymology": "message from Latin missus (\"sent\"); queue from Latin cauda (\"tail\") — messages line up like a tail.",
+      "shortDefinition": "The technique of grouping multiple small requests into a single larger call to reduce per-request overhead and network round-trip cost.",
+      "simpleDefinition": "Request batching combines several individual requests that would each make a separate network round trip into one bundled call. Instead of making 100 separate API requests to fetch 100 user records, you send one request with 100 IDs and receive all 100 records in one response. This reduces total latency because each round trip adds overhead regardless of payload size.",
+      "longDefinition": "Request batching trades call frequency for payload size to improve throughput and reduce latency in distributed systems. Every network call incurs fixed overhead independent of how much data is transferred: TCP/TLS handshake or connection acquisition, kernel syscalls for send/receive, serialisation overhead, and the speed-of-light round-trip delay between client and server. When an application makes many small calls — retrieving N rows one at a time, resolving N foreign keys, sending N events — that fixed per-call overhead multiplies by N. Batching collapses N round trips into one. Common patterns: the DataLoader pattern (popularised by Facebook's GraphQL reference implementation) batches all requests made within a single execution tick, resolves them in one database query, and fans out results to callers; bulk API endpoints (bulk upsert, bulk delete) accept arrays of items; database multi-row inserts collapse N single-row INSERTs into one statement; Kafka producers batch records into a single network send up to a configured linger.ms window. Trade-offs: batching adds latency for the first request in a batch (it waits for more requests to arrive up to a timeout window); partial failures within a batch require careful error handling (which items succeeded and which failed); and very large batches may hit payload size limits or timeout. The optimal batch size and window depend on the ratio of per-call overhead to per-item processing cost. Request batching is complementary to connection pooling and pipelining: pooling eliminates connection-creation cost, pipelining overlaps multiple calls on one connection, and batching reduces the number of calls entirely.",
+      "connector": "Request batching is like carpooling — instead of five people each driving separately to the same destination and paying five tolls and parking fees, one car carries all five, paying once. The overhead cost is fixed per trip, so sharing the trip saves four trips worth of overhead.",
+      "techContext": "The GraphQL server was making one SQL query per author field in each post, causing the N+1 problem at scale; adding a DataLoader reduced 500 individual author queries per request to a single SELECT WHERE id IN (...) batch query.",
+      "exampleSentence": "By batching Stripe charges into one API call per billing run instead of one call per subscription, the billing worker finished in 4 seconds instead of 22 minutes, and the Stripe rate-limit errors disappeared entirely.",
       "codeExample": {
-        "language": "python",
-        "code": "# Producer:\nqueue.send_message({\n  'type': 'email',\n  'to': 'user@example.com',\n  'subject': 'Welcome'\n})\n\n# Consumer (separate process):\nwhile True:\n  msg = queue.receive_message()\n  send_email(msg['to'], msg['subject'])\n  msg.delete()"
+        "language": "javascript",
+        "code": "// DataLoader pattern: batch all user lookups within one tick\nconst DataLoader = require('dataloader');\n\n// batchLoadFn is called once per tick with all accumulated IDs\nconst userLoader = new DataLoader(async (userIds) => {\n  // One DB query for all IDs instead of N queries\n  const users = await db.query(\n    'SELECT * FROM users WHERE id = ANY($1)', [userIds]\n  );\n  // Return results in the same order as input IDs\n  const userMap = Object.fromEntries(users.map(u => [u.id, u]));\n  return userIds.map(id => userMap[id] ?? null);\n});\n\n// These three calls are batched into ONE database query:\nconst [alice, bob, carol] = await Promise.all([\n  userLoader.load(1),\n  userLoader.load(2),\n  userLoader.load(3)\n]);"
       },
+      "etymology": "Request from Latin requirere (to seek again, to demand); batch from Middle English bache (a quantity baked at one time), from Old English bacan (to bake) — the metaphor of baking many items in a single oven run rather than heating the oven separately for each one.",
       "unlockLevel": 1,
       "tags": [
-        "asynchronous",
-        "architecture",
-        "microservices"
+        "performance",
+        "api",
+        "databases"
       ],
-      "category": "components"
+      "category": "patterns"
     },
     {
       "id": "syst0140-0000-0000-0000-000000000014",
@@ -332,51 +335,51 @@
     },
     {
       "id": "syst0150-0000-0000-0000-000000000015",
-      "word": "partition",
-      "pronunciation": "par-TISH-un",
+      "word": "Read-Through Cache",
+      "pronunciation": "REED THROO KAYSH",
       "partOfSpeech": "noun",
-      "shortDefinition": "A network failure that splits a distributed system into isolated groups.",
-      "simpleDefinition": "Network failure splitting a distributed system into isolated groups that cannot communicate — forcing a choice between consistency and availability. Architects must design systems to handle these inevitable 'network splits' without compromising overall data integrity.",
-      "longDefinition": "Network partitions occur when nodes can't communicate due to network failures, creating isolated groups. Each partition continues operating independently but can't coordinate. The 'P' in CAP theorem — all distributed systems must handle partitions.",
-      "connector": "Think of a partition like a bridge collapsing between two towns — both are fine, but messages and deliveries between them stop.",
-      "techContext": "Partitions are inevitable in distributed systems. Designs must choose how to handle them: sacrifice consistency or availability.",
-      "exampleSentence": "During the network partition, our US and EU data centers couldn't sync, so we served stale reads to maintain availability.",
-      "etymology": "from Latin partitio (\"a sharing, division\") from partire (\"to divide\").",
+      "shortDefinition": "A caching strategy in which the cache itself automatically fetches missing data from the backing store on a cache miss, transparently populating itself.",
+      "simpleDefinition": "In a read-through cache, your application always reads from the cache. If the data is there (cache hit), it is returned immediately. If not (cache miss), the cache library or proxy automatically fetches the data from the database, stores it in the cache, then returns it to the caller. The application code never speaks directly to the database for read operations — the cache is the single read interface.",
+      "longDefinition": "The read-through pattern delegates the cache population logic from the application to the cache layer itself. The application code calls one interface — the cache — for all reads. The cache handles hit/miss logic transparently: on a hit it returns the cached value; on a miss it fetches from the backing store (database, API, object store), writes the result into the cache with an appropriate TTL, and returns it to the caller. This is distinguished from the cache-aside (lazy loading) pattern, in which the application code explicitly checks the cache, fetches from the database on miss, and then populates the cache itself. Read-through offers simpler application code — the data access logic is not interleaved with cache management — but couples the application to the cache's interface and requires the cache to understand how to fetch from the backing store. Read-through is commonly implemented at the ORM layer (Hibernate's second-level cache, Rails' cache store) or through a caching proxy like Varnish (which reads from the origin on miss) or a distributed cache with a loader function (Caffeine's CacheLoader, Redis with a Spring CacheManager). The main operational consideration is cache warming: immediately after deployment or cache flush, all reads miss and hit the backing store simultaneously — this is the cache stampede problem, addressed by pre-warming the cache before switching traffic or by using a probabilistic early expiration strategy to refresh entries before they expire.",
+      "connector": "A read-through cache is like a librarian who keeps a personal copy of every book she lends — when you ask for a book she does not have, she fetches it from the main archive and makes a copy for herself. Next time anyone asks for the same book, she hands it straight over without visiting the archive again.",
+      "techContext": "Replacing the cache-aside pattern with a read-through loader in the product catalogue service removed 40 lines of boilerplate cache-check-fetch-populate logic from every repository method and consolidated the TTL policy in one place.",
+      "exampleSentence": "The read-through cache meant the application code called one method for all product lookups — the cache handled the miss, fetched from Postgres, and stored the result, so the calling code never needed to know whether the data came from cache or the database.",
       "codeExample": {
-        "language": "yaml",
-        "code": "# Network partition scenario:\nDC1 (US):     [Node-A, Node-B]  ❌ network split\nDC2 (Europe): [Node-C, Node-D]\n\n# Nodes within DC can talk, but DCs can't communicate\n# System must choose: consistency or availability"
+        "language": "javascript",
+        "code": "// Read-through cache: application always reads from cache layer\nclass ReadThroughCache {\n  constructor(redisClient, database, defaultTtlSeconds = 300) {\n    this.redis = redisClient;\n    this.db = database;\n    this.ttl = defaultTtlSeconds;\n  }\n\n  async get(key, loaderFn) {\n    // Try cache first\n    const cached = await this.redis.get(key);\n    if (cached) return JSON.parse(cached);\n\n    // Cache miss: fetch from backing store\n    const value = await loaderFn();\n    if (value !== null) {\n      await this.redis.setex(key, this.ttl, JSON.stringify(value));\n    }\n    return value;\n  }\n}\n\n// Application code never touches DB directly for reads:\nconst cache = new ReadThroughCache(redis, db);\nconst product = await cache.get(\n  `product:${id}`,\n  () => db.query('SELECT * FROM products WHERE id = $1', [id])\n);"
       },
+      "etymology": "Read from Old English raedan (to advise, to interpret); through indicating the direction of data flow — data passes through the cache on its way from the backing store to the caller; cache from French cacher (to hide) — a hidden store for fast retrieval.",
       "unlockLevel": 1,
       "tags": [
-        "distributed-systems",
-        "networking",
-        "cap-theorem"
+        "caching",
+        "performance",
+        "databases"
       ],
-      "category": "processes"
+      "category": "patterns"
     },
     {
       "id": "syst0160-0000-0000-0000-000000000016",
-      "word": "Denormalization",
-      "pronunciation": "dee-nor-mul-ih-ZAY-shun",
+      "word": "Cold Start",
+      "pronunciation": "KOHLD START",
       "partOfSpeech": "noun",
-      "shortDefinition": "Strategy of intentionally duplicating data to improve read performance by avoiding expensive joins.",
-      "simpleDefinition": "Strategic duplication of data across multiple records to improve database read performance — by avoiding expensive join operations. While it increases storage usage and write complexity, it ensures near-instant data retrieval for high-traffic, read-heavy applications where speed is the primary requirement.",
-      "longDefinition": "In NoSQL design, denormalization is the process of embedding related data directly into a document or record rather than referencing it by ID. This trade-off prioritizes read speed over storage efficiency. By having all necessary data present in a single read operation, the application avoids the latency associated with querying multiple tables, which is critical for maintaining performance in distributed, non-relational environments.",
-      "connector": "Think of denormalization like having multiple remote controls for your TV — redundant, but saves you from having to walk across the room.",
-      "techContext": "We denormalized the author's name into the 'post' document so we don't have to look up the 'users' collection every time we display a blog post.",
-      "exampleSentence": "Denormalization is common in document databases because it allows you to fetch everything you need for a UI view in a single query.",
+      "shortDefinition": "The latency spike that occurs when a serverless function or container must initialise from a completely idle state before it can process a request.",
+      "simpleDefinition": "A cold start happens when a request arrives and there is no warm, running instance to handle it. The platform must download the function code, start a runtime, initialise the execution environment, and run any application startup code — all before the actual request logic begins. This adds hundreds of milliseconds to seconds of latency that would not occur if an already-warm instance had handled the request.",
+      "longDefinition": "Cold starts are the primary latency trade-off of serverless computing (AWS Lambda, Google Cloud Functions, Azure Functions) and to a lesser extent container-based systems that scale to zero. In serverless execution models, a function instance is created on demand when a request arrives and no existing instance is available. The cold start sequence involves: downloading and decompressing the function package from storage, initialising the language runtime (JVM startup, Node.js module loading, Python import chain), executing the function's global initialisation code (establishing database connections, loading configuration, warming SDK clients), and only then executing the handler function for the actual request. This sequence takes 100ms to 3 seconds depending on runtime, package size, and provisioned resources. JVM-based runtimes (Java, Kotlin, Scala) have the longest cold starts; compiled native binaries (Rust, Go, or Java compiled with GraalVM native-image) have the shortest. Mitigation strategies include: provisioned concurrency (AWS Lambda term for keeping a specified number of instances always warm, at extra cost), scheduled warm-up pings, reducing package size (tree shaking, removing unused dependencies), choosing faster-starting runtimes, and moving startup work (connection pool initialisation, config loading) outside the handler into global scope so it only runs once per instance. In container-based systems on Kubernetes or similar, scale-to-zero configurations produce the same cold start behaviour; keeping a minimum of one replica running eliminates cold starts at the cost of idle compute. Cold starts also occur after a long period of inactivity when a platform evicts idle instances, after deployment of a new version when all old instances are replaced, and after scaling events when new instances are added to handle increased traffic.",
+      "connector": "A cold start is like starting a car that has been sitting in a sub-zero garage all night — the engine turns over slowly, the oil is thick, and you have to wait for it to warm up before driving at full speed. A warm car (warm instance) starts instantly and drives immediately.",
+      "techContext": "The p99 latency on the checkout Lambda spiked to 4 seconds on Sunday mornings because low overnight traffic allowed all instances to go idle; enabling provisioned concurrency for 2 instances eliminated the cold start spikes while adding only $8 per month.",
+      "exampleSentence": "The payment Lambda was flagged for its 2.8-second p95 latency, but the median latency was 80ms — the statistic was dominated by cold starts on the first request after idle periods, not actual processing time.",
       "codeExample": {
-        "language": "json",
-        "code": "// Denormalized user data inside a post\n{\n  \"post_id\": 1,\n  \"content\": \"Hello World\",\n  \"author_name\": \"Alice\" // Duplicated from Users table\n}"
+        "language": "javascript",
+        "code": "// Cold start mitigation: move initialisation outside the handler\n// so it runs ONCE when the instance first starts, not on every request\n\n// BAD: connection created on every invocation (re-creates on cold start too)\nexports.handler = async (event) => {\n  const db = await createDatabaseConnection(); // slow!\n  return db.query(...);\n};\n\n// GOOD: connection created once when instance initialises\nlet db;  // module-level variable — persists across warm invocations\nasync function getDb() {\n  if (!db) db = await createDatabaseConnection();  // only on cold start\n  return db;\n}\n\nexports.handler = async (event) => {\n  const conn = await getDb();  // fast on warm invocations\n  return conn.query(...);\n};"
       },
-      "etymology": "from 'de-' (reversing) + 'normalization'.",
+      "etymology": "Cold in the sense of starting from a completely unheated or uninitialised state — no running process, no warm cache, no prior execution — contrasted with a warm start where an existing process handles the request with no initialisation delay.",
       "unlockLevel": 1,
       "tags": [
-        "nosql",
-        "design",
-        "performance"
+        "serverless",
+        "performance",
+        "infrastructure"
       ],
-      "category": "processes"
+      "category": "concepts"
     },
     {
       "id": "syst0170-0000-0000-0000-000000000017",
@@ -404,28 +407,27 @@
     },
     {
       "id": "syst0180-0000-0000-0000-000000000018",
-      "word": "Backpressure",
-      "pronunciation": "BAK-presh-ur",
+      "word": "Cache Stampede",
+      "pronunciation": "KAYSH stam-PEED",
       "partOfSpeech": "noun",
-      "shortDefinition": "Data flow control mechanism that pauses a fast producer when a consumer becomes overwhelmed.",
-      "simpleDefinition": "Node.js data flow control mechanism that automatically pauses a fast data source — when its destination becomes overwhelmed. This prevents system memory exhaustion and potential crashes during high-speed data transfers by balancing production and consumption speeds.",
-      "longDefinition": "Backpressure is a critical concept in stream-based programming that occurs when the writable side of a stream cannot consume data as fast as the readable side can produce it. Without a way to signal the producer to slow down, the unconsumed data would accumulate in memory, eventually leading to a crash. Node.js handles this by providing a feedback mechanism within its stream API. When a buffer is full, the writable stream returns 'false', prompting the readable stream to pause until the buffer clears.",
-      "connector": "Think of backpressure like a busy freeway exit ramp — when the ramp is full, traffic slows down on the main highway to avoid accidents.",
-      "techContext": "Crucial for preventing memory overflows in high-speed data processing pipelines.",
-      "exampleSentence": "Without proper backpressure handling, our server would have crashed because the database couldn't write the logs as fast as the network was receiving them.",
+      "shortDefinition": "A thundering-herd failure mode in which simultaneous cache misses for the same popular key cause a spike of requests to the backing store at the moment the cached entry expires.",
+      "simpleDefinition": "A cache stampede (also called a thundering herd or dog-pile effect) happens when a very popular cache entry expires. At that moment, hundreds or thousands of concurrent requests all find a cache miss and all simultaneously race to query the database or origin to repopulate it. The origin, which was protected from load by the cache, suddenly receives a traffic spike it was not sized to handle — causing latency spikes, timeouts, or crashes.",
+      "longDefinition": "Cache stampede is a self-inflicted denial-of-service pattern that emerges whenever two conditions coincide: a cache entry has a fixed expiry time (TTL), and that entry is accessed at high frequency. At the moment the TTL expires, all in-flight requests simultaneously miss the cache and each independently executes the expensive query or computation to repopulate it. Before any of those queries completes, all subsequent requests also miss and add to the pileup. The backing store receives N identical requests for the data it normally serves once per TTL period. Mitigation strategies address the root cause — multiple independent recomputation attempts — in different ways. Mutex / lock-based recomputation: the first request to miss acquires a lock and recomputes; all other requests either wait for the lock or return stale data until the recomputation completes. The stale-while-revalidate pattern extends TTLs in the cache but marks entries as stale after a shorter freshness window; requests return stale data immediately while a single background refresh is triggered. Probabilistic early expiration (the optimal approach for read-heavy caches): each request independently decides whether to refresh early using a probability function that increases as the TTL approaches zero — this spreads recomputations over time rather than bunching them at expiry. Jitter: adding random variation to TTLs so that a group of related keys does not all expire simultaneously. The pattern is especially acute in read-heavy systems with global CDNs (many edge nodes all expire the same cache entry at the same second), and in systems where a popular item's TTL is too short relative to the query cost.",
+      "connector": "A cache stampede is like a sold-out concert ticket going back on sale at an exact announced time — thousands of fans all refresh simultaneously the moment tickets become available, instantly overloading the ticketing server. The load spike is caused not by organic demand but by the synchronisation point the expiry time creates.",
+      "techContext": "The product detail page for the flash sale item caused a database brownout every time the Redis TTL expired — adding probabilistic early expiration with a 10-second jitter window spread the refresh load and eliminated the 30-second latency spike that had been recurring on the hour.",
+      "exampleSentence": "The homepage widget cache had a hard 60-second TTL and received 8,000 requests per second; when the entry expired, all 8,000 concurrent requests hit the database simultaneously — switching to stale-while-revalidate with a background refresh reduced database load during expiry windows by 99%.",
       "codeExample": {
-        "language": "js",
-        "code": "const readable = getLargeStream();\nconst writable = getSlowDestination();\n// .pipe handles backpressure automatically\nreadable.pipe(writable);"
+        "language": "javascript",
+        "code": "// Probabilistic early expiration to prevent cache stampede\n// (XFetch algorithm)\nasync function getWithEarlyExpire(redis, key, ttlSeconds, computeFn, beta = 1) {\n  const entry = await redis.get(key);\n\n  if (entry) {\n    const { value, computedAt, ttl } = JSON.parse(entry);\n    const delta = (Date.now() / 1000) - computedAt;  // time to compute last time\n    const remainingTtl = ttl - (Date.now() / 1000);\n\n    // Probabilistically recompute before expiry based on remaining TTL\n    const shouldRefreshEarly = remainingTtl - (delta * beta * Math.log(Math.random())) < 0;\n    if (!shouldRefreshEarly) return value;\n  }\n\n  // Recompute\n  const start = Date.now() / 1000;\n  const newValue = await computeFn();\n  const delta = (Date.now() / 1000) - start;\n  await redis.setex(key, ttlSeconds, JSON.stringify({\n    value: newValue,\n    computedAt: start,\n    ttl: start + ttlSeconds\n  }));\n  return newValue;\n}"
       },
-      "etymology": "from 'back' + 'pressure' (resistance to forward flow).",
+      "etymology": "Cache from French cacher (to hide); stampede from American Spanish estampida (a crash, an uproar), from estampar (to stamp) — the image of a herd of animals all charging simultaneously in the same direction, analogous to all cache-miss requests simultaneously charging the origin.",
       "unlockLevel": 1,
       "tags": [
-        "nodejs",
-        "data-handling",
-        "internals",
-        "performance"
+        "caching",
+        "performance",
+        "distributed-systems"
       ],
-      "category": "components"
+      "category": "concepts"
     },
     {
       "id": "syst0190-0000-0000-0000-000000000019",
@@ -477,49 +479,49 @@
     },
     {
       "id": "syst0210-0000-0000-0000-000000000021",
-      "word": "NoSQL",
-      "pronunciation": "NOH-SEE-kwul",
-      "partOfSpeech": "acronym",
-      "shortDefinition": "Non-relational database management systems designed for horizontal scalability and flexible, schema-less data handling.",
-      "simpleDefinition": "Broad category of non-relational database management systems designed for horizontal scalability and high-performance data handling — standing for 'Not Only SQL.' They offer flexible schemas that handle unstructured data more efficiently than traditional SQL-based systems, enabling rapid development and massive scale.",
-      "longDefinition": "NoSQL databases emerged to handle the 'three Vs' of big data: volume, velocity, and variety. Unlike traditional relational databases that rely on rigid schemas and complex joins, NoSQL systems prioritize performance and ease of scaling. They encompass various models, including document, key-value, graph, and wide-column stores, allowing developers to choose the specific architecture that best fits their application's performance and data consistency needs.",
-      "connector": "Think of NoSQL like a flexible digital notebook — you can jot down any information on any page without sticking to rigid lines.",
-      "techContext": "NoSQL is often preferred for Big Data applications where the sheer volume of data exceeds the capacity of a single relational server.",
-      "exampleSentence": "The NoSQL movement revolutionized how we build apps by providing flexible schemas that can scale to handle millions of concurrent users.",
+      "word": "Write-Through Cache",
+      "pronunciation": "RYT THROO KAYSH",
+      "partOfSpeech": "noun",
+      "shortDefinition": "A caching strategy that writes data to both the cache and the backing store synchronously on every update, keeping them permanently in sync.",
+      "simpleDefinition": "In a write-through cache, every write operation updates both the cache and the database before the write is considered complete. The application writes once, to the cache, and the cache layer writes it through to the database as part of the same operation. This means cache and database are always consistent: you never have stale data in the cache after a write.",
+      "longDefinition": "The write-through strategy keeps the cache and backing store in strict synchrony by routing all writes through the cache. When the application writes a value, the cache stores it and immediately propagates the write to the backing store (database, object store) before acknowledging success to the caller. This synchronous write-through makes the cache the single write interface, just as the read-through pattern makes it the single read interface. The primary benefit: the cache is never stale after a write. Any subsequent read for the same key — whether by this instance or any other — will find the newly written value in the cache. There is no invalidation step, no TTL expiry, and no risk of reading stale data on reads that follow writes. The primary cost: every write is slower than a write that only touches the cache, because it must wait for the backing store write to complete. Write-through is therefore most appropriate when read-after-write consistency is critical and write latency is acceptable, and when read frequency far exceeds write frequency (the cache is worth warming on every write because data will be read many times before the next write). Write-through is commonly combined with read-through to create a unified cache layer where all reads and writes pass through the cache, and the application code never talks to the backing store directly. Contrast with write-behind (write-back) caching, which acknowledges the write after storing to cache and asynchronously flushes to the database — lower write latency, but with a data-loss window if the cache fails before flushing. Also contrast with write-around, which bypasses the cache on writes and writes directly to the database — preserving cache space for read-heavy items that would otherwise be evicted by written data that is unlikely to be read soon.",
+      "connector": "A write-through cache is like a carbon-copy receipt book — you write on the top sheet and the carbon copy on the sheet below is updated simultaneously. Both copies always say the same thing, but writing takes slightly longer than writing on a single sheet.",
+      "techContext": "The product inventory service used a write-through Redis cache: stock quantity updates hit Redis first, which synchronously updated the Postgres inventory table before returning; any read — on any server, at any time after the write — was guaranteed to return the current value.",
+      "exampleSentence": "After switching to a write-through cache, the race condition where a user saw their just-updated profile picture temporarily revert to the old one disappeared — the cache and database were always in sync.",
       "codeExample": {
-        "language": "js",
-        "code": "// NoSQL (MongoDB) flexible insert\ndb.users.insertOne({ name: \"Bob\", age: 30, hobbies: [\"coding\"] });\ndb.users.insertOne({ name: \"Alice\", profession: \"Engineer\" });"
+        "language": "javascript",
+        "code": "// Write-through cache: writes go to cache AND database synchronously\nclass WriteThroughCache {\n  constructor(redis, database, defaultTtlSeconds = 3600) {\n    this.redis = redis;\n    this.db = database;\n    this.ttl = defaultTtlSeconds;\n  }\n\n  async set(key, value) {\n    // Write to backing store FIRST (durability)\n    await this.db.upsert(key, value);\n    // Then update cache (consistency)\n    await this.redis.setex(key, this.ttl, JSON.stringify(value));\n  }\n\n  async get(key) {\n    const cached = await this.redis.get(key);\n    if (cached) return JSON.parse(cached);\n    // Cache miss: load from DB and warm cache\n    const value = await this.db.find(key);\n    if (value) await this.redis.setex(key, this.ttl, JSON.stringify(value));\n    return value;\n  }\n}"
       },
-      "etymology": "Shortening of 'Not Only SQL'.",
+      "etymology": "Write from Old English writan (to score, to scratch on a surface); through indicating the path — data is written through the cache and into the backing store; cache from French cacher (to hide) — a hidden fast store in front of the slower canonical store.",
       "unlockLevel": 1,
       "tags": [
-        "nosql",
-        "databases",
-        "fundamentals"
+        "caching",
+        "performance",
+        "databases"
       ],
-      "category": "concepts"
+      "category": "patterns"
     },
     {
       "id": "syst0220-0000-0000-0000-000000000022",
-      "word": "ACID",
-      "pronunciation": "A-sid",
-      "partOfSpeech": "acronym",
-      "shortDefinition": "Guarantee reliable transaction processing through Atomicity, Consistency, Isolation, and Durability properties.",
-      "simpleDefinition": "Foundational database guarantees — Atomicity, Consistency, Isolation, and Durability — ensuring that transactions are processed reliably. These properties prevent data corruption during crashes and ensure that concurrent users don't interfere with each other's updates.",
-      "longDefinition": "Atomicity ensures all-or-nothing execution, Consistency maintains valid data states, Isolation prevents concurrent interference, and Durability guarantees persistence after commits. Together, these properties form the bedrock of relational database reliability, ensuring that even in the event of system failures or power outages, the data remains accurate and the system transitions from one valid state to another without corruption.",
-      "connector": "Think of ACID like a bank vault — Atomic (all bills or none), Consistent (valid amounts), Isolated (locked during transfer), Durable (written to ledger).",
-      "techContext": "The gold standard for transactional systems where data accuracy is critical, such as banking or inventory management.",
-      "exampleSentence": "The platform's ACID-compliant architecture ensures that even a sudden server failure won't result in double-spending or corrupted user balances during checkout.",
-      "etymology": "Acronym for Atomicity, Consistency, Isolation, Durability.",
+      "word": "Single Point of Failure",
+      "pronunciation": "SIN-gul POYNT UV FAYL-yur",
+      "partOfSpeech": "noun",
+      "shortDefinition": "A component whose failure alone is sufficient to make an entire system unavailable, because no redundant alternative exists.",
+      "simpleDefinition": "A single point of failure (SPOF) is any component — a server, a network link, a database, a cloud region, or even a person — whose failure causes the entire system to stop working. Because nothing else can take over its function, it is the one dependency you cannot afford to lose. Eliminating SPOFs is a core goal of high-availability architecture.",
+      "longDefinition": "Single points of failure are identified during failure mode analysis and architecture review as the components whose unavailability immediately propagates to service unavailability. The concept applies at every layer of a system: at the hardware level, a single server with no replica is a SPOF; at the network level, a single network interface, switch, or ISP connection is a SPOF; at the storage level, a single database with no read replica or backup is a SPOF; at the application level, a single-instance process with no failover is a SPOF; at the dependency level, a third-party API with no fallback is a SPOF. Even people can be SPOFs: an organisation where only one engineer understands a critical system has a human SPOF. Eliminating a SPOF generally requires one of three approaches: active redundancy (running multiple instances in parallel so failure of one has no impact), passive redundancy (maintaining a standby that can be promoted when the active fails, accepting a brief failover window), or elimination (redesigning the system to not require the component at all). Common SPOFs in web systems include: a single load balancer without HA pair, a primary database with no automatic failover, a single availability zone deployment in a cloud provider, a single CDN provider for all static assets, and a single region for all data storage. SLA requirements drive SPOF analysis: achieving 99.99% availability (52 minutes of downtime per year) is essentially impossible with any unmitigated SPOF that fails more than once a year.",
+      "connector": "A single point of failure is like a drawbridge with only one motor — all traffic between the old town and the new town passes over this one bridge. If the motor breaks, all traffic stops instantly, no matter how well everything else is functioning on both sides.",
+      "techContext": "The architecture review flagged the single NAT gateway as a SPOF — all outbound traffic from the private subnets passed through it; adding a second NAT gateway in a different availability zone with automatic failover cost $30 per month and removed the last single point of failure in the critical payment processing path.",
+      "exampleSentence": "The 14-hour outage was caused by a single point of failure: the one database master had no automatic failover replica, so when it crashed, the entire application stopped accepting orders until an engineer manually restored from backup.",
       "codeExample": {
-        "language": "sql",
-        "code": "BEGIN TRANSACTION;\nUPDATE accounts SET balance = balance - 100 WHERE id = 1;\nUPDATE accounts SET balance = balance + 100 WHERE id = 2;\nCOMMIT;"
+        "language": "yaml",
+        "code": "# BEFORE: single points of failure\nArchitecture:\n  load_balancer: 1 instance      # SPOF: no HA pair\n  app_servers: 3 instances       # OK: redundant\n  database:\n    primary: 1 instance          # SPOF: no replica/failover\n    replicas: 0\n  region: us-east-1 only         # SPOF: no geo-redundancy\n\n# AFTER: SPOFs eliminated\nArchitecture:\n  load_balancer: 2 instances (active-passive)\n  app_servers: 3 instances (min 2 AZs)\n  database:\n    primary: 1 instance\n    replicas: 2 (multi-AZ, auto-failover)\n  regions: [us-east-1, us-west-2]  # active-passive geo-redundancy"
       },
+      "etymology": "Single from Latin singulus (one alone); point from Old French pointe (a sharp end, a precise location); failure from Medieval Latin fallura (a falling short); the phrase names a precise location in a system architecture where one failure alone determines overall system fate.",
       "unlockLevel": 1,
       "tags": [
-        "sql",
-        "databases",
-        "transactions"
+        "availability",
+        "reliability",
+        "infrastructure"
       ],
       "category": "concepts"
     },
@@ -545,25 +547,25 @@
     },
     {
       "id": "syst0240-0000-0000-0000-000000000024",
-      "word": "consensus",
-      "pronunciation": "kun-SEN-sus",
+      "word": "Shard Key",
+      "pronunciation": "SHARD KEE",
       "partOfSpeech": "noun",
-      "shortDefinition": "Agreement among distributed nodes on a single value or state despite failures.",
-      "simpleDefinition": "The fundamental process where distributed nodes agree on a single shared state or value — even when some machines or network links fail. Vital for leader election and maintaining consistent order in distributed logs and databases.",
-      "longDefinition": "Consensus algorithms (Paxos, Raft) enable distributed systems to agree on shared state even when nodes fail or messages are lost. Essential for leader election, configuration management, and distributed transactions. CAP theorem constrains achievable guarantees.",
-      "connector": "Think of consensus like a jury reaching a unanimous verdict — everyone must end up agreeing on the same final word.",
-      "techContext": "Underpins systems like etcd, Consul, and ZooKeeper. Understanding consensus clarifies why distributed coordination is hard.",
-      "exampleSentence": "Raft consensus ensures all nodes in our cluster agree on which server is the leader, even during network partitions.",
-      "etymology": "from Latin consensus (\"agreement\") from consentire (\"to feel together, agree\").",
+      "shortDefinition": "The attribute whose value determines which shard in a sharded database stores a given record, governing data distribution and query routing.",
+      "simpleDefinition": "When a database is sharded — split across multiple servers — every record must land on exactly one shard. The shard key is the field you designate for this purpose. A hash of the shard key (or its range position) maps the record to a specific shard. Choosing the wrong shard key produces hotspots where one shard receives most of the traffic while others sit idle.",
+      "longDefinition": "In a sharded database, all data for a given entity must be stored on exactly one shard, and all queries for that entity must be routed to the correct shard without scanning every server. The shard key is the field (or composite of fields) that the routing layer hashes or range-partitions to determine the target shard. Choosing the shard key is one of the most consequential and least reversible decisions in a sharded architecture. A good shard key distributes records evenly across shards (high cardinality, no dominant values), ensures that common queries touch only one shard (locality — queries should be expressible as single-shard operations), and is stable (changing a record's shard key requires moving it to a different shard, which is operationally expensive). Bad shard key choices produce hotspots: using a timestamp as the shard key for a time-series workload routes all current writes to the same shard; using user_id when 0.1% of users generate 50% of activity creates a heavy-user hotspot. Common shard key strategies include: hash-based sharding (consistent hashing maps key space to shards, provides even distribution but loses range-query efficiency); range-based sharding (consecutive key ranges map to shards, enables efficient range queries but risks hotspots on sequential keys); and directory-based sharding (a lookup table records which shard holds which key ranges, most flexible but adds a lookup overhead and a metadata SPOF). MongoDB, Cassandra (partition key), DynamoDB (partition key), and Vitess (MySQL sharding) all expose shard key selection as a first-class configuration decision, and all warn in their documentation that resharding (changing the shard key) is difficult to near-impossible once data is loaded.",
+      "connector": "A shard key is like the letter range on a filing cabinet drawer — A-F, G-M, N-Z. Every document goes into exactly one drawer based on the first letter of the surname (the shard key). If 60% of names start with S, that drawer becomes a hotspot regardless of how well balanced the other drawers are.",
+      "techContext": "Choosing user_id as the shard key for the activity log created a celebrity-user hotspot — one shard held 40% of all data; switching to a composite key of (user_id_hash % 256, date) distributed writes evenly and eliminated the latency spike on that shard.",
+      "exampleSentence": "The sharding design looked elegant on paper, but using created_at as the shard key meant all writes went to the most recent shard, making it a write hotspot that overwhelmed a single database node while the other shards sat nearly idle.",
       "codeExample": {
-        "language": "yaml",
-        "code": "# Raft consensus cluster:\nnodes:\n  - node-1  # leader (elected via consensus)\n  - node-2  # follower\n  - node-3  # follower\n\n# All nodes agree on log entries via majority vote"
+        "language": "javascript",
+        "code": "// Consistent hashing: determine target shard from shard key\nclass ShardRouter {\n  constructor(shards) {\n    this.shards = shards;  // [shard0, shard1, shard2, ...]\n  }\n\n  // Hash-based routing: userId -> shard index\n  getShardForUser(userId) {\n    const hash = this.fnv1aHash(userId.toString());\n    return this.shards[hash % this.shards.length];\n  }\n\n  // FNV-1a hash (simple, fast, good distribution)\n  fnv1aHash(str) {\n    let hash = 2166136261;\n    for (const char of str) {\n      hash ^= char.charCodeAt(0);\n      hash = (hash * 16777619) >>> 0;  // 32-bit unsigned\n    }\n    return hash;\n  }\n\n  async queryUser(userId) {\n    const shard = this.getShardForUser(userId);\n    return shard.query('SELECT * FROM users WHERE id = ?', [userId]);\n  }\n}"
       },
+      "etymology": "Shard from Old English sceard (a fragment of pottery or glass); key in the sense of an attribute that controls access or routing — the shard key is the field whose value unlocks which shard holds the data.",
       "unlockLevel": 1,
       "tags": [
-        "distributed-systems",
-        "algorithms",
-        "interview"
+        "databases",
+        "scalability",
+        "distributed-systems"
       ],
       "category": "concepts"
     },

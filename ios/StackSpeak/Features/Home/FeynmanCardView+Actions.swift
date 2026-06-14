@@ -99,6 +99,7 @@ extension FeynmanCardView {
     }
 
     func skipWord() {
+        guard stage != .done else { return }
         stopRecordingIfNeeded()
         onSubmit("", .typed, true)  // mark as mastered
         advanceTrigger &+= 1
@@ -117,6 +118,7 @@ extension FeynmanCardView {
     /// successfully submits the report. Wired as the report sheet's
     /// onSubmitted callback so canceling the sheet leaves the card untouched.
     func finalizeReportSkip() {
+        guard stage != .done else { return }
         onSubmit("", .typed, true)
         advanceTrigger &+= 1
         withAnimation(reduceMotion ? nil : MotionTokens.standard) {

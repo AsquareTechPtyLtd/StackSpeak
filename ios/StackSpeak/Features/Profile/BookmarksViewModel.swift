@@ -18,6 +18,7 @@ final class BookmarksViewModel {
         let chapterId: String
         let bookTitle: String
         let cardTitle: String
+        let bookmarkedAt: Date
     }
 
     private(set) var cardRows: [CardRow] = []
@@ -72,13 +73,14 @@ final class BookmarksViewModel {
                     bookId: bookmark.bookId,
                     chapterId: bookmark.chapterId,
                     bookTitle: bookTitle,
-                    cardTitle: cardTitle
+                    cardTitle: cardTitle,
+                    bookmarkedAt: bookmark.bookmarkedAt
                 ))
             }
         }
 
         // Latest first.
-        cardRows = resolved.sorted { $0.cardTitle < $1.cardTitle }
+        cardRows = resolved.sorted { $0.bookmarkedAt > $1.bookmarkedAt }
     }
 
     private func loadCardsBestEffort(

@@ -14,6 +14,8 @@ final class BooksTabViewModel {
     var query: String = ""
     var books: [BookSummary] = []
     var loadError: (any Error)?
+    /// True between the start of `load(...)` and when it resolves.
+    private(set) var isLoading: Bool = false
 
     /// Active category filter. Empty set = "All" (no filter). OR-semantics — a book
     /// matches if any of its categories is in `selectedCategories`. Persisted across
@@ -82,6 +84,8 @@ final class BooksTabViewModel {
 
     /// Loads the catalog from the service and refreshes per-book progress from SwiftData.
     func load(catalogService: BookCatalogService, modelContext: ModelContext) async {
+        isLoading = true
+        defer { isLoading = false }
         do {
             let catalog = try await catalogService.loadCatalog()
             self.books = catalog.books

@@ -3,169 +3,169 @@
   "words": [
     {
       "id": "dist0010-0000-0000-0000-000000000001",
-      "word": "Eventual Consistency",
-      "pronunciation": "ee-VEN-choo-ul kun-SIS-tun-see",
+      "word": "Correlated Failure",
+      "pronunciation": "KOR-uh-lay-ted FAYL-yur",
       "partOfSpeech": "noun",
-      "shortDefinition": "Consistency model where all data replicas converge to the same value over time.",
-      "simpleDefinition": "Consistency model where all data replicas converge to the same value given time — rather than guaranteeing instant synchronization. It prioritizes performance and availability, allowing temporary data staleness that corrects itself as updates propagate through the cluster.",
-      "longDefinition": "Unlike strict consistency, eventual consistency allows for higher availability and lower latency by not requiring all nodes to agree before confirming a write. While this creates a window of 'inconsistency' where different users might see different data versions, the system guarantees that all replicas will eventually match if no further updates occur. This is the standard model for social media feeds and DNS.",
-      "connector": "Think of eventual consistency like a group chat — some people see a message slightly before others, but everyone eventually views the same final conversation.",
-      "techContext": "Common in distributed systems like DNS or social media feeds, where seeing a slightly outdated post is acceptable.",
-      "exampleSentence": "Because of eventual consistency, the user might not see their new profile picture immediately, but it will sync across all servers within seconds.",
+      "shortDefinition": "A failure mode where multiple independent-seeming components fail together due to a shared root cause.",
+      "simpleDefinition": "A correlated failure is when multiple nodes that are designed to be independent fail at the same time because they share a hidden dependency — the same rack, a shared library bug, a common config push, or a single network switch. It defeats the redundancy assumptions underlying fault-tolerant system designs.",
+      "longDefinition": "Fault tolerance in distributed systems is built on the assumption that node failures are independent: if node A fails, it tells us nothing about whether node B will fail. Replication with quorum writes and multi-AZ deployments both rely on this independence. Correlated failures shatter that assumption. Common sources: physical co-location — nodes on the same rack, blade chassis, or power distribution unit fail together on a hardware fault; software monoculture — all nodes run the same binary, so a bug or a bad config push hits them all simultaneously; shared infrastructure — all nodes connect to the same NFS mount, rely on the same DNS server, or call the same third-party API, which becomes a silent single point of failure; noisy-neighbor effects — a resource-intensive workload on one VM starves co-located VMs. The reliability engineering term is 'common-cause failure' or 'systematic failure'. Defense strategies include spreading replicas across independent failure domains (separate racks, AZs, power circuits), canary deployments and staged rollouts to limit the blast radius of a bad push, chaos engineering to probe for hidden shared dependencies, and cell-based architecture where each cell is a bounded failure domain.",
+      "connector": "Think of correlated failure like a building with sprinklers on every floor — redundant against individual pipe failures, but if the main water supply is cut, every floor's sprinkler fails simultaneously. The independence assumption of the design was false.",
+      "techContext": "A multi-AZ deployment protects against single-AZ failures only if the application has no cross-AZ shared dependencies — a shared RDS primary in one AZ, a single Elasticache cluster, or a shared ALB can all introduce correlated failure paths.",
+      "exampleSentence": "The supposedly independent replicas suffered a correlated failure when a bad config push deployed to all three simultaneously, taking every node offline in under 30 seconds despite the cluster being designed for single-node tolerance.",
       "codeExample": {
-        "language": "js",
-        "code": "// Client reads after write might return old value temporarily\ndb.collection('posts').updateOne({ id: 1 }, { $set: { title: 'New' } });\nconst post = db.collection('posts').findOne({ id: 1 }); // might be 'Old'"
+        "language": "yaml",
+        "code": "# Kubernetes: spread replicas across failure domains\napiVersion: apps/v1\nkind: Deployment\nspec:\n  replicas: 3\n  template:\n    spec:\n      topologySpreadConstraints:\n        - maxSkew: 1\n          topologyKey: topology.kubernetes.io/zone\n          whenUnsatisfiable: DoNotSchedule\n          labelSelector:\n            matchLabels:\n              app: api-server\n      # Prevents all replicas landing in the same AZ\n      # reducing correlated failure risk"
       },
-      "etymology": "from 'eventual' (happening in the end) + 'consistency'.",
+      "etymology": "Correlated from Latin correlatus ('mutually related'); failure from Latin fallere ('to deceive, fail'); the compound describes failures whose timing is not independent — they share a common, often hidden, root cause.",
       "unlockLevel": 16,
       "tags": [
-        "nosql",
         "distributed-systems",
-        "scaling"
+        "reliability",
+        "fault-tolerance"
       ],
-      "category": "qualities"
+      "category": "concepts"
     },
     {
       "id": "dist0020-0000-0000-0000-000000000002",
-      "word": "Quorum",
-      "pronunciation": "KWOR-um",
+      "word": "Leader Lease",
+      "pronunciation": "LEE-dur LEES",
       "partOfSpeech": "noun",
-      "shortDefinition": "Minimum number of nodes required to agree for a distributed operation to succeed.",
-      "simpleDefinition": "Minimum number of server nodes required to agree before a distributed data operation is considered successful — balancing latency and consistency. Quorum requirements ensure that a majority of replicas are synchronized, preventing conflicting updates and ensuring data reliability across a cluster.",
-      "longDefinition": "In distributed databases like Cassandra or DynamoDB, quorum settings allow developers to tune the level of consistency on a per-query basis. For example, a 'Write Quorum' of two out of three nodes ensures that even if one node fails, the data is safe and consistent. This mechanism is essential for resolving conflicts and ensuring that the most recent version of data is returned.",
-      "connector": "Think of a quorum like a board of directors' vote — you need a majority of members to agree before any policy is changed.",
-      "techContext": "In Cassandra, you can tune the quorum settings per query to balance between speed and strict consistency.",
-      "exampleSentence": "We adjusted the read quorum to 'local_quorum' to ensure low latency while still getting a high degree of data reliability within the same region.",
+      "shortDefinition": "A time-bounded guarantee that a node is the unique leader, allowing it to serve reads without consulting other nodes.",
+      "simpleDefinition": "A leader lease is a time-limited token granted to a Raft or Paxos leader by a quorum of followers, certifying that no other leader can exist for the duration of the lease. While the lease is valid, the leader can answer reads locally without a round trip to the cluster, dramatically reducing read latency.",
+      "longDefinition": "In consensus-based replication (Raft, Multi-Paxos), a leader is elected by a quorum and handles all writes. But reads are more nuanced: a leader that has just been elected may not yet have all committed entries from a previous term, and a stale leader (one that has been partitioned but doesn't know it) might return stale data. Leader leases solve this. When a leader wins an election, it also wins a lease for a bounded duration — typically a few seconds. The lease is a quorum promise: no follower that granted this lease will vote for a different leader until the lease expires. Because the leader knows no competing leader can exist during the lease window, it can serve linearizable reads locally without a round trip. The safety assumption is clock-based: the lease timer on the leader must expire before any follower's lease timer expires, which requires bounded clock skew. Systems like Google Spanner and CockroachDB use leader leases for low-latency linearizable reads. TiKV's Raft implementation uses a variant called 'lease reads'. If the leader crashes and the lease has not expired, followers must wait for the lease to time out before electing a new leader — this prevents a new leader from serving stale data during the overlap window.",
+      "connector": "Think of a leader lease like a parking permit with an expiry time — while it's valid, you have guaranteed exclusive rights to your spot and don't need to ask anyone's permission. When it expires, anyone can contest the space.",
+      "techContext": "CockroachDB's leaseholder concept is a leader lease: the node holding the range lease serves all reads for that range locally with linearizable consistency, bypassing the Raft log for reads that fall within the lease window.",
+      "exampleSentence": "Enabling leader leases reduced our CockroachDB p99 read latency from 8ms to 1.5ms — reads no longer needed a Raft round trip and were served directly from the leaseholder's memory.",
       "codeExample": {
-        "language": "sql",
-        "code": "-- Cassandra consistency level\nCONSISTENCY QUORUM;\nSELECT * FROM users WHERE id = 123;"
+        "language": "text",
+        "code": "Raft Leader Lease protocol:\n\n1. Leader wins election (term T), gets quorum acks\n2. Leader requests lease: 'I am leader for term T, lease valid for 5s'\n3. Quorum of followers grants lease (they won't vote for others for 5s)\n4. Leader can now serve reads locally:\n   - Check lease is still valid (wall clock < lease_expiry)\n   - Return value without Raft round trip\n5. On lease renewal: leader pings quorum before expiry\n6. On leader crash: followers wait for lease_duration before new election\n\nSafety requirement:\n  leader_lease_duration < min_follower_election_timeout"
       },
-      "etymology": "from Latin quorum ('of whom'), referring to a majority needed for a meeting.",
+      "etymology": "Leader from Old English lædan ('to guide'); lease from Old French lais ('letting, granting') — a leader lease is a time-bounded grant of exclusive leadership authority that eliminates the need for per-read quorum checks.",
       "unlockLevel": 16,
       "tags": [
-        "nosql",
         "distributed-systems",
-        "scaling"
+        "consensus",
+        "performance"
       ],
       "category": "concepts"
     },
     {
       "id": "dist0030-0000-0000-0000-000000000003",
-      "word": "Rebalancing",
-      "pronunciation": "ree-BAL-uhns-ing",
+      "word": "Hedged Request",
+      "pronunciation": "HEJD ri-KWEST",
       "partOfSpeech": "noun",
-      "shortDefinition": "Redistributing message partitions across a cluster of consumers.",
-      "simpleDefinition": "The automated process of redistributing data partitions or workload across a cluster whenever nodes join or leave. Rebalancing ensures that cluster resources remain evenly utilized, preventing hotspots and maintaining high throughput as infrastructure scales.",
-      "longDefinition": "Rebalancing is the process of moving the ownership of partitions or resources from one member of a cluster to another, usually triggered by a node joining or leaving the group.",
-      "connector": "Think of rebalancing like a new lane opening at a grocery store — customers shift over to even out the lines and speed up everyone's checkout.",
-      "techContext": "A Kafka rebalance was triggered when our auto-scaler added four new consumer pods to handle the morning traffic spike.",
-      "exampleSentence": "The system experienced a brief pause in processing while the consumer group was performing a rebalancing operation.",
-      "etymology": "From the prefix 're-' (again) and 'balance'.",
+      "shortDefinition": "A latency reduction technique that sends the same request to multiple replicas simultaneously and uses the first response.",
+      "simpleDefinition": "A hedged request is sent to two or more replicas at once (or a second copy is sent after a short delay), and the client uses whichever response arrives first, cancelling the rest. This eliminates tail latency caused by slow or momentarily overloaded replicas by trading a small amount of extra load for a dramatic improvement in worst-case response time.",
+      "longDefinition": "In any distributed system, the slowest replica — the tail — determines worst-case latency. A single slow node (GC pause, disk flush, CPU contention) can add hundreds of milliseconds to a request that normally takes 2ms. Hedged requests, introduced in the Google infrastructure as a technique to cut tail latency, address this by redundancy in time. The simplest form: send request to one replica, wait a brief threshold (e.g., the 95th percentile latency), then send an identical request to a second replica. Return whichever response arrives first. Because the hedge threshold is near the median latency, only requests that would have been slow get hedged — the overhead is typically 1–5% extra requests. A variant — the 'backup request' — sends the second request without waiting for the threshold. The cost: slightly higher overall load on backends. In read-heavy systems with replication, hedging is nearly free because replicas can answer independently. For writes, hedging is only safe if operations are idempotent — otherwise, both copies of a write might execute. Jeff Dean and Luiz André Barroso documented hedged requests in their 2013 paper 'The Tail at Scale', showing that hedging could reduce 99.9th percentile latency by 5–10x with less than 5% extra requests.",
+      "connector": "Think of a hedged request like hailing two taxis simultaneously — you take whichever arrives first and wave off the other. You pay a tiny extra cost (one taxi wasted) but guarantee you don't wait for a slow one stuck in traffic.",
+      "techContext": "Cassandra's speculative retry feature implements hedged requests: if a replica has not responded within the speculative_retry threshold (e.g., '99PERCENTILE'), the coordinator sends the same read to a second replica and returns the first response.",
+      "exampleSentence": "After enabling speculative retry on our Cassandra reads with a 99th-percentile threshold, the p999 latency dropped from 800ms to 45ms — only 3.2% of requests were hedged.",
       "codeExample": {
-        "language": "javascript",
-        "code": "consumer.on('rebalance', () => {\n  console.log('Partitions are being redistributed');\n});"
+        "language": "python",
+        "code": "import asyncio\n\nasync def hedged_read(key: str, replicas: list, hedge_after_ms: float):\n    \"\"\"Send to first replica; hedge to second if no response within threshold.\"\"\"\n    tasks = []\n    result_queue = asyncio.Queue()\n\n    async def fetch(replica):\n        val = await replica.get(key)\n        await result_queue.put(val)\n\n    # Start first request\n    tasks.append(asyncio.create_task(fetch(replicas[0])))\n\n    try:\n        # Wait for fast path\n        return await asyncio.wait_for(result_queue.get(), hedge_after_ms / 1000)\n    except asyncio.TimeoutError:\n        # Hedge to second replica\n        tasks.append(asyncio.create_task(fetch(replicas[1])))\n        result = await result_queue.get()\n        for t in tasks:\n            t.cancel()\n        return result"
       },
+      "etymology": "Hedge from Middle English heggen ('to enclose, protect') — as in financial hedging, which offsets risk by holding complementary positions; in distributed systems, sending duplicate requests hedges against the risk of one being slow.",
       "unlockLevel": 16,
       "tags": [
-        "scalability",
-        "messaging",
-        "kafka"
+        "distributed-systems",
+        "performance",
+        "latency"
       ],
       "category": "processes"
     },
     {
       "id": "dist0040-0000-0000-0000-000000000004",
-      "word": "Two-Phase Commit",
-      "pronunciation": "TOO-fayz kuh-MIT",
+      "word": "Message Deduplication",
+      "pronunciation": "MES-ij dee-doo-plih-KAY-shun",
       "partOfSpeech": "noun",
-      "shortDefinition": "A distributed-transaction protocol where a coordinator first asks all participants to prepare, then tells them to commit or abort.",
-      "simpleDefinition": "Round 1: ask everyone 'can you commit?'. Round 2: if all said yes, tell them to commit; otherwise tell everyone to abort.",
-      "longDefinition": "Two-Phase Commit (2PC) gives ACID across multiple nodes by introducing a coordinator. Phase 1 (Prepare): each participant promises it can commit — durably writes the change but doesn't apply it. Phase 2 (Commit): once all yes, coordinator tells everyone to apply. The flaw: if the coordinator dies after Phase 1, participants are stuck holding locks forever.",
-      "techContext": "2PC's blocking failure mode is why modern distributed systems prefer sagas and eventual consistency. XA transactions in JDBC/Postgres are 2PC under the hood — used sparingly because of the recovery complexity.",
-      "exampleSentence": "Pulled the cross-database write off 2PC and onto a saga — coordinator failures were dropping us into manual cleanup once a quarter.",
-      "etymology": "Named for its two communication phases — prepare and commit.",
-      "connector": "Like a wedding ceremony — the officiant asks each party to consent, then both commit simultaneously. If anyone says 'I object,' the whole thing aborts.",
+      "shortDefinition": "The practice of detecting and discarding duplicate messages to ensure each logical message is processed exactly once.",
+      "simpleDefinition": "Message deduplication ensures that if a producer sends the same message more than once — due to retries after a network timeout or crash — the broker or consumer processes it only once. It converts at-least-once delivery semantics into effective exactly-once behavior without requiring the producer to know whether its previous attempt succeeded.",
+      "longDefinition": "In any reliable messaging system, producers must retry on failure — they cannot know whether a message was delivered and lost the response, or never delivered at all. This means at-least-once delivery is the natural guarantee, and duplicate messages are an expected occurrence under failure. Message deduplication converts this into effectively-once processing. Implementation strategies: Broker-side deduplication — the broker assigns each message a unique ID (or uses the producer-assigned one). For a configurable window, the broker rejects any message with a seen ID. Kafka's idempotent producer (enable.idempotence=true) uses a producer ID + sequence number; the broker deduplicates within a single session. Consumer-side idempotency — the consumer tracks a set of processed message IDs in a database or cache. Before processing, it checks whether the ID has been seen; after processing, it records the ID. This is the right approach when the consumer's processing is not idempotent by nature. A deduplication window is required: IDs cannot be remembered forever. The window must be longer than the maximum time a duplicate could arrive. Common approaches include bloom filters for approximate deduplication with bounded memory, and time-windowed sets for exact deduplication within a sliding window. AWS SQS Standard queues offer best-effort deduplication; FIFO queues offer 5-minute deduplication windows keyed on a message group ID.",
+      "connector": "Think of message deduplication like a postal clerk who checks whether a letter's serial number has already been processed today — if so, they discard the duplicate, even though the sender had no way of knowing their first copy arrived safely.",
+      "techContext": "Kafka's idempotent producer assigns each message a sequence number per partition; the broker rejects out-of-order or duplicate sequences, making producer retries safe — the foundation of Kafka's exactly-once transactions.",
+      "exampleSentence": "After enabling idempotent producers and consumer-side deduplication via a Redis set, the order processing pipeline went from occasionally charging customers twice on network retries to zero duplicate charges.",
       "codeExample": {
-        "language": "text",
-        "code": "Coordinator                Participants A, B, C\n     │\n     │── PREPARE ──────────────▶│\n     │                          │ (durably log; reply YES/NO)\n     │◀─── YES, YES, YES ───────│\n     │\n     │── COMMIT ───────────────▶│\n     │                          │ (apply changes)\n     │◀─── ACK, ACK, ACK ───────│\n     │\n     ▼  done\n\nFailure: if coordinator crashes after PREPARE, participants block until it recovers."
+        "language": "python",
+        "code": "import redis\nimport json\n\ndedup_store = redis.Redis(host='redis', port=6379)\n\ndef process_message(message: dict) -> bool:\n    \"\"\"Process a message, deduplicating by message_id.\"\"\"\n    msg_id = message['message_id']\n    dedup_key = f'processed:{msg_id}'\n\n    # Atomic check-and-set with 24-hour TTL\n    already_processed = dedup_store.set(\n        dedup_key, '1',\n        nx=True,        # only set if not exists\n        ex=86400        # 24-hour dedup window\n    )\n\n    if not already_processed:\n        return False    # duplicate — skip\n\n    # Safe to process\n    handle_order(message['payload'])\n    return True"
       },
+      "etymology": "Message from Old French messagier ('bearer of news'); deduplication from Latin de- ('remove') + duplicatus ('doubled') — removing duplicate copies of the same logical message from a stream.",
       "unlockLevel": 16,
       "tags": [
-        "distributed",
-        "transactions",
-        "consistency"
-      ],
-      "category": "patterns"
-    },
-    {
-      "id": "dist0050-0000-0000-0000-000000000005",
-      "word": "Outbox Pattern",
-      "pronunciation": "OUT-boks PAT-urn",
-      "partOfSpeech": "noun",
-      "shortDefinition": "A pattern where a service writes both its data change and the corresponding event into the same database transaction, then a separate process publishes the event.",
-      "simpleDefinition": "Write to your DB and your message broker reliably by writing to one transactional outbox table — a relay process publishes from the outbox to the broker.",
-      "longDefinition": "The Outbox Pattern fixes the dual-write problem: you can't atomically commit to a database AND publish to a message broker. Instead, you write the message to an `outbox` table in the same DB transaction as your business write. A poller (or CDC stream) reads the outbox and publishes — getting at-least-once delivery semantics for free.",
-      "techContext": "Debezium + Kafka is the canonical implementation: Debezium tails the transaction log, emits outbox rows as Kafka messages, and you delete (or mark) the outbox row after publish. Pair with idempotent consumers to handle duplicate delivery cleanly.",
-      "exampleSentence": "Implement the order-events stream via the outbox pattern — the lost-message bug from the dual-write goes away.",
-      "etymology": "Named for the database table that acts as the outbox — staging area before publishing.",
-      "connector": "Like a postal outbox — drop your letter in, the carrier picks it up later. The drop is atomic with the writing; the delivery is asynchronous.",
-      "codeExample": {
-        "language": "sql",
-        "code": "-- Inside a single transaction\nBEGIN;\nINSERT INTO orders (id, customer_id, total) VALUES (...);\nINSERT INTO outbox (event_type, payload) VALUES ('OrderPlaced', '{...}');\nCOMMIT;\n\n-- Separate process polls outbox + publishes to broker\n-- (or use Debezium to tail the WAL and emit to Kafka)"
-      },
-      "unlockLevel": 16,
-      "tags": [
-        "distributed",
+        "distributed-systems",
         "messaging",
         "reliability"
       ],
       "category": "patterns"
     },
     {
-      "id": "dist0060-0000-0000-0000-000000000006",
-      "word": "Event Sourcing",
-      "pronunciation": "ee-VENT SOR-sing",
+      "id": "dist0050-0000-0000-0000-000000000005",
+      "word": "Log Compaction",
+      "pronunciation": "LOG kom-PAK-shun",
       "partOfSpeech": "noun",
-      "shortDefinition": "Pattern of storing the state of an application as a sequence of events.",
-      "simpleDefinition": "Architectural pattern storing application state as a continuous sequence of immutable events — rather than just a final snapshot. This enables perfect audit trails, temporal queries, and the ability to completely 'replay' history to reconstruct state.",
-      "longDefinition": "Event sourcing is an architectural pattern in which changes to the state of an application are stored as a sequence of events, rather than just storing the current state in a database.",
-      "connector": "Think of event sourcing like a bank ledger — you record every deposit and withdrawal (events) to calculate the final balance (state) at any point in time.",
-      "techContext": "By using event sourcing, our middleware can reconstruct the entire history of an order by replaying all the 'order_updated' events from the event store.",
-      "exampleSentence": "Event sourcing provides a perfect audit log because every single change to the data is preserved as an immutable event.",
-      "etymology": "Combination of 'event' (Latin 'eventus', occurrence) and 'sourcing'.",
+      "shortDefinition": "A process that retains only the latest value per key in a log, discarding superseded records to reclaim space.",
+      "simpleDefinition": "Log compaction keeps a Kafka topic from growing forever by merging the log: for each key, only the most recent record is retained; all older records with the same key are discarded. This turns the topic into a compacted changelog that always contains each key's current state — useful for derived state stores that need to rebuild from the log.",
+      "longDefinition": "A standard Kafka topic with time-based retention deletes old segments entirely, which means a consumer that falls too far behind loses data. Log compaction provides an alternative retention policy: instead of deleting by age, the broker retains the most recent record for every distinct key and deletes all earlier records with the same key. This guarantees that the compacted log always contains a full snapshot of the latest state for every key ever written — nothing is lost permanently as long as the consumer reads before the current record is superseded. Log compaction runs as a background process called the log cleaner. The cleaner splits the log into a 'clean' (already compacted) segment and a 'dirty' (uncompacted) segment. It scans the dirty segment, builds an in-memory offset map (key → latest offset), then copies only the latest version of each key to the clean segment. A record with a null value (a tombstone) signals deletion: the cleaner retains the tombstone for a configurable grace period and then deletes both the tombstone and all earlier records for that key. Compacted topics are the natural backing store for Kafka Streams' state stores and for change-data-capture topics where consumers need to replay full state: a new consumer group can read from the beginning of the compacted topic and reconstruct the current state of every key.",
+      "connector": "Think of log compaction like consolidating a year's worth of spreadsheet edits into a single summary row per account — every intermediate state is thrown away, but the current balance is always preserved and always recoverable.",
+      "techContext": "Kafka log compaction is configured per topic via `cleanup.policy=compact`; the `min.cleanable.dirty.ratio` setting controls how full the dirty segment must be before the cleaner runs, trading compaction frequency against read amplification.",
+      "exampleSentence": "We configured the user-profile topic with log compaction so a new microservice deployment could replay the compacted topic from offset 0 and reconstruct the current state of every user without consuming months of full history.",
       "codeExample": {
-        "language": "javascript",
-        "code": "const events = [\n  { type: 'AccountCreated', id: 1 },\n  { type: 'MoneyDeposited', amount: 100 }\n];"
+        "language": "bash",
+        "code": "# Create a compacted Kafka topic\nkafka-topics.sh \\\n  --create \\\n  --bootstrap-server kafka:9092 \\\n  --topic user-profiles \\\n  --partitions 6 \\\n  --replication-factor 3 \\\n  --config cleanup.policy=compact \\\n  --config min.cleanable.dirty.ratio=0.1 \\\n  --config delete.retention.ms=86400000  # tombstone grace period 24h\n\n# Describe topic to verify\nkafka-topics.sh --describe --bootstrap-server kafka:9092 --topic user-profiles"
       },
+      "etymology": "Log from the computing sense of an append-only sequential record; compaction from Latin compactus ('pressed together, condensed') — the process compresses a history of changes into the minimal set of current values.",
       "unlockLevel": 16,
       "tags": [
-        "architecture",
-        "data-patterns",
-        "persistence"
+        "distributed-systems",
+        "messaging",
+        "kafka"
       ],
-      "category": "patterns"
+      "category": "processes"
+    },
+    {
+      "id": "dist0060-0000-0000-0000-000000000006",
+      "word": "Compacted Topic",
+      "pronunciation": "kom-PAK-ted TOP-ik",
+      "partOfSpeech": "noun",
+      "shortDefinition": "A Kafka topic configured to retain only the most recent record per key, providing a changelog that always reflects current state.",
+      "simpleDefinition": "A compacted topic is a Kafka topic where the broker continuously runs a background process to discard all but the latest record per key. Unlike time-based or size-based retention, compaction ensures the topic always holds the most recent state for every key — making it suitable as a persistent key-value store backed by a streaming log.",
+      "longDefinition": "A compacted Kafka topic combines the append semantics of a log with the 'last write wins' semantics of a key-value store. Producers write key-value pairs; the broker's log cleaner merges old segments to retain only the latest value per key. A consumer starting at offset 0 sees every key's current value exactly once — the topic acts as a materialized snapshot of all keys ever written. This is the backbone of several distributed systems patterns. Kafka Streams uses compacted topics as changelog topics for stateful stream processors: when a processor restarts after a failure, it reads the compacted changelog to rebuild its local RocksDB state store without replaying the full event history. Change-data-capture pipelines use compacted topics to represent the current state of a database table: each row is a key, and the latest record is the current row value. New consumers get the full current state; ongoing consumers see only deltas. Tombstone records (null values) signal that a key has been deleted. The broker retains tombstones for a configurable delete retention period, allowing consumers that were temporarily offline to observe the deletion before the tombstone is garbage-collected. Compacted topics are not suitable for queries that need historical values — only the current value per key is guaranteed to be present.",
+      "connector": "Think of a compacted topic like a phonebook that is reprinted periodically — each reprint includes only the current address for every person, dropping all previous addresses. You can always look up the latest, but old editions are gone.",
+      "techContext": "Kafka Streams changelog topics are compacted by default: each processor's state store is backed by a compacted topic named `<app-id>-<processor-name>-changelog`, allowing state stores to be rebuilt efficiently after node restarts.",
+      "exampleSentence": "By pointing our user-preferences microservice at a compacted topic, new service instances could bootstrap their in-memory state cache from the topic on startup without hitting the database.",
+      "codeExample": {
+        "language": "python",
+        "code": "from confluent_kafka import Producer\n\nproducer = Producer({'bootstrap.servers': 'kafka:9092'})\n\n# Write a user preference update\n# Key = user_id; latest value per key is retained after compaction\nproducer.produce(\n    topic='user-preferences',\n    key='user-42',\n    value='{\"theme\": \"dark\", \"language\": \"en\"}'\n)\n\n# Delete a key by writing a tombstone (null value)\nproducer.produce(\n    topic='user-preferences',\n    key='user-99',\n    value=None   # tombstone — cleaner will eventually remove all records for user-99\n)\nproducer.flush()"
+      },
+      "etymology": "Compacted from Latin compactus ('pressed together, condensed') — records are pressed down to their latest value per key; topic from Greek topos ('place') via the Kafka sense of a named log partition.",
+      "unlockLevel": 16,
+      "tags": [
+        "distributed-systems",
+        "kafka",
+        "messaging"
+      ],
+      "category": "concepts"
     },
     {
       "id": "dist0070-0000-0000-0000-000000000007",
-      "word": "Saga Pattern",
-      "pronunciation": "SAH-guh PAT-ern",
+      "word": "Retry Storm",
+      "pronunciation": "REE-try STORM",
       "partOfSpeech": "noun",
-      "shortDefinition": "Pattern for managing distributed transactions using a sequence of local transactions.",
-      "simpleDefinition": "Management pattern for complex, distributed transactions across multiple microservices — using a series of local transactions and compensating actions. It ensures eventual consistency by providing a predefined 'undo' path if any individual step in the process fails.",
-      "longDefinition": "A saga is a sequence of local transactions where each transaction updates data within a single service and triggers the next transaction; if one fails, the saga executes compensating transactions to undo the previous changes.",
-      "connector": "Think of the saga pattern like booking a complex vacation — if the hotel booking fails, the system automatically cancels your flight (compensating action) to keep things consistent.",
-      "techContext": "We implemented the saga pattern to handle our flight-and-hotel booking process, ensuring that if the hotel booking fails, the flight is automatically canceled.",
-      "exampleSentence": "The saga pattern is a more scalable alternative to traditional two-phase commit (2PC) for maintaining consistency in microservices.",
-      "etymology": "From Old Norse 'saga', a long story of heroic achievement.",
+      "shortDefinition": "A failure cascade where simultaneous client retries overwhelm a recovering service, preventing it from stabilising.",
+      "simpleDefinition": "A retry storm happens when many clients simultaneously retry requests against a service that is slow or partially unavailable. The flood of retries increases load on the struggling service, pushing it further into failure or preventing recovery. It turns a transient issue into a sustained outage.",
+      "longDefinition": "Retry storms are a classic distributed systems failure cascade. A service slows down due to a brief spike, elevated latency, or a dependency hiccup. Clients hit their timeouts and retry. If thousands of clients all set the same timeout and use the same retry interval, they retry in lockstep: the first retry wave arrives just as the service is trying to recover, overwhelms it again, and the cycle repeats. The service oscillates between near-recovery and collapse without ever stabilising. The combination of naive retry logic and a thundering herd makes retry storms one of the most common causes of extended outages in microservices. Prevention: exponential backoff — each retry waits twice as long as the previous, spreading retries over time; jitter — add random noise to backoff intervals so retries de-synchronize across clients; circuit breakers — stop retrying entirely when a failure threshold is reached, giving the service a breathing window; retry budgets — cap the percentage of total requests that are retries so the service always receives a meaningful fraction of fresh traffic; load shedding on the server side — the service actively rejects a fraction of requests under overload rather than accepting all and degrading. The AWS exponential backoff and jitter recommendation (with full jitter or decorrelated jitter) is the industry standard for retry logic in cloud services.",
+      "connector": "Think of a retry storm like a stadium exit jammed at halftime: everyone pushes at once, which jams the exit tighter, which makes people push harder. If everyone just waited a random moment before trying, the crowd would flow freely.",
+      "techContext": "AWS SDK implements exponential backoff with full jitter by default; for custom clients, the pattern is: wait = min(cap, random(0, base * 2^attempt)) where cap prevents the backoff from growing indefinitely.",
+      "exampleSentence": "The database blip lasted 2 seconds but the resulting retry storm from 800 concurrent clients kept the service degraded for 4 minutes — adding jitter to the retry logic cut future recovery time to under 10 seconds.",
       "codeExample": {
-        "language": "javascript",
-        "code": "if (hotelBookingFailed) {\n  compensateFlightBooking(flightId);\n}"
+        "language": "python",
+        "code": "import random\nimport time\nimport requests\n\ndef call_with_backoff(url: str, max_attempts: int = 5) -> dict:\n    \"\"\"Exponential backoff with full jitter to prevent retry storms.\"\"\"\n    base = 0.5   # seconds\n    cap  = 30.0  # max wait seconds\n\n    for attempt in range(max_attempts):\n        try:\n            resp = requests.get(url, timeout=2)\n            resp.raise_for_status()\n            return resp.json()\n        except (requests.Timeout, requests.HTTPError) as e:\n            if attempt == max_attempts - 1:\n                raise\n            # Full jitter: random in [0, min(cap, base * 2^attempt)]\n            wait = random.uniform(0, min(cap, base * (2 ** attempt)))\n            time.sleep(wait)"
       },
+      "etymology": "Retry from Latin re- ('again') + Old French trier ('to try'); storm from Old English storm ('violent disturbance') — a retry storm is a violent surge of repeated attempts that overwhelms rather than relieves a struggling system.",
       "unlockLevel": 16,
       "tags": [
         "distributed-systems",
         "reliability",
-        "architecture"
+        "resilience"
       ],
       "category": "patterns"
     },
@@ -174,7 +174,7 @@
       "word": "CDC",
       "pronunciation": "SEE-dee-see",
       "partOfSpeech": "acronym",
-      "shortDefinition": "Pattern used to determine and track the data that has changed.",
+      "shortDefinition": "Technique that reads a database's transaction log to capture every row-level insert, update, and delete and streams those events to downstream consumers.",
       "simpleDefinition": "Change Data Capture — a set of patterns that identify and track real-time changes within a database. By streaming every insert, update, and delete, CDC allows downstream systems like search indexes and caches to remain perfectly synchronized with primary data stores.",
       "longDefinition": "Change Data Capture (CDC) is a set of software design patterns used to determine and track the data that has changed so that action can be taken using the changed data (e.g., syncing it to another database).",
       "connector": "Think of CDC like a digital news ticker for your database — every time a record changes, it instantly broadcasts the update to everyone who needs to know.",
@@ -195,27 +195,27 @@
     },
     {
       "id": "dist0090-0000-0000-0000-000000000009",
-      "word": "Stream Processing",
-      "pronunciation": "STREEM PROH-ses-ing",
+      "word": "Idempotent Producer",
+      "pronunciation": "eye-DEM-puh-tent pruh-DOO-ser",
       "partOfSpeech": "noun",
-      "shortDefinition": "Processing data in real-time as it flows through a system.",
-      "simpleDefinition": "The technical practice of acting upon data as it continuously flows through a system — rather than waiting for large batches. This enables immediate insights and actions, such as real-time fraud detection or live telemetry analysis of high-volume event streams.",
-      "longDefinition": "Stream processing is the practice of querying and taking action on a continuous flow of data records, rather than processing them in large, static batches.",
-      "connector": "Think of stream processing like an industrial assembly line — items (data) are processed, measured, and inspected one by one as they move past the workstation.",
-      "techContext": "Our stream processing engine analyzes millions of clicks per second to detect fraudulent patterns and block suspicious users in real-time.",
-      "exampleSentence": "We migrated our analytics from nightly batch jobs to Apache Flink for real-time stream processing.",
-      "etymology": "From 'stream' (Old English 'stream') and 'processing'.",
+      "shortDefinition": "A Kafka producer configured to ensure each message is written to a partition exactly once, even across retries.",
+      "simpleDefinition": "An idempotent producer attaches a unique producer ID and a per-partition sequence number to each message. If the broker receives a duplicate (same ID + sequence), it discards it rather than appending it again. This makes retries safe and provides exactly-once write semantics at the producer level without any application-level deduplication logic.",
+      "longDefinition": "Before idempotent producers, Kafka could only guarantee at-least-once delivery from the producer side. A producer that sent a message, received no acknowledgement (due to network timeout), and retried would sometimes produce two copies if the broker had actually written the first but its ack was lost in transit. The idempotent producer feature (introduced in Kafka 0.11) eliminates this. When a producer enables idempotence (`enable.idempotence=true`), the Kafka broker assigns it a persistent Producer ID (PID). The producer then attaches a monotonically increasing sequence number to each message sent to each partition. The broker maintains the last seen sequence number per (PID, partition) pair and silently deduplicates any message whose sequence number is not exactly `last_seen + 1`. This deduplication window covers the in-flight message window (up to `max.in.flight.requests.per.connection` messages, which must be ≤ 5 for idempotence). Idempotent producers are a building block for Kafka's transactional API: transactions add atomic multi-partition writes on top of idempotent single-partition writes, enabling exactly-once semantics for stream processing pipelines. Setting `acks=all` (the required setting for idempotence) also ensures the message is written to all in-sync replicas before acknowledgement, providing full durability.",
+      "connector": "Think of an idempotent producer like a mail-order system that stamps each order with a unique serial number — if the same order number arrives twice (retry), the warehouse ignores the duplicate and ships only once, regardless of how many times the customer resubmitted.",
+      "techContext": "Kafka Streams automatically enables idempotent producers and sets `acks=all` when processing.guarantee is configured to `exactly_once_v2`, making idempotent producers transparent to application developers.",
+      "exampleSentence": "After enabling idempotent producers, the payment pipeline's duplicate transaction rate on network retries dropped to zero without any changes to the consumer-side deduplication logic.",
       "codeExample": {
-        "language": "javascript",
-        "code": "stream.filter(event => event.price > 100)\n      .map(event => event.id)\n      .subscribe(id => notify(id));"
+        "language": "python",
+        "code": "from confluent_kafka import Producer\n\n# Idempotent producer configuration\nproducer = Producer({\n    'bootstrap.servers': 'kafka:9092',\n    'enable.idempotence': True,   # enables PID + sequence dedup\n    'acks': 'all',                # required for idempotence\n    'max.in.flight.requests.per.connection': 5,  # max for idempotence\n    'retries': 2147483647,        # unlimited retries (safe with idempotence)\n})\n\ndef delivery_report(err, msg):\n    if err:\n        print(f'Delivery failed: {err}')\n    else:\n        print(f'Delivered to {msg.topic()} [{msg.partition()}] @ {msg.offset()}')\n\nproducer.produce('payments', key='txn-42', value='{...}', callback=delivery_report)\nproducer.flush()"
       },
+      "etymology": "Idempotent from Latin idem ('same') + potens ('powerful, able') — an operation that produces the same result no matter how many times it is applied; producer from Latin producere ('to bring forth') — a Kafka client that writes records to topics.",
       "unlockLevel": 16,
       "tags": [
-        "big-data",
-        "real-time",
-        "streaming"
+        "distributed-systems",
+        "kafka",
+        "messaging"
       ],
-      "category": "processes"
+      "category": "concepts"
     },
     {
       "id": "dist0100-0000-0000-0000-000000000010",
@@ -243,49 +243,49 @@
     },
     {
       "id": "dist0110-0000-0000-0000-000000000011",
-      "word": "Service Mesh",
-      "pronunciation": "SUR-vis MESH",
+      "word": "Data Plane",
+      "pronunciation": "DAY-tuh PLAYN",
       "partOfSpeech": "noun",
-      "shortDefinition": "Dedicated infrastructure layer for managing service-to-service communication.",
-      "simpleDefinition": "A dedicated, low-latency infrastructure layer designed to handle massive volumes of network-based inter-service communication. It offloads critical networking tasks — like encryption, retries, and traffic routing — from the application code into a specialized transparent proxy sidecar.",
-      "longDefinition": "A service mesh is a configurable, low-latency infrastructure layer designed to handle a high volume of network-based interprocess communication among microservices.",
-      "connector": "Think of a service mesh like a personal assistant for every service — they handle all the calls, translate languages, and keep meticulous logs for you.",
-      "techContext": "Installing the Istio service mesh gave us automatic mutual TLS encryption and advanced traffic routing capabilities without changing a single line of application code.",
-      "exampleSentence": "The service mesh provides observability into every request flowing between our hundred microservices.",
-      "etymology": "From 'service' (Latin 'servitium') and 'mesh' (Middle Dutch 'maesche').",
+      "shortDefinition": "The layer of a distributed system responsible for forwarding, processing, or transforming actual data traffic, as distinct from the control plane that manages configuration.",
+      "simpleDefinition": "The data plane is the fast path — the part of a system that actually handles, forwards, or transforms data in real time. It is distinct from the control plane, which makes decisions about how data should flow. Proxies, load balancers, and stream processors all have a data plane that moves packets or records, and a separate control plane that configures the rules.",
+      "longDefinition": "The data-plane / control-plane separation is a foundational architectural pattern in networking, distributed systems, and service meshes. The control plane is responsible for configuration, routing decisions, cluster membership, and policy — it is the 'brain'. The data plane is responsible for executing those decisions at line rate — the 'muscle'. In a service mesh like Istio, the control plane (Istiod) distributes xDS configuration to every Envoy sidecar proxy; each Envoy instance is the data plane — it intercepts every request, enforces the configured routing rules, applies mTLS, records metrics, and forwards packets. Separating the planes provides several benefits: the data plane can be highly optimised for throughput (written in C++, using kernel bypass techniques like DPDK or eBPF) while the control plane can be more complex and is not on the hot path; a control-plane failure degrades manageability but the data plane continues forwarding based on the last known configuration; the two planes can be scaled independently. In Apache Kafka, the broker's data plane handles produce/consume requests; the metadata plane (formerly ZooKeeper, now KRaft) is the control plane. In Kubernetes, kubelet and kube-proxy are data-plane components; the API server and scheduler are control-plane components. In stream processing systems, the data plane is the operator code that transforms records per message; the control plane is the job manager that distributes work and coordinates checkpointing.",
+      "connector": "Think of the data plane like the roads in a city and the control plane like the traffic management center — trucks drive on roads (data plane) while engineers at the center change signal timings and route diversions (control plane). The trucks keep moving even if the center goes dark for a moment.",
+      "techContext": "In Istio, Envoy sidecars form the data plane: they proxy all inbound and outbound traffic for their paired service, enforcing the routing rules, retries, and mTLS policies last pushed by the Istiod control plane.",
+      "exampleSentence": "After the Istiod control plane restarted during the upgrade, the data plane — every Envoy sidecar — continued forwarding traffic based on its cached configuration, resulting in zero traffic loss during the control-plane outage.",
       "codeExample": {
-        "language": "javascript",
-        "code": "apiVersion: networking.istio.io/v1alpha3\nkind: VirtualService\nmetadata:\n  name: my-service"
+        "language": "yaml",
+        "code": "# Istio: control plane pushes VirtualService to data plane (Envoy)\napiVersion: networking.istio.io/v1alpha3\nkind: VirtualService\nmetadata:\n  name: payment-service\nspec:\n  hosts:\n    - payment-service\n  http:\n    - route:\n        - destination:\n            host: payment-service\n            subset: v2\n          weight: 90\n        - destination:\n            host: payment-service\n            subset: v1\n          weight: 10\n# Istiod distributes this to every Envoy sidecar (data plane)\n# Envoy enforces the 90/10 split on every actual request"
       },
+      "etymology": "Data from Latin datum ('given'); plane from Latin planus ('flat, level') — in aviation, planes of operation refer to distinct layers of function; the data plane / control plane metaphor entered networking via SDN (Software-Defined Networking) in the 2000s.",
       "unlockLevel": 16,
       "tags": [
-        "infrastructure",
+        "distributed-systems",
         "networking",
-        "kubernetes"
+        "architecture"
       ],
       "category": "components"
     },
     {
       "id": "dist0120-0000-0000-0000-000000000012",
-      "word": "Distributed Tracing",
-      "pronunciation": "dih-STRIB-yoo-ted TRAY-sing",
+      "word": "Trace Sampling",
+      "pronunciation": "TRAYS SAM-pling",
       "partOfSpeech": "noun",
-      "shortDefinition": "Monitoring request paths as they flow across multiple microservices and networks.",
-      "simpleDefinition": "The practice of monitoring requests as they flow through complex microservice architectures — spanning multiple servers and networks. It stitches together individual 'spans' using unique IDs to provide a holistic view of a single transaction's path.",
-      "longDefinition": "Distributed tracing is essential for debugging modern microservices where a single user action may trigger dozen of internal service calls. By propagating a unique trace identifier through every request header, the system can reconstruct the entire execution path. This visibility helps engineers identify which specific service in a long chain is responsible for errors or high latency, significantly reducing mean time to resolution.",
-      "connector": "Think of distributed tracing like tracking a relay race baton — you see which runner held it longest and exactly where it was dropped.",
-      "techContext": "Implementing distributed tracing was the only way we could understand the complex interactions between our 50 different microservices.",
-      "exampleSentence": "Distributed tracing allowed us to visualize the entire lifecycle of a request as it hopped across different servers and data centers.",
-      "etymology": "from 'distributed' + 'tracing'.",
+      "shortDefinition": "The practice of capturing only a fraction of distributed traces to control observability overhead while retaining diagnostic value.",
+      "simpleDefinition": "Trace sampling selects which requests to trace in a distributed system. Tracing every request at high traffic volumes would overwhelm storage and processing. Sampling trades completeness for cost: a 1% sample captures enough statistical signal for performance analysis while cutting overhead 100-fold, while head-based or tail-based strategies retain important outliers.",
+      "longDefinition": "Full distributed tracing — recording every span for every request — is prohibitively expensive at scale. A system handling 100,000 requests per second with 10 services and 5 spans per service generates 5 million spans per second. Trace sampling is the mechanism for making tracing economically viable. Head-based sampling: the sampling decision is made at the trace's entry point (e.g., the edge load balancer or the first service) before downstream calls are made. All downstream spans inherit the decision. Simple to implement, but commits to a sampling rate before knowing whether the request is interesting. Tail-based sampling: the full trace is collected speculatively in a buffer; the sampling decision is made after the trace completes, based on its content — keeping traces with errors, high latency, or user-defined criteria. Tail-based sampling can achieve 100% capture of errors at 1% overall sampling, but requires a stateful collector that buffers traces. Adaptive sampling: the sampling rate adjusts dynamically based on observed request rate — sample more during low traffic, sample less under high load. This maintains a roughly constant span ingestion rate regardless of traffic. The OpenTelemetry SDK supports all three strategies. Sampling metadata (whether a trace was sampled and at what rate) must be propagated in headers so downstream services can make consistent decisions and statistical correction factors can be applied to rate calculations.",
+      "connector": "Think of trace sampling like a quality inspector on an assembly line who inspects every 100th widget in normal operation, but flags every widget that triggers an alarm — you get broad coverage cheaply, while still catching every defect.",
+      "techContext": "Jaeger's adaptive sampling dynamically adjusts the per-service sampling rate to maintain a target of 100 traces per second per service, protecting the backend while ensuring no service goes entirely unsampled.",
+      "exampleSentence": "Switching from head-based 1% sampling to tail-based sampling caused the error rate in captured traces to jump from 1% to 98%, revealing dozens of intermittent bugs that the head-based sampler had been statistically discarding.",
       "codeExample": {
-        "language": "bash",
-        "code": "# Example propagation header\ncurl -H \"traceparent: 00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01\" \\\n     http://api.internal/v1/orders"
+        "language": "python",
+        "code": "from opentelemetry import trace\nfrom opentelemetry.sdk.trace import TracerProvider\nfrom opentelemetry.sdk.trace.sampling import (\n    TraceIdRatioBased,\n    ParentBased,\n)\n\n# Head-based sampling: sample 5% of new traces\n# Respect parent's decision for downstream spans\nsampler = ParentBased(root=TraceIdRatioBased(0.05))\n\nprovider = TracerProvider(sampler=sampler)\ntrace.set_tracer_provider(provider)\ntracer = trace.get_tracer('my-service')\n\nwith tracer.start_as_current_span('handle-request') as span:\n    span.set_attribute('user.id', '42')\n    # Span is recorded only if sampled (5% of new traces)"
       },
+      "etymology": "Trace from Latin tractus ('drawn, dragged') — a trace follows the path of a request; sampling from the statistical sense of selecting a representative subset from a larger population for observation.",
       "unlockLevel": 16,
       "tags": [
+        "distributed-systems",
         "observability",
-        "tracing",
-        "architecture"
+        "performance"
       ],
       "category": "processes"
     },
@@ -339,24 +339,24 @@
     },
     {
       "id": "dist0150-0000-0000-0000-000000000015",
-      "word": "Vector Clocks",
-      "pronunciation": "VEK-ter KLOKS",
+      "word": "Monotonic Counter",
+      "pronunciation": "mon-uh-TON-ik KOWN-ter",
       "partOfSpeech": "noun",
-      "shortDefinition": "Algorithm for generating a partial ordering of events in a distributed system.",
-      "simpleDefinition": "Algorithm for tracking causality and event ordering in a distributed system where no global clock exists. It uses an array of counters — one per node — to detect conflicting updates and determine which versions of data are most recent.",
-      "longDefinition": "A vector clock is a data structure used to determine the partial ordering of events and detect causality violations in a distributed system where there is no global clock.",
-      "connector": "Think of vector clocks like a 'read receipts' chain — they show exactly who saw what version and when, helping to resolve subsequent disagreements.",
-      "techContext": "Riak uses vector clocks to detect when two different versions of a document have been written simultaneously in different data centers.",
-      "exampleSentence": "The middleware used vector clocks to resolve conflicts when two users updated the same record during a network partition.",
-      "etymology": "From 'vector' (mathematical array) and 'clocks'.",
+      "shortDefinition": "A counter that only ever increases, used to generate globally ordered sequence numbers or version stamps across a distributed system.",
+      "simpleDefinition": "A monotonic counter is a shared counter that only increments — never decrements. Its key property is that any two values from the sequence are comparable: the larger one came later. Distributed systems use monotonic counters to assign sequence numbers to events, transactions, or writes, enabling a total order without relying on wall-clock timestamps.",
+      "longDefinition": "Monotonic counters appear across distributed systems wherever a total, non-decreasing ordering is required without trusting physical clocks. In a single-node database, auto-increment primary keys and transaction IDs are monotonic counters. In distributed systems, generating a monotonic counter that is both globally unique and globally ordered requires coordination: all nodes must agree on the next value. Common implementations: Sequence services — a dedicated service (like Snowflake's ID generator, or a Zookeeper ephemeral sequential node) issues batches of IDs to each node; each node burns through its batch locally without further coordination. The globally issued batches maintain monotonicity across nodes. Logical clocks — Lamport timestamps act as a monotonic counter that incorporates causality: each node bumps its local counter on every event and advances to max(local, received) + 1 on every message, ensuring causally related events have monotonically increasing timestamps. Monotonic read guarantees — the concept extends to read operations: a monotonic read guarantee means that once a client reads a value at position X in a sequence, subsequent reads never return a value from before X. Lease-based counters — in systems like etcd, a node acquires a lease with an epoch number; the epoch is a monotonic counter that increments on each election, allowing older leaders to be detected and rejected. The critical operational property: monotonic counters must never reuse a value across failures or restarts. This typically requires durable persistence of the current counter value before issuing any IDs in a batch.",
+      "connector": "Think of a monotonic counter like an odometer — it only ever goes up, so any reading you take today is guaranteed to be higher than any reading from yesterday. No matter who reads it or when, the ordering is unambiguous.",
+      "techContext": "PostgreSQL's transaction IDs (XIDs) are a 32-bit monotonic counter shared across all transactions; XID wraparound — when the counter overflows — is a well-known operational hazard requiring VACUUM to advance the horizon before wraparound occurs.",
+      "exampleSentence": "The distributed event log uses a Zookeeper-backed monotonic counter to stamp every event with a unique, globally ordered sequence number, guaranteeing that replicas apply events in the same order regardless of network delivery order.",
       "codeExample": {
-        "language": "javascript",
-        "code": "{ \"nodeA\": 5, \"nodeB\": 2, \"nodeC\": 8 }"
+        "language": "python",
+        "code": "import threading\n\nclass MonotonicCounter:\n    \"\"\"Thread-safe monotonic counter. Replace with distributed\n    implementation (Redis INCR, ZooKeeper sequential node) for multi-node use.\"\"\"\n\n    def __init__(self, start: int = 0):\n        self._value = start\n        self._lock = threading.Lock()\n\n    def next(self) -> int:\n        with self._lock:\n            self._value += 1\n            return self._value\n\n    @property\n    def current(self) -> int:\n        return self._value\n\n# Usage\ncounter = MonotonicCounter()\nfor _ in range(3):\n    print(counter.next())  # 1, 2, 3 — never repeats, never decrements"
       },
+      "etymology": "Monotonic from Greek monos ('single') + tonos ('tone, tension') — mathematically, a monotonically increasing function never decreases; counter from Old French conter ('to count, recount') — a register that tracks a running total.",
       "unlockLevel": 16,
       "tags": [
         "distributed-systems",
-        "theory",
+        "ordering",
         "consistency"
       ],
       "category": "concepts"
@@ -387,20 +387,20 @@
     },
     {
       "id": "dist0170-0000-0000-0000-000000000017",
-      "word": "Raft",
-      "pronunciation": "RAFT",
+      "word": "Flexible Paxos",
+      "pronunciation": "FLEK-sih-bul PAK-sohs",
       "partOfSpeech": "noun",
-      "shortDefinition": "A consensus algorithm designed as an alternative to Paxos.",
-      "simpleDefinition": "Modern consensus algorithm designed for manageability and ease of understanding — providing a way to maintain a shared, replicated log across a cluster. It functions by electing a single leader responsible for all state modifications.",
-      "longDefinition": "Raft is a consensus algorithm that is designed to be easy to understand. It achieves consensus by electing a leader and then giving that leader complete responsibility for managing the replicated log.",
-      "connector": "Think of Raft like a group of friends picking a restaurant — they elect one leader to decide, and everyone else follows the leader's final choice.",
-      "techContext": "Etcd, the key-value store used by Kubernetes, uses the Raft algorithm to maintain a consistent state across its cluster.",
-      "exampleSentence": "The Raft algorithm handled the leader election perfectly when the primary node's network cable was accidentally unplugged.",
-      "etymology": "The name is not an acronym; it was chosen because it's a 'raft' to save you from the complex Paxos algorithm.",
+      "shortDefinition": "A generalisation of Paxos that allows different quorum sizes for leader election and log replication, independently tunable per phase.",
+      "simpleDefinition": "Flexible Paxos (FPaxos) shows that a Paxos cluster does not need the same majority quorum for every phase. The only requirement is that the election quorum and the replication quorum together cover at least one common node. This allows a 5-node cluster to replicate to just 2 nodes (for low latency) as long as elections require 4 nodes (for safety).",
+      "longDefinition": "Classic Paxos and Raft require a strict majority quorum — ⌊N/2⌋+1 nodes — for both leader election (Phase 1) and log replication (Phase 2). This gives you safety and liveness, but it means replication always pays the latency cost of waiting for a majority acknowledgement. Flexible Paxos (introduced by Howard, Malkhi, and Spiegelman) relaxes this constraint with a single requirement: the election quorum Q1 and the replication quorum Q2 must have non-empty intersection — they must share at least one node. This is the intersection condition that ensures any newly elected leader can find the latest committed value. Given this constraint, you can choose different quorum sizes for each phase. For a 5-node cluster: Q1=4, Q2=2 (fast replication: only 2 acks needed per write, but elections need 4 nodes); or Q1=2, Q2=4 (fast elections: leader change needs only 2 votes, but replication requires 4 acks). This flexibility lets operators tune the availability-latency-durability trade-off. In failure scenarios, if fewer nodes than Q2 are alive, writes are not possible; if fewer than Q1 are alive, elections are not possible — but these thresholds can be set independently. FPaxos is deployed in Azure's CosmosDB and influenced the design of EPaxos. For most systems, the practical implication is that replication quorums smaller than majority are safe as long as election quorums are larger than majority.",
+      "connector": "Think of Flexible Paxos like a high-security building that requires 4 of 5 key cards to change who has master access, but only 2 of 5 to open a regular door. The high bar for changing authority ensures consistency; the low bar for normal operation ensures speed.",
+      "techContext": "Azure Cosmos DB uses a form of Flexible Paxos where write quorums can be configured to as few as 1 replica (strong consistency requires 3), letting clients trade durability for write latency.",
+      "exampleSentence": "By adopting Flexible Paxos with Q2=2 for replication on a 5-node cluster, the write latency dropped by 40% compared to majority quorum, while the Q1=4 election quorum ensured no log divergence was possible.",
       "codeExample": {
-        "language": "javascript",
-        "code": "if (receivedVotes > totalNodes / 2) {\n  this.role = 'LEADER';\n}"
+        "language": "text",
+        "code": "Flexible Paxos quorum intersection requirement:\n  Q1 ∩ Q2 ≠ ∅  (election quorum and replication quorum share ≥1 node)\n\nFor N=5 nodes, options satisfying Q1 + Q2 > N:\n  Classic Paxos: Q1=3, Q2=3  (both majority)\n  Fast Writes:   Q1=4, Q2=2  (write to 2; elect from 4)\n  Fast Elect:    Q1=2, Q2=4  (write to 4; elect from 2)\n\nSafety proof:\n  Any elected leader in Q1 overlaps with the last committed Q2 write\n  → new leader can always find the latest committed entry\n  → no two leaders can have conflicting commits"
       },
+      "etymology": "Flexible indicating the variable quorum sizes; Paxos named for a fictional legislative system on the Greek island of Paxos, used by Leslie Lamport to name the original consensus algorithm — Flexible Paxos is an extension that relaxes its rigidity.",
       "unlockLevel": 16,
       "tags": [
         "distributed-systems",
@@ -411,27 +411,27 @@
     },
     {
       "id": "dist0180-0000-0000-0000-000000000018",
-      "word": "Anti-entropy",
-      "pronunciation": "an-tee-EN-truh-pee",
+      "word": "HotStuff",
+      "pronunciation": "HOT-stuf",
       "partOfSpeech": "noun",
-      "shortDefinition": "A background process that periodically compares replicas and reconciles divergence, restoring consistency.",
-      "simpleDefinition": "A janitor process that walks across replicas, compares their state (often via Merkle trees), and copies missing or stale data to bring them back in sync.",
-      "longDefinition": "Anti-entropy is what eventually-consistent stores rely on to actually become consistent. Two replicas diverge during a partition or message loss; an anti-entropy sweep computes a digest of each replica's data, finds the differences, and exchanges only the missing pieces. Cassandra and DynamoDB lean on it heavily.",
-      "techContext": "Cassandra calls them 'repair' operations. Implementations use Merkle trees to make divergence-detection O(log n) of data size — you only walk the subtree where hashes differ.",
-      "exampleSentence": "The replication backlog cleared up after we scheduled nightly anti-entropy runs across all keyspace shards.",
-      "etymology": "From physics — entropy = disorder; anti-entropy = restoring order.",
-      "connector": "Like a garbage collector for inconsistency — runs in the background, reconciles slowly but reliably.",
+      "shortDefinition": "A Byzantine fault-tolerant consensus protocol that achieves linear communication complexity per round by routing all messages through the leader.",
+      "simpleDefinition": "HotStuff is a BFT consensus protocol designed to tolerate Byzantine (malicious or arbitrarily faulty) nodes while achieving linear message complexity. Instead of every node broadcasting to every other node, all messages flow through the leader, reducing the per-round communication from O(n²) to O(n) — making it practical for larger BFT clusters.",
+      "longDefinition": "Classical Byzantine fault-tolerant (BFT) protocols like PBFT (Practical Byzantine Fault Tolerance) require O(n²) messages per round because every node must hear from every other node to detect Byzantine behavior — a node broadcasting conflicting messages to different peers. This quadratic complexity makes PBFT impractical beyond a few dozen nodes. HotStuff, introduced by Abraham, Malkhi, Nayak, Ren, and Spiegelman, achieves linear message complexity while maintaining the same safety and liveness guarantees. The key insight is the chained three-phase structure: Prepare, Pre-Commit, and Commit phases, each producing a Quorum Certificate (QC) — a threshold signature from a quorum of replicas. All messages flow through the leader, who aggregates votes into a QC using a threshold signature scheme. A node only needs to send its vote to the leader; the leader broadcasts the QC back. This is O(n) per phase instead of O(n²). HotStuff also introduces the 'pipelined' variant where consecutive blocks in the chain serve the three phases of multiple proposals simultaneously, reducing latency to one network round trip per block under normal operation. HotStuff's design directly influenced the LibraBFT consensus protocol (used in the Diem blockchain), and its ideas appear in Tendermint and modern BFT research. Safety guarantee: with f Byzantine nodes, safety holds for any n ≥ 3f+1 total nodes; the protocol tolerates up to ⌊(n-1)/3⌋ Byzantine failures.",
+      "connector": "Think of HotStuff like a class taking a vote where every student passes their ballot to the teacher (the leader) instead of reading out loud to the class — the teacher collects all votes and announces the result, achieving consensus with n messages instead of n² whispers.",
+      "techContext": "Meta's Diem blockchain used LibraBFT, a variant of HotStuff, as its consensus mechanism; the linear message complexity allowed the network to operate with hundreds of validator nodes where PBFT would have been impractical.",
+      "exampleSentence": "By replacing the PBFT-based consensus layer with HotStuff, the validator cluster's message overhead dropped from 90,000 messages per round (n²) to 300 (n), enabling the network to scale from 30 to 300 nodes without latency degradation.",
       "codeExample": {
         "language": "text",
-        "code": "Replica A: {k1:v1, k2:v2_old, k3:v3}\nReplica B: {k1:v1, k2:v2_new, k4:v4}\n\nMerkle tree compare → divergence at k2, k3, k4\n\nExchange only the diffs:\n  A → B: k3=v3\n  B → A: k2=v2_new (newer timestamp wins), k4=v4\n\nAfter sweep: both replicas agree."
+        "code": "HotStuff three-phase round (pipelined view):\n\nLeader                   Replicas (n-1)\n  │                           │\n  │── PREPARE(block, qc) ────▶│  (broadcast new block + parent QC)\n  │◀─ VOTE(block hash) ───────│  (each replica sends vote to leader only)\n  │   (aggregate n-f votes into QC using threshold signature)\n  │\n  │── PRE-COMMIT(qc) ────────▶│\n  │◀─ VOTE ───────────────────│\n  │\n  │── COMMIT(qc) ────────────▶│  (block is now finalized)\n  │\nMessage complexity: O(n) per phase vs O(n²) in PBFT\nSafety: n ≥ 3f + 1 (tolerates f Byzantine nodes)"
       },
+      "etymology": "HotStuff is an informal name chosen by its authors — likely a nod to the protocol being 'hot' (fast, efficient) compared to prior BFT work; it does not stand for an acronym.",
       "unlockLevel": 16,
       "tags": [
-        "distributed",
-        "consistency",
-        "replication"
+        "distributed-systems",
+        "consensus",
+        "byzantine-fault-tolerance"
       ],
-      "category": "patterns"
+      "category": "concepts"
     },
     {
       "id": "dist0190-0000-0000-0000-000000000019",
@@ -483,20 +483,20 @@
     },
     {
       "id": "dist0210-0000-0000-0000-000000000021",
-      "word": "Paxos",
-      "pronunciation": "PAK-sohs",
+      "word": "Multi-Paxos",
+      "pronunciation": "MUL-tee PAK-sohs",
       "partOfSpeech": "noun",
-      "shortDefinition": "A family of protocols for solving consensus in a network of unreliable processors.",
-      "simpleDefinition": "Foundational family of protocols for achieving consensus among distributed servers on a single value — even when processors fail or messages are lost. It provides a mathematically robust but complex framework for building fault-tolerant distributed systems.",
-      "longDefinition": "Paxos is a consensus algorithm used to achieve agreement among a group of distributed servers on a single value, even when some servers might fail or messages might be lost.",
-      "connector": "Think of Paxos like a complicated multi-nation peace treaty — it's incredibly hard to get all parties to sign, but once they do, everyone is in agreement.",
-      "techContext": "Google's Chubby lock service uses a Paxos-based protocol to ensure that all its globally distributed replicas agree on which user holds a lock.",
-      "exampleSentence": "While Paxos is notoriously difficult to implement correctly, it remains the foundation of many highly available distributed systems.",
-      "etymology": "Named after a fictional legislative system on the Greek island of Paxos.",
+      "shortDefinition": "An optimisation of Paxos that elects a stable leader to skip Phase 1 for repeated consensus rounds, reducing round trips for a replicated log.",
+      "simpleDefinition": "Single-decree Paxos requires two round trips (Prepare + Accept) to agree on one value. Multi-Paxos skips the Prepare phase for all instances after the first by keeping the same leader for multiple rounds. This makes it practical for a replicated log where thousands of log entries need to be agreed on per second.",
+      "longDefinition": "Classic Paxos (single-decree Paxos) solves consensus for a single value using two phases: Phase 1 (Prepare / Promise) establishes the leader's authority and discovers any previously accepted values; Phase 2 (Propose / Accept) gets the value durably agreed. Running two round trips for every log entry in a replicated state machine is expensive. Multi-Paxos optimises this by noting that Phase 1 proves the leader's authority — and that authority is still valid for subsequent instances until a higher ballot number is observed. A stable leader can therefore skip Phase 1 for all subsequent log entries and proceed directly to Phase 2. This reduces the steady-state cost to one round trip per log entry (one Accept message and a quorum of Accepted replies). Leader leases extend this further, enabling the leader to serve reads locally. Multi-Paxos is what is actually deployed in production systems that call themselves 'Paxos-based': Google's Chubby and Megastore, Apache Zookeeper's ZAB protocol, and etcd's Raft (a close relative). The challenge is that Paxos papers rarely specify all the engineering details — Multi-Paxos is underspecified and each implementation must work out leader election, log truncation, and recovery independently. This is one reason Raft was developed: to provide an understandable, fully specified variant of Multi-Paxos for replicated logs.",
+      "connector": "Think of Multi-Paxos like a meeting where, instead of re-introducing yourself and proving your credentials at the start of every agenda item, you do it once at the beginning and then proceed through all items with authority already established.",
+      "techContext": "Google's Chubby distributed lock service uses Multi-Paxos for its replicated log; the same leader handles thousands of operations per second using Phase 2 only, falling back to Phase 1 only when a leader change is required.",
+      "exampleSentence": "By implementing Multi-Paxos instead of single-decree Paxos, the distributed log's write throughput increased from 500 to 12,000 operations per second — Phase 1 was being skipped for 99.97% of all entries.",
       "codeExample": {
-        "language": "javascript",
-        "code": "Phase1_Prepare(seqNum)\nPhase2_Accept(seqNum, value)"
+        "language": "text",
+        "code": "Multi-Paxos steady-state (leader established, Phase 1 skipped):\n\nLeader                     Acceptors A, B, C\n  │                              │\n  │── Accept(slot=42, v=v42) ───▶│  (Phase 2 only)\n  │◀─ Accepted(slot=42) ─────────│\n  │   (quorum ≥ 2 of 3) → slot 42 decided\n  │\n  │── Accept(slot=43, v=v43) ───▶│\n  │◀─ Accepted(slot=43) ─────────│\n  │   ...\n\nPhase 1 only runs on leader election or on learning of a higher ballot.\nSteady-state: 1 round trip per slot vs 2 in basic Paxos."
       },
+      "etymology": "Multi from Latin multus ('many') + Paxos — the name of the fictional Paxian legislative system in Lamport's original papers; Multi-Paxos describes running the Paxos protocol across multiple consecutive decision slots (log entries).",
       "unlockLevel": 16,
       "tags": [
         "distributed-systems",
@@ -507,22 +507,25 @@
     },
     {
       "id": "dist0220-0000-0000-0000-000000000022",
-      "word": "Sharding",
-      "pronunciation": "SHARD-ing",
+      "word": "Scatter-Gather Query",
+      "pronunciation": "SKAT-ur GAT-hur KWER-ee",
       "partOfSpeech": "noun",
-      "shortDefinition": "Horizontal scaling strategy partitioning datasets across multiple independent database servers.",
-      "simpleDefinition": "A horizontal scaling strategy that partitions a massive dataset across multiple separate database servers — known as shards. It allows systems to handle much larger traffic volumes and data sizes than any single physical server could support.",
-      "longDefinition": "Sharding is an architectural pattern that involves breaking a large database into smaller, faster, and more manageable parts called shards. Each shard is a separate database instance that contains a subset of the total data. By distributing the load across many servers, sharding enables applications to scale horizontally beyond the vertical limits of a single machine. However, it introduces significant complexity in query routing, data rebalancing, and cross-shard joining.",
-      "connector": "Think of sharding like splitting a giant library into several different buildings — you need more space, so you move sections of books to new locations.",
-      "techContext": "A complex architectural move that is usually only necessary for massive scale (like Facebook or Twitter).",
-      "exampleSentence": "To handle our rapidly growing global traffic, we implemented database sharding, partitioning our user data geographically to improve local latency and system resilience.",
-      "etymology": "from 'shard' (a fragment, especially of pottery).",
+      "shortDefinition": "A query pattern that fans out sub-requests to multiple partitions or nodes in parallel and merges the partial results at a coordinator.",
+      "simpleDefinition": "A scatter-gather query is executed in two phases: the coordinator scatters the query to every relevant shard or node simultaneously (they execute it in parallel), then gathers the partial results and merges them into the final answer. It enables parallelism across a sharded system but introduces tail latency — the total time is determined by the slowest shard.",
+      "longDefinition": "Scatter-gather is the dominant query execution model in distributed search engines, column stores, and sharded databases when the query predicate does not align with the partition key. Without a single shard that can answer the query entirely, the coordinator must consult all N shards. Each shard executes the query locally against its own data subset and returns partial results. The coordinator merges, sorts, and aggregates them. The latency of a scatter-gather query is determined by the slowest shard: in a 100-shard cluster, if one shard is executing a GC pause or serving a hot partition, every query waits for it. This is the tail latency amplification problem — the probability that at least one shard is slow is much higher than the probability that any individual shard is slow. Elasticsearch fans out every search to all primary shards by default; a query over 20 shards with p99 shard latency of 10ms has a p99 end-to-end latency of nearly 10ms × worst-shard factor, not 10ms / 20. Optimisations: partition pruning — exclude shards that provably contain no matching data using partition statistics or bloom filters; speculative/hedged execution — reissue a slow shard's request to a healthy replica and use whichever responds first; early termination for LIMIT queries — stop gathering once enough results are accumulated; query routing — when the predicate matches the partition key, route to a single shard instead of all. DynamoDB's scatter-gather is exposed as `parallel scan`; BigQuery uses column statistics to prune partitions.",
+      "connector": "Think of a scatter-gather query like asking every librarian in a large building simultaneously to find all books on a topic, then collecting and sorting all their piles at the front desk — faster than one librarian but you wait for the slowest one to return.",
+      "techContext": "Elasticsearch fans out every search query across all index shards by default; using the `routing` parameter restricts the scatter to a subset of shards when the application knows which shard owns the target data.",
+      "exampleSentence": "The catalog-wide price search scatter-gathered across all 24 shards; the coordinator waited 850ms for shard 18 on a degraded node while the other 23 completed in under 40ms.",
+      "codeExample": {
+        "language": "python",
+        "code": "import concurrent.futures\nfrom typing import List\n\ndef scatter_gather(query: dict, shards: list) -> List[dict]:\n    \"\"\"Fan out query to all shards in parallel, merge results.\"\"\"\n\n    def query_shard(shard):\n        return shard.search(query)\n\n    # Scatter: parallel requests\n    with concurrent.futures.ThreadPoolExecutor(max_workers=len(shards)) as ex:\n        futures = [ex.submit(query_shard, shard) for shard in shards]\n        partial_results = [f.result() for f in concurrent.futures.as_completed(futures)]\n\n    # Gather + Merge: flatten, sort by score, top-K\n    all_hits = [hit for partial in partial_results for hit in partial]\n    return sorted(all_hits, key=lambda h: h['score'], reverse=True)[:10]"
+      },
+      "etymology": "Scatter from Old English scateran ('to disperse'); gather from Old English gaderian ('to collect, assemble'); the compound is a distributed systems idiom for the fan-out / fan-in execution pattern used in search and analytics systems.",
       "unlockLevel": 16,
       "tags": [
-        "sql",
-        "scaling",
-        "architecture",
-        "advanced"
+        "distributed-systems",
+        "query-patterns",
+        "performance"
       ],
       "category": "processes"
     },

@@ -199,26 +199,26 @@ struct FeynmanCardView: View {
     /// T4 — single ⋯ replaces the three competing buttons on the word stage.
     private var overflowMenu: some View {
         Menu {
-            Button {
-                skipWord()
-            } label: {
-                Label(String(localized: "feynman.menu.skipMastered"),
-                      systemImage: "checkmark.circle")
-            }
-            Button(role: .destructive) {
-                reportAndSkip()
-            } label: {
-                Label(String(localized: "feynman.menu.report"),
-                      systemImage: "flag")
-            }
             if stage != .done {
-                Divider()
                 Button {
-                    showDetail = true
+                    skipWord()
                 } label: {
-                    Label(String(localized: "feynman.menu.openDetail"),
-                          systemImage: "doc.text")
+                    Label(String(localized: "feynman.menu.skipMastered"),
+                          systemImage: "checkmark.circle")
                 }
+                Button(role: .destructive) {
+                    reportAndSkip()
+                } label: {
+                    Label(String(localized: "feynman.menu.report"),
+                          systemImage: "flag")
+                }
+                Divider()
+            }
+            Button {
+                showDetail = true
+            } label: {
+                Label(String(localized: "feynman.menu.openDetail"),
+                      systemImage: "doc.text")
             }
         } label: {
             Image(systemName: "ellipsis.circle")

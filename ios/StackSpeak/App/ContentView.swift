@@ -6,6 +6,7 @@ struct ContentView: View {
     @Environment(\.colorScheme) private var systemColorScheme
     @Environment(\.theme) private var theme
     @Environment(\.scenePhase) private var scenePhase
+    @Environment(\.services) private var services
     @Query private var userProgressList: [UserProgress]
 
     @State private var showOnboarding = false
@@ -23,6 +24,10 @@ struct ContentView: View {
             }
         }
         .environment(\.userProgress, userProgress)
+        // Force the user's light/dark choice (nil = follow system). This sets the
+        // trait collection that the dynamic ColorTokens resolve against, so colors
+        // stay correct even for views that bind to the default ThemeManager.
+        .preferredColorScheme(theme.forcedColorScheme)
         .task {
             checkOnboardingStatus()
         }
@@ -36,11 +41,13 @@ struct ContentView: View {
         .onChange(of: userProgressList) { _, _ in
             checkOnboardingStatus()
         }
-        // Re-check notification authorization when app comes to foreground
+        // Pull/merge/push progress on foreground — no-op unless Pro + a
+        // backend is configured (SyncCoordinator gates internally).
         .onChange(of: scenePhase) { _, newPhase in
-            if newPhase == .active {
+            if newPhase == .active, let services {
                 Task {
-                    _ = await NotificationService.shared.checkAuthorizationStatus()
+                    await SyncCoordinator(backend: services.backend, modelContext: modelContext)
+                        .syncIfEligible()
                 }
             }
         }

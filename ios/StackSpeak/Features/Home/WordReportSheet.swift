@@ -21,6 +21,7 @@ struct WordReportSheet: View {
     @State private var additionalNotes = ""
     @State private var isSubmitting = false
     @State private var showSuccess = false
+    @State private var submitError: String?
     @FocusState private var notesFocused: Bool
 
     var body: some View {
@@ -62,6 +63,14 @@ struct WordReportSheet: View {
             } message: {
                 Text("report.success.message")
             }
+            .alert("report.submit.error.title", isPresented: Binding(get: { submitError != nil },
+                                                                     set: { if !$0 { submitError = nil } })) {
+                Button("common.ok") { submitError = nil }
+            } message: {
+                if let msg = submitError {
+                    Text(msg)
+                }
+            }
         }
     }
 
@@ -76,7 +85,7 @@ struct WordReportSheet: View {
                     SelectableRow(
                         title: reason.displayName,
                         isSelected: selectedReason == reason,
-                        role: .multiselect,
+                        role: .picker,
                         action: { selectedReason = reason },
                         leading: {
                             Image(systemName: reason.icon)
@@ -149,6 +158,7 @@ struct WordReportSheet: View {
                 showSuccess = true
             } catch {
                 isSubmitting = false
+                submitError = error.localizedDescription
             }
         }
     }

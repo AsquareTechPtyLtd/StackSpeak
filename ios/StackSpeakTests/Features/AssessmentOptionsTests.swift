@@ -2,7 +2,11 @@ import Testing
 import Foundation
 @testable import StackSpeak
 
+// `@MainActor` because `AssessmentView.buildDistractors` is MainActor-isolated
+// (SwiftUI `View`); running the suite on the main actor lets it pass the
+// non-Sendable `[Word]` fixtures without tripping Swift 6 strict concurrency.
 @Suite("AssessmentView — distractor generation")
+@MainActor
 struct AssessmentOptionsTests {
 
     private func makeWord(

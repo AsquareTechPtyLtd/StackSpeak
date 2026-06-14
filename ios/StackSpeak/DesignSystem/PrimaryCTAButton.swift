@@ -46,3 +46,24 @@ struct PrimaryCTAButton: View {
         .accessibilityHint(isEnabled ? Text("") : Text("a11y.cta.disabled"))
     }
 }
+
+#Preview("PrimaryCTAButton — Light") {
+    VStack(spacing: 16) {
+        PrimaryCTAButton("Get Started", action: {})
+        PrimaryCTAButton("Loading…", isLoading: true, action: {})
+        PrimaryCTAButton("Disabled", action: {}).disabled(true)
+    }
+    .padding()
+    .withTheme(ThemeManager())
+}
+
+#Preview("PrimaryCTAButton — Dark") {
+    VStack(spacing: 16) {
+        PrimaryCTAButton("Get Started", action: {})
+        PrimaryCTAButton("Loading…", isLoading: true, action: {})
+        PrimaryCTAButton("Disabled", action: {}).disabled(true)
+    }
+    .padding()
+    .withTheme(ThemeManager())
+    .preferredColorScheme(.dark)
+}

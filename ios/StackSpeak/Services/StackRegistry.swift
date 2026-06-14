@@ -38,7 +38,7 @@ final class StackRegistry: @unchecked Sendable {
             self.allStacks = []
             self.stacksById = [:]
             self.loadError = error
-            logger.error("Failed to load words-index.json: \(error.localizedDescription)")
+            logger.error("Failed to load words-index.json: \(error.localizedDescription, privacy: .public)")
         }
     }
 

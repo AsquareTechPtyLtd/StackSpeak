@@ -61,25 +61,26 @@ struct CategoryFilterChip: View {
     }
 }
 
-#Preview("Category chip — light") {
-    HStack {
-        CategoryFilterChip(category: nil, label: "filter.all", isSelected: true, action: {})
-        CategoryFilterChip(category: .aiML, label: "category.ai_ml", isSelected: false, action: {})
-        CategoryFilterChip(category: .testing, label: "category.testing", isSelected: true, action: {})
+private struct CategoryFilterChipPreviewContainer: View {
+    @Environment(\.theme) private var theme
+    var body: some View {
+        HStack {
+            CategoryFilterChip(category: nil, label: "filter.all", isSelected: true, action: {})
+            CategoryFilterChip(category: .aiML, label: "category.ai_ml", isSelected: false, action: {})
+            CategoryFilterChip(category: .testing, label: "category.testing", isSelected: true, action: {})
+        }
+        .padding()
+        .background(theme.colors.bg)
     }
-    .padding()
-    .background(Color(.systemBackground))
-    .withTheme(ThemeManager())
+}
+
+#Preview("Category chip — light") {
+    CategoryFilterChipPreviewContainer()
+        .withTheme(ThemeManager())
 }
 
 #Preview("Category chip — dark") {
-    HStack {
-        CategoryFilterChip(category: nil, label: "filter.all", isSelected: true, action: {})
-        CategoryFilterChip(category: .aiML, label: "category.ai_ml", isSelected: false, action: {})
-        CategoryFilterChip(category: .testing, label: "category.testing", isSelected: true, action: {})
-    }
-    .padding()
-    .background(Color(.systemBackground))
-    .withTheme(ThemeManager())
-    .preferredColorScheme(.dark)
+    CategoryFilterChipPreviewContainer()
+        .withTheme(ThemeManager())
+        .preferredColorScheme(.dark)
 }

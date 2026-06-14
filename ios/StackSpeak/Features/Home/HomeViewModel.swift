@@ -7,7 +7,6 @@ final class HomeViewModel {
     var dailySet: DailySet?
     var wordsById: [UUID: Word] = [:]
     var errorMessage: String?
-    var currentIndex: Int = 0
     /// False until the first `loadTodaysWords` finishes. Lets the view tell
     /// "still loading" apart from "genuinely all mastered" — without it, the
     /// empty (computed) `todaysWords` briefly flashes the all-mastered state.
@@ -20,19 +19,6 @@ final class HomeViewModel {
 
     func isWordCompleted(_ wordId: UUID) -> Bool {
         dailySet?.isWordCompleted(wordId) ?? false
-    }
-
-    /// Used by the Today list flow: after completing a word, the screen
-    /// offers a "Next word" CTA that pushes the next still-undone word in
-    /// the day's order. `nil` when nothing else is left.
-    func nextUndoneWord(after wordId: UUID) -> Word? {
-        guard let set = dailySet,
-              let currentIdx = set.wordIds.firstIndex(of: wordId) else { return nil }
-        let candidates = set.wordIds[(currentIdx + 1)...] + set.wordIds[..<currentIdx]
-        for id in candidates where !set.isWordCompleted(id) {
-            if let word = wordsById[id] { return word }
-        }
-        return nil
     }
 
     /// Most recent explanation the user recorded for this word, if any. Used by the
@@ -61,14 +47,6 @@ final class HomeViewModel {
                 }
             }
             wordsById = loaded
-
-            // Open the deck on the first unfinished card, so a returning user
-            // lands on what they still need to do rather than a done card.
-            if let firstUnfinished = set.wordIds.firstIndex(where: { !set.isWordCompleted($0) }) {
-                currentIndex = firstUnfinished
-            } else {
-                currentIndex = max(set.wordIds.count - 1, 0)
-            }
         } catch {
             errorMessage = error.localizedDescription
         }

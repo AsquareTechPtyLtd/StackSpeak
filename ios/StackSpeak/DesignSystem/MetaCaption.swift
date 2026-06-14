@@ -15,7 +15,7 @@ struct MetaCaption: View {
     }
 
     var body: some View {
-        HStack(spacing: 6) {
+        HStack(spacing: theme.spacing.xs) {
             Text(badge)
                 .font(TypographyTokens.mono)
                 .foregroundColor(theme.colors.inkFaint)
@@ -28,4 +28,25 @@ struct MetaCaption: View {
         }
         .accessibilityElement(children: .combine)
     }
+}
+
+#Preview("MetaCaption — Light") {
+    VStack(alignment: .leading, spacing: 12) {
+        MetaCaption("Intermediate")
+        MetaCaption("Advanced", secondary: "noun")
+        MetaCaption("Basic", secondary: "verb")
+    }
+    .padding()
+    .withTheme(ThemeManager())
+}
+
+#Preview("MetaCaption — Dark") {
+    VStack(alignment: .leading, spacing: 12) {
+        MetaCaption("Intermediate")
+        MetaCaption("Advanced", secondary: "noun")
+        MetaCaption("Basic", secondary: "verb")
+    }
+    .padding()
+    .withTheme(ThemeManager())
+    .preferredColorScheme(.dark)
 }

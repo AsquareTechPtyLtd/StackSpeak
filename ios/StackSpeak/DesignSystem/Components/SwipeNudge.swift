@@ -32,7 +32,7 @@ struct SwipeNudge: View {
 
     var body: some View {
         Button(action: onAdvance) {
-            HStack(spacing: 6) {
+            HStack(spacing: theme.spacing.xs) {
                 if direction == .forward {
                     Text(label)
                         .font(TypographyTokens.callout)
@@ -66,4 +66,23 @@ struct SwipeNudge: View {
             .foregroundColor(theme.colors.inkMuted)
             .offset(x: nudge ? dx : 0)
     }
+}
+
+#Preview("SwipeNudge — Light") {
+    VStack(spacing: 24) {
+        SwipeNudge("Swipe", direction: .forward, onAdvance: {})
+        SwipeNudge("Go back", direction: .backward, onAdvance: {})
+    }
+    .padding()
+    .withTheme(ThemeManager())
+}
+
+#Preview("SwipeNudge — Dark") {
+    VStack(spacing: 24) {
+        SwipeNudge("Swipe", direction: .forward, onAdvance: {})
+        SwipeNudge("Go back", direction: .backward, onAdvance: {})
+    }
+    .padding()
+    .withTheme(ThemeManager())
+    .preferredColorScheme(.dark)
 }

@@ -13,6 +13,12 @@ protocol WordRepository {
     func fetchWord(byId id: UUID) throws -> Word?
     func fetchWords(matching query: String, filters: WordFilters) throws -> [Word]
     func generateDailySet(for date: Date, userProgress: UserProgress) throws -> DailySet
+    @discardableResult
+    func setDailyWordGoal(_ goal: Int, userProgress: UserProgress) throws -> DailySet
+    /// Reconciles today's set with the current stack selection (keeps completed
+    /// words, swaps incomplete ones that no longer qualify).
+    @discardableResult
+    func reconcileTodaysSetWithSelection(userProgress: UserProgress) throws -> DailySet?
 }
 
 /// Protocol for user progress data access
@@ -25,6 +31,7 @@ protocol ProgressRepository {
     func unmarkWordMastered(_ wordId: UUID, userProgress: UserProgress) throws
     func toggleBookmark(_ wordId: UUID, userProgress: UserProgress) throws
     func completeDailySet(_ dailySet: DailySet, userProgress: UserProgress) throws
+    func addOptionalStacks(_ rawValues: [String], to userProgress: UserProgress) throws
     func recordAssessmentResult(
         wordId: UUID,
         isCorrect: Bool,

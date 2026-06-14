@@ -65,6 +65,17 @@ struct ThemedTextEditor: View {
             .padding(theme.spacing.sm)
             .background(theme.colors.surfaceAlt)
             .clipShape(.rect(cornerRadius: RadiusTokens.inline))
+            // A visible border so the field reads as an input — and an accent
+            // ring while focused so it stays clearly delineated against the card
+            // once the keyboard is up.
+            .overlay(
+                RoundedRectangle(cornerRadius: RadiusTokens.inline)
+                    .strokeBorder(
+                        focus.wrappedValue ? theme.colors.accent : theme.colors.lineStrong,
+                        lineWidth: focus.wrappedValue ? BorderTokens.focus : BorderTokens.regular
+                    )
+            )
+            .animation(.easeInOut(duration: 0.15), value: focus.wrappedValue)
             .focused(focus)
             .toolbar {
                 ToolbarItemGroup(placement: .keyboard) {

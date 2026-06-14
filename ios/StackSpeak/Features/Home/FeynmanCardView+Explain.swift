@@ -3,36 +3,56 @@ import SwiftUI
 // MARK: - Explain stage (TextEditor + mic + Submit)
 
 extension FeynmanCardView {
+    /// Scroll target so the editor can be pulled fully into view when focused.
+    static let explainEditorID = "feynman.explanationEditor"
+
     var explainStage: some View {
         // ScrollView so the user can scroll to reach Submit when the
         // keyboard is up; `.scrollDismissesKeyboard(.interactively)` lets
         // them swipe the keyboard away with a downward drag.
-        ScrollView {
-            VStack(alignment: .leading, spacing: theme.spacing.md) {
-                stageLabel("feynman.stage.explain")
+        ScrollViewReader { proxy in
+            ScrollView {
+                VStack(alignment: .leading, spacing: theme.spacing.md) {
+                    // Collapse the guidance while typing so the whole input box
+                    // fits in the space above the keyboard.
+                    if !explanationFocused {
+                        stageLabel("feynman.stage.explain")
 
-                Text("feynman.explain.about")
-                    .font(TypographyTokens.callout)
-                    .foregroundColor(theme.colors.inkMuted)
-                    .lineSpacing(7)
-                    .multilineTextAlignment(.leading)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .padding(.vertical, theme.spacing.xs)
+                        Text("feynman.explain.about")
+                            .font(TypographyTokens.callout)
+                            .foregroundColor(theme.colors.inkMuted)
+                            .lineSpacing(7)
+                            .multilineTextAlignment(.leading)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .padding(.vertical, theme.spacing.xs)
 
-                Text("feynman.explain.prompt")
-                    .font(TypographyTokens.body)
-                    .foregroundColor(theme.colors.ink)
+                        Text("feynman.explain.prompt")
+                            .font(TypographyTokens.body)
+                            .foregroundColor(theme.colors.ink)
+                    }
 
-                explanationEditor
+                    explanationEditor
+                        .id(Self.explainEditorID)
 
-                if let micError {
-                    Text(micError)
-                        .font(TypographyTokens.caption)
-                        .foregroundColor(theme.colors.warn)
+                    if let micError {
+                        Text(micError)
+                            .font(TypographyTokens.caption)
+                            .foregroundColor(theme.colors.warn)
+                    }
+                }
+                .animation(reduceMotion ? nil : MotionTokens.standard,
+                           value: explanationFocused)
+            }
+            .scrollDismissesKeyboard(.interactively)
+            // When the keyboard comes up, pull the editor to the top of the
+            // scroll area so the entire box is visible above the keyboard.
+            .onChange(of: explanationFocused) { _, focused in
+                guard focused else { return }
+                withAnimation(reduceMotion ? nil : MotionTokens.standard) {
+                    proxy.scrollTo(Self.explainEditorID, anchor: .top)
                 }
             }
         }
-        .scrollDismissesKeyboard(.interactively)
     }
 
     var explanationEditor: some View {
