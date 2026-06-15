@@ -11,20 +11,27 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.verticalScroll
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
+import com.stackspeak.features.speech.SpeechService
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.stackspeak.designsystem.LocalStackSpeakColors
 import com.stackspeak.designsystem.StackSpeakTypography
@@ -34,6 +41,17 @@ fun PracticeScreen(wordId: String, onDone: () -> Unit, viewModel: PracticeViewMo
     val word by viewModel.word.collectAsStateWithLifecycle()
     val colors = LocalStackSpeakColors.current
     var explanation by remember { mutableStateOf("") }
+
+    val context = LocalContext.current
+    val speech = remember { SpeechService(context) }
+    DisposableEffect(Unit) { onDispose { speech.destroy() } }
+    fun listen() = speech.start(
+        onResult = { explanation = (explanation.trim() + " " + it).trim() },
+        onError = { },
+    )
+    val micPermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+        if (granted) listen()
+    }
 
     LaunchedEffectOnce(wordId) { viewModel.load(wordId) }
 
@@ -69,11 +87,18 @@ fun PracticeScreen(wordId: String, onDone: () -> Unit, viewModel: PracticeViewMo
                     .padding(12.dp),
             )
 
+            if (speech.isAvailable) {
+                TextButton(
+                    onClick = { micPermission.launch(android.Manifest.permission.RECORD_AUDIO) },
+                    modifier = Modifier.semantics { contentDescription = "Speak your explanation" },
+                ) { Text("🎤  Speak instead", color = colors.accent) }
+            }
+
             Button(
                 onClick = { viewModel.submit(explanation, onDone) },
                 enabled = explanation.trim().length >= 2,
                 colors = ButtonDefaults.buttonColors(containerColor = colors.accent, contentColor = colors.accentText),
-                modifier = Modifier.fillMaxWidth().padding(top = 16.dp),
+                modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
             ) {
                 Text("Lock it in")
             }

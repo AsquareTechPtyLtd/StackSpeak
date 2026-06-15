@@ -91,6 +91,7 @@ dependencies {
 
     implementation(libs.androidx.security.crypto)
     implementation(libs.billing.ktx)
+    implementation(libs.androidx.work.runtime.ktx)
 
     testImplementation(libs.junit)
     testImplementation(libs.robolectric)
