@@ -12,6 +12,7 @@ import com.stackspeak.data.backend.EmailSignUpResult
 import com.stackspeak.data.backend.TokenStore
 import com.stackspeak.data.billing.ProProduct
 import com.stackspeak.data.billing.PurchaseRepository
+import com.stackspeak.features.notifications.ReminderScheduler
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -27,11 +28,17 @@ class ProfileViewModel @Inject constructor(
     private val entitlement: EntitlementRepository,
     private val sync: SyncCoordinator,
     private val purchases: PurchaseRepository,
+    private val reminders: ReminderScheduler,
 ) : ViewModel() {
 
     val products: StateFlow<List<ProProduct>> = purchases.products
 
     fun buyPro(activity: Activity, productId: String) = purchases.purchase(activity, productId)
+
+    fun setReminders(enabled: Boolean) {
+        reminders.setEnabled(enabled)
+        _state.update { it.copy(remindersEnabled = enabled) }
+    }
 
     data class UiState(
         val configured: Boolean = false,
@@ -39,6 +46,7 @@ class ProfileViewModel @Inject constructor(
         val isPro: Boolean = false,
         val busy: Boolean = false,
         val message: String? = null,
+        val remindersEnabled: Boolean = false,
     )
 
     private val _state = MutableStateFlow(

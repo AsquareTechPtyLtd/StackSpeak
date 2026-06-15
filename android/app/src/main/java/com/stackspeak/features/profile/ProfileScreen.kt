@@ -16,6 +16,8 @@ import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -39,6 +41,9 @@ fun ProfileScreen(viewModel: ProfileViewModel = hiltViewModel()) {
     val activity = LocalContext.current as? android.app.Activity
     var email by remember { mutableStateOf("") }
     var password by remember { mutableStateOf("") }
+    val notifPermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+        if (granted) viewModel.setReminders(true)
+    }
 
     Column(Modifier.fillMaxSize().padding(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         Text("Profile", style = StackSpeakTypography.title1Serif, color = colors.ink)
@@ -90,6 +95,20 @@ fun ProfileScreen(viewModel: ProfileViewModel = hiltViewModel()) {
         ) {
             Text("Pro (debug)", style = StackSpeakTypography.body, color = colors.ink)
             Switch(checked = state.isPro, onCheckedChange = { viewModel.toggleProDebug() })
+        }
+        Row(
+            Modifier.fillMaxWidth().background(colors.surface, RoundedCornerShape(12.dp)).padding(16.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween,
+        ) {
+            Text("Daily reminder", style = StackSpeakTypography.body, color = colors.ink)
+            Switch(
+                checked = state.remindersEnabled,
+                onCheckedChange = { on ->
+                    if (on) notifPermission.launch(android.Manifest.permission.POST_NOTIFICATIONS)
+                    else viewModel.setReminders(false)
+                },
+            )
         }
         Button(
             onClick = viewModel::syncNow,
