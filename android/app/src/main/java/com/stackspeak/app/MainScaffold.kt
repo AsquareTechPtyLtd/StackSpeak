@@ -20,11 +20,12 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.stackspeak.designsystem.LocalStackSpeakColors
 import com.stackspeak.designsystem.StackSpeakTypography
+import com.stackspeak.features.books.LibraryScreen
 import com.stackspeak.features.home.HomeScreen
 import com.stackspeak.features.review.ReviewScreen
 
 @Composable
-fun MainScaffold(onOpenWord: (String) -> Unit) {
+fun MainScaffold(onOpenWord: (String) -> Unit, onOpenBook: (String) -> Unit) {
     var tab by remember { mutableIntStateOf(0) }
     val colors = LocalStackSpeakColors.current
 
@@ -32,7 +33,8 @@ fun MainScaffold(onOpenWord: (String) -> Unit) {
         Column(Modifier.weight(1f)) {
             when (tab) {
                 0 -> HomeScreen(onOpenWord = onOpenWord)
-                else -> ReviewScreen()
+                1 -> ReviewScreen()
+                else -> LibraryScreen(onOpenBook = onOpenBook)
             }
         }
         Row(
@@ -43,6 +45,7 @@ fun MainScaffold(onOpenWord: (String) -> Unit) {
         ) {
             TabLabel("Today", selected = tab == 0, modifier = Modifier.weight(1f)) { tab = 0 }
             TabLabel("Review", selected = tab == 1, modifier = Modifier.weight(1f)) { tab = 1 }
+            TabLabel("Library", selected = tab == 2, modifier = Modifier.weight(1f)) { tab = 2 }
         }
     }
 }
