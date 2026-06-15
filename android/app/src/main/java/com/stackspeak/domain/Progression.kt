@@ -1,6 +1,7 @@
 package com.stackspeak.domain
 
 import com.stackspeak.data.AssessmentRecord
+import com.stackspeak.data.BookProgressRecord
 import com.stackspeak.data.PracticedSentenceRecord
 import com.stackspeak.data.UserProgress
 import java.time.Instant
@@ -105,5 +106,36 @@ object Progression {
             longestStreak = maxOf(p.longestStreak, newStreak),
             lastCompletedDate = now,
         )
+    }
+
+    /**
+     * Records reading a book card: adds it to the book's completed set, advances
+     * the per-book reading streak (continue/reset on day boundary), and stamps the
+     * open time. Mirrors iOS `BookProgress` updates.
+     */
+    fun recordBookCardRead(p: UserProgress, bookId: String, cardId: String, now: Instant, zone: ZoneId): UserProgress {
+        val today = now.atZone(zone).toLocalDate()
+        val todayStr = today.toString()
+        val existing = p.bookProgress.firstOrNull { it.bookId == bookId }
+        val updated = if (existing == null) {
+            BookProgressRecord(bookId, now, null, cardId, listOf(cardId), todayStr, 1, 1)
+        } else {
+            val lastDay = runCatching { java.time.LocalDate.parse(existing.lastReadingDayString) }.getOrNull()
+            val streak = when {
+                lastDay == null || existing.lastReadingDayString.isEmpty() -> 1
+                lastDay == today -> existing.currentStreakDays
+                ChronoUnit.DAYS.between(lastDay, today) == 1L -> existing.currentStreakDays + 1
+                else -> 1
+            }
+            existing.copy(
+                lastOpenedAt = now,
+                currentCardId = cardId,
+                completedCardIds = (existing.completedCardIds + cardId).distinct().sorted(),
+                lastReadingDayString = todayStr,
+                currentStreakDays = streak,
+                longestStreakDays = maxOf(existing.longestStreakDays, streak),
+            )
+        }
+        return p.copy(bookProgress = p.bookProgress.filter { it.bookId != bookId } + updated)
     }
 }

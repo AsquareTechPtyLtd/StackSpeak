@@ -58,6 +58,12 @@ class ProgressRepository @Inject constructor(private val store: ProgressLocalSto
 
     suspend fun markMastered(wordId: String) = mutate { it.copy(masteredWordIds = it.masteredWordIds + wordId) }
 
+    suspend fun markBookCardRead(bookId: String, cardId: String, now: Instant = Instant.now(), zone: ZoneId = ZoneId.systemDefault()) =
+        mutate { Progression.recordBookCardRead(it, bookId, cardId, now, zone) }
+
+    suspend fun bookProgress(bookId: String): BookProgressRecord? =
+        ensureLoaded().bookProgress.firstOrNull { it.bookId == bookId }
+
     suspend fun setDailyGoal(goal: Int) = mutate { it.copy(dailyWordGoal = maxOf(3, goal)) }
 
     /** Applies an SM-2 grade to a word's review state (creating it if absent). */

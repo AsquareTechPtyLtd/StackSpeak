@@ -14,13 +14,17 @@ import androidx.compose.ui.Modifier
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.stackspeak.designsystem.LocalStackSpeakColors
+import com.stackspeak.features.books.BookDetailScreen
+import com.stackspeak.features.books.ReaderScreen
 import com.stackspeak.features.onboarding.OnboardingScreen
 import com.stackspeak.features.practice.PracticeScreen
 
-/** Manual in-app routing (no nav library needed for the M3 loop). */
+/** Manual in-app routing (no nav library needed for the loop + books). */
 private sealed interface Route {
     data object Main : Route
     data class Practice(val wordId: String) : Route
+    data class BookDetail(val bookId: String) : Route
+    data class Reader(val bookId: String, val chapterId: String) : Route
 }
 
 @Composable
@@ -38,10 +42,23 @@ fun AppRoot() {
             else -> {
                 var route by remember { mutableStateOf<Route>(Route.Main) }
                 when (val r = route) {
-                    Route.Main -> MainScaffold(onOpenWord = { route = Route.Practice(it) })
+                    Route.Main -> MainScaffold(
+                        onOpenWord = { route = Route.Practice(it) },
+                        onOpenBook = { route = Route.BookDetail(it) },
+                    )
                     is Route.Practice -> PracticeScreen(
                         wordId = r.wordId,
                         onDone = { route = Route.Main },
+                    )
+                    is Route.BookDetail -> BookDetailScreen(
+                        bookId = r.bookId,
+                        onOpenChapter = { route = Route.Reader(r.bookId, it) },
+                        onBack = { route = Route.Main },
+                    )
+                    is Route.Reader -> ReaderScreen(
+                        bookId = r.bookId,
+                        chapterId = r.chapterId,
+                        onBack = { route = Route.BookDetail(r.bookId) },
                     )
                 }
             }
