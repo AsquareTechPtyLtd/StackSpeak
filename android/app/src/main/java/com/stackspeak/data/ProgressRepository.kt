@@ -64,6 +64,15 @@ class ProgressRepository @Inject constructor(private val store: ProgressLocalSto
     suspend fun bookProgress(bookId: String): BookProgressRecord? =
         ensureLoaded().bookProgress.firstOrNull { it.bookId == bookId }
 
+    /** Replaces local progress with a (merged) snapshot during sync apply. */
+    suspend fun applySnapshot(snapshot: com.stackspeak.domain.ProgressSnapshot) =
+        mutate {
+            // Preserve the local shuffle seed if the snapshot somehow lacks one.
+            snapshot.toUserProgress().let { applied ->
+                if (applied.shuffleSeed.isBlank()) applied.copy(shuffleSeed = it.shuffleSeed) else applied
+            }
+        }
+
     suspend fun setDailyGoal(goal: Int) = mutate { it.copy(dailyWordGoal = maxOf(3, goal)) }
 
     /** Applies an SM-2 grade to a word's review state (creating it if absent). */
