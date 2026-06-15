@@ -22,6 +22,7 @@ import com.stackspeak.designsystem.LocalStackSpeakColors
 import com.stackspeak.designsystem.StackSpeakTypography
 import com.stackspeak.features.books.LibraryScreen
 import com.stackspeak.features.home.HomeScreen
+import com.stackspeak.features.profile.ProfileScreen
 import com.stackspeak.features.review.ReviewScreen
 
 @Composable
@@ -34,7 +35,8 @@ fun MainScaffold(onOpenWord: (String) -> Unit, onOpenBook: (String) -> Unit) {
             when (tab) {
                 0 -> HomeScreen(onOpenWord = onOpenWord)
                 1 -> ReviewScreen()
-                else -> LibraryScreen(onOpenBook = onOpenBook)
+                2 -> LibraryScreen(onOpenBook = onOpenBook)
+                else -> ProfileScreen()
             }
         }
         Row(
@@ -46,6 +48,7 @@ fun MainScaffold(onOpenWord: (String) -> Unit, onOpenBook: (String) -> Unit) {
             TabLabel("Today", selected = tab == 0, modifier = Modifier.weight(1f)) { tab = 0 }
             TabLabel("Review", selected = tab == 1, modifier = Modifier.weight(1f)) { tab = 1 }
             TabLabel("Library", selected = tab == 2, modifier = Modifier.weight(1f)) { tab = 2 }
+            TabLabel("Profile", selected = tab == 3, modifier = Modifier.weight(1f)) { tab = 3 }
         }
     }
 }
