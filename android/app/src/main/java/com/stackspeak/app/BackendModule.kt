@@ -36,4 +36,8 @@ object BackendModule {
     @Singleton
     fun backendService(config: BackendConfig, tokens: TokenStore, http: OkHttpClient): BackendService =
         if (config.isConfigured) SupabaseBackendService(config, tokens, http) else NoOpBackendService()
+
+    @Provides
+    @Singleton
+    fun purchaseRepository(impl: com.stackspeak.data.billing.PlayBillingRepository): com.stackspeak.data.billing.PurchaseRepository = impl
 }

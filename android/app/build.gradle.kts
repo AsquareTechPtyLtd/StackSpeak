@@ -90,6 +90,7 @@ dependencies {
     ksp(libs.room.compiler)
 
     implementation(libs.androidx.security.crypto)
+    implementation(libs.billing.ktx)
 
     testImplementation(libs.junit)
     testImplementation(libs.robolectric)
