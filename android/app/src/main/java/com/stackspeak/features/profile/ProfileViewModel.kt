@@ -2,6 +2,7 @@ package com.stackspeak.features.profile
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import android.app.Activity
 import com.stackspeak.data.EntitlementRepository
 import com.stackspeak.data.SyncCoordinator
 import com.stackspeak.data.SyncResult
@@ -9,8 +10,11 @@ import com.stackspeak.data.backend.BackendError
 import com.stackspeak.data.backend.BackendService
 import com.stackspeak.data.backend.EmailSignUpResult
 import com.stackspeak.data.backend.TokenStore
+import com.stackspeak.data.billing.ProProduct
+import com.stackspeak.data.billing.PurchaseRepository
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
@@ -22,7 +26,12 @@ class ProfileViewModel @Inject constructor(
     private val tokens: TokenStore,
     private val entitlement: EntitlementRepository,
     private val sync: SyncCoordinator,
+    private val purchases: PurchaseRepository,
 ) : ViewModel() {
+
+    val products: StateFlow<List<ProProduct>> = purchases.products
+
+    fun buyPro(activity: Activity, productId: String) = purchases.purchase(activity, productId)
 
     data class UiState(
         val configured: Boolean = false,

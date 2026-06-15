@@ -22,6 +22,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
@@ -33,7 +34,9 @@ import com.stackspeak.designsystem.StackSpeakTypography
 @Composable
 fun ProfileScreen(viewModel: ProfileViewModel = hiltViewModel()) {
     val state by viewModel.state.collectAsStateWithLifecycle()
+    val products by viewModel.products.collectAsStateWithLifecycle()
     val colors = LocalStackSpeakColors.current
+    val activity = LocalContext.current as? android.app.Activity
     var email by remember { mutableStateOf("") }
     var password by remember { mutableStateOf("") }
 
@@ -94,6 +97,18 @@ fun ProfileScreen(viewModel: ProfileViewModel = hiltViewModel()) {
             colors = ButtonDefaults.buttonColors(containerColor = colors.accent, contentColor = colors.accentText),
             modifier = Modifier.fillMaxWidth(),
         ) { Text("Sync now") }
+
+        // Paywall — real Pro purchase (subscriptions). Hidden once Pro is active.
+        if (!state.isPro && products.isNotEmpty()) {
+            Text("Get StackSpeak Pro", style = StackSpeakTypography.headline, color = colors.ink)
+            products.forEach { product ->
+                Button(
+                    onClick = { activity?.let { viewModel.buyPro(it, product.id) } },
+                    colors = ButtonDefaults.buttonColors(containerColor = colors.accentDecoration, contentColor = colors.accentText),
+                    modifier = Modifier.fillMaxWidth(),
+                ) { Text("${product.title} — ${product.formattedPrice}") }
+            }
+        }
 
         state.message?.let { Text(it, style = StackSpeakTypography.footnote, color = colors.inkMuted) }
     }
